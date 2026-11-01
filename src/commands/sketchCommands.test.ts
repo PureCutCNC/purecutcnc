@@ -248,11 +248,64 @@ function testToggleActiveStates() {
   console.log('pending toggle active states: PASSED')
 }
 
+/**
+ * A rotary canned shape (Turn, Polygon, Thread, Flutes) refuses the three
+ * transforms, and its Move stays available: that is the tool rail's and the
+ * toolbar's copy of the context menu's rule, so no button can start what the
+ * menu would not offer (issue #1112 rt7-f).
+ */
+function testRotaryCannedTransformGating() {
+  console.log('Testing rotary canned transform gating...')
+
+  const turn = makeFeature('turn-1', { canned: { kind: 'turn', params: {} }, operation: 'model' })
+  const ellipse = makeFeature('ellipse-1', { canned: { kind: 'ellipse', params: {} } })
+  const plain = makeFeature('plain-1')
+
+  const turnState = makeCommandState(makeProject([turn]), makeSelection(['turn-1']))
+  assert(turnState.predicates.hasRotaryCannedSelectedFeatures, 'the Turn is a rotary canned selection')
+  assert(turnState.predicates.rotaryCannedShapeLabelKey === 'canned.turn.name',
+    `the refusal names the Turn's own editor, got ${String(turnState.predicates.rotaryCannedShapeLabelKey)}`)
+  assert(turnState.transform.move.enabled, 'Move stays available for a rotary canned shape')
+  assert(turnState.transform.copy.enabled, 'Copy stays available for a rotary canned shape')
+  assert(!turnState.transform.resize.enabled, 'Resize is refused for a rotary canned shape')
+  assert(!turnState.transform.rotate.enabled, 'Rotate is refused for a rotary canned shape')
+  assert(!turnState.transform.mirror.enabled, 'Mirror is refused for a rotary canned shape')
+
+  const plainState = makeCommandState(makeProject([plain]), makeSelection(['plain-1']))
+  assert(!plainState.predicates.hasRotaryCannedSelectedFeatures, 'a plain feature is not a rotary selection')
+  assert(plainState.predicates.rotaryCannedShapeLabelKey === null, 'a plain feature names no rotary editor')
+  assert(plainState.transform.resize.enabled, 'Resize is untouched for a plain feature')
+  assert(plainState.transform.rotate.enabled, 'Rotate is untouched for a plain feature')
+  assert(plainState.transform.mirror.enabled, 'Mirror is untouched for a plain feature')
+
+  // Another canned kind keeps today's behaviour: an ellipse's outline is a
+  // plain profile, so the transforms still apply.
+  const ellipseState = makeCommandState(makeProject([ellipse]), makeSelection(['ellipse-1']))
+  assert(!ellipseState.predicates.hasRotaryCannedSelectedFeatures, 'an ellipse is not a rotary canned shape')
+  assert(ellipseState.transform.resize.enabled, 'Resize is untouched for an ellipse')
+  assert(ellipseState.transform.rotate.enabled, 'Rotate is untouched for an ellipse')
+
+  // The refusal follows the selection, not the primary row: a plain primary
+  // with a Turn beside it still refuses the transforms, and names the Turn.
+  const mixedState = makeCommandState(
+    makeProject([plain, turn]),
+    makeSelection(['plain-1', 'turn-1']),
+  )
+  assert(mixedState.predicates.hasRotaryCannedSelectedFeatures, 'the mixed selection holds a rotary shape')
+  assert(mixedState.predicates.rotaryCannedShapeLabelKey === 'canned.turn.name',
+    'the mixed selection names the rotary shape it refuses for')
+  assert(!mixedState.transform.resize.enabled, 'Resize is refused for a mixed selection holding a Turn')
+  assert(!mixedState.transform.rotate.enabled, 'Rotate is refused for a mixed selection holding a Turn')
+
+  console.log('rotary canned transform gating: PASSED')
+}
+
 testLockedSelectionGating()
 testFeatureDistributionRejectsModelSelection()
 testClosedProfileOffsetGating()
 testArrangeThresholds()
 testSketchEditActive()
 testToggleActiveStates()
+testRotaryCannedTransformGating()
 
 console.log('All sketch command tests passed')

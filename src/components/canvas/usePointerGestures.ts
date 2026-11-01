@@ -463,11 +463,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       }
     }
 
-    // A selected canned ellipse draws two radius handles in feature mode. They
-    // are the only handles there, so a press on one starts a radius drag before
-    // the feature body or a marquee can take the pointer (issue #1112).
+    // A canned ellipse whose Edit panel is open draws two radius handles in
+    // feature mode. They are the only handles there, so a press on one starts a
+    // radius drag before the feature body or a marquee can take the pointer
+    // (issue #1112). The `canned-edit` session is the one pending-create state
+    // that places nothing on the canvas, so it must not swallow the press.
+    const pendingEditSession = pendingAddRef.current?.shape === 'canned-edit'
     const canGrabRadiusHandle = selection.mode === 'feature'
-      && !pendingAddRef.current && !pendingMoveRef.current && !pendingTransformRef.current
+      && (!pendingAddRef.current || pendingEditSession)
+      && !pendingMoveRef.current && !pendingTransformRef.current
       && !pendingShapeAction && !pendingConstraintRef.current
       && !pendingTextLayoutRef.current && !pendingFeatureDistributionRef.current
       && !pendingClipboardPlacementRef.current
@@ -711,6 +715,17 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       pendingSketchFilletRef.current = null
       setHoveredEditControl(null)
       hoverFeature(null)
+      // A canned-shape edit borrows `pendingAdd` only to open its side panel: it
+      // places nothing, and its one canvas gesture is dragging the ellipse's
+      // radius handles, which writes that panel's fields (issue #1112 rt7-g).
+      if (pendingAdd.shape === 'canned-edit') {
+        if (isDraggingNodeRef.current && cannedRadius.dragRef.current) {
+          cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
+        } else {
+          cannedRadius.hover(point)
+        }
+        return
+      }
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
         scheduleDraw()

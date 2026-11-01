@@ -499,19 +499,46 @@
   font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 }
 
-/* A shape shared with linked copies on the other face (issue #945). */
-.change-face__linked,
-.properties-linked-face-note {
+/* A shape shared with linked copies on the other face (issue #945). The bar
+ * belongs to this dialog and stays here alone. */
+.change-face__linked {
   margin: 8px 0 0;
   padding: 6px 8px;
   border-left: 2px solid var(--face-bottom);
   color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* A Properties note is plain secondary text: one sentence the panel adds under
+ * a field, not a callout. It used to borrow the change-face dialog's orange
+ * bar, on every note — the shape summary, the text summary, the missing source,
+ * the unknown shape and the linked-copy count. Frank read that colour as an
+ * "AI slop" callout and asked for text (issue #1112 rt7-h). */
+.properties-note {
+  margin: 8px 0 0;
+  color: var(--text-dim);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.change-face__linked {
-  font-size: 13px;
+/* The neutral tag above a canned shape's Shape summary: its sketch is generated
+ * from parameters rather than drawn. Same metrics as the authoring-face chip,
+ * in the panel's own colours, so it reads as a label and never as a warning
+ * (issue #1112 rt7-h). */
+.properties-canned-label {
+  justify-self: start;
+  margin: 8px 0 0;
+  padding: 0 6px;
+  height: 16px;
+  line-height: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
 /* CAM setup grouping and property dialogs (#946). */

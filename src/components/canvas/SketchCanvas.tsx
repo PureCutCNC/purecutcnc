@@ -47,7 +47,7 @@ import {
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
 import { useCannedRadiusDrag } from './useCannedRadiusDrag'
-import { cannedRadiusDrawParams } from './cannedRadiusDrag'
+import { subscribeCannedEditDraft } from './cannedEditDraft'
 import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { ellipseRadiusCentre, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
 import { ConstraintEditPanel } from './ConstraintEditPanel'
@@ -176,12 +176,21 @@ import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMi
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { projectMovePreviewPoint } from '../../store/helpers/rotaryMove'
+import { projectMovePreviewPoint, rotaryCopyStepDelta } from '../../store/helpers/rotaryMove'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 
 export type { SketchCanvasHandle }
+
+/**
+ * Whether this build publishes the canvas' own test seams — the live view
+ * state, the move preview point and what the feature pass drew of the Edit-
+ * ellipse handles — for the browser specs. Dev-only, tree-shaken from
+ * production builds; a module constant so the draw pass does not repeat the
+ * check on every frame.
+ */
+const CANVAS_TEST_SEAMS = import.meta.env.DEV
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
   {
@@ -242,8 +251,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function stopNodeDrag() {
-    // A canned ellipse's radius drag is a preview: the release is the one write.
-    cannedRadius.finish()
+    // A radius-handle release ends only the gesture: the dragged radius is
+    // already the Edit panel's field text, and that panel owns the history
+    // transaction Save commits or Cancel discards (issue #1112 rt7-g).
+    if (cannedRadius.dragRef.current) {
+      cannedRadius.finish()
+      isDraggingNodeRef.current = false
+      dragStartWorldRef.current = null
+      return
+    }
     if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
     dragStartWorldRef.current = null
@@ -359,7 +375,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformKeepOriginals,
     completePendingOffset,
     cancelPendingOffset,
-    updateFeature,
     updateFeatureDistribution,
     setFeatureDistributionPickTarget,
     setFeatureDistributionGuide,
@@ -444,14 +459,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingClipboardPlacementRef.current = pendingClipboardPlacement
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
 
-  // A canned ellipse's radius handles belong to the selected feature, not to a
-  // sketch-edit session (its geometry is generated, issue #1112).
+  // A canned ellipse's radius handles belong to its open Edit panel — the only
+  // place they are drawn — and the drag writes that panel's fields (issue #1112
+  // rt7-g).
   const cannedRadius = useCannedRadiusDrag({
     projectRef,
-    selectionRef,
     canvasRef,
     viewStateRef,
-    updateFeature,
     scheduleDraw,
   })
 
@@ -927,6 +941,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     scheduleDraw()
   }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, pendingFeatureDistribution, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, toolpathLevel, operationHighlightKind, canvasPalette, showOtherSide])
 
+  // The Edit-ellipse panel's fields place the radius handles, so opening or
+  // closing that panel and every field change (typed or dragged) redraws the
+  // canvas without a project write (issue #1112 rt7-g).
+  useEffect(() => subscribeCannedEditDraft(scheduleDraw), [scheduleDraw])
+
   useEffect(() => {
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
@@ -1079,6 +1098,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
+    // What this pass drew of the Edit-ellipse handles, published for the
+    // browser specs below: a selection-with-no-editor must draw none of them,
+    // and a handle must be seen rather than inferred from the drag.
+    let radiusHandlesDrawn = 0
+    let draftedEllipseParams: { rx: number; ry: number } | null = null
     for (const feature of features) {
       if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || sideViewIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
@@ -1087,12 +1111,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
 
-      // While a radius handle is dragged the ellipse draws from the preview
-      // parameters, so the outline follows the pointer without a store write.
+      // While the Edit-ellipse panel is open its fields place the outline and
+      // the two handles: a dragged radius is held out of the project until Save
+      // (issue #1112 rt7-g review), so the canvas — not a store write — is what
+      // shows it. The handles read the same parameters.
       const radiusDrag = cannedRadius.dragRef.current
-      const previewParams = radiusDrag && radiusDrag.featureId === feature.id ? radiusDrag.params : null
-      const drawableFeature = previewParams
-        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: previewParams } }
+      const handleParams = cannedRadius.handleParams(feature)
+      const drawableFeature = handleParams
+        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: handleParams } }
         : feature
 
       const batchLine = feature.operation === 'line'
@@ -1107,10 +1133,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         drawFeature(ctx, drawableFeature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness, sheet)
       }
 
-      // A selected canned ellipse owns the two radius handles, drawn the way
-      // a circle's radius handle is (issue #1112 slice w3e-a).
-      const handleParams = cannedRadiusDrawParams(feature, radiusDrag)
-      if (handleParams && selection.mode === 'feature' && selection.selectedFeatureId === feature.id) {
+      // The two radius handles, drawn only while the Edit-ellipse panel for this
+      // row is open, the way a circle's radius handle is (issue #1112 rt7-g).
+      if (handleParams) {
         const handles = ellipseRadiusHandles(handleParams, feature.transform)
         const centre = ellipseRadiusCentre(feature.transform)
         const activeAxis = radiusDrag?.featureId === feature.id
@@ -1121,6 +1146,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (activeHandle) {
           drawRadiusMeasurement(ctx, centre, activeHandle.world, vt, project.meta.units)
         }
+        radiusHandlesDrawn += handles.length
+        draftedEllipseParams = handleParams
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
@@ -1198,6 +1225,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.textBaseline = 'middle'
         ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
         ctx.restore()
+      }
+    }
+    // Publish what this pass drew for the browser specs (issue #1112 rt7-g
+    // review): the radius handles are an in-canvas drawing, so a spec asserts
+    // the dots and the previewed outline instead of inferring them from a drag
+    // that may still have written nothing. Dev-only, like the view-state seam.
+    if (CANVAS_TEST_SEAMS) {
+      canvas.dataset.radiusHandles = String(radiusHandlesDrawn)
+      if (draftedEllipseParams) {
+        canvas.dataset.ellipseDraft = `${draftedEllipseParams.rx},${draftedEllipseParams.ry}`
+      } else {
+        delete canvas.dataset.ellipseDraft
       }
     }
     drawLineFeatureBatch(ctx, batchedLineFeatures, vt, sheet)
@@ -1588,11 +1627,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
             const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
             for (let index = 2; index <= parsedCount; index += 1) {
+              // Copy `index` is placed by the same clamp every copy uses, from
+              // where the one before it landed: a canned rotary band cannot
+              // travel past the bar's end just because the drag was repeated
+              // (issue #1112 rt7-f review). A non-rotary copy gets the plain
+              // multiple back, exactly as before.
+              const placement = rotaryCopyStepDelta(
+                project,
+                pendingMove.entityIds,
+                targetPoint.x - pendingMove.fromPoint.x,
+                targetPoint.y - pendingMove.fromPoint.y,
+                index,
+              )
               for (const feature of features) {
                 const repeatedPreview = translateProfile(
                   feature.sketch.profile,
-                  (targetPoint.x - pendingMove.fromPoint.x) * index,
-                  (targetPoint.y - pendingMove.fromPoint.y) * index,
+                  placement.dx,
+                  placement.dy,
                 )
                 drawPreviewProfile(ctx, repeatedPreview, vt, `Copy ${index}`)
               }

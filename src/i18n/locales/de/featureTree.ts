@@ -250,6 +250,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.edit': '{shape} bearbeiten…',
   'featureTree.properties.canned.editUnavailable': 'Der Editor für diese Form ist noch nicht verfügbar',
   'featureTree.properties.canned.expand': 'In Features umwandeln',
+  'featureTree.properties.canned.label': 'Vorlagen-Element',
   'featureTree.properties.canned.note': 'Die Skizze wird aus den Parametern dieser Form erzeugt. Wandle sie in Features um, um sie zu bearbeiten, zu schneiden, zu verbinden, zu kürzen oder zu versetzen.',
   'featureTree.properties.canned.noteBadge': 'Erzeugt',
   'featureTree.properties.canned.modelNote': 'Dieses Modell wird aus seinen Parametern erzeugt. Eine Änderung baut sein Netz neu auf; es kann nicht in ebene Features aufgelöst werden.',
@@ -429,6 +430,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'Keine kompatiblen Operationen',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Wird in keiner Operation verwendet',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Das Entfernen würde die Operation ungültig machen',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Größe in {edit} ändern',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Form',

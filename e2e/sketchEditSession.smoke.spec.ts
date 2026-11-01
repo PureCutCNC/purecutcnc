@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { Page } from '@playwright/test'
 import { seedConstructionReferences, pickReference, referenceSnapshot } from './constructionReferences.helpers'
 import { test, expect } from './fixtures'
 import {
@@ -28,6 +29,17 @@ import {
 import { seedLinkedProject } from './featureReferences.helpers'
 
 const EDIT_PANEL = '.canvas-workflow-panel--edit'
+
+/**
+ * Open the Properties panel's Shape section, which holds a single feature's one
+ * edit action (issue #1112 rt7-i) and starts collapsed on a fresh profile.
+ */
+async function openPropertiesShapeSection(page: Page): Promise<void> {
+  const header = page.locator('.properties-panel .disclosure-section__header').first()
+  await expect(header).toContainText('Shape')
+  if (await header.getAttribute('aria-expanded') !== 'true') await header.click()
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
+}
 
 function defProfile(project: Record<string, unknown>): {
   segments: Array<{ to: { x: number } }>
@@ -253,6 +265,10 @@ for (const face of ['top', 'bottom'] as const) {
     await seedProject(page, JSON.stringify(saved))
     const before = await getProject(page)
     await page.locator('.tree-row--feature[data-feature-id="reference-source"]').click()
+    // The one edit action lives in the Shape section, which starts collapsed
+    // (issue #1112 rt7-i); the action itself, its enabled state and what it
+    // opens are unchanged.
+    await openPropertiesShapeSection(page)
     const edit = page.locator('.properties-panel').getByRole('button', { name: 'Edit sketch', exact: true })
     await expect(edit).toBeEnabled()
     await edit.click()

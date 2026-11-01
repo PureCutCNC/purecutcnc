@@ -33,9 +33,10 @@ import type {
 import type { FeatureDistributionMode } from '../sketch/featureDistribution'
 import type { TextLayoutKind } from '../sketch/textPlacement'
 import { featureHasClosedGeometry } from '../text'
-import { isCannedFeature } from '../cannedShapes'
+import { cannedShapeLabelKey, isCannedFeature } from '../cannedShapes'
 import { useNoticeStore } from '../store/noticeStore'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
+import { hasRotaryCannedFeature, isRotaryCannedFeature } from '../store/helpers/cannedShapeActions'
 
 export interface CommandDescriptor {
   id: string
@@ -62,6 +63,19 @@ export interface SketchCommandPredicates {
   hasOffsetEligibleSelectedFeatures: boolean
   /** True when any selected row is a generated (canned) shape or model. */
   hasCannedSelectedFeatures: boolean
+  /**
+   * True when any selected row is a rotary canned shape (Turn, Polygon,
+   * Thread, Flutes), whose size and orientation live in its parameters. The
+   * three transforms refuse such a selection, exactly as the context menu does
+   * (issue #1112 rt7-f).
+   */
+  hasRotaryCannedSelectedFeatures: boolean
+  /**
+   * The label key of the rotary canned shape a refusal names — the primary
+   * selected row when it is one — or `null`. The toolbar's Resize reason points
+   * at that shape's editor, the way the menu's does.
+   */
+  rotaryCannedShapeLabelKey: string | null
   alignableFeatureIds: string[]
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
@@ -128,6 +142,16 @@ export function deriveSketchCommandPredicates({
   const hasClosedSelectedFeatures =
     selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
   const hasCannedSelectedFeatures = selectedFeatures.some(isCannedFeature)
+  const hasRotaryCannedSelectedFeatures = hasRotaryCannedFeature(selectedFeatures)
+  // The primary row leads, so the Resize reason names the shape the user
+  // right-clicked rather than the first one in selection order.
+  const rotaryCannedRows = [
+    ...selectedFeatures.filter((feature) => feature.id === primarySelectedFeatureId),
+    ...selectedFeatures.filter((feature) => feature.id !== primarySelectedFeatureId),
+  ].filter(isRotaryCannedFeature)
+  const rotaryCannedShapeLabelKey = rotaryCannedRows.length > 0
+    ? cannedShapeLabelKey(rotaryCannedRows[0].canned)
+    : null
   const hasOffsetEligibleSelectedFeatures =
     hasClosedSelectedFeatures && !hasCannedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
   const alignableFeatureIds = selectedFeatures
@@ -156,6 +180,8 @@ export function deriveSketchCommandPredicates({
     hasClosedSelectedFeatures,
     hasOffsetEligibleSelectedFeatures,
     hasCannedSelectedFeatures,
+    hasRotaryCannedSelectedFeatures,
+    rotaryCannedShapeLabelKey,
     alignableFeatureIds,
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
@@ -197,15 +223,15 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         active: false,
       },
       resize: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'resize',
       },
       rotate: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'rotate',
       },
       mirror: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'mirror',
       },
     },

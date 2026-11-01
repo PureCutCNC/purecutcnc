@@ -15,34 +15,43 @@
  */
 
 /**
- * A canned ellipse's radius-handle drag session (issue #1112 slice w3e-a).
+ * A canned ellipse's radius-handle drag session (issue #1112 slices w3e-a,
+ * rt7-g).
  *
  * Run with: npx tsx src/components/canvas/cannedRadiusDrag.test.ts
  *
  * The load-bearing properties:
- *   1. A drag starts only on a canned ellipse's own handle, never on another
- *      kind or a handle index that does not exist.
- *   2. Every pointer move previews new parameters for the dragged feature only;
- *      nothing is stored until the release.
- *   3. The release is exactly one write, so the gesture is one undo step — and
- *      through `updateFeature` it is the same normalize/apply path the
- *      Edit-ellipse panel uses, so linked copies and the summary follow.
+ *   1. Handles exist only while that ellipse's Edit panel is open. A plain
+ *      selection draws none and cannot start a drag (Frank, round 7).
+ *   2. A drag writes the panel's field text — the same edit path a keystroke
+ *      takes — and never the project. The field is *held*: the canvas preview
+ *      follows the pointer while the project keeps that field's stored value
+ *      until Save, and typing another field does not release it
+ *      (issues #1112 rt7-g review, rt7-g correction).
+ *   3. The fields and the handles are one value in both directions: typing a
+ *      radius moves its handle, and dragging moves the field.
  *   4. The handle follows the same snap gate a dragged circle control does, and
- *      a press that never moved it is not an edit (issue #1112 review).
+ *      a rotated placement still maps the pointer onto the ellipse's own axis.
+ *   5. The canvas feature pass itself draws those handles and the previewed
+ *      outline — the rule is executed, not just described by a helper — and
+ *      publishes the count for the browser spec (issue #1112 rt7-g review).
  */
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { newProject, type CannedShapeData, type Point, type Project } from '../../types/project'
+import ts from 'typescript'
+import { newProject, type Point, type Project } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore } from '../../store/types'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { translateMatrix } from '../../store/helpers/instanceTransforms'
+import { ELLIPSE_RADIUS_MIN, ellipseRadiusCentre, ellipseRadiusHandlePoint, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
+import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { cannedEditPreviewValues, closeCannedEditDraft, getCannedEditDraft, openCannedEditDraft, setCannedEditDraftField } from './cannedEditDraft'
 import {
   beginCannedRadiusDrag,
-  cannedRadiusDrawParams,
-  commitCannedRadiusDrag,
+  cannedEditHandleParams,
   moveCannedRadiusDrag,
+  publishCannedRadiusDrag,
   updateCannedRadiusDrag,
   type CannedRadiusDragState,
 } from './cannedRadiusDrag'
@@ -50,6 +59,10 @@ import {
 /** Apply a sequence of pointer positions, as the drag handler does move by move. */
 function dragTo(state: CannedRadiusDragState, ...points: Point[]): CannedRadiusDragState {
   return points.reduce((current, point) => updateCannedRadiusDrag(current, point), state)
+}
+
+function near(actual: number, expected: number, label: string): void {
+  assert(Math.abs(actual - expected) < 1e-6, `${label}: expected ${expected}, got ${actual}`)
 }
 
 function resetStore(project?: Project): void {
@@ -79,93 +92,201 @@ function store(): ProjectStore {
   return useProjectStore.getState()
 }
 
+/** The fixture project's unit system: the draft text is written in it. */
+function units(): Project['meta']['units'] {
+  return store().project.meta.units
+}
+
 function storedParams(featureId: string): { rx: number; ry: number } {
   const canned = resolveFeatureInstance(store().project, featureId)?.canned
   assert.ok(canned, `feature ${featureId} is canned`)
   return canned.params as { rx: number; ry: number }
 }
 
-// ── 1. What a drag can start on ────────────────────────────────────────
-
 resetStore()
 store().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
 const ellipse = resolvedProjectFeatures(store().project)[0]
 assert.ok(ellipse, 'the fixture created an ellipse')
+const storedParameters = storedParams(ellipse.id)
+const undoSteps = store().history.past.length
 
-const xDrag = beginCannedRadiusDrag(ellipse, 0)
-assert.ok(xDrag, 'a handle index starts a drag')
-assert.equal(xDrag.axis, 'rx', 'index 0 is the local X radius')
-const yDrag = beginCannedRadiusDrag(ellipse, 1)
-assert.ok(yDrag, 'the second handle index starts a drag')
-assert.equal(yDrag.axis, 'ry', 'index 1 is the local Y radius')
-assert.equal(beginCannedRadiusDrag(ellipse, 2), null, 'a third handle does not exist')
-assert.equal(beginCannedRadiusDrag(ellipse, -1), null, 'a negative handle does not exist')
+// ── 1. A plain selection has no handles and cannot drag ────────────────
+
+assert.equal(getCannedEditDraft(), null, 'no editor is open on a plain selection')
 assert.equal(
-  beginCannedRadiusDrag({ ...ellipse, canned: { kind: 'ngon', params: { sides: 6, size: 10, rotation: 0 } } }, 0),
+  cannedEditHandleParams(ellipse, null, null),
   null,
-  'another canned kind has no ellipse handles',
+  'a plain selection draws no radius handles',
 )
 assert.equal(
-  beginCannedRadiusDrag({ ...ellipse, canned: null }, 0),
+  beginCannedRadiusDrag(ellipse, 0, null),
   null,
-  'a plain feature has no ellipse handles',
+  'a press where a handle would be starts no drag on a plain selection',
 )
+
+// A session for another row, or for another kind, is not this ellipse's editor.
+openCannedEditDraft('f-other', 'ellipse', { rx: '30', ry: '20' }, units())
 assert.equal(
-  beginCannedRadiusDrag({ ...ellipse, canned: { kind: 'ellipse', params: { rx: 0, ry: 20 } } }, 0),
+  beginCannedRadiusDrag(ellipse, 0, getCannedEditDraft()),
   null,
-  'parameters the generator refuses cannot be dragged',
+  'another row being edited does not give this ellipse handles',
 )
+openCannedEditDraft(ellipse.id, 'ngon', { sides: '6', size: '10', rotation: '0' }, units())
+assert.equal(
+  beginCannedRadiusDrag(ellipse, 0, getCannedEditDraft()),
+  null,
+  'a non-ellipse editor has no radius handles',
+)
+closeCannedEditDraft()
 
-// ── 2. Pointer moves preview, and only the dragged feature ─────────────
+// ── 2. In Edit ellipse mode the fields place the handles ───────────────
 
-const start = beginCannedRadiusDrag(ellipse, 0)
-assert.ok(start, 'the drag starts')
+openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' }, units())
+const opened = getCannedEditDraft()
+assert.ok(opened, 'the Edit ellipse session is open')
+const drawParams = cannedEditHandleParams(ellipse, opened, null)
+assert.ok(drawParams, 'the edited ellipse draws its handles')
+near(drawParams.rx, 30, 'the handles sit on the stored rx')
+near(drawParams.ry, 20, 'the handles sit on the stored ry')
+
+// Typing a radius moves its handle: the fields are the handle placement.
+setCannedEditDraftField(ellipse.id, 'ry', '45')
+const typedParams = cannedEditHandleParams(ellipse, getCannedEditDraft(), null)
+assert.ok(typedParams, 'a typed value keeps the handles on screen')
+near(typedParams.ry, 45, 'a typed ry moves the Y handle')
+near(typedParams.rx, 30, 'typing ry leaves the X handle alone')
+
+// A field the generator refuses keeps the stored placement, which is what the
+// panel's preview keeps drawing.
+setCannedEditDraftField(ellipse.id, 'ry', '')
+const refusedParams = cannedEditHandleParams(ellipse, getCannedEditDraft(), null)
+assert.ok(refusedParams, 'a refused field keeps the handles on screen')
+near(refusedParams.ry, 20, 'a refused field leaves the handle on the stored ry')
+setCannedEditDraftField(ellipse.id, 'ry', '20')
+
+// ── 3. Dragging writes the panel's field, not the project ──────────────
+
+const start = beginCannedRadiusDrag(ellipse, 0, getCannedEditDraft())
+assert.ok(start, 'the edited ellipse starts an X drag')
+assert.equal(start.axis, 'rx', 'index 0 is the local X radius')
+assert.equal(beginCannedRadiusDrag(ellipse, 2, getCannedEditDraft()), null, 'a third handle does not exist')
+assert.equal(beginCannedRadiusDrag(ellipse, -1, getCannedEditDraft()), null, 'a negative handle does not exist')
+
 const preview = dragTo(start, { x: 70, y: 50 }, { x: 90, y: 50 }, { x: 120, y: 50 })
-assert.equal(preview.params.rx, 70, 'the last pointer position is the preview radius')
-assert.equal(preview.params.ry, 20, 'the preview never touches the other radius')
+near(preview.params.rx, 70, 'the last pointer position is the preview radius')
+near(preview.params.ry, 20, 'the preview never touches the other radius')
 assert.deepEqual(preview.transform, start.transform, 'the placement is fixed for the drag')
-assert.deepEqual(storedParams(ellipse.id), { rx: 30, ry: 20 }, 'no pointer move writes to the project')
+assert.deepEqual(storedParams(ellipse.id), storedParameters, 'no pointer move writes to the project')
+assert.equal(store().history.past.length, undoSteps, 'no pointer move adds an undo step')
 
-// The preview belongs to its own feature; another ellipse draws its own.
-const otherEllipse = { ...ellipse, id: 'f-other' }
-assert.deepEqual(cannedRadiusDrawParams(ellipse, preview), preview.params, 'the dragged ellipse draws its preview')
-assert.equal(cannedRadiusDrawParams(otherEllipse, preview)?.rx, 30, 'another ellipse keeps its stored radius')
-assert.equal(
-  cannedRadiusDrawParams({ ...ellipse, canned: { kind: 'ngon', params: { sides: 6, size: 10, rotation: 0 } } }, null),
-  null,
-  'only an ellipse has radius handles to draw',
+assert.equal(publishCannedRadiusDrag(preview), true, 'the drag publishes a changed field')
+assert.equal(getCannedEditDraft()?.values.rx, '70', 'the drag writes the panel’s rx field')
+assert.equal(getCannedEditDraft()?.values.ry, '20', 'the drag never rewrites the other field')
+assert.deepEqual(
+  getCannedEditDraft()?.heldFields,
+  ['rx'],
+  'the dragged field is held out of the project until Save (issue #1112 rt7-g review)',
 )
+assert.deepEqual(storedParams(ellipse.id), storedParameters, 'publishing writes no project parameters')
+assert.equal(store().history.past.length, undoSteps, 'the drag is not an undo step before Save')
 
-// ── 2b. The handle obeys the circle's snap gate (review fix 1) ─────────
+// A keystroke on the dragged field makes that field a typed value again, so the
+// F1 behaviour of a typed value is untouched by the drag's held field.
+setCannedEditDraftField(ellipse.id, 'rx', '71')
+assert.deepEqual(getCannedEditDraft()?.heldFields, [], 'typing the dragged field resumes its live preview')
+publishCannedRadiusDrag(preview)
+assert.deepEqual(getCannedEditDraft()?.heldFields, ['rx'], 'the drag holds its field again')
 
-const gateStart = beginCannedRadiusDrag(ellipse, 0)
-assert.ok(gateStart, 'the gated drag starts')
+// The corrected rule (issue #1112 rt7-g correction): typing *another* field in
+// the same session must not release the dragged field's hold, or the typed
+// write would carry the dragged radius into the project before Save.
+setCannedEditDraftField(ellipse.id, 'ry', '25')
+assert.deepEqual(
+  getCannedEditDraft()?.heldFields,
+  ['rx'],
+  'typing another field keeps the dragged field held',
+)
+const previewValues = cannedEditPreviewValues(getCannedEditDraft()!, { rx: '30', ry: '20' })
+assert.equal(previewValues.rx, '30', 'the project preview keeps the stored rx')
+assert.equal(previewValues.ry, '25', 'while the typed ry previews live')
+
+// The handles now follow the field the drag wrote.
+const draggedParams = cannedEditHandleParams(ellipse, getCannedEditDraft(), null)
+assert.ok(draggedParams, 'the dragged ellipse keeps its handles')
+near(draggedParams.rx, 70, 'the X handle follows the dragged field')
+
+// Field precision: the text and the handle are one value, at four decimals.
+const fractional = updateCannedRadiusDrag(start, { x: 83.333333, y: 50 })
+near(fractional.params.rx, 33.3333, 'the dragged radius lands on field precision')
+publishCannedRadiusDrag(fractional)
+assert.equal(getCannedEditDraft()?.values.rx, '33.3333', 'the field text is the same rounded radius')
+
+// The minimum keeps the ellipse from collapsing through its centre.
+const collapsed = updateCannedRadiusDrag(start, { x: 50, y: 50 })
+near(collapsed.params.rx, ELLIPSE_RADIUS_MIN, 'a pull to the centre stops at the minimum radius')
+
+// ── 4. The handle obeys the circle's snap gate and the axis lock ───────
+
 const noLock = (point: Point): Point => point
 assert.equal(
-  moveCannedRadiusDrag(gateStart, null, { x: 80, y: 50 }, noLock),
-  gateStart,
+  moveCannedRadiusDrag(start, null, { x: 80, y: 50 }, noLock),
+  start,
   'a required snap that did not resolve leaves the radius exactly where it is',
 )
-// The gate holds whatever the drag origin is: it must not fall back to some
-// other point and move the radius through the positions snapping excludes.
 assert.equal(
-  moveCannedRadiusDrag(gateStart, null, { x: 120, y: 90 }, noLock),
-  gateStart,
+  moveCannedRadiusDrag(start, null, { x: 120, y: 90 }, noLock),
+  start,
   'the snap gate ignores the drag origin',
 )
-const gatedMove = moveCannedRadiusDrag(gateStart, { x: 75, y: 50 }, { x: 80, y: 50 }, noLock)
-assert.equal(gatedMove.params.rx, 25, 'a resolved snap point still moves the handle')
-assert.equal(gatedMove.params.ry, 20, 'the gate never touches the other radius')
-
-// The axis lock is applied before the radius is mapped, exactly as the pointer
-// handler applied it before this fix.
+const gatedMove = moveCannedRadiusDrag(start, { x: 75, y: 50 }, { x: 80, y: 50 }, noLock)
+near(gatedMove.params.rx, 25, 'a resolved snap point still moves the handle')
+near(gatedMove.params.ry, 20, 'the gate never touches the other radius')
 const lockY = (point: Point, reference: Point): Point => ({ x: reference.x, y: point.y })
-const lockedMove = moveCannedRadiusDrag(gateStart, { x: 95, y: 70 }, { x: 80, y: 50 }, lockY)
-assert.equal(lockedMove.params.rx, 30, 'the drag axis lock is applied to the gated point')
+const lockedMove = moveCannedRadiusDrag(start, { x: 95, y: 70 }, { x: 80, y: 50 }, lockY)
+near(lockedMove.params.rx, 30, 'the drag axis lock is applied to the gated point')
 
-// The pointer handler has no second decision: it hands the snap-gated point
-// straight to the drag. Pinned because the reviewed bug was a fallback to the
-// raw pointer in that branch, which no radius-drag unit can observe otherwise.
+// ── 5. A rotated placement keeps the drag on the ellipse's own axis ────
+
+const angle = Math.PI / 6
+const rotated = {
+  ...ellipse,
+  id: 'f-rotated',
+  transform: {
+    a: Math.cos(angle),
+    b: Math.sin(angle),
+    c: -Math.sin(angle),
+    d: Math.cos(angle),
+    e: 100,
+    f: 80,
+  },
+}
+openCannedEditDraft(rotated.id, 'ellipse', { rx: '30', ry: '20' }, units())
+const rotatedStart = beginCannedRadiusDrag(rotated, 0, getCannedEditDraft())
+assert.ok(rotatedStart, 'the rotated ellipse starts an X drag')
+// The placed X handle, pulled out to a radius of 60 in the same direction.
+const placedHandle = ellipseRadiusHandlePoint({ rx: 60, ry: 20 }, 'rx', rotated.transform)
+const rotatedMove = updateCannedRadiusDrag(rotatedStart, placedHandle)
+near(rotatedMove.params.rx, 60, 'the rotated drag reads the radius along the placed X axis')
+near(rotatedMove.params.ry, 20, 'a rotated drag never touches the other radius')
+publishCannedRadiusDrag(rotatedMove)
+assert.equal(getCannedEditDraft()?.values.rx, '60', 'the rotated drag writes the field too')
+closeCannedEditDraft()
+
+// ── 6. Closing the editor takes the handles away again ─────────────────
+
+assert.equal(getCannedEditDraft(), null, 'closing the panel ends the session')
+assert.equal(cannedEditHandleParams(ellipse, null, null), null, 'the closed panel draws no handles')
+assert.equal(beginCannedRadiusDrag(ellipse, 0, null), null, 'and nothing can be dragged')
+assert.deepEqual(storedParams(ellipse.id), storedParameters, 'the whole session wrote no parameters')
+
+// The old release -> updateFeature write is gone, so the drag cannot bypass the
+// panel's Save/Cancel handling. Pinned because that write is exactly what the
+// reviewed bug was, and no radius-drag unit can observe its absence otherwise.
+const hookSource = readFileSync(new URL('./useCannedRadiusDrag.ts', import.meta.url), 'utf8')
+assert(!hookSource.includes('updateFeature'), 'the radius drag hook has no direct project write')
+const blockSource = readFileSync(new URL('./cannedRadiusDrag.ts', import.meta.url), 'utf8')
+assert(!blockSource.includes('useProjectStore'), 'the radius drag module imports no store')
+
 const gesturesSource = readFileSync(new URL('./usePointerGestures.ts', import.meta.url), 'utf8')
 assert(
   gesturesSource.includes('cannedRadius.update(constrainedPoint,'),
@@ -175,113 +296,135 @@ assert(
   !gesturesSource.includes('constrainedPoint ?? snapped'),
   'the radius drag never falls back to the raw snapped pointer',
 )
-
-// ── 3. The release is exactly one write ────────────────────────────────
-
-const writes: Array<{ featureId: string; canned: CannedShapeData }> = []
-commitCannedRadiusDrag(preview, (featureId, canned) => writes.push({ featureId, canned }))
-assert.equal(writes.length, 1, 'four pointer moves and one release are one write')
-assert.equal(writes[0].featureId, ellipse.id, 'the write targets the dragged feature')
-assert.deepEqual(writes[0].canned, { kind: 'ellipse', params: preview.params }, 'the write stores the last preview')
-
-// ── 4. Through the real store: one undo step, placement kept ───────────
-
-resetStore()
-store().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
-const featureId = resolvedProjectFeatures(store().project)[0].id
-const placement = resolveFeatureInstance(store().project, featureId)?.transform
-const undoStepsBefore = store().history.past.length
-
-const drag = beginCannedRadiusDrag(resolveFeatureInstance(store().project, featureId)!, 0)
-assert.ok(drag, 'the placed ellipse starts a drag')
-const dragged = dragTo(drag, { x: 80, y: 50 }, { x: 95, y: 50 })
-commitCannedRadiusDrag(dragged, (id, canned) => store().updateFeature(id, { canned }))
-
-assert.deepEqual(storedParams(featureId), { rx: 45, ry: 20 }, 'the release stores the dragged radius')
-assert.equal(
-  store().history.past.length - undoStepsBefore,
-  1,
-  'the whole drag is one undo step, like one Edit-panel Apply',
+assert(
+  gesturesSource.includes("pendingAddRef.current?.shape === 'canned-edit'"),
+  'the press may grab a handle while the Edit panel occupies pendingAdd',
 )
+
+// ── 7. The canvas feature pass draws the handles, and only in Edit mode ─
+
+// The properties above are decisions the draw pass makes; this section runs it.
+// A spec that only asks `cannedEditHandleParams` cannot see a pass that draws a
+// selected ellipse's handles from its stored parameters anyway, which is
+// exactly the reviewed escape (issue #1112 rt7-g review). The live feature pass
+// from `SketchCanvas.tsx` is executed with only unrelated layers stubbed, and
+// the handles, the previewed outline and the published draw count are read back.
+const canvasSource = readFileSync(new URL('./SketchCanvas.tsx', import.meta.url), 'utf8')
+const drawStart = canvasSource.indexOf('    if (sheet) drawAroundModelBands(')
+const drawEnd = canvasSource.indexOf('    const clipboardPlacement =', drawStart)
+assert(drawStart > 0 && drawEnd > drawStart, 'the canvas feature pass is present')
+const drawScript = ts.transpileModule(canvasSource.slice(drawStart, drawEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+}).outputText
+
+interface DrawnFeature {
+  id: string
+  canned?: { kind: string; params: { rx?: number; ry?: number } }
+}
+const canvasDataset: Record<string, string> = {}
+const drawnFeatures: DrawnFeature[] = []
+const drawnHandleAxes: string[][] = []
+const drawCtx = {
+  canvas: { width: 800, height: 600 },
+  save() {}, restore() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
+  arc() {}, fill() {}, stroke() {}, fillRect() {}, fillText() {}, setLineDash() {},
+} as unknown as CanvasRenderingContext2D
+// The selection a user has after clicking the ellipse: the row is selected, no
+// Edit panel is open, and that is the state that must draw no handles.
+const drawSelection = {
+  selectedFeatureIds: [ellipse.id] as string[],
+  selectedFeatureId: null as string | null,
+  hoveredFeatureId: null as string | null,
+  groupFolderId: null as string | null,
+  mode: 'feature' as const,
+  activeControl: null,
+}
+const drawDependencies = {
+  ctx: drawCtx,
+  canvas: { dataset: canvasDataset } as unknown as HTMLCanvasElement,
+  CANVAS_TEST_SEAMS: true,
+  sheet: null,
+  features: resolvedProjectFeatures(store().project),
+  project: store().project,
+  selection: drawSelection,
+  vt: { scale: 1, offsetX: 0, offsetY: 0 },
+  t: (key: string) => key,
+  drawAroundModelBands() {},
+  hiddenDistributionSourceIds: null,
+  operationHighlightIds: null,
+  drawOtherFace: () => new Set<string>(),
+  useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
+  drawRotarySolidSideViews: () => new Set<string>(),
+  drawOriginMarker() {},
+  activeOriginInStock: () => ({ x: 0, y: 0 }),
+  canvasPalette: {},
+  drawFeature: (_ctx: unknown, feature: DrawnFeature) => { drawnFeatures.push(feature) },
+  drawFeatureInfo() {},
+  drawLineFeatureBatch() {},
+  stlImageCacheRef: { current: new Map<string, unknown>() },
+  // The real helper, reading the real open panel's draft: a pass that drew from
+  // the stored parameters would be a different function here, and the plain
+  // selection below would draw two handles.
+  cannedRadius: {
+    dragRef: { current: null },
+    hoveredAxisRef: { current: null },
+    handleParams: (feature: Pick<typeof ellipse, 'id' | 'canned'>) =>
+      cannedEditHandleParams(feature, getCannedEditDraft(), null),
+  },
+  ellipseRadiusHandles,
+  ellipseRadiusCentre,
+  ELLIPSE_CANNED_KIND,
+  drawEllipseRadiusHandles: (_ctx: unknown, _centre: unknown, handles: { axis: string }[]) => {
+    drawnHandleAxes.push(handles.map((handle) => handle.axis))
+  },
+  drawRadiusMeasurement() {},
+  featureDisplayProfiles: () => [],
+  traceProfilePath() {},
+  canvasRgba: () => 'rgba(0, 0, 0, 1)',
+}
+const runDrawPass = (): void => {
+  drawnFeatures.length = 0
+  drawnHandleAxes.length = 0
+  for (const key of Object.keys(canvasDataset)) delete canvasDataset[key]
+  new Function(...Object.keys(drawDependencies), drawScript)(...Object.values(drawDependencies))
+}
+
+// Plain selection: the ellipse is on screen and selected, and the pass draws no
+// handles at all — the mutation "draw the handles on plain selection again"
+// fails here, not only in a helper test.
+runDrawPass()
+assert.equal(drawnFeatures.length, 1, 'the plain selection draws its outline')
+assert.deepEqual(drawnHandleAxes, [], 'a plain selection draws no radius handles')
+assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes that it drew no handles')
+assert.equal('ellipseDraft' in canvasDataset, false, 'a plain selection previews no draft')
+
+// Edit mode: both handles, and the outline drawn at the panel's parameters.
+openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' }, units())
+runDrawPass()
+assert.deepEqual(drawnHandleAxes, [['rx', 'ry']], 'the open panel draws both handles')
+assert.equal(canvasDataset.radiusHandles, '2', 'the pass publishes the two handles it drew')
+assert.equal(canvasDataset.ellipseDraft, '30,20', 'the outline draws at the panel’s fields')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the drawn outline carries the draft rx')
+
+// A held drag: the pass draws the dragged radius while the project keeps the
+// stored one. This is the preview the review asked to see without the store.
+setCannedEditDraftField(ellipse.id, 'rx', '45', { holdPreview: true })
+runDrawPass()
+assert.deepEqual(getCannedEditDraft()?.heldFields, ['rx'], 'the drag is held')
+assert.equal(canvasDataset.radiusHandles, '2', 'the dragged ellipse still draws its handles')
+assert.equal(canvasDataset.ellipseDraft, '45,20', 'the canvas previews the dragged radius')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 45, 'the drawn outline is the dragged radius')
 assert.deepEqual(
-  resolveFeatureInstance(store().project, featureId)?.transform,
-  placement,
-  'a radius drag never moves the instance',
+  storedParams(ellipse.id),
+  storedParameters,
+  'and the drawn preview changed no stored parameter',
 )
 
-store().undo()
-assert.deepEqual(storedParams(featureId), { rx: 30, ry: 20 }, 'undo restores both radii')
+// Closing the panel: no handles, and the outline back on the stored shape.
+closeCannedEditDraft()
+runDrawPass()
+assert.deepEqual(drawnHandleAxes, [], 'closing the panel takes the drawn handles away')
+assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes the empty count again')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the outline is the stored radius again')
 
-// Two instances of one definition both read the edited parameters, each keeping
-// its own placement — the same rule an Edit-panel Apply follows.
-const projectWithCopy = store().project
-const [onlyRow] = projectWithCopy.features
-store().loadProject({
-  ...projectWithCopy,
-  features: [
-    onlyRow,
-    { ...onlyRow, id: 'f-copy', transform: translateMatrix(120, 30) },
-  ],
-})
-const copyPlacement = resolveFeatureInstance(store().project, 'f-copy')?.transform
-const copyDrag = beginCannedRadiusDrag(resolveFeatureInstance(store().project, featureId)!, 1)
-assert.ok(copyDrag, 'the shared definition starts a Y drag')
-// Local (0, 30): the placed origin is (50, 50).
-commitCannedRadiusDrag(updateCannedRadiusDrag(copyDrag, { x: 50, y: 80 }), (id, canned) => store().updateFeature(id, { canned }))
-assert.equal(storedParams('f-copy').ry, 30, 'a linked copy reads the shared parameters')
-assert.deepEqual(
-  resolveFeatureInstance(store().project, 'f-copy')?.transform,
-  copyPlacement,
-  'the linked copy keeps its own placement',
-)
-
-// ── 5. A press that never moved the handle is not an edit (review fix 2) ─
-
-resetStore()
-store().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5)
-const clickId = resolvedProjectFeatures(store().project)[0].id
-
-const edit = beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)
-assert.ok(edit, 'the fixture ellipse starts an X drag')
-assert.equal(
-  commitCannedRadiusDrag(updateCannedRadiusDrag(edit, { x: 95, y: 50 }), (id, canned) => store().updateFeature(id, { canned })),
-  true,
-  'a moved drag writes once',
-)
-assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'the edit is stored')
-const undoStepsAfterEdit = store().history.past.length
-
-store().undo()
-assert.deepEqual(storedParams(clickId), { rx: 30, ry: 20 }, 'undo restores the edit')
-assert.equal(store().history.future.length, 1, 'the undo left one redo step')
-
-// A click on a handle: press, release, no move.
-const click = beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)
-assert.ok(click, 'the press grabs the handle')
-const clickWrites: CannedShapeData[] = []
-const clickWrote = commitCannedRadiusDrag(click, (id, canned) => {
-  clickWrites.push(canned)
-  store().updateFeature(id, { canned })
-})
-assert.equal(clickWrote, false, 'an unmoved press/release writes nothing')
-assert.equal(clickWrites.length, 0, 'the click never reaches updateFeature')
-assert.deepEqual(storedParams(clickId), { rx: 30, ry: 20 }, 'the click leaves the parameters alone')
-assert.equal(store().history.past.length, undoStepsAfterEdit - 1, 'the click adds no undo step')
-assert.equal(store().history.future.length, 1, 'the click keeps the redo step')
-store().redo()
-assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'redo still replays the undone edit')
-
-// Dragging away and back to the same radius is also not an edit.
-const roundTrip = dragTo(
-  beginCannedRadiusDrag(resolveFeatureInstance(store().project, clickId)!, 0)!,
-  { x: 80, y: 50 },
-  { x: 95, y: 50 },
-)
-assert.equal(
-  commitCannedRadiusDrag(roundTrip, (id, canned) => store().updateFeature(id, { canned })),
-  false,
-  'a drag that ends where it began writes nothing',
-)
-assert.deepEqual(storedParams(clickId), { rx: 45, ry: 20 }, 'the round trip leaves the parameters alone')
-
-console.log('✓ ellipse radius drag: start rules, snap gate, preview-only moves, one write, one undo step')
+console.log('✓ ellipse radius drag: edit-mode-only handles, field writes, snap gate, rotated frame')

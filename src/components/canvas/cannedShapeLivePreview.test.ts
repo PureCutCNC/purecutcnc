@@ -89,6 +89,13 @@ const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { switchWorkspaceFace } = await import('../../store/workspaceFace')
 const { rotarySolidCannedData } = await import('../../store/helpers/rotarySolids')
 const { rotarySolidFrame } = await import('../../cannedShapes/generators/rotarySolidParams')
+const { getCannedEditDraft } = await import('./cannedEditDraft')
+const {
+  beginCannedRadiusDrag,
+  cannedEditHandleParams,
+  publishCannedRadiusDrag,
+  updateCannedRadiusDrag,
+} = await import('./cannedRadiusDrag')
 
 let passCount = 0
 let failCount = 0
@@ -524,6 +531,98 @@ for (const flatCase of FLAT_CASES) {
     assert(definitionJson(featureId) === storedDefinition, 'one undo restored the stored definition')
   })
 }
+
+// A canned ellipse's radius handles belong to this panel (issue #1112 rt7-g):
+// the canvas drag is a field edit, but a *held* one — the panel and the canvas
+// follow the pointer while the project keeps its stored parameters until Save,
+// so a dragged radius is never a project change before the user commits it
+// (issue #1112 rt7-g review).
+await scenario('Edit ellipse: a dragged radius is held in the panel until Save', async () => {
+  const featureId = flatProject('ellipse')
+  const storedDefinition = definitionJson(featureId)
+  const storedHistory = historyLength()
+  const mounted = await openPanel(featureId, 'ellipse')
+  try {
+    await waitFor(() => panelInputs().length === 2, 'the two radius fields render')
+
+    const feature = resolveFeatureInstance(project(), featureId)
+    assert(feature, 'the edited ellipse resolves')
+    const drag = beginCannedRadiusDrag(feature, 0, getCannedEditDraft())
+    assert(drag, 'the open panel lets the X handle start a drag')
+    // The fixture ellipse sits at (40, 30), so a pointer at x = 85 asks for rx 45.
+    const moved = updateCannedRadiusDrag(drag, { x: 85, y: 30 })
+    publishCannedRadiusDrag(moved)
+    await flush()
+
+    assert(panelInputs()[0].value === '45', `the X field holds the dragged radius, got ${panelInputs()[0].value}`)
+    assert(panelInputs()[1].value === '20', 'the drag left the Y field alone')
+    // The one requirement the reviewed escape broke: a drag writes the panel,
+    // never the project. The canvas preview reads the same draft the handles do
+    // (`cannedRadiusDrag.test.ts` runs that draw pass).
+    assert(definitionJson(featureId) === storedDefinition, 'a dragged radius leaves the stored ellipse untouched until Save')
+    assert(cannedEditHandleParams(feature, getCannedEditDraft(), null)?.rx === 45, 'the canvas draws the dragged radius from the panel draft')
+    assert(cannedEditHandleParams(feature, getCannedEditDraft(), moved)?.rx === 45, 'while moving, the drag itself places the handle')
+    assert(historyLength() === storedHistory, 'a dragged radius is not an undo step before Save')
+
+    buttonByLabel('Save').click()
+    await waitFor(() => historyLength() === storedHistory + 1, 'Save is one undo step')
+    await waitFor(() => store().pendingAdd === null, 'Save closes the panel session')
+    const saved = resolveFeatureInstance(project(), featureId)?.canned?.params
+    assert(saved?.rx === 45, `Save stored the dragged radius, got ${String(saved?.rx)}`)
+  } finally {
+    mounted.unmount()
+  }
+  await flush()
+
+  store().undo()
+  await flush()
+  assert(definitionJson(featureId) === storedDefinition, 'one undo restored the ellipse the session opened on')
+})
+
+await scenario('Edit ellipse: Cancel discards a dragged radius like a typed one', async () => {
+  const featureId = flatProject('ellipse')
+  const storedDefinition = definitionJson(featureId)
+  const storedHistory = historyLength()
+  const mounted = await openPanel(featureId, 'ellipse')
+  try {
+    await waitFor(() => panelInputs().length === 2, 'the two radius fields render')
+    const feature = resolveFeatureInstance(project(), featureId)
+    assert(feature, 'the edited ellipse resolves')
+    const drag = beginCannedRadiusDrag(feature, 1, getCannedEditDraft())
+    assert(drag, 'the open panel lets the Y handle start a drag')
+    publishCannedRadiusDrag(updateCannedRadiusDrag(drag, { x: 40, y: 60 }))
+    await flush()
+    assert(panelInputs()[1].value === '30', `the Y field holds the dragged radius, got ${panelInputs()[1].value}`)
+    assert(definitionJson(featureId) === storedDefinition, 'the dragged radius was held out of the project')
+  } finally {
+    // Cancel/Escape closes the session, which drops the held preview.
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+  await flush()
+  assert(definitionJson(featureId) === storedDefinition, 'Cancel left the stored ellipse alone')
+  assert(historyLength() === storedHistory, 'Cancel left the undo history alone')
+})
+
+await scenario('Edit ellipse: a typed radius moves its handle', async () => {
+  const featureId = flatProject('ellipse')
+  const mounted = await openPanel(featureId, 'ellipse')
+  try {
+    await waitFor(() => panelInputs().length === 2, 'the two radius fields render')
+    setInputValue(panelInputs()[1], '60')
+    await flush()
+    const feature = resolveFeatureInstance(project(), featureId)
+    assert(feature, 'the edited ellipse resolves')
+    const handles = cannedEditHandleParams(feature, getCannedEditDraft(), null)
+    assert(handles, 'the open panel draws the ellipse’s handles')
+    assert(handles.ry === 60, `the typed ry placed the Y handle, got ${String(handles.ry)}`)
+    assert(handles.rx === 30, 'typing ry left the X handle alone')
+  } finally {
+    store().cancelPendingAdd()
+    mounted.unmount()
+  }
+})
+
 
 // A disabled Save is the panel's own refusal, so the field that produced it is
 // allowed to be a value the creation clamp would have hidden (issue #1112 F1).

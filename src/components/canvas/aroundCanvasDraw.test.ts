@@ -67,6 +67,10 @@ for (const axis of ['x', 'y'] as const) {
   const dependencies = {
     ctx, sheet, features, project: f.project, selection: f.selection,
     vt: { scale: 1, offsetX: 0, offsetY: 100 },
+    // The pass publishes what it drew of the Edit-ellipse handles for the
+    // browser specs (issue #1112 rt7-g review); the canvas is its target.
+    canvas: { dataset: {} as Record<string, string> } as unknown as HTMLCanvasElement,
+    CANVAS_TEST_SEAMS: true,
     t: (key: string, values?: { name?: string }) => values?.name ?? key,
     drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null as Set<string> | null,
     drawOtherFace: () => new Set(), useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
@@ -74,11 +78,10 @@ for (const axis of ['x', 'y'] as const) {
     drawOriginMarker() {}, activeOriginInStock() {}, canvasPalette: canvasColors(),
     drawFeature: (_ctx: unknown, feature: { id: string }) => flatDraws.push(feature.id),
     drawLineFeatureBatch() {}, stlImageCacheRef: { current: new Map() },
-    // A selected canned ellipse owns radius handles in the same pass (issue
-    // #1112 w3e-a). Neither shape in this fixture is an ellipse, so the pass
-    // reads the drag refs once and draws no handles.
-    cannedRadius: { dragRef: { current: null }, hoveredAxisRef: { current: null } },
-    cannedRadiusDrawParams: () => null,
+    // A canned ellipse draws radius handles in the same pass, only while its
+    // Edit panel is open (issue #1112 rt7-g). Neither shape in this fixture is
+    // an ellipse, so the pass draws no handles.
+    cannedRadius: { dragRef: { current: null }, hoveredAxisRef: { current: null }, handleParams: () => null },
     featureDisplayProfiles, traceProfilePath, canvasRgba,
   }
   const draw = new Function(...Object.keys(dependencies), script) as (...args: unknown[]) => void

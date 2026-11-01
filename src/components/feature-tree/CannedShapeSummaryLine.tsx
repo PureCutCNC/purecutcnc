@@ -122,7 +122,7 @@ export function CannedShapeSummaryLine({ summary, surface, depth, depthSurface, 
       : t('featureTree.properties.canned.depth', { value }))
   }
   return (
-    <p className="properties-linked-face-note" data-testid="canned-shape-summary">
+    <p className="properties-note" data-testid="canned-shape-summary">
       {parts.join(' · ')}
     </p>
   )

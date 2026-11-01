@@ -33,8 +33,10 @@
  * the solid off the bar axis, turning about the bar is the Polygon editor's
  * Rotation field, and a regenerate would undo a manual rotation. An imported
  * model keeps the section exactly as it was, and the other "Rotate" entries
- * (context menu, toolbar, rail) stay what they always were: the 2D placement
- * transform, which never writes `stl.orientation`.
+ * (context menu, toolbar, rail) were the 2D placement transform, which never
+ * wrote `stl.orientation` — and since rt7-f that transform is refused for the
+ * four rotary kinds altogether (`store/helpers/cannedShapeActions.ts`), so the
+ * closest an orientation question gets is a refused start.
  *
  * The panel is rendered for real: the Z control lives on the Instance tab and
  * the orientation section on its own, so both are opened the way a click does.
@@ -585,12 +587,12 @@ async function renderSingle(featureId: string): Promise<Mounted> {
 //
 // The handoff asked whether the context menu, the toolbar/rail button or a
 // keyboard action can reach the model orientation for a canned model. They all
-// dispatch `startRotateFeature` — the 2D placement transform every feature has
-// (see `store/cannedRefusals.test.ts`: move/rotate/mirror/copy keep a shape
-// canned) — and never write `stl.orientation`. This pins that boundary: after
-// the rotate workflow is armed on a Turn, its stored orientation is still
-// absent, so no reachable action but ModelOrientationSection can re-orient a
-// generated model.
+// dispatch `startRotateFeature` — a 2D placement transform that never wrote
+// `stl.orientation` — and since issue #1112 rt7-f that dispatch is refused for
+// the four rotary kinds outright (`store/helpers/cannedShapeActions.ts`). This
+// pins that boundary at both ends: the placement rotate does not arm, and the
+// stored orientation stays absent, so no reachable action but the imported
+// model's ModelOrientationSection can re-orient a generated model.
 
 {
   const { turnId } = loadWithShapes()
@@ -601,15 +603,16 @@ async function renderSingle(featureId: string): Promise<Mounted> {
 
   store().selectFeature(turnId)
   store().startRotateFeature(turnId)
-  const pending = store().pendingTransform
-  assert.equal(pending?.mode, 'rotate', 'the placement rotate workflow is armed')
-  assert.equal(pending?.entityType, 'feature', 'on the feature placement')
+  assert.equal(
+    store().pendingTransform,
+    null,
+    'the placement rotate is refused for a rotary canned shape (rt7-f)',
+  )
   assert.equal(
     store().project.featureDefinitions[turn.definitionId].stl?.orientation,
     undefined,
-    'and the 2D placement rotate never writes the 3D orientation',
+    'so nothing here can write the 3D orientation',
   )
-  store().cancelPendingTransform()
 }
 
 // ── a mixed selection edits only the shapes that own a Z ─────

@@ -1681,7 +1681,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {textFeature ? (
             <>
-              <p className="properties-linked-face-note" data-testid="text-summary">
+              <p className="properties-note" data-testid="text-summary">
                 {t('featureTree.properties.text.summary', {
                   text: textFeature.text,
                   size: formatLength(textFeature.size, units),
@@ -1721,7 +1721,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 ) : null}
               </div>
               {textPathRefreshReason === 'missing-source' || textPathRefreshReason === 'empty-source' ? (
-                <p className="properties-linked-face-note" data-testid="text-path-source-missing">
+                <p className="properties-note" data-testid="text-path-source-missing">
                   {t('featureTree.properties.text.path.refreshUnavailable')}
                 </p>
               ) : null}
@@ -1756,6 +1756,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {isCannedShape ? (
             <>
+              {/* The shape is generated from parameters rather than drawn, so
+                  the summary says what it is with a label instead of the
+                  drawing tools the reader would otherwise look for. One label
+                  per canned shape, every kind (issue #1112 rt7-h). */}
+              <span className="properties-canned-label" data-testid="canned-feature-label">
+                {t('featureTree.properties.canned.label')}
+              </span>
               {cannedSummary ? (
                 <CannedShapeSummaryLine
                   summary={cannedSummary}
@@ -1769,7 +1776,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   units={units}
                 />
               ) : (
-                <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
+                <p className="properties-note" data-testid="canned-shape-unknown">
                   {t('featureTree.properties.canned.unknown')}
                 </p>
               )}
@@ -1804,6 +1811,23 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </>
           ) : null}
+          {isCannedShape || isTextFeature ? null : (
+            // The one edit action Shape offers a drawn feature, in the place a
+            // generated shape's "Edit {shape}…" sits. A generated shape has its
+            // own editor in the block above, and so does a text run — its
+            // "Edit text…" reopens the run, so a sketch edit here would be a
+            // second, permanently disabled action (issue #1112 rt7-i). The
+            // bottom row is Delete alone now.
+            <div className="properties-actions" style={{ marginTop: '12px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.stock.editSketch')}
+              </button>
+            </div>
+          )}
           {isTextFeature ? (
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
@@ -1831,23 +1855,12 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </div>
           ) : null}
           {linkedOnOtherFace > 0 ? (
-            <p className="properties-linked-face-note" data-testid="linked-other-face-note">
+            <p className="properties-note" data-testid="linked-other-face-note">
               {t(
                 `featureTree.face.linkedOtherFace.${linkedFaceKey}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
                 { count: linkedOnOtherFace },
               )}
             </p>
-          ) : null}
-          {hasLinkedInstances ? (
-            <div className="properties-actions" style={{ marginTop: '8px' }}>
-              <button
-                className="feat-btn"
-                type="button"
-                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
-              >
-                {t('featureTree.properties.makeUnique')}
-              </button>
-            </div>
           ) : null}
         </DisclosureSection>
         {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId && !isGeneratedModel ? (
@@ -1953,6 +1966,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             />
             <span>{t("featureTree.properties.locked")}</span>
           </label>
+          {/* A shared shape's way out of the link is an instance decision, not a
+              property of the geometry, so it lives here rather than in Shape
+              (issue #1112 rt7-i). Visibility is unchanged: only while the shape
+              is shared. */}
+          {hasLinkedInstances ? (
+            <div className="properties-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.makeUnique')}
+              </button>
+            </div>
+          ) : null}
         </DisclosureSection>
         {hasSelfIntersection ? (
           <div className="properties-warning">
@@ -1966,15 +1994,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button
-          className="feat-btn"
-          type="button"
-          onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
-          disabled={isTextFeature || isCannedShape}
-          title={isCannedShape ? t('featureTree.properties.canned.sketchDisabled') : undefined}
-        >
-          {t('featureTree.properties.stock.editSketch')}
-        </button>
+        {/* Delete is the one action left outside the sections: the edit action
+            sits in Shape and Make unique in Instance (issue #1112 rt7-i). */}
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           {t('featureTree.properties.deleteFeature')}
         </button>
