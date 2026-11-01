@@ -27,12 +27,18 @@ import { useI18n } from '../../i18n/i18nContext'
 interface TextToolDialogProps {
   onClose: () => void
   onConfirm: (config: TextToolConfig) => void
+  /**
+   * Current values when Properties reopens the dialog to edit an existing run
+   * (issue #1112). Absent for creation, which starts from the defaults.
+   */
+  initial?: TextToolConfig
+  mode?: 'create' | 'edit'
 }
 
-export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
+export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }: TextToolDialogProps) {
   useRestoreCanvasFocus()
   const units = useProjectStore((state) => state.project.meta.units)
-  const defaults = defaultTextToolConfig(units)
+  const defaults = initial ?? defaultTextToolConfig(units)
   const [text, setText] = useState(defaults.text)
   const [style, setStyle] = useState<TextFontStyle>(defaults.style)
   const [fontId, setFontId] = useState(defaults.fontId)
@@ -40,6 +46,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
   const [operation, setOperation] = useState<FeatureOperation>(defaults.operation)
   const fontOptions = getTextFontOptions(style)
   const { t } = useI18n()
+  const isEdit = mode === 'edit'
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
     return t(key, params)
@@ -86,7 +93,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog dialog--import dialog--no-clip" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">{td('dialogs.textTool.title')}</h2>
+          <h2 className="dialog-title">{td(isEdit ? 'dialogs.textTool.editTitle' : 'dialogs.textTool.title')}</h2>
           <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -169,7 +176,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
             {td('dialogs.common.cancel')}
           </button>
           <button className="feat-btn" type="button" onClick={handleCreate}>
-            {td('dialogs.textTool.placeText')}
+            {td(isEdit ? 'dialogs.common.apply' : 'dialogs.textTool.placeText')}
           </button>
         </div>
       </div>

@@ -15,65 +15,106 @@
  */
 
 /**
- * Canned Thread and Flutes store flow (issue #1016 C1 slice A).
+ * Canned Thread/Flutes store flow and old-command equivalence (issue #1112 F).
  *
- * Mutations checked one at a time against these assertions:
- * - the starts multiplier omitted from the lead → "a two-start thread advances
- *   the lead per turn" fails;
- * - the start offset dropped (all starts on the zero line) → "starts sit C/n
- *   apart" fails;
- * - the X/Y mapping swapped → the Y-bar along/across assertions fail;
- * - the new lines not stamped `authoringFace: 'around'` → "the setup is made
- *   real in the same step" and the seam generation fail;
- * - the operation left on the provisional setup id after the write → "the
- *   operation joins a real Around setup" fails;
- * - a depth at the radius accepted → "a depth reaching the centreline is
- *   refused" fails;
- * - creation split across two `set` calls → "one undo removes everything"
- *   fails;
- * - the parameter records serialized → the "no input fields persisted"
- *   assertions fail.
- * - the imported V-bit converted with the library entry's own units instead of
- *   the project's → the cross-unit import tests fail;
- * - the rotary drive sign dropped (a reversed definition ignored) → the parsed
- *   export sign tests fail;
- * - a posted angle reduced modulo 360, or written under the wrong rotary word →
- *   the parsed lead tests fail;
- * - `direction: 'left'` ignored (the posted ratio sign not reversed) → the
- *   left-hand ratio assertion fails;
- * - an explicit `direction: 'right'` not identical to an omitted one → the
- *   paired byte-identity assertion fails.
+ * Load-bearing properties:
+ *
+ * 1. **Creation adds one feature, no operation and no tool.** The dialog's
+ *    numbers land as one canned `thread`/`flutes` definition drawing every
+ *    line, in exactly one history step.
+ * 2. **The generated lines equal the old command's lines** for several
+ *    parameter sets. The old command measured start from the stock's minimum
+ *    along coordinate; the new canned shape measures it from the chuck end
+ *    (decision 4), so a Y bar is compared on the same physical band.
+ * 3. **A Follow line operation on the canned feature cuts what the old
+ *    folder's operation cut**: the same moves and the same posted G-code,
+ *    with the date pinned.
+ * 4. **Save → load → regenerate is exact, per kind** — the round-trip test the
+ *    canned model requires.
+ * 5. **Edit and Expand** work through the ordinary feature paths: a parameter
+ *    change regenerates the lines and the Z span, and Expand gives the plain
+ *    lines back.
+ * 6. **Every target path reaches the same depth rule** (FG3): Add, Use current
+ *    selection and Add to operation all read the canned depth, the deepest
+ *    wins when patterns differ, and a mixed target keeps its own depth.
+ *
+ * Mutations checked one at a time:
+ * - start measured from the minimum end on Y → the Y equivalence and chuck-end
+ *   assertions fail;
+ * - a folder / per-line features created again → the "one feature" assertions
+ *   fail;
+ * - an operation or tool added by creation → the operation/tool counts fail;
+ * - stored parameters dropped → the round-trip geometry differs;
+ * - a Follow line taking today's 1 mm default instead of the feature's depth →
+ *   the move/G-code parity and the operation-depth assertions fail;
+ * - `updateOperation` applying a target change without the depth rule → the
+ *   retarget and Add-to-operation assertions fail;
+ * - `twist` sign or `hand` ignored → the geometry and toolpath comparisons
+ *   fail;
+ * - Expand emitting one piece per feature instead of per outline → the
+ *   expanded line count fails.
  *
  * Run with: npx tsx src/store/rotaryPatterns.test.ts
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, getStockBounds, newProject, roundStock } from '../types/project'
-import type { Project, SketchFeature, Tool } from '../types/project'
-import type { ToolLibraryEntry } from '../toolLibrary'
+import {
+  IDENTITY_MATRIX,
+  defaultTool,
+  getStockBounds,
+  newProject,
+  roundStock,
+} from '../types/project'
+import type {
+  CannedShapeParams,
+  FeatureDefinition,
+  FeatureFolder,
+  FeatureInstance,
+  OperationTarget,
+  Project,
+  SketchProfile,
+  Tool,
+} from '../types/project'
 import { bundledMachines } from '../machine/registry'
+import { validateMachineDefinition } from '../engine/gcode/types'
+import type { MachineDefinition } from '../engine/gcode/types'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
 import { normalizeToolForProject, resolveDimensionRef } from '../engine/toolpaths/geometry'
-import { parseGcodeMotion } from '../engine/gcode/gcodeMotionParser'
 import { runPostProcessor } from '../engine/gcode/postprocessor'
-import { rotaryWord, validateMachineDefinition } from '../engine/gcode/types'
-import type { MachineDefinition } from '../engine/gcode/types'
-import { warningSeverity } from '../engine/toolpaths/warningCodes'
-import { activeFace, activeSetup, aroundUnavailableReason } from './helpers/activeFace'
-import { provisionalSetupId } from './helpers/provisionalSetup'
-import { rotaryPatternFrame } from './helpers/rotaryPatterns'
-import { useProjectStore } from './projectStore'
+import { createCamPlan } from '../engine/operations/camPlan'
+import { buildRotaryPatternLines, rotaryPatternFrame, rotarySheetPoint } from '../engine/rotaryPatterns'
+import type { RotaryPatternFrame } from '../engine/rotaryPatterns'
 import { switchWorkspaceFace } from './workspaceFace'
-
-function near(actual: number, expected: number, label: string, tolerance = 1e-9): void {
-  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`)
-}
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import type { RotaryPatternInput } from './helpers/rotaryPatterns'
+import { useProjectStore } from './projectStore'
+import {
+  resolveCannedShapeProfiles,
+} from '../cannedShapes'
+import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import { normalizeThreadCannedParams } from '../cannedShapes/generators/thread'
+import { normalizeFlutesCannedParams } from '../cannedShapes/generators/flutes'
 
 const store = () => useProjectStore.getState()
 
-function log(message: string): void {
-  console.log(message)
+let passCount = 0
+let failCount = 0
+
+function test(name: string, fn: () => void): void {
+  try {
+    fn()
+    console.log(`✓ ${name}`)
+    passCount += 1
+  } catch (error) {
+    console.error(`✗ ${name}`)
+    console.error(`  ${(error as Error).stack ?? (error as Error).message}`)
+    failCount += 1
+  }
+}
+
+function near(actual: number, expected: number, label: string, tolerance = 1e-9): void {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`)
 }
 
 // ── fixtures ──────────────────────────────────────────────────
@@ -88,41 +129,31 @@ const MM_AT = { x: 10, y: 30 }
 const INCH_AT = { x: 3, y: 5 }
 const MM_X_BAR: BarSpec = { axis: 'x', units: 'mm', at: MM_AT }
 const MM_Y_BAR: BarSpec = { axis: 'y', units: 'mm', at: MM_AT }
-const INCH_X_BAR: BarSpec = { axis: 'x', units: 'inch', at: INCH_AT }
 const INCH_Y_BAR: BarSpec = { axis: 'y', units: 'inch', at: INCH_AT }
-const MM_BAR = MM_X_BAR
-const INCH_BAR = INCH_Y_BAR
 
 function barStock(spec: BarSpec): ReturnType<typeof roundStock> {
-  // The diameter and length follow the units, the orientation follows the axis.
   const [diameter, length] = spec.units === 'mm' ? [40, 200] : [2, 8]
   return roundStock(diameter, length, spec.axis, spec.at)
 }
 
-function barFor(axis: 'x' | 'y', units: 'mm' | 'inch'): BarSpec {
-  if (axis === 'x') return units === 'mm' ? MM_X_BAR : INCH_X_BAR
-  return units === 'mm' ? MM_Y_BAR : INCH_Y_BAR
-}
-
-function rotaryMachine(axis: 'x' | 'y', drive: 'own' | 'borrowed', reversed = false): MachineDefinition {
+function rotaryMachine(axis: 'x' | 'y'): MachineDefinition {
   const base = structuredClone(bundledMachines()[0])
   return validateMachineDefinition({
     ...base,
-    id: `around-${axis}-${drive}${reversed ? '-rev' : ''}`,
-    rotary: { about: axis, drive, reversed, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    id: `around-${axis}-canned`,
+    rotary: { about: axis, drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
   })
 }
 
-function vBit(units: 'mm' | 'inch', id: string): Tool {
+function cutter(units: 'mm' | 'inch', id: string, type: Tool['type']): Tool {
   return {
     ...defaultTool(units, 1),
     id,
-    name: `${id} 60 V-bit`,
+    name: `${id} ${type}`,
     units,
-    type: 'v_bit',
+    type,
     diameter: units === 'mm' ? 6 : 0.25,
-    vBitAngle: 60,
-    // 0 means no declared ceiling, so a thread is never warned about its depth.
+    vBitAngle: type === 'v_bit' ? 60 : null,
     maxCutDepth: 0,
     defaultStepdown: units === 'mm' ? 0.4 : 0.02,
     defaultFeed: units === 'mm' ? 600 : 24,
@@ -130,161 +161,274 @@ function vBit(units: 'mm' | 'inch', id: string): Tool {
   }
 }
 
-function vBitLibrary(units: 'mm' | 'inch'): ToolLibraryEntry {
-  const { id: _id, ...entry } = vBit(units, 'library')
-  void _id
-  return { ...entry, key: `vbit-${units}` }
-}
-
-/**
- * A bundled-library V-bit written in `units`, with every converted length
- * distinct from its same-unit twin so a wrong conversion target cannot hide
- * behind an equal number. `maxCutDepth` is deliberately non-zero: on the
- * library entry it is a real ceiling, so it must convert like any other length.
- */
-function importVBit(units: 'mm' | 'inch', key: string): ToolLibraryEntry {
-  const { id: _id, ...entry } = vBit(units, key)
-  void _id
-  return { ...entry, key, maxCutDepth: units === 'mm' ? 10 : 0.5 }
-}
-
-/** A rotary project with the given tools, loaded and switched onto Around. */
-function loadRotary(spec: BarSpec, tools: Tool[]): Project {
+/** A rotary project with one cutter, loaded and switched onto Around. */
+function loadRotary(spec: BarSpec, tool: Tool): Project {
   const base = newProject(`Patterns ${spec.axis}`, spec.units)
   base.meta.projectType = 'rotary'
   base.stock = barStock(spec)
-  const machine = rotaryMachine(spec.axis, 'own')
+  const machine = rotaryMachine(spec.axis)
   base.meta.machineDefinitions = [machine]
   base.meta.selectedMachineId = machine.id
-  base.tools = tools
-  const project = projectWithFeatures(base, [])
-  store().loadProject(project)
+  base.tools = [tool]
+  store().loadProject(projectWithFeatures(base, []))
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   return store().project
 }
 
-function resetStore(project: Project): void {
-  store().loadProject(project)
+/** The frame the pre-canned command used: start from the stock minimum on either axis. */
+function oldFrame(project: Project): RotaryPatternFrame {
+  const frame = rotaryPatternFrame(project)
+  assert.ok(frame, 'the fixture is a bar')
+  const bounds = getStockBounds(project.stock)
+  return {
+    ...frame,
+    alongOrigin: frame.axis === 'x' ? bounds.minX : bounds.minY,
+    alongDirection: 1,
+  }
 }
 
-const createdFeature = (id: string): SketchFeature => {
-  const feature = store().project.features.find((entry) => entry.id === id)
-  assert.ok(feature, `feature ${id} exists`)
-  const definition = store().project.featureDefinitions[feature.definitionId]
-  assert.ok(definition, `definition for ${id} exists`)
+/** The line profile the old command created for one sheet line. */
+function lineProfile(frame: RotaryPatternFrame, line: {
+  alongStart: number
+  alongEnd: number
+  acrossStart: number
+  acrossEnd: number
+}): SketchProfile {
   return {
-    ...(feature as unknown as SketchFeature),
+    start: rotarySheetPoint(frame, line.alongStart, line.acrossStart),
+    segments: [{
+      type: 'line',
+      to: rotarySheetPoint(frame, line.alongEnd, line.acrossEnd),
+    }],
+    closed: false,
+  }
+}
+
+/**
+ * Build the old project shape — a named folder of ordinary open lines — so
+ * its operation can be compared with the canned feature's. This is the
+ * pre-canned creation result, not a path the app still offers.
+ */
+function oldPatternProject(spec: BarSpec, input: RotaryPatternInput, toolId: string): Project {
+  const baseProject = newProject(`Patterns ${spec.axis}`, spec.units)
+  baseProject.meta.projectType = 'rotary'
+  baseProject.stock = barStock(spec)
+  const machine = rotaryMachine(spec.axis)
+  baseProject.meta.machineDefinitions = [machine]
+  baseProject.meta.selectedMachineId = machine.id
+  baseProject.tools = [cutter(spec.units, toolId, input.kind === 'thread' ? 'v_bit' : 'ball_endmill')]
+  const project = projectWithFeatures(baseProject, [])
+  const frame = oldFrame(project)
+  const built = buildRotaryPatternLines(frame, input)
+  assert.ok(built.ok, 'the old fixture builds its lines')
+
+  const folder: FeatureFolder = {
+    id: 'old-folder',
+    name: input.kind === 'thread' ? 'Thread' : 'Flutes',
+    collapsed: false,
+    section: 'features',
+  }
+  const definitions: Record<string, FeatureDefinition> = {}
+  const features: FeatureInstance[] = []
+  const thickness = project.stock.thickness
+  built.lines.forEach((line, index) => {
+    const definitionId = `old-def-${index}`
+    const featureId = `old-f-${index}`
+    const profile = lineProfile(frame, line)
+    definitions[definitionId] = {
+      id: definitionId,
+      kind: 'composite',
+      profile,
+      dimensions: [],
+      text: null,
+      stl: null,
+      operation: 'line',
+    }
+    features.push({
+      id: featureId,
+      name: input.kind === 'thread' ? `Thread Start ${index + 1}` : `Flutes Flute ${index + 1}`,
+      definitionId,
+      transform: { ...IDENTITY_MATRIX },
+      constraints: [],
+      folderId: folder.id,
+      z_top: thickness,
+      z_bottom: thickness - input.depth,
+      authoringFace: 'around',
+      visible: true,
+      locked: false,
+    })
+  })
+  return {
+    ...project,
+    featureFolders: [folder],
+    features,
+    featureDefinitions: definitions,
+    featureTree: [{ type: 'folder', folderId: folder.id }],
+  }
+}
+
+function followLineTarget(featureIds: string[]): OperationTarget {
+  return { source: 'features', featureIds }
+}
+
+/** Load a project, enter Around and add one Follow line operation for `ids`. */
+function addEngrave(project: Project, ids: string[]): { project: Project; operationId: string } {
+  store().loadProject(project)
+  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
+  const operationId = store().addOperation('follow_line', 'rough', followLineTarget(ids))
+  assert.ok(operationId, 'the Follow line operation is created')
+  return { project: store().project, operationId }
+}
+
+/**
+ * The old command's operation, exactly as it created it: a Follow line whose
+ * `carveDepth` (and `maxCarveDepth`) came from the requested depth, not from
+ * today's default. Only the name is left at the store default so the posted
+ * program's comment lines match the new operation; the name is presentation,
+ * the depth is what cuts.
+ */
+function addOldEngrave(
+  project: Project,
+  ids: string[],
+  depth: number,
+): { project: Project; operationId: string } {
+  const run = addEngrave(project, ids)
+  store().updateOperation(run.operationId, { carveDepth: depth, maxCarveDepth: depth })
+  return { project: store().project, operationId: run.operationId }
+}
+
+/** Pin the program date so a midnight boundary cannot flake an export compare. */
+function pinDate(gcode: string): string {
+  return gcode.replace(/\b\d{4}-\d{2}-\d{2}\b/g, 'YYYY-MM-DD')
+}
+
+/** Add one plain open Line on the Around face, for the mixed-target test. */
+function addPlainLineFeature(): string {
+  const thickness = store().project.stock.thickness
+  store().addFeature({
+    id: 'plain-line',
+    name: 'Plain Line',
+    kind: 'polygon',
+    folderId: null,
     sketch: {
-      profile: definition.profile,
+      profile: {
+        start: { x: 0, y: 0 },
+        segments: [{ type: 'line', to: { x: 10, y: 0 } }],
+        closed: false,
+      },
       origin: { x: 0, y: 0 },
       orientationAngle: 0,
-      dimensions: definition.dimensions,
+      dimensions: [],
       constraints: [],
     },
-    kind: definition.kind,
-    operation: definition.operation,
-    text: definition.text,
-    stl: definition.stl,
-  }
+    operation: 'line',
+    z_top: thickness,
+    z_bottom: thickness - 1,
+    authoringFace: 'around',
+    visible: true,
+    locked: false,
+  })
+  return 'plain-line'
 }
 
-/** The flat cut levels the generator documents: from `topZ` down to `finalZ` by `stepdown`. */
-function carveLevels(topZ: number, finalZ: number, stepdown: number): number[] {
-  const levels: number[] = []
-  let z = topZ
-  while (z > finalZ) {
-    z = Math.max(finalZ, z - stepdown)
-    levels.push(z)
-    if (z <= finalZ) break
-  }
-  return levels.length > 0 ? levels : [finalZ]
+/** Compute a toolpath and post it through the real postprocessor. */
+function movesAndGcode(project: Project, operationId: string): { moves: unknown[]; gcode: string } {
+  const operation = project.operations.find((entry) => entry.id === operationId)
+  assert.ok(operation, 'the operation exists')
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope, 'generation returns an envelope')
+  const toolRecord = project.tools.find((entry) => entry.id === operation.toolRef)
+  assert.ok(toolRecord, 'the operation tool exists')
+  const machine = project.meta.machineDefinitions.find((entry) => entry.id === project.meta.selectedMachineId)
+  assert.ok(machine, 'the machine exists')
+  const result = runPostProcessor({
+    project,
+    definition: validateMachineDefinition(machine),
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(toolRecord, project),
+      toolpath: envelope.result,
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  return { moves: envelope.result.moves, gcode: pinDate(result.gcode) }
 }
 
-// ── thread creation ───────────────────────────────────────────
+function onlyCannedFeature(): FeatureInstance {
+  const features = store().project.features
+  assert.equal(features.length, 1, `exactly one canned feature (got ${features.length})`)
+  return features[0]
+}
 
-log('Testing thread creation, geometry and the one-step setup...')
-{
-  loadRotary(MM_BAR, [vBit('mm', 'v1')])
-  const frame = rotaryPatternFrame(store().project)!
+function resolvedCanned(featureId: string) {
+  const project = store().project
+  const feature = resolveFeatureInstance(project, featureId)
+  assert.ok(feature, 'the canned feature resolves')
+  return feature
+}
+
+// ── creation ─────────────────────────────────────────────────
+
+test('a thread creates one canned feature, no folder, no operation and no tool', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
   const before = store().project
   const historyBefore = store().history.past.length
-  const result = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 1, depth: 1.2 })
-
+  const result = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
   assert.ok(result.ok, `thread created (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-  assert.equal(result.featureIds.length, 1, 'one line for a single start')
-  assert.equal(store().history.past.length, historyBefore + 1, 'exactly one history entry')
+  if (!result.ok) return
 
   const project = store().project
-  const folder = project.featureFolders.find((entry) => entry.id === result.folderId)
-  assert.ok(folder, 'the folder exists')
-  assert.equal(folder.name, 'Thread', 'the folder is named after the thread')
-  assert.equal(folder.section, 'features', 'the folder is an ordinary features folder')
-  assert.notEqual(folder.grouped, true, 'the folder is not a grouped composite')
-
-  const feature = createdFeature(result.featureIds[0])
-  assert.equal(feature.folderId, result.folderId, 'the line is inside the folder')
-  assert.equal(feature.operation, 'line', 'the line is an ordinary line feature')
-  assert.equal(feature.authoringFace, 'around', 'the line is authored on Around')
-  assert.equal(feature.sketch.profile.closed, false, 'the line is open')
-  assert.equal(feature.sketch.profile.segments.length, 1, 'the line is one segment')
-  assert.equal(feature.z_top, project.stock.thickness, 'z_top is the bar surface')
-  near(resolveDimensionRef(project, feature.z_bottom), project.stock.thickness - 1.2, 'z_bottom is the requested depth below the surface')
-
-  // Sheet geometry: along is the bar axis, across is the other one and starts
-  // on the centered zero line.
-  const start = feature.sketch.profile.start
-  const end = (feature.sketch.profile.segments[0] as { to: { x: number; y: number } }).to
-  const bounds = getStockBounds(project.stock)
-  near(start.x, bounds.minX + 25, 'along start measured from the stock minimum')
-  near(end.x, bounds.minX + 25 + 60, 'along end is start + length')
-  near(start.y, frame.zero, 'a single start begins on the zero line')
-  near(end.y - start.y, frame.circumference * 60 / 2, 'one circumference per pitch along')
-
-  const operation = project.operations.find((entry) => entry.id === result.operationId)
-  assert.ok(operation, 'the operation exists')
-  assert.equal(project.operations.length, 1, 'exactly one operation created')
-  assert.equal(operation.kind, 'follow_line', 'an Engrave operation')
-  assert.equal(operation.pass, 'rough', 'cut in stepdown passes')
-  assert.equal(operation.target.source, 'features', 'the Engrave targets features')
-  assert.deepEqual(operation.target.featureIds, result.featureIds, 'the Engrave targets exactly the created lines')
-  assert.equal(operation.toolRef, 'v1', 'the existing V-bit is used')
-  near(operation.carveDepth, 1.2, 'the Engrave cuts to the requested depth')
-  assert.ok((operation.stepdown ?? 0) > 0, 'the Engrave has a positive stepdown')
-
-  const setup = activeSetup(project)
-  assert.equal(setup.kind, 'around', 'the workspace stays on Around')
-  assert.notEqual(setup.id, provisionalSetupId('around'), 'the provisional setup is made real in the same step')
-  assert.equal(operation.setupId, setup.id, 'the operation joins the real Around setup')
-  assert.ok(project.setups.some((entry) => entry.id === setup.id && entry.kind === 'around'), 'the setup is stored')
-  assert.deepEqual(activeFace(project), 'around')
-
-  // The input numbers are not stored: nothing but ordinary shapes.
-  const serialized = JSON.stringify({ folder, features: project.features, definitions: project.featureDefinitions, operation })
-  for (const field of ['"pitch"', '"starts"', '"twist"', '"length"', '"direction"', 'threadParams', 'fluteParams']) {
-    assert.ok(!serialized.includes(field), `${field} is not persisted`)
-  }
-  const rawInstance = project.features.find((entry) => entry.id === result.featureIds[0])!
-  assert.deepEqual(
-    Object.keys(rawInstance).sort(),
-    ['authoringFace', 'constraints', 'definitionId', 'folderId', 'id', 'locked', 'name', 'textLayout', 'transform', 'visible', 'z_bottom', 'z_top'].sort(),
-    'the line instance has exactly the ordinary instance shape',
+  assert.equal(store().history.past.length, historyBefore + 1, 'exactly one history entry')
+  assert.equal(project.featureFolders.length, before.featureFolders.length, 'no folder is created')
+  assert.equal(project.operations.length, before.operations.length, 'no operation is created')
+  assert.deepEqual(project.tools, before.tools, 'no tool is added or changed')
+  const feature = onlyCannedFeature()
+  assert.equal(feature.id, result.featureId, 'the returned id is the feature')
+  const definition = project.featureDefinitions[feature.definitionId]
+  assert.equal(definition.operation, 'line', 'an ordinary Line')
+  assert.equal(feature.authoringFace, 'around', 'authored on Around')
+  assert.equal(feature.folderId, null, 'not inside a folder')
+  near(resolveDimensionRef(project, feature.z_top), project.stock.thickness, 'z_top is the bar surface')
+  near(
+    resolveDimensionRef(project, feature.z_bottom),
+    project.stock.thickness - 1.2,
+    'z_bottom is the requested depth below the surface',
   )
 
-  // One undo removes everything; redo restores it.
-  store().undo()
-  const undone = store().project
-  assert.equal(undone.features.length, 0, 'undo removes the line')
-  assert.equal(undone.featureFolders.length, 0, 'undo removes the folder')
-  assert.equal(undone.operations.length, 0, 'undo removes the operation')
-  assert.equal(undone.tools.length, 1, 'undo removes no pre-existing tool')
-  assert.equal(activeFace(undone), 'around', 'undo leaves the workspace on Around')
-  store().redo()
-  assert.equal(store().project.features.length, 1, 'redo restores the line')
-  assert.equal(store().project.featureFolders.length, 1, 'redo restores the folder')
-  assert.equal(store().project.operations.length, 1, 'redo restores the operation')
+  assert.equal(definition.canned?.kind, THREAD_CANNED_KIND, 'stored kind')
+  const params = normalizeThreadCannedParams(definition.canned?.params ?? {})
+  assert.ok(params, 'stored parameters normalize')
+  assert.deepEqual(
+    { start: params.start, length: params.length, pitch: params.pitch, starts: params.starts, depth: params.depth, hand: params.hand },
+    { start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2, hand: 'right' },
+    'the dialog numbers are stored',
+  )
 
-  // A refused creation changes nothing at all.
+  const frame = rotaryPatternFrame(project)
+  assert.ok(frame, 'the fixture is a bar')
+  const profiles = resolveCannedShapeProfiles(resolvedCanned(result.featureId))
+  assert.equal(profiles.length, 2, 'one open outline per start')
+  for (const profile of profiles) assert.equal(profile.closed, false, 'every outline is open')
+  assert.equal(profiles[0].segments.length, 1, 'each outline is one line')
+  const starts = profiles.map((profile) => profile.start)
+  const lead = 2 * 2
+  near(
+    Math.abs(starts[1].y - starts[0].y),
+    frame.circumference / 2,
+    'two starts sit half a circumference apart',
+  )
+  const end = profiles[0].segments[0].type === 'line' ? profiles[0].segments[0].to : starts[0]
+  near(Math.abs(end.y - starts[0].y), frame.circumference * 60 / lead, 'the lead is starts × pitch')
+
+  // Undo/redo are one step for the whole feature.
+  store().undo()
+  assert.equal(store().project.features.length, 0, 'undo removes the feature')
+  assert.equal(store().history.past.length, historyBefore, 'undo restores history')
+  store().redo()
+  assert.equal(store().project.features.length, 1, 'redo restores the feature')
+  assert.equal(store().project.operations.length, before.operations.length, 'redo adds no operation')
+
+  // A refusal changes nothing.
   const refusedBefore = store().project
   const refusedHistory = store().history.past.length
   const refused = store().addRotaryPattern({ kind: 'thread', start: 0, length: 10, pitch: 2, depth: frame.radius })
@@ -292,492 +436,453 @@ log('Testing thread creation, geometry and the one-step setup...')
   assert.equal(refused.ok === false && refused.reason, 'depthReachesCentreline', 'with the centreline reason')
   assert.equal(store().project, refusedBefore, 'a refusal does not touch the project')
   assert.equal(store().history.past.length, refusedHistory, 'a refusal adds no history')
-  resetStore(before)
-}
+})
 
-// ── multi-start thread, off-origin geometry ───────────────────
-
-log('Testing multi-start lead, start spacing and the Y/inch sheet...')
-{
-  loadRotary(MM_BAR, [vBit('mm', 'v1')])
-  const frame = rotaryPatternFrame(store().project)!
-  const result = store().addRotaryPattern({ kind: 'thread', start: 40, length: 30, pitch: 1.25, starts: 2, depth: 1 })
-  assert.ok(result.ok, 'two-start thread created')
-  if (!result.ok) throw new Error('unreachable')
-  assert.equal(result.featureIds.length, 2, 'one line per start')
-  const lines = result.featureIds.map((id) => createdFeature(id).sketch.profile)
-  const across = lines.map((line) => line.start.y)
-  near(across[1] - across[0], frame.circumference / 2, 'starts sit C/n apart')
-  for (const line of lines) {
-    const end = (line.segments[0] as { to: { x: number; y: number } }).to
-    near(Math.abs(end.y - line.start.y), frame.circumference * 30 / (2 * 1.25), 'a two-start thread advances the lead per turn')
-  }
-  const operation = store().project.operations.at(-1)!
-  assert.equal(operation.target.source, 'features', 'the multi-start Engrave targets features')
-  assert.deepEqual(operation.target.featureIds, result.featureIds, 'both starts are one Engrave target')
-
-  // Y bar, inch, off-origin: along is Y (from the stock minimum), across is X
-  // and starts on the centered zero line.
-  loadRotary(INCH_BAR, [vBit('inch', 'vi')])
-  const inchFrame = rotaryPatternFrame(store().project)!
-  const inchResult = store().addRotaryPattern({ kind: 'thread', start: 1.5, length: 3, pitch: 0.05, depth: 0.1 })
-  assert.ok(inchResult.ok, 'inch Y-bar thread created')
-  if (!inchResult.ok) throw new Error('unreachable')
-  const inchFeature = createdFeature(inchResult.featureIds[0])
-  const inchBounds = getStockBounds(store().project.stock)
-  near(inchFeature.sketch.profile.start.y, inchBounds.minY + 1.5, 'Y bar along start is measured from the stock minimum')
-  near(inchFeature.sketch.profile.start.x, inchFrame.zero, 'Y bar across starts on the centered zero line')
-  const inchEnd = (inchFeature.sketch.profile.segments[0] as { to: { x: number; y: number } }).to
-  near(inchEnd.y, inchBounds.minY + 1.5 + 3, 'Y bar along end is start + length')
-  near(inchEnd.x - inchFeature.sketch.profile.start.x, -inchFrame.circumference * 3 / 0.05, 'the Y bar right-hand slope runs the other way across')
-  // The right-hand chirality itself is re-derived from physical points in
-  // helpers/rotaryPatterns.test.ts, on both axes.
-
-  // A user-specified line may run past the end of the bar: it is not clipped.
-  loadRotary(MM_BAR, [vBit('mm', 'v1')])
-  const barBounds = getStockBounds(store().project.stock)
-  const overrun = store().addRotaryPattern({ kind: 'thread', start: 195, length: 20, pitch: 2, depth: 1 })
-  assert.ok(overrun.ok, 'an overrunning thread is created')
-  if (!overrun.ok) throw new Error('unreachable')
-  const overrunProfile = createdFeature(overrun.featureIds[0]).sketch.profile
-  const overrunEnd = (overrunProfile.segments[0] as { to: { x: number; y: number } }).to
-  near(overrunProfile.start.x, barBounds.minX + 195, 'the overrunning line starts where asked')
-  near(overrunEnd.x, barBounds.minX + 195 + 20, 'and keeps its requested length past the bar end')
-  assert.ok(overrunEnd.x > barBounds.maxX, 'the geometry really does extend past the bar')
-}
-
-// ── flutes ────────────────────────────────────────────────────
-
-log('Testing flutes: count, twist, straight and tool selection...')
-{
-  loadRotary(MM_BAR, [vBit('mm', 'v1'), { ...vBit('mm', 'ball'), id: 'ball', name: 'ball', type: 'ball_endmill', diameter: 3 }])
-  const frame = rotaryPatternFrame(store().project)!
-  const result = store().addRotaryPattern({ kind: 'flutes', start: 20, length: 50, count: 4, twist: 1.5, depth: 0.8, toolRef: 'ball' })
+test('flutes store signed twist and one feature per pattern', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'ball', 'ball_endmill'))
+  const result = store().addRotaryPattern({ kind: 'flutes', start: 20, length: 50, count: 4, twist: -1.5, depth: 0.8 })
   assert.ok(result.ok, 'flutes created')
-  if (!result.ok) throw new Error('unreachable')
-  assert.equal(result.featureIds.length, 4, 'one line per flute')
-  const folder = store().project.featureFolders.find((entry) => entry.id === result.folderId)
-  assert.equal(folder?.name, 'Flutes', 'the folder is named after the flutes')
-  const starts = result.featureIds.map((id) => createdFeature(id).sketch.profile.start.y)
-  for (let index = 1; index < starts.length; index++) {
-    near(starts[index] - starts[index - 1], frame.circumference / 4, 'flutes sit C/count apart')
-  }
-  for (const id of result.featureIds) {
-    const profile = createdFeature(id).sketch.profile
-    const end = (profile.segments[0] as { to: { x: number; y: number } }).to
-    near(Math.abs(end.y - profile.start.y), 1.5 * frame.circumference, 'each flute spans twist*C across')
-  }
-  const operation = store().project.operations.at(-1)!
-  assert.equal(operation.toolRef, 'ball', 'the explicitly selected tool is used')
-  assert.equal(operation.kind, 'follow_line', 'flutes cut with an Engrave')
-  assert.equal(operation.target.source, 'features', 'all flutes target features')
-  assert.deepEqual(operation.target.featureIds, result.featureIds, 'all flutes are one target')
+  if (!result.ok) return
+  const feature = onlyCannedFeature()
+  const definition = store().project.featureDefinitions[feature.definitionId]
+  assert.equal(definition.operation, 'line', 'an ordinary Line')
+  assert.equal(definition.canned?.kind, FLUTES_CANNED_KIND, 'stored kind')
+  const params = normalizeFlutesCannedParams(definition.canned?.params ?? {})
+  assert.ok(params, 'stored parameters normalize')
+  assert.equal(params.twist, -1.5, 'the signed twist is stored')
+  assert.equal(params.count, 4, 'the count is stored')
+  assert.equal(resolveCannedShapeProfiles(resolvedCanned(result.featureId)).length, 4, 'one outline per flute')
+})
 
-  // Straight flutes stay on their own meridian, negative twist reverses.
-  const straight = store().addRotaryPattern({ kind: 'flutes', start: 0, length: 20, count: 2, twist: 0, depth: 0.5, toolRef: 'ball' })
-  assert.ok(straight.ok, 'straight flutes created')
-  if (!straight.ok) throw new Error('unreachable')
-  for (const id of straight.featureIds) {
-    const profile = createdFeature(id).sketch.profile
-    const end = (profile.segments[0] as { to: { x: number; y: number } }).to
-    near(end.y, profile.start.y, 'a straight flute keeps its across coordinate')
-  }
-  const reversed = store().addRotaryPattern({ kind: 'flutes', start: 0, length: 20, count: 1, twist: -1, depth: 0.5, toolRef: 'ball' })
-  assert.ok(reversed.ok, 'negative-twist flute created')
-  if (!reversed.ok) throw new Error('unreachable')
-  const reversedProfile = createdFeature(reversed.featureIds[0]).sketch.profile
-  const reversedEnd = (reversedProfile.segments[0] as { to: { x: number; y: number } }).to
-  near(reversedEnd.y - reversedProfile.start.y, -frame.circumference, 'negative twist reverses the across direction')
-}
-
-// ── refusals and tool resolution ──────────────────────────────
-
-log('Testing refusals, V-bit resolution and imported tools...')
-{
-  // No V-bit anywhere: refuse atomically.
-  loadRotary(MM_BAR, [])
-  const before = store().project
-  const historyBefore = store().history.past.length
-  const noTool = store().addRotaryPattern({ kind: 'thread', start: 0, length: 20, pitch: 1, depth: 1 })
-  assert.equal(noTool.ok, false, 'a thread without a V-bit is refused')
-  assert.equal(noTool.ok === false && noTool.reason, 'noVBitTool', 'with the V-bit reason')
-  assert.equal(store().project, before, 'the refusal does not touch the project')
-  assert.equal(store().history.past.length, historyBefore, 'the refusal adds no history')
-
-  // The same thread imports the bundled V-bit in the same undo step.
-  const imported = store().addRotaryPattern({ kind: 'thread', start: 0, length: 20, pitch: 1, depth: 1 }, [vBitLibrary('mm')])
-  assert.ok(imported.ok, 'the library V-bit is imported')
-  if (!imported.ok) throw new Error('unreachable')
-  assert.equal(store().history.past.length, historyBefore + 1, 'the import is part of the same history step')
-  const importedTool = store().project.tools.find((tool) => tool.id === store().project.operations[0].toolRef)
-  assert.equal(importedTool?.type, 'v_bit', 'the operation carries the imported V-bit')
-  store().undo()
-  assert.equal(store().project.tools.length, 0, 'one undo removes the imported tool too')
-
-  // A bundled V-bit written in the other unit system is converted into the
-  // project's units before it is stored, and the Engrave seeded from it is in
-  // project units too (issue #1016 C1 A1). The library entry's own `units` must
-  // never be the conversion target: doing that would store an inch tool in a mm
-  // project (and vice versa), unscaled.
-  const MM_PER_INCH = 25.4
-  const crossUnit = [
-    {
-      label: 'inch library into an mm bar',
-      spec: MM_BAR,
-      libraryUnits: 'inch' as const,
-      projectUnits: 'mm' as const,
-      expected: {
-        diameter: 0.25 * MM_PER_INCH,
-        feed: 24 * MM_PER_INCH,
-        plungeFeed: 8 * MM_PER_INCH,
-        stepdown: 0.02 * MM_PER_INCH,
-        maxCutDepth: 0.5 * MM_PER_INCH,
-      },
-      request: { start: 0, length: 20, pitch: 1, depth: 1 },
-    },
-    {
-      label: 'mm library into an inch bar',
-      spec: INCH_BAR,
-      libraryUnits: 'mm' as const,
-      projectUnits: 'inch' as const,
-      expected: {
-        diameter: 6 / MM_PER_INCH,
-        feed: 600 / MM_PER_INCH,
-        plungeFeed: 200 / MM_PER_INCH,
-        stepdown: 0.4 / MM_PER_INCH,
-        maxCutDepth: 10 / MM_PER_INCH,
-      },
-      request: { start: 0, length: 1, pitch: 0.05, depth: 0.05 },
-    },
-  ]
-  for (const entry of crossUnit) {
-    loadRotary(entry.spec, [])
-    const stepBefore = store().history.past.length
-    const result = store().addRotaryPattern(
-      { kind: 'thread', ...entry.request },
-      [importVBit(entry.libraryUnits, `cross-${entry.libraryUnits}`)],
-    )
-    assert.ok(result.ok, `${entry.label}: the library V-bit is imported`)
-    if (!result.ok) throw new Error('unreachable')
-    const project = store().project
-    const operation = project.operations[0]
-    const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
-    assert.ok(tool, `${entry.label}: the imported tool is stored`)
-    if (!tool) throw new Error('unreachable')
-    assert.equal(tool.units, entry.projectUnits, `${entry.label}: the stored tool declares the project's units`)
-    assert.equal(tool.type, 'v_bit', `${entry.label}: it is still a V-bit`)
-    assert.equal(tool.vBitAngle, 60, `${entry.label}: the V angle is an angle, not a converted length`)
-    near(tool.diameter, entry.expected.diameter, `${entry.label}: the diameter is converted into project units`)
-    near(tool.defaultFeed, entry.expected.feed, `${entry.label}: the default feed is converted`)
-    near(tool.defaultPlungeFeed, entry.expected.plungeFeed, `${entry.label}: the plunge feed is converted`)
-    near(tool.defaultStepdown, entry.expected.stepdown, `${entry.label}: the stepdown is converted`)
-    near(tool.maxCutDepth, entry.expected.maxCutDepth, `${entry.label}: the max cut depth is converted`)
-    // The Engrave is seeded from the converted tool, so every length it carries
-    // is in project units without a second conversion.
-    near(operation.feed, entry.expected.feed, `${entry.label}: the operation feed is in project units`)
-    near(operation.plungeFeed, entry.expected.plungeFeed, `${entry.label}: the operation plunge feed is in project units`)
-    near(operation.stepdown, entry.expected.stepdown, `${entry.label}: the operation stepdown is in project units`)
-    assert.equal(store().history.past.length, stepBefore + 1, `${entry.label}: the import is one history step`)
-    store().undo()
-    assert.equal(store().project.tools.length, 0, `${entry.label}: one undo removes the imported tool`)
-    assert.equal(store().project.features.length, 0, `${entry.label}: and every created line`)
-    assert.equal(store().project.operations.length, 0, `${entry.label}: and the Engrave operation`)
-  }
-
-  // Flutes: missing and incompatible tools refuse.
-  loadRotary(MM_BAR, [{ ...vBit('mm', 'v1'), id: 'plasma', type: 'plasma' } as Tool])
-  const missing = store().addRotaryPattern({ kind: 'flutes', start: 0, length: 10, count: 1, twist: 0, depth: 0.5, toolRef: 'nope' })
-  assert.equal(missing.ok === false && missing.reason, 'toolNotFound', 'an unknown tool is refused')
-  const incompatible = store().addRotaryPattern({ kind: 'flutes', start: 0, length: 10, count: 1, twist: 0, depth: 0.5, toolRef: 'plasma' })
-  assert.equal(incompatible.ok === false && incompatible.reason, 'toolIncompatible', 'a plasma torch is refused')
-
-  // Creation away from an available Around leaves state untouched.
-  loadRotary(MM_BAR, [vBit('mm', 'v1')])
-  store().setActiveSetup(store().project.setups.find((setup) => setup.id !== undefined && setup.kind !== 'around')?.id ?? provisionalSetupId('top'))
-  assert.notEqual(activeFace(store().project), 'around', 'the fixture is away from Around')
-  const awayBefore = store().project
-  const away = store().addRotaryPattern({ kind: 'thread', start: 0, length: 10, pitch: 1, depth: 0.5 })
-  assert.equal(away.ok === false && away.reason, 'aroundNotActive', 'creation away from Around is refused')
-  assert.equal(store().project, awayBefore, 'and leaves the project untouched')
-
-  // A milling project has no Around at all.
-  const milling = newProject('Milling', 'mm')
-  store().loadProject(milling)
-  const unavailable = store().addRotaryPattern({ kind: 'thread', start: 0, length: 10, pitch: 1, depth: 0.5 })
-  assert.equal(unavailable.ok === false && unavailable.reason, 'aroundUnavailable', 'a non-rotary project is refused')
-  resetStore(newProject())
-}
-
-// ── posted-program helpers ────────────────────────────────────
-
-/**
- * `+1`/`-1`: what a positive physical angle is multiplied by on its way into
- * the program, restated from the definition's own fields — a reversed axis
- * flips it, and a borrowed motor riding a negated coordinate entry flips it
- * again. Deliberately not `rotaryDirection`: this is the expected value the
- * export is checked against, derived here rather than read back.
- */
-function expectedDriveSign(definition: MachineDefinition): 1 | -1 {
-  const rotary = definition.rotary
-  assert.ok(rotary, 'the export machine has a rotary block')
-  if (!rotary) throw new Error('unreachable')
-  let sign: 1 | -1 = rotary.reversed ? -1 : 1
-  if (rotary.drive === 'borrowed') {
-    const entry = rotary.about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis
-    if (entry.startsWith('-')) sign = sign === 1 ? -1 : 1
-  }
-  return sign
-}
-
-/**
- * `+1`/`-1`: the machine along coordinate's sign against the physical along
- * direction. Project X is physical X, but project Y is physical −Y (the project
- * frame is Y-down), so a machine Y delta is already the physical along delta. A
- * negated coordinate entry flips either.
- */
-function alongAxisSign(axis: 'x' | 'y', definition: MachineDefinition): 1 | -1 {
-  const entry = axis === 'x' ? definition.coordinateSystem.xAxis : definition.coordinateSystem.yAxis
-  assert.equal(entry, axis.toUpperCase(), `the bar's along axis maps to machine ${axis.toUpperCase()}`)
-  return entry.startsWith('-') ? -1 : 1
-}
-
-/**
- * Create one thread through the store, generate it, export it, and read the
- * literal program back with the motion parser. Every value the assertions use
- * comes from the text (or from the definition's own fields), never from the
- * toolpath the post-processor was handed.
- */
-function assertExportedHelix(
-  axis: 'x' | 'y',
-  units: 'mm' | 'inch',
-  drive: 'own' | 'borrowed',
-  reversed: boolean,
-  starts: number,
-  direction?: 'right' | 'left',
-): string {
-  const spec = barFor(axis, units)
-  const pitch = units === 'mm' ? 2 : 0.05
-  const depth = units === 'mm' ? 1.2 : 0.1
-  const start = units === 'mm' ? 10 : 1
-  const length = units === 'mm' ? 60 : 3
-  const label = `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}${direction ? `/${direction}` : ''}`
-
-  loadRotary(spec, [vBit(units, 'v1')])
-  const created = store().addRotaryPattern(
-    direction
-      ? { kind: 'thread', start, length, pitch, starts, depth, direction }
-      : { kind: 'thread', start, length, pitch, starts, depth },
-  )
-  assert.ok(created.ok, `${label}: thread created`)
-  if (!created.ok) throw new Error('unreachable')
-  const project = store().project
-  const operation = project.operations[0]
-  const envelope = computeOperationToolpath(project, operation)
-  assert.ok(envelope, `${label}: generation returns an envelope`)
-  if (!envelope) throw new Error('unreachable')
-  const path = envelope.result
-  assert.deepEqual(path.warnings, [], `${label}: no generation warnings`)
-
-  const definition = rotaryMachine(axis, drive, reversed)
-  const tool = normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project)
-  const exported = runPostProcessor({
-    project,
-    definition,
-    operations: [{ operation, tool, toolpath: path }],
-    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+test('a single straight flute is a valid canned feature and edits', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'ball', 'ball_endmill'))
+  const result = store().addRotaryPattern({
+    kind: 'flutes',
+    start: 0,
+    length: 10,
+    count: 1,
+    twist: 0,
+    depth: 0.5,
   })
-  const rotaryRefusals = exported.warnings.filter((warning) => warning.code.startsWith('postRotary'))
-  assert.deepEqual(rotaryRefusals, [], `${label}: no rotary refusal`)
-  assert.ok(exported.gcode.includes('G93'), `${label}: turning cuts run in inverse time`)
-  // Nothing nonfinite reached the text at all.
-  assert.doesNotMatch(exported.gcode, /NaN|Infinity|undefined/, `${label}: no nonfinite token in the program`)
+  assert.ok(result.ok, 'a single straight flute is created')
+  if (!result.ok) return
+  const feature = onlyCannedFeature()
+  const definition = store().project.featureDefinitions[feature.definitionId]
+  assert.equal(definition.canned?.kind, FLUTES_CANNED_KIND, 'stored kind')
+  const before = resolveCannedShapeProfiles(resolvedCanned(result.featureId))
+  assert.equal(before.length, 1, 'one outline')
+  assert.equal(before[0].closed, false, 'the outline is open')
 
-  // The letter the rotation is posted under, derived from the drive alone.
-  const word: 'A' | 'X' | 'Y' = drive === 'own' ? 'A' : axis === 'x' ? 'Y' : 'X'
-  assert.equal(rotaryWord(definition), word, `${label}: the machine posts the rotation under ${word}`)
+  const stored = normalizeFlutesCannedParams(definition.canned?.params ?? {})
+  assert.ok(stored, 'stored parameters normalize')
+  const next = normalizeFlutesCannedParams({
+    ...stored,
+    length: 20,
+  } as unknown as CannedShapeParams)
+  assert.ok(next, 'the edited parameters normalize')
+  store().updateFeature(result.featureId, {
+    canned: { kind: FLUTES_CANNED_KIND, params: next },
+  })
+  const after = resolveCannedShapeProfiles(resolvedCanned(result.featureId))[0]
+  const end = after.segments[0].type === 'line' ? after.segments[0].to : after.start
+  near(Math.abs(end.x - after.start.x), 20, 'the edited length is applied')
+})
 
-  // Read the literal program back: modal coordinates, and the angle under the
-  // independently expected rotary word.
-  const parsed = parseGcodeMotion(
-    exported.gcode,
-    definition.motion.arcFormat,
-    definition.program.commentPrefix,
-    definition.program.commentSuffix,
-    { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
-  )
-  // The helix ends at a non-zero angle and the program stops there (#1091):
-  // no closing unwind, so every block is a work-coordinate motion.
-  assert.equal(parsed.status, 'verified', `${label}: the program parses cleanly (${parsed.warnings.join('; ')})`)
-  assert.equal(parsed.warnings.length, 0, `${label}: no block is unplaceable (${parsed.warnings.join('; ')})`)
+test('a Y bar measures start from the chuck end, not the minimum', () => {
+  loadRotary(MM_Y_BAR, cutter('mm', 'v1', 'v_bit'))
+  const frame = rotaryPatternFrame(store().project)
+  assert.ok(frame, 'the fixture is a bar')
+  const bounds = getStockBounds(store().project.stock)
+  near(frame.alongOrigin, bounds.maxY, 'the chuck end is the stock maximum on a Y bar')
+  assert.equal(frame.alongDirection, -1, 'length runs away from the chuck end')
 
-  // 360 degrees per physical lead: over one lead (`starts * pitch`) of physical
-  // travel the bar turns exactly one revolution. The posted angle carries the
-  // independently derived drive sign; the machine along coordinate carries the
-  // along-axis sign; the two combine into the expected signed ratio.
-  const lead = starts * pitch
-  // A left-hand thread reverses the physical hand, so the posted angle-vs-along
-  // ratio flips sign while the lead magnitude is unchanged.
-  const handSign = direction === 'left' ? -1 : 1
-  const expectedRatio = handSign * expectedDriveSign(definition) * alongAxisSign(axis, definition) * 360 / lead
-  let feeding = 0
-  for (const move of parsed.moves) {
-    for (const point of [move.from, move.to]) {
-      assert.ok(
-        Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z),
-        `${label}: every posted coordinate is finite`,
-      )
-      if (point.a !== undefined) assert.ok(Number.isFinite(point.a), `${label}: every posted angle is finite`)
-    }
-    if (move.kind !== 'linear') continue
-    const deltaAlong = axis === 'x' ? move.to.x - move.from.x : move.to.y - move.from.y
-    if (Math.abs(deltaAlong) <= 1e-9) continue
-    const fromAngle = move.from.a
-    const toAngle = move.to.a
-    assert.ok(fromAngle !== undefined && toAngle !== undefined, `${label}: a feeding move along the bar posts its angle`)
-    if (fromAngle === undefined || toAngle === undefined) throw new Error('unreachable')
-    const ratio = (toAngle - fromAngle) / deltaAlong
-    const tolerance = Math.abs(expectedRatio) * 1e-6
-    assert.ok(
-      Math.abs(ratio - expectedRatio) <= tolerance,
-      `${label}: the posted angle advances one turn per physical lead (${ratio} != ${expectedRatio})`,
-    )
-    feeding += 1
+  const result = store().addRotaryPattern({ kind: 'thread', start: 10, length: 30, pitch: 2, depth: 1 })
+  assert.ok(result.ok, 'Y thread created')
+  if (!result.ok) return
+  const profile = resolveCannedShapeProfiles(resolvedCanned(result.featureId))[0]
+  const end = profile.segments[0].type === 'line' ? profile.segments[0].to : profile.start
+  const band = [profile.start.y, end.y].sort((a, b) => a - b)
+  near(band[0], bounds.maxY - 40, 'the 30 long band starts 40 from the chuck end')
+  near(band[1], bounds.maxY - 10, 'and ends 10 from the chuck end')
+  near(end.y - profile.start.y, 30, 'the line is still drawn low to high in stock coordinates')
+})
+
+// ── equivalence with the old command ─────────────────────────
+
+interface EquivalenceCase {
+  label: string
+  spec: BarSpec
+  input: RotaryPatternInput
+}
+
+const THREAD_CASES: EquivalenceCase[] = [
+  {
+    label: 'mm X single start',
+    spec: MM_X_BAR,
+    input: { kind: 'thread', start: 25, length: 60, pitch: 2, depth: 1.2 },
+  },
+  {
+    label: 'mm X two start, left hand',
+    spec: MM_X_BAR,
+    input: { kind: 'thread', start: 40, length: 30, pitch: 1.25, starts: 2, hand: 'left', depth: 1 },
+  },
+  {
+    label: 'inch Y three start',
+    spec: INCH_Y_BAR,
+    input: { kind: 'thread', start: 1.5, length: 3, pitch: 0.05, starts: 3, depth: 0.1 },
+  },
+]
+
+const FLUTE_CASES: EquivalenceCase[] = [
+  {
+    label: 'mm X twisted',
+    spec: MM_X_BAR,
+    input: { kind: 'flutes', start: 20, length: 50, count: 4, twist: 1.5, depth: 0.8 },
+  },
+  {
+    label: 'mm X left twist',
+    spec: MM_X_BAR,
+    input: { kind: 'flutes', start: 5, length: 20, count: 3, twist: -0.75, depth: 0.5 },
+  },
+  {
+    label: 'inch Y straight',
+    spec: INCH_Y_BAR,
+    input: { kind: 'flutes', start: 1, length: 2, count: 2, twist: 0, depth: 0.1 },
+  },
+]
+
+test('the canned generator draws the old command lines, for several parameter sets', () => {
+  for (const [index, testCase] of [...THREAD_CASES, ...FLUTE_CASES].entries()) {
+    const toolType = testCase.input.kind === 'thread' ? 'v_bit' : 'ball_endmill'
+    const toolId = `t${index}`
+    loadRotary(testCase.spec, cutter(testCase.spec.units, toolId, toolType))
+    const frame = rotaryPatternFrame(store().project)
+    assert.ok(frame, `${testCase.label}: fixture is a bar`)
+    const bounds = getStockBounds(store().project.stock)
+    const barLength = testCase.spec.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
+
+    // The old command measured from the stock minimum on both axes.
+    const old = oldFrame(store().project)
+    const oldStart = testCase.input.start
+    const newStart = testCase.spec.axis === 'x' ? oldStart : barLength - oldStart - testCase.input.length
+    const newInput: RotaryPatternInput = { ...testCase.input, start: newStart }
+
+    const oldLines = buildRotaryPatternLines(old, testCase.input)
+    assert.ok(oldLines.ok, `${testCase.label}: old command lines build`)
+    const expected = oldLines.lines.map((line) => lineProfile(old, line))
+
+    const result = store().addRotaryPattern(newInput)
+    assert.ok(result.ok, `${testCase.label}: canned feature created (${result.ok ? '' : result.reason})`)
+    if (!result.ok) continue
+    const actual = resolveCannedShapeProfiles(resolvedCanned(result.featureId))
+    assert.deepEqual(actual, expected, `${testCase.label}: generated lines equal the old command's`)
   }
-  assert.ok(feeding > 0, `${label}: the program contains feeding moves along the bar`)
+})
 
-  // The turn is never reduced modulo one revolution: the travel spans several
-  // turns and the largest posted angle is well past 360.
-  const posted = parsed.moves
-    .map((move) => move.to.a)
-    .filter((angle): angle is number => angle !== undefined)
-  assert.ok(posted.length > 0, `${label}: the program posts the angle`)
-  assert.ok(Math.max(...posted.map(Math.abs)) > 360, `${label}: the program keeps turning past one revolution`)
+test('a Follow line on the canned feature cuts the old folder operation, moves and G-code', () => {
+  for (const [index, testCase] of [...THREAD_CASES, ...FLUTE_CASES].entries()) {
+    const toolType = testCase.input.kind === 'thread' ? 'v_bit' : 'ball_endmill'
+    const toolId = `t${index}`
+    const spec = testCase.spec
+    const cutterTool = cutter(spec.units, toolId, toolType)
 
-  // #1091: the program ends where the thread ended. The last angle in the
-  // text is the last toolpath move's angle — no closing A0 unwind — and the
-  // final motion is the operation's own retract, not a turn.
-  const lastMove = path.moves[path.moves.length - 1]
-  assert.ok(lastMove.to.a !== undefined, `${label}: the last move carries an angle`)
-  if (lastMove.to.a === undefined) throw new Error('unreachable')
+    // Old shape: folder + one line per start/flute + an Engrave on all of them,
+    // with the depth the old dialog wrote onto the operation.
+    const oldProject = oldPatternProject(spec, testCase.input, toolId)
+    const oldIds = oldProject.features.map((feature) => feature.id)
+    const oldRun = addOldEngrave(oldProject, oldIds, testCase.input.depth)
+    const oldOperation = oldRun.project.operations.find((operation) => operation.id === oldRun.operationId)
+    assert.ok(oldOperation, `${testCase.label}: the old operation exists`)
+    assert.equal(oldOperation.carveDepth, testCase.input.depth, `${testCase.label}: the old depth is explicit`)
+    const oldResult = movesAndGcode(oldRun.project, oldRun.operationId)
+
+    // New shape: one canned feature + an Engrave on the feature.
+    loadRotary(spec, cutterTool)
+    const bounds = getStockBounds(store().project.stock)
+    const barLength = spec.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
+    const newStart = spec.axis === 'x'
+      ? testCase.input.start
+      : barLength - testCase.input.start - testCase.input.length
+    const created = store().addRotaryPattern({ ...testCase.input, start: newStart })
+    assert.ok(created.ok, `${testCase.label}: canned feature created`)
+    if (!created.ok) continue
+    const newRun = addEngrave(store().project, [created.featureId])
+    const newOperation = newRun.project.operations.find((operation) => operation.id === newRun.operationId)
+    assert.ok(newOperation, `${testCase.label}: the new operation exists`)
+    assert.equal(
+      newOperation.carveDepth,
+      testCase.input.depth,
+      `${testCase.label}: the Follow line depth comes from the feature`,
+    )
+    const newResult = movesAndGcode(newRun.project, newRun.operationId)
+
+    assert.deepEqual(newResult.moves, oldResult.moves, `${testCase.label}: identical toolpath moves`)
+    assert.equal(newResult.gcode, oldResult.gcode, `${testCase.label}: identical posted G-code (date pinned)`)
+  }
+})
+
+// ── the Follow line depth rule on every target path (FG3) ────
+//
+// Decision 3 (#1112): a Follow line whose every target is a canned Thread or
+// Flutes cuts at the pattern's stored depth, and the deepest one when they
+// differ. The rule lives in the store, so a target set through Add, Use
+// current selection or Add to operation reaches the same code. The mutation
+// that must fail: `updateOperation` applying the target without the rule.
+
+test('select-then-Add puts the canned Thread depth on a new Follow line', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the Follow line exists')
+  assert.equal(operation.carveDepth, 1.2, 'the new operation cuts the pattern depth')
+  assert.equal(operation.maxCarveDepth, 1.2, 'and stores it as its maximum')
+})
+
+test('Use current selection retargets an existing 1 mm Follow line to the Thread depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const plainLineId = addPlainLineFeature()
+  // The CAMPanel handler calls exactly this: updateOperation(id, { target }).
+  const run = addEngrave(store().project, [plainLineId])
+  const before = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(before, 'the Follow line exists')
+  assert.equal(before.carveDepth, 1, 'a plain Line keeps the default depth')
+
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  store().updateOperation(run.operationId, { target: followLineTarget([created.featureId]) })
+
+  const after = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(after, 'the operation still exists')
+  assert.equal(after.carveDepth, 1.2, 'retargeting reads the Thread depth')
+  assert.equal(after.maxCarveDepth, 1.2, 'and its maximum')
+})
+
+test('right-click Add to operation re-reads the deepest canned depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const shallow = store().addRotaryPattern({ kind: 'thread', start: 25, length: 30, pitch: 2, depth: 0.5 })
+  assert.ok(shallow.ok, 'the shallow thread is created')
+  if (!shallow.ok) return
+  const run = addEngrave(store().project, [shallow.featureId])
+  const deep = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(deep.ok, 'the deep thread is created')
+  if (!deep.ok) return
+
+  // The context menu merges the row into the existing target, then calls
+  // updateOperation with the combined set (useFeatureTreeActions).
+  store().updateOperation(run.operationId, {
+    target: followLineTarget([shallow.featureId, deep.featureId]),
+  })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 1.2, 'the deepest pattern names the one cutting depth')
+  assert.equal(operation.maxCarveDepth, 1.2, 'and its maximum')
+})
+
+test('a target set with a plain Line keeps the operation depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  store().updateOperation(run.operationId, { carveDepth: 1, maxCarveDepth: 1 })
+  const plainLineId = addPlainLineFeature()
+
+  store().updateOperation(run.operationId, {
+    target: followLineTarget([created.featureId, plainLineId]),
+  })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 1, 'a mixed target has no pattern depth to name')
+  assert.equal(operation.maxCarveDepth, 1, 'so both stored depths stay as they were')
+})
+
+test('reapplying the same target does not reset a manual depth', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const run = addEngrave(store().project, [created.featureId])
+  store().updateOperation(run.operationId, { carveDepth: 0.9, maxCarveDepth: 0.9 })
+
+  store().updateOperation(run.operationId, { target: followLineTarget([created.featureId]) })
+  const operation = store().project.operations.find((entry) => entry.id === run.operationId)
+  assert.ok(operation, 'the operation still exists')
+  assert.equal(operation.carveDepth, 0.9, 'an unchanged target is not a target change')
+  assert.equal(operation.maxCarveDepth, 0.9, 'so the manual depth survives')
+})
+
+test('CAM Plan never creates a Follow line, so it has no depth path to bypass', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+
+  // A canned pattern is a `line` feature, and the planner reports line
+  // engraving as out of scope instead of proposing an operation. If CAM Plan
+  // ever starts proposing Follow line, this assertion fails: the planner must
+  // then route its target through withCannedPatternTargetDepth in the store.
+  const plan = createCamPlan(store().project, [])
+  assert.equal(
+    plan.operations.some((draft) => draft.operation.kind === 'follow_line'),
+    false,
+    'CAM Plan does not propose Follow line',
+  )
+})
+
+// ── round trip, edit and expand ──────────────────────────────
+
+test('an old folder of lines plus its Engrave stays folder + lines + operation', () => {
+  const oldProject = oldPatternProject(
+    MM_X_BAR,
+    { kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 },
+    'v1',
+  )
+  const oldIds = oldProject.features.map((feature) => feature.id)
+  const run = addOldEngrave(oldProject, oldIds, 1.2)
+  const profiles = run.project.features.map(
+    (feature) => run.project.featureDefinitions[feature.definitionId].profile,
+  )
+
+  const saved = store().saveProject()
+  store().openProjectFromText(saved, null)
+  const after = store().project
+  assert.equal(after.featureFolders.length, 1, 'the old folder stays')
+  assert.equal(after.features.length, oldIds.length, 'the old lines stay')
+  assert.equal(after.operations.length, 1, 'the old Engrave stays')
+  assert.deepEqual(
+    after.features.map((feature) => after.featureDefinitions[feature.definitionId].profile),
+    profiles,
+    'the old plain line geometry is unchanged',
+  )
+  const operation = after.operations[0]
+  assert.equal(operation.kind, 'follow_line', 'the operation kind is unchanged')
+  assert.equal(operation.carveDepth, 1.2, 'the old Engrave keeps its explicit depth')
+  assert.deepEqual(
+    operation.target.source === 'features' ? operation.target.featureIds : [],
+    oldIds,
+    'the operation still targets the old lines',
+  )
+  for (const feature of after.features) {
+    assert.equal(
+      after.featureDefinitions[feature.definitionId].canned,
+      undefined,
+      'no canned data is invented for an old project',
+    )
+  }
+})
+
+const ROUND_TRIP_CASES: Array<{ label: string; spec: BarSpec; input: RotaryPatternInput; kind: string }> = [
+  {
+    label: 'thread',
+    spec: MM_X_BAR,
+    input: { kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 },
+    kind: THREAD_CANNED_KIND,
+  },
+  {
+    label: 'flutes',
+    spec: MM_X_BAR,
+    input: { kind: 'flutes', start: 20, length: 50, count: 4, twist: -1.5, depth: 0.8 },
+    kind: FLUTES_CANNED_KIND,
+  },
+]
+
+test('save, load, regenerate: the same lines per canned kind', () => {
+  for (const testCase of ROUND_TRIP_CASES) {
+    loadRotary(testCase.spec, cutter(testCase.spec.units, 't1', testCase.input.kind === 'thread' ? 'v_bit' : 'ball_endmill'))
+    const created = store().addRotaryPattern(testCase.input)
+    assert.ok(created.ok, `${testCase.label}: created`)
+    if (!created.ok) continue
+    const before = resolveCannedShapeProfiles(resolvedCanned(created.featureId))
+    assert.ok(before.length > 0, `${testCase.label}: draws lines before saving`)
+
+    const file = store().saveProject()
+    const saved = JSON.parse(file) as Project
+    const savedFeature = saved.features.find((feature) => feature.id === created.featureId)
+    assert.ok(savedFeature, `${testCase.label}: the feature is saved`)
+    assert.equal(
+      saved.featureDefinitions[savedFeature.definitionId].canned?.kind,
+      testCase.kind,
+      `${testCase.label}: kind is saved`,
+    )
+
+    store().openProjectFromText(file, null)
+    const after = resolveCannedShapeProfiles(resolvedCanned(created.featureId))
+    assert.deepEqual(after, before, `${testCase.label}: same lines after load and regenerate`)
+    assert.equal(store().project.features.length, 1, `${testCase.label}: no extra rows appear`)
+    assert.equal(store().project.operations.length, 0, `${testCase.label}: no operation is created on load`)
+  }
+})
+
+test('editing the parameters regenerates the lines and the Z span', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 20, pitch: 2, depth: 1 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const before = resolveCannedShapeProfiles(resolvedCanned(created.featureId))
+  const feature = onlyCannedFeature()
+  const definition = store().project.featureDefinitions[feature.definitionId]
+  const stored = normalizeThreadCannedParams(definition.canned?.params ?? {})
+  assert.ok(stored, 'stored parameters normalize')
+
+  const next = normalizeThreadCannedParams({
+    ...stored,
+    start: 40,
+    length: 30,
+    pitch: 1.5,
+    starts: 3,
+    depth: 1.4,
+  } as unknown as CannedShapeParams)
+  assert.ok(next, 'the edited parameters normalize')
+  store().updateFeature(created.featureId, {
+    canned: { kind: THREAD_CANNED_KIND, params: next },
+    z_top: store().project.stock.thickness,
+    z_bottom: store().project.stock.thickness - 1.4,
+  })
+
+  const after = resolveCannedShapeProfiles(resolvedCanned(created.featureId))
+  assert.equal(after.length, 3, 'the new start count regenerates the lines')
+  assert.notDeepEqual(after, before, 'the lines moved')
+  const edited = store().project.features[0]
+  near(resolveDimensionRef(store().project, edited.z_bottom), store().project.stock.thickness - 1.4, 'the Z span follows the depth')
+  const frame = rotaryPatternFrame(store().project)
+  assert.ok(frame, 'the fixture is a bar')
+  const bounds = getStockBounds(store().project.stock)
+  near(after[0].start.x, bounds.minX + 40, 'the edited start is applied')
+  near(
+    (after[0].segments[0] as { to: { x: number } }).to.x,
+    bounds.minX + 40 + 30,
+    'the edited length is applied',
+  )
+})
+
+test('Expand to features gives the plain lines back', () => {
+  loadRotary(MM_X_BAR, cutter('mm', 'v1', 'v_bit'))
+  const created = store().addRotaryPattern({ kind: 'thread', start: 25, length: 60, pitch: 2, starts: 2, depth: 1.2 })
+  assert.ok(created.ok, 'thread created')
+  if (!created.ok) return
+  const expected = resolveCannedShapeProfiles(resolvedCanned(created.featureId))
+  store().expandCannedFeature(created.featureId)
+  const project = store().project
+  const plain = project.features.filter((feature) => {
+    const definition = project.featureDefinitions[feature.definitionId]
+    return definition.canned === undefined || definition.canned === null
+  })
+  assert.equal(plain.length, expected.length, 'one plain feature per generated line')
+  for (const feature of plain) {
+    const definition = project.featureDefinitions[feature.definitionId]
+    assert.equal(definition.operation, 'line', 'the expanded rows are Lines')
+    assert.equal(feature.authoringFace, 'around', 'they stay on Around')
+  }
+  assert.equal(project.features.some((feature) => feature.id === created.featureId), true, 'the source row is kept')
   assert.ok(
-    Math.abs(posted[posted.length - 1] - lastMove.to.a * expectedDriveSign(definition)) <= 1e-6,
-    `${label}: the last angle written is the last toolpath angle, with no closing unwind`,
+    project.featureFolders.some((folder) => folder.grouped === true),
+    'the plain lines go into a grouped folder',
   )
-  assert.ok(
-    !exported.gcode.split(/\r?\n/).some((line) => line === `G0 ${word}0.000`),
-    `${label}: no bare closing turn to 0 is written`,
-  )
+})
 
-  return exported.gcode
-}
-
-// ── the real generation and export seam ───────────────────────
-
-log('Testing generation and export through the real seam...')
-{
-  for (const [label, axis, units, spec, pitch, length, direction] of [
-    ['mm X right', 'x', 'mm', MM_BAR, 2, 60, undefined],
-    ['mm X left', 'x', 'mm', MM_BAR, 2, 60, 'left'],
-    ['inch Y right', 'y', 'inch', INCH_BAR, 0.05, 3, undefined],
-    ['inch Y left', 'y', 'inch', INCH_BAR, 0.05, 3, 'left'],
-  ] as const) {
-    loadRotary(spec, [vBit(units, 'v1')])
-    const depth = units === 'mm' ? 1.2 : 0.1
-    const created = store().addRotaryPattern(
-      direction
-        ? { kind: 'thread', start: 10, length, pitch, starts: 1, depth, direction }
-        : { kind: 'thread', start: 10, length, pitch, starts: 1, depth },
-    )
-    assert.ok(created.ok, `${label}: thread created`)
-    if (!created.ok) throw new Error('unreachable')
-    const project = store().project
-    const operation = project.operations[0]
-    assert.equal(aroundUnavailableReason(project), null, `${label}: Around stays available`)
-
-    const envelope = computeOperationToolpath(project, operation)
-    assert.ok(envelope, `${label}: generation returns an envelope`)
-    const path = envelope.result
-    assert.ok(path.moves.length > 0, `${label}: nonempty moves`)
-    // warningSeverity has no 'info' level — its domain is 'warning' | 'error' —
-    // so "no generation warning above info" is exactly "no warnings at all".
-    assert.deepEqual(
-      path.warnings.map((warning) => warningSeverity(warning.code)),
-      [],
-      `${label}: generation emits no warning at any severity`,
-    )
-    assert.ok(path.moves.every((move) => move.from.a !== undefined && move.to.a !== undefined), `${label}: every point carries a`)
-
-    const axisOf = (point: { x: number; y: number }) => (axis === 'x' ? point.x : point.y)
-    let along = 0
-    let swept = 0
-    const cutZs: number[] = []
-    for (const move of path.moves) {
-      const deltaAlong = Math.abs(axisOf(move.to) - axisOf(move.from))
-      if (deltaAlong > 1e-9 && move.kind !== 'rapid') {
-        along += deltaAlong
-        swept += Math.abs(move.to.a! - move.from.a!)
-      }
-      if (move.kind === 'cut') cutZs.push(move.to.z)
-    }
-    assert.ok(along > 0, `${label}: the path follows the bar`)
-    near(swept / along, 360 / pitch, `${label}: 360 degrees per pitch along the bar`, 1e-6 * 360 / pitch)
-
-    // Depth passes: the documented level rule, at the requested floor. Distinct
-    // levels are grouped at a micron — the generator's last step can land one
-    // ULP off the arithmetic floor and emit a near-duplicate final pass.
-    const distinctCutZ = [...new Set(cutZs.map((z) => Math.round(z / 1e-6)))]
-    const deepest = Math.min(...cutZs)
-    near(deepest, project.stock.thickness - depth, `${label}: the deepest pass is the requested depth`, 1e-9)
-    const expectedLevels = carveLevels(project.stock.thickness / 2, project.stock.thickness / 2 - depth, operation.stepdown ?? depth)
-    assert.ok(expectedLevels.length > 1, `${label}: more than one documented pass`)
-    assert.ok(cutZs.length > 1, `${label}: the thread is cut in depth passes`)
-    assert.ok(distinctCutZ.length > 1, `${label}: the passes reach different depths`)
-    assert.ok(distinctCutZ.length <= expectedLevels.length, `${label}: no more distinct levels than stepdown passes`)
-    assert.ok(Math.max(...cutZs) < project.stock.thickness, `${label}: the first pass is below the surface`)
-
-    // Safe retracts at or above the bar surface, and the last move retracts.
-    const rapids = path.moves.filter((move) => move.kind === 'rapid')
-    assert.ok(rapids.length > 0, `${label}: the path retracts`)
-    for (const move of rapids) {
-      assert.ok(move.to.z >= project.stock.thickness - 1e-9, `${label}: a rapid stays clear of the bar`)
-    }
-    assert.equal(path.moves.at(-1)!.kind, 'rapid', `${label}: the last move is a retract`)
-
-    // The exported program text itself — parsed posted coordinates and rotary
-    // words across every axis/units/drive/reversal/start combination — is
-    // checked in the matrix below.
-  }
-}
-
-// ── the posted program, read back ─────────────────────────────
-
-log('Testing the exported program text: posted modal coordinates and rotary words...')
-{
-  // A bounded matrix: both bar axes, both unit systems, own-A and borrowed
-  // motor, normal and reversed rotation, single and multiple starts. Each case
-  // is generated through the store and read back from the literal program.
-  for (const axis of ['x', 'y'] as const) {
-    for (const units of ['mm', 'inch'] as const) {
-      for (const drive of ['own', 'borrowed'] as const) {
-        for (const reversed of [false, true]) {
-          for (const starts of [1, 3]) {
-            // The existing 32 cases stay exactly as they were: an omitted
-            // direction is the default right hand.
-            const omitted = assertExportedHelix(axis, units, drive, reversed, starts)
-            // An explicit right hand is the same program, byte for byte; the
-            // left hand is the same geometry with the posted ratio reversed.
-            const explicitRight = assertExportedHelix(axis, units, drive, reversed, starts, 'right')
-            assert.equal(
-              explicitRight,
-              omitted,
-              `${axis}/${units}/${drive}${reversed ? '/reversed' : ''}/starts=${starts}: an explicit right is byte-identical to omitted`,
-            )
-            assertExportedHelix(axis, units, drive, reversed, starts, 'left')
-          }
-        }
-      }
-    }
-  }
-}
-
-log('All rotary pattern store tests passed.')
+console.log(`\n${passCount} passed, ${failCount} failed.`)
+if (failCount > 0) process.exitCode = 1

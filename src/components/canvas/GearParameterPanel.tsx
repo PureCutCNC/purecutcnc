@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import type { GearCreationParams } from '../../sketch/gearProfile'
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   GEAR_MAX_TEETH,
   GEAR_MIN_TEETH,
   validateGearProfileParams,
+  type GearCreationParams,
 } from '../../sketch/gearProfile'
 import type { PendingAddTool } from '../../store/types'
 import { formatLength } from '../../utils/units'
@@ -35,6 +35,7 @@ interface GearParameterPanelProps {
 }
 
 type GearReferenceKind =
+  | 'outsideRadius'
   | 'teeth'
   | 'wholeDepth'
   | 'flankProfile'
@@ -57,7 +58,7 @@ interface GearFieldProps {
   reference: GearReferenceKind
 }
 
-function stopPanelKey(event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>): void {
+function stopPanelKey(event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>): void {
   event.stopPropagation()
   if (event.key === 'Enter') {
     event.preventDefault()
@@ -117,6 +118,17 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
   const pressureAngle = params.pressureAngleDeg * Math.PI / 180
   const pressureEndX = 29 + Math.sin(pressureAngle) * 20
   const pressureEndY = 29 - Math.cos(pressureAngle) * 20
+
+  if (kind === 'outsideRadius') {
+    return (
+      <GearReferenceFrame label={t('canvas.gear.ref.outsideRadius')}>
+        <circle className="gear-reference__outline" cx="29" cy="17" r="13" />
+        <circle className="gear-reference__guide" cx="29" cy="17" r="7" />
+        <path className="gear-reference__accent" d="M29 17h13" />
+        <path className="gear-reference__accent-fill" d="M43 17l-4-3v6z" />
+      </GearReferenceFrame>
+    )
+  }
 
   if (kind === 'teeth') {
     return (
@@ -225,6 +237,195 @@ function GearParameterReference({ kind, params }: GearReferenceProps) {
   )
 }
 
+interface GearFieldsProps {
+  params: GearCreationParams
+  session: number | string
+  onParams: (patch: Partial<GearCreationParams>) => void
+  /** Edit mode adds the size field; creation gets it from the canvas drag. */
+  size?: number
+  onSize?: (value: number) => void
+  autoFocusTeeth?: boolean
+}
+
+/** The full gear parameter set, shared by the creation panel and Edit gear. */
+export function GearFields({ params, session, onParams, size, onSize, autoFocusTeeth }: GearFieldsProps) {
+  const { t } = useI18n()
+  return (
+    <>
+      {size !== undefined && onSize ? (
+        <GearField labelKey="canvas.gear.outsideRadius" params={params} reference="outsideRadius">
+          <input
+            key={`gear-size-${session}`}
+            className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+            type="text"
+            inputMode="decimal"
+            defaultValue={size}
+            onBlur={(event) => {
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                size,
+                onSize,
+                (value) => Math.max(0.0001, value),
+              )
+            }}
+            onKeyDown={stopPanelKey}
+            autoFocus
+          />
+        </GearField>
+      ) : null}
+      <GearField labelKey="canvas.gear.toothCount" params={params} reference="teeth">
+        <input
+          key={`gear-teeth-${session}`}
+          className="canvas-workflow-panel__count-input"
+          type="text"
+          inputMode="numeric"
+          defaultValue={params.teeth}
+          onBlur={(event) => {
+            event.currentTarget.value = commitNumber(
+              event.currentTarget.value,
+              params.teeth,
+              (value) => onParams({ teeth: value }),
+              (value) => Math.max(GEAR_MIN_TEETH, Math.min(GEAR_MAX_TEETH, Math.round(value))),
+            )
+          }}
+          onKeyDown={stopPanelKey}
+          autoFocus={autoFocusTeeth && size === undefined}
+        />
+      </GearField>
+      <GearField labelKey="canvas.gear.wholeDepth" params={params} reference="wholeDepth">
+        <input
+          key={`gear-depth-${session}`}
+          className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+          type="text"
+          inputMode="decimal"
+          defaultValue={params.wholeDepth}
+          onBlur={(event) => {
+            event.currentTarget.value = commitNumber(
+              event.currentTarget.value,
+              params.wholeDepth,
+              (value) => onParams({ wholeDepth: value }),
+              (value) => Math.max(0, value),
+            )
+          }}
+          onKeyDown={stopPanelKey}
+        />
+      </GearField>
+      <GearField labelKey="canvas.gear.flankProfile" params={params} reference="flankProfile">
+        <select
+          className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
+          value={params.flankProfile}
+          onChange={(event) => onParams({ flankProfile: event.target.value as GearCreationParams['flankProfile'] })}
+          onKeyDown={stopPanelKey}
+        >
+          <option value="involute">{t('canvas.gear.flank.involute')}</option>
+          <option value="straight">{t('canvas.gear.flank.straight')}</option>
+        </select>
+      </GearField>
+      {params.flankProfile === 'involute' ? (
+        <GearField labelKey="canvas.gear.pressureAngle" params={params} reference="pressureAngle">
+          <input
+            key={`gear-pressure-${session}`}
+            className="canvas-workflow-panel__count-input"
+            type="text"
+            inputMode="decimal"
+            defaultValue={params.pressureAngleDeg}
+            onBlur={(event) => {
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                params.pressureAngleDeg,
+                (value) => onParams({ pressureAngleDeg: value }),
+                (value) => Math.max(10, Math.min(35, value)),
+              )
+            }}
+            onKeyDown={stopPanelKey}
+          />
+        </GearField>
+      ) : null}
+      <GearField labelKey="canvas.gear.rootForm" params={params} reference="rootForm">
+        <select
+          className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
+          value={params.rootForm}
+          onChange={(event) => onParams({ rootForm: event.target.value as GearCreationParams['rootForm'] })}
+          onKeyDown={stopPanelKey}
+        >
+          <option value="rounded">{t('canvas.gear.root.rounded')}</option>
+          <option value="flat">{t('canvas.gear.root.flat')}</option>
+          <option value="sharp">{t('canvas.gear.root.sharp')}</option>
+        </select>
+      </GearField>
+      {params.rootForm === 'rounded' ? (
+        <GearField labelKey="canvas.gear.rootFilletRadius" params={params} reference="rootFilletRadius">
+          <input
+            key={`gear-root-fillet-${session}`}
+            className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+            type="text"
+            inputMode="decimal"
+            defaultValue={params.rootFilletRadius}
+            onBlur={(event) => {
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                params.rootFilletRadius,
+                (value) => onParams({ rootFilletRadius: value }),
+                (value) => Math.max(0, value),
+              )
+            }}
+            onKeyDown={stopPanelKey}
+          />
+        </GearField>
+      ) : null}
+      <GearField labelKey="canvas.gear.crestForm" params={params} reference="crestForm">
+        <select
+          className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
+          value={params.crestForm}
+          onChange={(event) => onParams({ crestForm: event.target.value as GearCreationParams['crestForm'] })}
+          onKeyDown={stopPanelKey}
+        >
+          <option value="flat">{t('canvas.gear.crest.flat')}</option>
+          <option value="rounded">{t('canvas.gear.crest.rounded')}</option>
+        </select>
+      </GearField>
+      {params.crestForm === 'rounded' ? (
+        <GearField labelKey="canvas.gear.crestRadius" params={params} reference="crestRadius">
+          <input
+            key={`gear-crest-radius-${session}`}
+            className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+            type="text"
+            inputMode="decimal"
+            defaultValue={params.crestRadius}
+            onBlur={(event) => {
+              event.currentTarget.value = commitNumber(
+                event.currentTarget.value,
+                params.crestRadius,
+                (value) => onParams({ crestRadius: value }),
+                (value) => Math.max(0, value),
+              )
+            }}
+            onKeyDown={stopPanelKey}
+          />
+        </GearField>
+      ) : null}
+      <GearField labelKey="canvas.gear.boreDiameter" params={params} reference="boreDiameter">
+        <input
+          key={`gear-bore-${session}`}
+          className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
+          type="text"
+          inputMode="decimal"
+          defaultValue={params.boreDiameter === 0 ? '' : params.boreDiameter}
+          onBlur={(event) => {
+            event.currentTarget.value = commitNumber(
+              event.currentTarget.value,
+              params.boreDiameter,
+              (value) => onParams({ boreDiameter: value }),
+              (value) => Math.max(0, value),
+            )
+          }}
+          onKeyDown={stopPanelKey}
+        />
+      </GearField>
+    </>
+  )
+}
+
 export function GearParameterPanel({
   pendingAdd,
   units,
@@ -249,155 +450,12 @@ export function GearParameterPanel({
         {t('canvas.gear.summary', { length: formatLength(pendingAdd.outsideRadius, units) })}
       </div>
       <div className="canvas-workflow-panel__meta canvas-workflow-panel__gear-fields">
-        <GearField labelKey="canvas.gear.toothCount" params={params} reference="teeth">
-          <input
-            key={`gear-teeth-${pendingAdd.session}`}
-            className="canvas-workflow-panel__count-input"
-            type="text"
-            inputMode="numeric"
-            defaultValue={params.teeth}
-            onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
-                params.teeth,
-                (value) => setPendingGearParams({ teeth: value }),
-                (value) => Math.max(GEAR_MIN_TEETH, Math.min(GEAR_MAX_TEETH, Math.round(value))),
-              )
-            }}
-            onKeyDown={stopPanelKey}
-            autoFocus
-          />
-        </GearField>
-        <GearField labelKey="canvas.gear.wholeDepth" params={params} reference="wholeDepth">
-          <input
-            key={`gear-depth-${pendingAdd.session}`}
-            className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-            type="text"
-            inputMode="decimal"
-            defaultValue={params.wholeDepth}
-            onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
-                params.wholeDepth,
-                (value) => setPendingGearParams({ wholeDepth: value }),
-                (value) => Math.max(0, value),
-              )
-            }}
-            onKeyDown={stopPanelKey}
-          />
-        </GearField>
-        <GearField labelKey="canvas.gear.flankProfile" params={params} reference="flankProfile">
-          <select
-            className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
-            value={params.flankProfile}
-            onChange={(event) => setPendingGearParams({ flankProfile: event.target.value as GearCreationParams['flankProfile'] })}
-            onKeyDown={stopPanelKey}
-          >
-            <option value="involute">{t('canvas.gear.flank.involute')}</option>
-            <option value="straight">{t('canvas.gear.flank.straight')}</option>
-          </select>
-        </GearField>
-        {params.flankProfile === 'involute' ? (
-          <GearField labelKey="canvas.gear.pressureAngle" params={params} reference="pressureAngle">
-            <input
-              key={`gear-pressure-${pendingAdd.session}`}
-              className="canvas-workflow-panel__count-input"
-              type="text"
-              inputMode="decimal"
-              defaultValue={params.pressureAngleDeg}
-              onBlur={(event) => {
-                event.currentTarget.value = commitNumber(
-                  event.currentTarget.value,
-                  params.pressureAngleDeg,
-                  (value) => setPendingGearParams({ pressureAngleDeg: value }),
-                  (value) => Math.max(10, Math.min(35, value)),
-                )
-              }}
-              onKeyDown={stopPanelKey}
-            />
-          </GearField>
-        ) : null}
-        <GearField labelKey="canvas.gear.rootForm" params={params} reference="rootForm">
-          <select
-            className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
-            value={params.rootForm}
-            onChange={(event) => setPendingGearParams({ rootForm: event.target.value as GearCreationParams['rootForm'] })}
-            onKeyDown={stopPanelKey}
-          >
-            <option value="rounded">{t('canvas.gear.root.rounded')}</option>
-            <option value="flat">{t('canvas.gear.root.flat')}</option>
-            <option value="sharp">{t('canvas.gear.root.sharp')}</option>
-          </select>
-        </GearField>
-        {params.rootForm === 'rounded' ? (
-          <GearField labelKey="canvas.gear.rootFilletRadius" params={params} reference="rootFilletRadius">
-            <input
-              key={`gear-root-fillet-${pendingAdd.session}`}
-              className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-              type="text"
-              inputMode="decimal"
-              defaultValue={params.rootFilletRadius}
-              onBlur={(event) => {
-                event.currentTarget.value = commitNumber(
-                  event.currentTarget.value,
-                  params.rootFilletRadius,
-                  (value) => setPendingGearParams({ rootFilletRadius: value }),
-                  (value) => Math.max(0, value),
-                )
-              }}
-              onKeyDown={stopPanelKey}
-            />
-          </GearField>
-        ) : null}
-        <GearField labelKey="canvas.gear.crestForm" params={params} reference="crestForm">
-          <select
-            className="canvas-workflow-panel__count-input canvas-workflow-panel__select-input"
-            value={params.crestForm}
-            onChange={(event) => setPendingGearParams({ crestForm: event.target.value as GearCreationParams['crestForm'] })}
-            onKeyDown={stopPanelKey}
-          >
-            <option value="flat">{t('canvas.gear.crest.flat')}</option>
-            <option value="rounded">{t('canvas.gear.crest.rounded')}</option>
-          </select>
-        </GearField>
-        {params.crestForm === 'rounded' ? (
-          <GearField labelKey="canvas.gear.crestRadius" params={params} reference="crestRadius">
-            <input
-              key={`gear-crest-radius-${pendingAdd.session}`}
-              className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-              type="text"
-              inputMode="decimal"
-              defaultValue={params.crestRadius}
-              onBlur={(event) => {
-                event.currentTarget.value = commitNumber(
-                  event.currentTarget.value,
-                  params.crestRadius,
-                  (value) => setPendingGearParams({ crestRadius: value }),
-                  (value) => Math.max(0, value),
-                )
-              }}
-              onKeyDown={stopPanelKey}
-            />
-          </GearField>
-        ) : null}
-        <GearField labelKey="canvas.gear.boreDiameter" params={params} reference="boreDiameter">
-          <input
-            key={`gear-bore-${pendingAdd.session}`}
-            className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-            type="text"
-            inputMode="decimal"
-            defaultValue={params.boreDiameter === 0 ? '' : params.boreDiameter}
-            onBlur={(event) => {
-              event.currentTarget.value = commitNumber(
-                event.currentTarget.value,
-                params.boreDiameter,
-                (value) => setPendingGearParams({ boreDiameter: value }),
-                (value) => Math.max(0, value),
-              )
-            }}
-            onKeyDown={stopPanelKey}
-          />
-        </GearField>
+        <GearFields
+          params={params}
+          session={pendingAdd.session}
+          onParams={setPendingGearParams}
+          autoFocusTeeth
+        />
       </div>
       {errors.length > 0 ? (
         <div className="sketch-banner-warning">{errors[0]}</div>

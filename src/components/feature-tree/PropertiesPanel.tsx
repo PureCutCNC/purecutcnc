@@ -41,7 +41,9 @@ import { machineOptionsForType, projectTypeLabelKey } from './projectTypeChoice'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
-import { defaultFontIdForStyle, getFeatureGeometryProfiles, getTextFontOptions } from '../../text'
+import { getFeatureGeometryProfiles } from '../../text'
+import { TextToolDialog } from '../project/TextToolDialog'
+import { textPathRefreshState } from '../../store/helpers/textPathSource'
 import {
   cannedShapeIsExpandable,
   cannedShapeLabelKey,
@@ -281,6 +283,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
+  // The text dialog is owned here so "Edit text…" reopens it with the run's
+  // current values, the same way a canned shape reopens its own panel
+  // (issue #1112 slice E).
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
 
   function renderContent() {
 
@@ -1503,7 +1509,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     : !selectedFeature.sketch.profile.closed
   const hasSelfIntersection = isTextFeature || isCannedShape ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
   const exceedsStock = isTextFeature || isCannedShape ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
-  const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
+  const textPathRefresh = isTextFeature ? textPathRefreshState(project, selectedFeature) : null
+  const textPathRefreshReason = textPathRefresh?.canRefresh === false ? textPathRefresh.reason : null
+  // A run with a vanished source still shows Refresh, disabled with the reason
+  // (decision 11: refuse with a reason, never silently do nothing).
+  const showTextPathRefresh = textPathRefresh?.canRefresh === true
+    || textPathRefreshReason === 'missing-source'
+    || textPathRefreshReason === 'empty-source'
 
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
   // don't count as base solids); imported STL models are locked as Model.
@@ -1605,47 +1617,77 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {textFeature ? (
             <>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.text")}</span>
-                <DraftTextInput
-                  key={`text-feature-text-${selectedFeature.id}-${textFeature.text}`}
-                  value={textFeature.text}
-                  onCommit={(next) =>
+              <p className="properties-linked-face-note" data-testid="text-summary">
+                {t('featureTree.properties.text.summary', {
+                  text: textFeature.text,
+                  size: formatLength(textFeature.size, units),
+                })}
+              </p>
+              <div className="properties-actions" style={{ marginTop: '12px' }}>
+                <button
+                  className="feat-btn"
+                  type="button"
+                  disabled={selectedFeature.locked}
+                  onClick={() => setEditingTextId(selectedFeature.id)}
+                >
+                  {t('featureTree.properties.text.edit')}
+                </button>
+                {showTextPathRefresh ? (
+                  <button
+                    className="feat-btn"
+                    type="button"
+                    disabled={textPathRefresh?.canRefresh !== true}
+                    title={textPathRefresh?.canRefresh !== true
+                      ? t('featureTree.properties.text.path.refreshUnavailable')
+                      : undefined}
+                    onClick={() => {
+                      if (!textPathRefresh || !textPathRefresh.canRefresh) return
+                      // Re-read the source through the same guide-pick path the
+                      // canvas uses, then commit: the baked path stays baked,
+                      // and the whole refresh is one undo step.
+                      const store = useProjectStore.getState()
+                      store.startTextLayout('path')
+                      if (!useProjectStore.getState().pendingTextLayout) return
+                      useProjectStore.getState().setTextLayoutGuide(textPathRefresh.sourceFeatureId)
+                      useProjectStore.getState().completeTextLayout()
+                    }}
+                  >
+                    {t('featureTree.properties.text.path.refresh')}
+                  </button>
+                ) : null}
+              </div>
+              {textPathRefreshReason === 'missing-source' || textPathRefreshReason === 'empty-source' ? (
+                <p className="properties-linked-face-note" data-testid="text-path-source-missing">
+                  {t('featureTree.properties.text.path.refreshUnavailable')}
+                </p>
+              ) : null}
+              {editingTextId === selectedFeature.id ? (
+                <TextToolDialog
+                  mode="edit"
+                  initial={{
+                    text: textFeature.text,
+                    style: textFeature.style,
+                    fontId: textFeature.fontId,
+                    size: textFeature.size,
+                    operation: selectedFeature.operation,
+                  }}
+                  onClose={() => setEditingTextId(null)}
+                  onConfirm={(config) => {
+                    // One write, one undo step — the same Properties path a
+                    // rename already takes (issue #1112).
                     updateFeature(selectedFeature.id, {
                       text: {
-                        ...textFeature,
-                        text: next.replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
+                        text: config.text,
+                        style: config.style,
+                        fontId: config.fontId,
+                        size: config.size,
                       },
-                    })}
+                      operation: config.operation,
+                    })
+                    setEditingTextId(null)
+                  }}
                 />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.style")}</span>
-                <Select
-                  value={textFeature.style}
-                  options={[
-                    { value: 'skeleton', label: t('featureTree.properties.text.skeleton') },
-                    { value: 'outline', label: t('featureTree.properties.text.outline') },
-                  ]}
-                  onChange={(style) => updateFeature(selectedFeature.id, {
-                    text: {
-                      ...textFeature,
-                      style,
-                      fontId: defaultFontIdForStyle(style),
-                    },
-                  })}
-                />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.font")}</span>
-                <Select
-                  value={textFeature.fontId}
-                  options={textFontOptions.map((font) => ({ value: font.id, label: font.label }))}
-                  onChange={(fontId) => updateFeature(selectedFeature.id, {
-                    text: { ...textFeature, fontId },
-                  })}
-                />
-              </label>
+              ) : null}
             </>
           ) : null}
           {isCannedShape ? (

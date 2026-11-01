@@ -149,6 +149,12 @@ export type PendingAddTool =
     }
   | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
+  /**
+   * A canned shape's parameters are being edited in the canvas side panel, the
+   * same panel creation uses. The row exists already; Apply is one
+   * `updateFeature` write. Transient, never persisted.
+   */
+  | { shape: 'canned-edit'; featureId: string; session: number }
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
@@ -614,6 +620,8 @@ export interface ProjectStore {
   startAddGearPlacement: () => void
   startAddRoundRectPlacement: () => void
   startAddChamferRectPlacement: () => void
+  /** Reopen a canned shape's parameters in the canvas creation side panel. */
+  beginCannedShapeEdit: (featureId: string) => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -686,17 +694,18 @@ export interface ProjectStore {
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
   addGearFeature: (name: string, center: Point, outsideRadius: number, params: GearCreationParams, depth: number) => string[]
   /**
-   * Canned Thread/Flutes on the Around face (issue #1016 C1): a named folder of
-   * ordinary open `line` features plus one Engrave operation, in one undo step.
-   * Returns the created ids, or a typed refusal that changed nothing.
+   * Canned Thread/Flutes on the Around face (issue #1112 F): one canned feature
+   * drawing all its open `line` outlines, in one undo step. Creation adds no
+   * operation and takes no tool. Returns the feature id, or a typed refusal
+   * that changed nothing.
    */
-  addRotaryPattern: (input: RotaryPatternInput, libraryTools?: ToolLibraryEntry[]) => RotaryPatternResult
+  addRotaryPattern: (input: RotaryPatternInput) => RotaryPatternResult
   /**
-   * Ordinary generated solids on the Around face (issue #1016 C2-B): a polygon
-   * prism from a round bar, or the round finished target of a square-to-round
-   * job from a real square blank. One undo step creates a folder, an ordinary
-   * `model` feature with its mesh asset, and one rotary rough plus one rotary
-   * finish operation targeting it. A typed refusal changes nothing.
+   * Canned Turn and Polygon models on the Around face (issue #1112 G): one
+   * generated `model` feature with its mesh asset, in one undo step. Creation
+   * adds no folder and no operation, and takes no tool; rotary operations are
+   * added to the model the ordinary way. Changing the parameters later rebuilds
+   * the mesh. A typed refusal changes nothing.
    */
   addRotarySolid: (input: RotarySolidInput) => RotarySolidResult
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void

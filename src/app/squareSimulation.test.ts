@@ -18,8 +18,8 @@
  * The app wiring of a real square-blank Around simulation (issue #1016 C2).
  *
  * A square blank is simulated exactly like the round bar: the same radial
- * heightfield, the same cutting kernel, the same playback and the same
- * synchronous app path. Its only square-specific input is the grid
+ * heightfield, the same cutting kernel, the same playback and the same deferred
+ * app build path. Its only square-specific input is the grid
  * initialization descriptor, which must reach every grid the app builds — the
  * empty result, the selected cut, the visible replay and the playback starting
  * stock — through one option builder.
@@ -27,10 +27,12 @@
  * The path is the accepted production output — `computeOperationToolpath` on an
  * ordinary rotary rough with an imported prism model, on a blank held by the
  * real default chuck — replayed through the shipped `buildSimulationSetupInput`
- * and `computeSimulationResult` / `useSimulationModel` entry points. The hook is
- * rendered to static markup, which runs the component body but never an effect:
- * a square result and its playback base grid appearing there prove the
- * synchronous path, with no worker or deferred delivery to stand in for it.
+ * and `computeSimulationResult` / `computeSimulationResultAsync` /
+ * `useSimulationModel` entry points. The hook is rendered to static markup,
+ * which runs the component body but never an effect: the tab-switch render must
+ * show its loading state rather than replaying the square cut (issue #1112
+ * review P1), while the deferred build and the lazy playback base grid still
+ * carry the square initialization descriptor.
  *
  * Mutations these assertions were checked against, each applied on its own and
  * reverted:
@@ -44,8 +46,8 @@
  *   empty result reports the true material baseline" fails;
  * - `buildSimulationSetupInput` dropping the descriptor → "the input carries
  *   the square initialization descriptor" fails;
- * - delivering the square result from an effect/worker again → the static-render
- *   assertion "the square result is synchronous" fails;
+ * - building the square result in the tab-switch render again → "the square
+ *   replay is not built in the tab-switch render" fails;
  * - a square mismatched-axis Around setup returning null (the round behaviour)
  *   instead of throwing → "a square mismatch refuses instead of drawing a flat
  *   sheet" fails.
@@ -61,7 +63,9 @@ import { PlaybackController } from '../engine/simulation/playback'
 import type { AroundFrame } from '../engine/aroundFrame'
 import type { SimulationGrid } from '../engine/simulation'
 import { buildSimulationSetupInput } from './simulationSetup'
-import { computeSimulationResult, useSimulationModel } from './useSimulationModel'
+import { computeSimulationResult } from './useSimulationModel'
+import { computeSimulationResultAsync } from './simulationCompute'
+import { useSimulationModel } from './useSimulationModel'
 import {
   DETAIL,
   LENGTH,
@@ -107,8 +111,8 @@ type HookResult = ReturnType<typeof useSimulationModel>
 
 /**
  * Render the hook as the app does. `renderToStaticMarkup` runs the component
- * body but no effects, so anything a square blank needs must be computed
- * synchronously — exactly the path the viewport consumes.
+ * body but no effects, which is exactly the render that opens the simulation
+ * tab: it must be the loading state, with the deferred build awaited separately.
  */
 function renderModel(args: HookArgs): HookResult {
   let captured: HookResult | null = null
@@ -189,7 +193,7 @@ function testSetupInputDescriptor(): void {
 // 2. Every app grid entry point gets the same square initialization
 // ---------------------------------------------------------------------------
 
-function testEveryEntryPoint(): void {
+async function testEveryEntryPoint(): Promise<void> {
   console.log('Testing every app grid entry point builds the same square grid...')
   const { project, operation, setup } = squareRotaryProject('x')
   const toolpath = generated(project, operation)
@@ -223,8 +227,9 @@ function testEveryEntryPoint(): void {
   near(visible.stats.minTopZ, selected.stats.minTopZ, 'and on the lowest material', 1e-5)
   assert.equal(visible.stats.processedMoveCount, selected.stats.processedMoveCount, 'and process the same moves')
 
-  // prior-operation playback base grid, through the real hook, rendered without
-  // effects: the square result and the lazy base grid are both synchronous.
+  // The hook's tab-switch render commits a loading state and builds the square
+  // result afterwards (issue #1112 review P1). Static rendering runs no effect,
+  // so this is exactly the render that must not replay the selected operation.
   const hook = renderModel({
     project,
     centerTab: 'simulation',
@@ -234,9 +239,13 @@ function testEveryEntryPoint(): void {
     selectedToolpath: toolpath,
     requestToolpath: () => Promise.resolve(null),
   })
-  assert.equal(hook.simulationInputPending, false, 'the square result is synchronous — no worker or effect delivery')
-  assert(hook.simulationResult, 'the hook has a square result on the first render')
-  assert(hook.simulationResult!.grid.initialTopZ, 'the hook result is seeded square')
+  assert.equal(hook.simulationInputPending, true, 'the panel is loading before the deferred build lands')
+  assert.equal(hook.simulationResult, null, 'the square replay is not built in the tab-switch render')
+  // The deferred entry point the hook awaits still receives the square
+  // initialization descriptor and produces the same seeded grid.
+  const deferred = await computeSimulationResultAsync(resultArgs(project, operation, input, 'selected'))
+  assert(deferred, 'the deferred square build completes')
+  assert(deferred!.grid.initialTopZ, 'the deferred result is seeded square')
   const playback = hook.simulationPlaybackInput
   assert(playback, 'playback is available for a first square operation')
   const base = playback!.getBaseGrid()
@@ -412,9 +421,9 @@ function testAxesUnitsOffOrigin(): void {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   testSetupInputDescriptor()
-  testEveryEntryPoint()
+  await testEveryEntryPoint()
   testActualGeneratedBand()
   testPlaybackParity()
   testAxesUnitsOffOrigin()
@@ -422,7 +431,7 @@ function main(): void {
 }
 
 try {
-  main()
+  await main()
 } catch (error: unknown) {
   console.error(error instanceof Error ? error.message : error)
   throw error

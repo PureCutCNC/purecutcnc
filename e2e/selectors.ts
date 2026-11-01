@@ -955,36 +955,26 @@ export const rotary = {
   direction: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__direction'),
   directionTrigger: (page: Page) => rotary.direction(page).locator('.ui-select__trigger'),
   directionOption: (page: Page, name: string) => rotary.direction(page).getByRole('option', { name }),
-  /** The Flutes tool picker, alone in its wrapper so direction never matches it. */
-  tool: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__tool'),
-  toolTrigger: (page: Page) => rotary.tool(page).locator('.ui-select__trigger'),
-  toolOption: (page: Page, name: string) => rotary.tool(page).getByRole('option', { name }),
   createButton: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__create'),
   cancelButton: (page: Page) => rotary.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotary.dialog(page).locator('.rotary-dialog__note'),
 }
 
-// Polygon / hex and Square to round on the Around face (#1016 C2-U2). The two
-// entries carry stable `data-command` hooks and only one is offered at a time
-// (Polygon on a round bar, Square to round on a square blank). The dialog reuses
-// the C1 rotary frame and field hooks but keeps its own `rotary-solid-dialog`
-// root, so the two dialogs' selectors can never be confused if both are mounted.
+// Turn and Polygon canned models on the Around face (#1112 G). Both entries
+// work on a round bar or a square blank and carry stable `data-command` hooks.
+// They share the C1 rotary dialog frame, but keep their own
+// `rotary-solid-dialog` root, so the two dialogs' selectors can never be
+// confused if both are mounted.
 export const rotarySolid = {
+  turnButton: (page: Page) => page.locator('[data-command="rotary-turn"]'),
   polygonButton: (page: Page) => page.locator('[data-command="rotary-polygon"]'),
-  squareToRoundButton: (page: Page) => page.locator('[data-command="rotary-square-to-round"]'),
   dialog: (page: Page) => page.locator('.rotary-solid-dialog'),
   field: (page: Page, name: 'start' | 'length' | 'sides' | 'across-flats' | 'rotation' | 'diameter') =>
     page.locator(`#rotary-solid-${name}`),
-  /** The tool picker, alone in its wrapper so nothing else matches it. */
-  tool: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__tool'),
-  toolTrigger: (page: Page) => rotarySolid.tool(page).locator('.ui-select__trigger'),
-  toolOption: (page: Page, name: string) => rotarySolid.tool(page).getByRole('option', { name }),
   createButton: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__create'),
   cancelButton: (page: Page) => rotarySolid.dialog(page).getByRole('button', { name: 'Cancel' }),
   error: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__error'),
   note: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__note'),
-  /** The live "the chuck keeps this clear" note, separate from the static note. */
-  chuckNote: (page: Page) => rotarySolid.dialog(page).locator('.rotary-dialog__chuck-note'),
 }
 

@@ -62,7 +62,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { DEFAULT_SETUP_ID, defaultTool, getStockBounds, newProject, rectProfile, roundStock } from '../types/project'
+import { DEFAULT_SETUP_ID, defaultTool, newProject, rectProfile, roundStock } from '../types/project'
 import { isSquareStock, squareStock } from '../types/barStock'
 import type { Project, SketchFeature, Stock, Tool } from '../types/project'
 import { defaultGearCreationParams } from '../sketch/gearProfile'
@@ -218,9 +218,9 @@ function assertUntouched(before: Snapshot, label: string): void {
   assert.equal(state.history.past.length, before.past, `${label}: no history entry`)
 }
 
-// ── 1. A square blank realizes the generated-model workflow ────
+// ── 1. A square blank creates a canned Turn model ─────────────
 
-log('Testing no-machine square realization and one undo, both axes and units...')
+log('Testing the square Turn model and one undo, both axes and units...')
 
 for (const spec of SPECS) {
   const label = `${spec.axis}/${spec.units}`
@@ -232,44 +232,38 @@ for (const spec of SPECS) {
   assert.equal(activeSetup(store().project).id, provisionalSetupId('around'), `${label}: on the provisional setup`)
 
   const stockBefore = structuredClone(store().project.stock)
-  const bounds = getStockBounds(store().project.stock)
-  const alongMin = spec.axis === 'x' ? bounds.minX : bounds.minY
-  const alongStart = alongMin + spec.length * 0.1
-  const alongEnd = alongStart + spec.length * 0.3
+  const start = spec.length * 0.1
+  const length = spec.length * 0.3
   const pastBefore = store().history.past.length
 
+  // The dialog's numbers are measured from the chuck end; creation is one
+  // canned model and no operation (issue #1112 G).
   const result = store().addRotarySolid({
-    kind: 'square-to-round',
+    kind: 'turn',
     diameter: spec.side * 0.6,
-    alongStart,
-    alongEnd,
-    toolRef: 'ball',
+    start,
+    length,
   })
-  assert.ok(result.ok, `${label}: the generated model is created (${result.ok ? '' : result.reason})`)
+  assert.ok(result.ok, `${label}: the canned Turn model is created (${result.ok ? '' : result.reason})`)
   if (!result.ok) throw new Error('unreachable')
 
   const after = store().project
   assert.deepEqual(after.stock, stockBefore, `${label}: the square blank is byte-identical`)
-  const realised = activeSetup(after)
-  assert.notEqual(realised.id, provisionalSetupId('around'), `${label}: the provisional setup became real`)
-  assert.equal(realised.kind, 'around', `${label}: and is an Around setup`)
-  assert.equal(realised.orientation.axis, spec.axis, `${label}: on the blank's own axis`)
-  assert.equal(after.operations.length, 2, `${label}: rough and finish exist`)
-  for (const operation of after.operations) {
-    assert.equal(operation.setupId, realised.id, `${label}: both operations join the realised setup`)
-  }
+  assert.equal(after.features.length, 1, `${label}: exactly one model row`)
+  assert.equal(after.operations.length, 0, `${label}: creation adds no operation`)
+  assert.equal(after.featureFolders.length, 0, `${label}: and no folder`)
+  assert.equal(after.featureDefinitions[after.features[0].definitionId].canned?.kind, 'turn', `${label}: the parameters are stored`)
   assert.equal(store().history.past.length, pastBefore + 1, `${label}: exactly one history step`)
 
   store().undo()
   const undone = store().project
-  assert.equal(undone.setups.some((setup) => setup.kind === 'around'), false, `${label}: one undo removes the realised setup`)
-  assert.equal(undone.operations.length, 0, `${label}: and both operations`)
-  assert.equal(undone.features.length, 0, `${label}: and the model`)
+  assert.equal(undone.features.length, 0, `${label}: one undo removes the model`)
+  assert.equal(undone.operations.length, 0, `${label}: and no operation exists`)
   assert.deepEqual(undone.stock, stockBefore, `${label}: the blank never changed`)
   assert.equal(activeFace(undone), 'around', `${label}: the workspace stays on Around`)
 
   store().redo()
-  assert.equal(store().project.operations.length, 2, `${label}: redo restores the generated pair`)
+  assert.equal(store().project.features.length, 1, `${label}: redo restores the model`)
 }
 
 // ── 2. Every other Around authoring path is refused ────────────
@@ -625,12 +619,20 @@ for (const spec of [SPECS[0], SPECS[3]]) {
 
   pastBefore = store().history.past.length
   const groupedIds = store().addGearFeature('Gear', { x: 30, y: 20 }, 8, gearParams(2), 2)
-  assert.equal(groupedIds.length, 2, `${label}: a round-bar gear with a bore is created as a group`)
+  // A gear is one canned feature with its bore as a hole (issue #1112 E), not a
+  // gear + bore group.
+  assert.equal(groupedIds.length, 1, `${label}: a round-bar gear with a bore is one canned feature`)
   const grouped = store().project.features.find((candidate) => candidate.id === groupedIds[0])
-  assert.ok(grouped && grouped.folderId !== null, `${label}: the grouped gear lands in a folder`)
-  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the grouped gear is one undo step`)
+  assert.ok(grouped, `${label}: the gear row exists`)
+  assert.equal(grouped.folderId, null, `${label}: the gear is not put in a folder`)
+  assert.equal(
+    store().project.featureDefinitions[grouped.definitionId]?.canned?.kind,
+    'gear',
+    `${label}: the gear keeps its parameters`,
+  )
+  assert.equal(store().history.past.length, pastBefore + 1, `${label}: the gear with a bore is one undo step`)
   store().undo()
-  assert.equal(store().project.features.length, 2, `${label}: undo removes the grouped gear`)
+  assert.equal(store().project.features.length, 2, `${label}: undo removes the gear`)
 }
 
 // Square Top: ordinary Top authoring stays available on the square blank.
@@ -655,7 +657,7 @@ assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo
 
 pastBefore = store().history.past.length
 const topGearIds = store().addGearFeature('Gear', { x: 60, y: 20 }, 8, gearParams(2), 2)
-assert.equal(topGearIds.length, 2, 'a Top gear with a bore succeeds on the square blank')
+assert.equal(topGearIds.length, 1, 'a Top gear with a bore succeeds on the square blank as one canned feature')
 assert.equal(store().history.past.length, pastBefore + 1, 'with exactly one undo step')
 
 // ── 6. The remaining copy creation boundaries (U1G) ────────────

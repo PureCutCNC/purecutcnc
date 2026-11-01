@@ -108,6 +108,8 @@ const CREATE_TEST_CASES: Array<{
   kind: string
   setup: () => void
   expectKind: string
+  /** A canned shape stores local geometry, so its placement is the transform. */
+  expectIdentityTransform?: boolean
   extra?: (f: SketchFeature & { definitionId?: string; transform?: Matrix2D }, def: FeatureDefinition) => void
 }> = [
   {
@@ -124,9 +126,17 @@ const CREATE_TEST_CASES: Array<{
     },
   },
   {
-    kind: 'ellipse',
+    kind: 'ellipse (canned)',
     setup: () => { useProjectStore.getState().addEllipseFeature('Ellipse', 50, 50, 30, 20, 5) },
-    expectKind: 'ellipse',
+    // A canned ellipse is a generated outline; its parameters are the shape.
+    expectKind: 'composite',
+    expectIdentityTransform: false,
+    extra: (_f, def) => {
+      assert(def.canned?.kind === 'ellipse', 'ellipse definition should stay canned')
+      assert(def.canned?.params.rx === 30 && def.canned?.params.ry === 20, 'radii are the parameters')
+      assert(def.profile.segments.length === 0 || def.profile.segments.every((seg) => seg.type === 'line'),
+        'the stored profile is the placement frame, not the Bézier outline')
+    },
   },
   {
     kind: 'polygon',
@@ -259,10 +269,11 @@ for (const tc of CREATE_TEST_CASES) {
     assert(def !== undefined, `[${tc.kind}] definition should exist in featureDefinitions`)
     assert(def.kind === tc.expectKind, `[${tc.kind}] definition kind should be ${tc.expectKind}, got ${def.kind}`)
 
-    // Identity transform should be present
+    // Identity transform should be present unless the canned shape places its
+    // local geometry through the instance transform.
     const t = f.transform
     assert(t !== undefined, `[${tc.kind}] feature should have transform`)
-    if (t) {
+    if (t && tc.expectIdentityTransform !== false) {
       assert(t.a === 1 && t.b === 0 && t.c === 0 && t.d === 1 && t.e === 0 && t.f === 0,
         `[${tc.kind}] transform should be identity, got ${JSON.stringify(t)}`)
     }

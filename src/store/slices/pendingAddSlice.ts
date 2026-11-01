@@ -25,7 +25,7 @@ import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
 import { activeFace, aroundSketchAuthoringRefused, faceArtworkTransform, newFeatureSpan } from '../helpers/activeFace'
-import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
+import { resolvedProjectFeatures, resolveFeatureInstance } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
 import {
@@ -58,6 +58,7 @@ export type PendingAddSlice = Pick<
   | 'startAddGearPlacement'
   | 'startAddRoundRectPlacement'
   | 'startAddChamferRectPlacement'
+  | 'beginCannedShapeEdit'
   | 'cancelPendingAdd'
   | 'setPendingAddAnchor'
   | 'placePendingAddAt'
@@ -126,6 +127,8 @@ function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
       return { shape: 'composite', start: null, lastPoint: null, segments: [], currentMode: current.currentMode, pendingArcEnd: null, closed: false, session }
     case 'text':
       return { shape: 'text', config: current.config, session }
+    case 'canned-edit':
+      return { shape: 'canned-edit', featureId: current.featureId, session }
     case 'origin':
       return { shape: 'origin', session }
   }
@@ -306,6 +309,34 @@ export function createPendingAddSlice(
         sketchEditSession: null,
         selection: resetFeaturePlacementSelection(s.selection),
       })),
+
+    /**
+     * Reopen an existing canned shape in the canvas creation side panel. The
+     * panel reads the stored parameters itself, so this only arms the pending
+     * session and selects the row; Apply is a single `updateFeature` write.
+     */
+    beginCannedShapeEdit: (featureId) =>
+      set((s) => {
+        const feature = resolveFeatureInstance(s.project, featureId)
+        if (!feature?.canned) return {}
+        return {
+          pendingAdd: { shape: 'canned-edit', featureId, session: nextPlacementSession() },
+          pendingMove: null,
+          pendingTransform: null,
+          pendingOffset: null,
+          pendingShapeAction: null,
+          pendingFeatureDistribution: null,
+          pendingTextLayout: null,
+          sketchEditSession: null,
+          selection: {
+            ...resetFeaturePlacementSelection(s.selection),
+            selectedFeatureId: featureId,
+            selectedFeatureIds: [featureId],
+            selectedNode: { type: 'feature', featureId },
+            mode: 'feature',
+          },
+        }
+      }),
 
     cancelPendingAdd: () => set({ pendingAdd: null }),
 
