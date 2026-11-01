@@ -683,6 +683,16 @@ async function seedSquareBlankProject(page: Page): Promise<Project> {
     // band showed as un-cut cells. 0.4 is the value whose coverage the tests
     // below pin (issue #1016 C2 correction D2).
     diameter: 6, defaultStepover: 0.4, defaultStepdown: 2,
+  }, {
+    // Rotary operations prefer a ball endmill. With only the flat above, the
+    // CAM Add menu imports the library's 4 mm ball at a 0.067 finishing
+    // stepover, ~30x the passes, and the spec spends its time redrawing them
+    // (issue #1139). This ball is the cutter the Add menu picks from the
+    // project instead, importing nothing. A ball leaves scallops a flat does
+    // not: to keep them under the 0.05 mm the coverage check below allows, a
+    // 6 mm ball needs a stepover under ~1.1 mm, so 0.15 x 6 = 0.9 mm.
+    ...defaultTool('mm', 2), id: 't2', name: 'Ball 6', type: 'ball_endmill',
+    diameter: 6, defaultStepover: 0.15, defaultStepdown: 2,
   }]
   base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', blank, 'mm') }]
   base.setups = [
@@ -968,6 +978,11 @@ test('square to round generates inside the band and removes material', async ({ 
   expect((project.stock as { shape?: string }).shape).toBe('square')
   const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')!
   const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')!
+  // The Add menu picks the project's own ball for both rotary operations and
+  // imports nothing (issue #1139).
+  expect(rough.toolRef).toBe('t2')
+  expect(finish.toolRef).toBe('t2')
+  expect(project.tools.map((tool) => tool.id)).toEqual(['t1', 't2'])
   const band = await pathSignature(page, finish.id)
   expect(band.cutMoveCount).toBeGreaterThan(0)
   expect(band.hasAngle).toBe(true)
