@@ -255,6 +255,7 @@ export const featureTreeEn = {
   'featureTree.properties.canned.edit': 'Edit {shape}…',
   'featureTree.properties.canned.editUnavailable': 'This shape’s editor is not available yet',
   'featureTree.properties.canned.expand': 'Expand to features',
+  'featureTree.properties.canned.label': 'Canned feature',
   'featureTree.properties.canned.note': 'The sketch is generated from this shape’s parameters. Expand to features to edit it, cut, join, trim or offset it.',
   'featureTree.properties.canned.noteBadge': 'Generated',
   'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',

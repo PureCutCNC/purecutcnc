@@ -1681,7 +1681,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {textFeature ? (
             <>
-              <p className="properties-linked-face-note" data-testid="text-summary">
+              <p className="properties-note" data-testid="text-summary">
                 {t('featureTree.properties.text.summary', {
                   text: textFeature.text,
                   size: formatLength(textFeature.size, units),
@@ -1721,7 +1721,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 ) : null}
               </div>
               {textPathRefreshReason === 'missing-source' || textPathRefreshReason === 'empty-source' ? (
-                <p className="properties-linked-face-note" data-testid="text-path-source-missing">
+                <p className="properties-note" data-testid="text-path-source-missing">
                   {t('featureTree.properties.text.path.refreshUnavailable')}
                 </p>
               ) : null}
@@ -1756,6 +1756,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {isCannedShape ? (
             <>
+              {/* The shape is generated from parameters rather than drawn, so
+                  the summary says what it is with a label instead of the
+                  drawing tools the reader would otherwise look for. One label
+                  per canned shape, every kind (issue #1112 rt7-h). */}
+              <span className="properties-canned-label" data-testid="canned-feature-label">
+                {t('featureTree.properties.canned.label')}
+              </span>
               {cannedSummary ? (
                 <CannedShapeSummaryLine
                   summary={cannedSummary}
@@ -1769,7 +1776,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   units={units}
                 />
               ) : (
-                <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
+                <p className="properties-note" data-testid="canned-shape-unknown">
                   {t('featureTree.properties.canned.unknown')}
                 </p>
               )}
@@ -1831,7 +1838,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </div>
           ) : null}
           {linkedOnOtherFace > 0 ? (
-            <p className="properties-linked-face-note" data-testid="linked-other-face-note">
+            <p className="properties-note" data-testid="linked-other-face-note">
               {t(
                 `featureTree.face.linkedOtherFace.${linkedFaceKey}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
                 { count: linkedOnOtherFace },

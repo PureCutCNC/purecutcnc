@@ -201,6 +201,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.edit': 'Editar {shape}…',
   'featureTree.properties.canned.editUnavailable': 'El editor de esta forma aún no está disponible',
   'featureTree.properties.canned.expand': 'Expandir a elementos',
+  'featureTree.properties.canned.label': 'Elemento predefinido',
   'featureTree.properties.canned.note': 'El boceto se genera a partir de los parámetros de esta forma. Expándela a elementos para editarla, cortarla, unirla, recortarla o desplazarla.',
   'featureTree.properties.canned.noteBadge': 'Generado',
   'featureTree.properties.canned.modelNote': 'Este modelo se genera a partir de sus parámetros. Cambiarlos reconstruye su malla; no se puede expandir a elementos planos.',
