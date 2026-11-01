@@ -86,12 +86,26 @@ function testThinFinRaisesItsCells(): void {
   const along = new Float32Array([0.46, 0.48, 0.48])
   const across = new Float64Array([-0.25, -0.25, 0.25])
   const up = new Float64Array([10, 10, 10])
-  const rotary = buildRotaryHeightMap({
-    axis: 'x', centre, pivot, cos: 1, sin: 0,
-    geometry: { section: interleave(across, up), along },
-  }, { minX: 0, maxX: 1, minY: 0, maxY: 1 }, 0.1)
+  const geometry = { section: interleave(across, up), along }
+  const frame = { axis: 'x' as const, centre, pivot, cos: 1, sin: 0, geometry }
+  const bbox = { minX: 0, maxX: 1, minY: 0, maxY: 1 }
+  const rotary = buildRotaryHeightMap(frame, bbox, 0.1)
   assert.deepEqual(rotary, map, 'the fused rotary kernel matches the flat raster for a thin fin')
-  console.log('thin fin: every overlapped cell lifted, both kernels agree')
+  // Reuse: a call at another cell size and window (which rebuilds the cached
+  // axial ranges the fin's no-centre path reads) must be right on its own and
+  // must leave nothing behind, so repeating the first call reproduces its map.
+  // The coarse call is checked against the flat raster for this same triangle,
+  // because the cached ranges are per cell size: reusing one across cell sizes
+  // reads the wrong cells (and rejects the fin's no-centre path outright).
+  const coarseOptions = { window: { minRow: 0, maxRow: 2 } }
+  const coarse = buildRotaryHeightMap(frame, bbox, 0.2, coarseOptions)
+  assert.deepEqual(coarse, buildHeightMap(
+    new Float32Array([0.46, 0.25, 10, 0.48, 0.25, 10, 0.48, 0.75, 10]),
+    new Uint32Array([0, 1, 2]), bbox, 0.2, coarseOptions,
+  ), 'a call at another cell size still rasterises this triangle exactly')
+  assert.deepEqual(buildRotaryHeightMap(frame, bbox, 0.1), map,
+    'a repeated call after a different cell size and window reproduces the thin fin map')
+  console.log('thin fin: every overlapped cell lifted, both kernels agree, reuse is clean')
 }
 
 /** `(across, up)` pairs into the kernel's `a0, u0, a1, u1, ...` layout. */
@@ -134,7 +148,20 @@ function testSliverUsesTheClippedMax(): void {
   // contribute its half-cell rise here.
   assert.equal(map.cellRise, 0,
     'a clipped no-centre triangle adds no cellRise; its value is already exact')
-  console.log('sliver: clipped maximum, no global-max over-raise, cellRise kept')
+  // The fused rotary kernel has its own clip pass, so pin the same clipped
+  // maxima there. A flat frame (`cos` 1, `sin` 0, centre and pivot 0) turns the
+  // mesh onto itself, so its map is the general kernel's.
+  const rotary = buildRotaryHeightMap({
+    axis: 'x', centre: 0, pivot: 0, cos: 1, sin: 0,
+    geometry: rotaryGeometryFromFlat(positions, index),
+  }, { minX: 0, maxX: 4, minY: 0, maxY: 1 }, 1, { trackCellRise: true })
+  assert.deepEqual(rotary, map, 'the fused rotary kernel clips each cell exactly like the flat raster')
+  for (let col = 0; col < 4; col++) {
+    assert.equal(rotary.data[col], expected[col],
+      `rotary cell ${col} is the clipped maximum ${expected[col]}, not the global maximum 4 `
+      + `(got ${rotary.data[col]})`)
+  }
+  console.log('sliver: clipped maximum, no global-max over-raise, cellRise kept, both kernels agree')
 }
 
 function testPeakThreshold(): void {
