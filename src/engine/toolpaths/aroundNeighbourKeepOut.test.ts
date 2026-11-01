@@ -55,6 +55,18 @@
  *      keeps the stale endpoint, because the footprint narrowing cannot see a
  *      neighbour outside the guide's world-XY footprint.
  *
+ * Correction round 2 (rt7-a, Frank's retest of rt6-e) added the mutations 8–10:
+ *   8. Measure a body by its stored Z top again (the rt6-e
+ *      `aroundMaterialBands`) → "the Hex end face: 3.5329, expected 3.5482":
+ *      the 0.5625 across-flats radius is 0.087 in below the 0.6495 corner, so
+ *      the trim falls back to 0.0327 and the V-bit cut 0.023 in into it.
+ *   9. Keep the rt6-e supporting rule for `body` only, as it was → the
+ *      circumferential line on the Turn is deleted again with "nothing was cut",
+ *      because the Turn's surface is above the line's stored Z top.
+ *   10. Make every *overlapping* band supporting instead of the bands that span
+ *      the guide's whole along extent → the line crossing the Hex runs through
+ *      it: "no cut may run through the Hex band".
+ *
  * Run with: npx tsx src/engine/toolpaths/aroundNeighbourKeepOut.test.ts
  */
 
@@ -124,7 +136,15 @@ const CIRCUMFERENCE = Math.PI * BAR_DIAMETER
 
 type SolidInput =
   | { kind: 'turn'; start: number; length: number; diameter: number; profile?: TurnCannedProfile }
-  | { kind: 'polygon'; start: number; length: number; sides: number; acrossFlats: number }
+  | {
+    kind: 'polygon'
+    start: number
+    length: number
+    sides: number
+    acrossFlats: number
+    /** Rotation about the bar's axis in degrees; 0 puts a flat up. */
+    rotationDeg?: number
+  }
 
 interface CaseSpec {
   tools?: Tool[]
@@ -149,12 +169,20 @@ function inchTool(id: string, type: Tool['type'], diameter: number, vBitAngle: n
   }
 }
 
-function setUpProject(): Project {
+interface BarSpec {
+  diameter: number
+  length: number
+  origin: { x: number; y: number }
+}
+
+const TEST_BAR: BarSpec = { diameter: BAR_DIAMETER, length: BAR_LENGTH, origin: BAR_ORIGIN }
+
+function setUpProject(bar: BarSpec = TEST_BAR, tools?: Tool[]): Project {
   const project = newProject('around neighbours', 'inch')
   project.meta.projectType = 'rotary'
   project.meta.maxTravelZ = 3
-  project.stock = roundStock(BAR_DIAMETER, BAR_LENGTH, 'x', BAR_ORIGIN)
-  project.tools = [
+  project.stock = roundStock(bar.diameter, bar.length, 'x', bar.origin)
+  project.tools = tools ?? [
     inchTool('vbit', 'v_bit', VBIT_DIAMETER, VBIT_INCLUDED_ANGLE),
     inchTool('flat', 'flat_endmill', VBIT_DIAMETER),
   ]
@@ -249,6 +277,90 @@ function buildCase(spec: CaseSpec): { project: Project; operation: Operation } {
   return { project, operation }
 }
 
+// ---------------------------------------------------------------------------
+// Frank's bolt, rebuilt inline (scripts/issue-1112-rt7-a-bolt.camj, which is a
+// probe input only and never a fixture): an inch Ø1.5 bar, a 1.125 in Hex then
+// a Ø0.75 Turn, a Thread on each of them, and two circumferential lines drawn
+// on the Turn below its surface.
+// ---------------------------------------------------------------------------
+
+const BOLT_BAR: BarSpec = { diameter: 1.5, length: 8, origin: { x: 0, y: 0 } }
+const BOLT_HEX = { start: 1, length: 0.5, acrossFlats: 1.125 }
+const BOLT_TURN = { start: 1.5, length: 6, diameter: 0.75 }
+const BOLT_THREADS = [1.5, 4.5]
+const BOLT_THREAD_LENGTH = 2
+/** The two circumferential lines: along positions, and the full wrap they draw. */
+const BOLT_LINES = [6.5, 3.5]
+const BOLT_LINE_TOP_Z = 1
+const BOLT_VBIT_DIAMETER = 0.25
+const BOLT_VBIT_INCLUDED_ANGLE = 30
+
+interface BoltCase {
+  project: Project
+  operation: Operation
+  /** The two circumferential lines, in BOLT_LINES order. */
+  lineIds: string[]
+}
+
+/** The same feature set and operations as Frank's bolt file, built by actions. */
+function buildBoltCase(): BoltCase {
+  store().loadProject(setUpProject(BOLT_BAR, [
+    inchTool('bolt-vbit', 'v_bit', BOLT_VBIT_DIAMETER, BOLT_VBIT_INCLUDED_ANGLE),
+  ]))
+  assert.equal(switchWorkspaceFace('around'), true, 'the Around face is available on a round bar')
+
+  const solids: SolidInput[] = [
+    { kind: 'polygon', start: BOLT_HEX.start, length: BOLT_HEX.length, sides: 6, acrossFlats: BOLT_HEX.acrossFlats },
+    { kind: 'turn', start: BOLT_TURN.start, length: BOLT_TURN.length, diameter: BOLT_TURN.diameter },
+    // The second Hex sits inside the Turn's band, as the bolt's copy does.
+    { kind: 'polygon', start: 4, length: BOLT_HEX.length, sides: 6, acrossFlats: BOLT_HEX.acrossFlats },
+  ]
+  for (const solid of solids) {
+    const planned = planRotarySolid(store().project, EMPTY_SELECTION, solid)
+    assert.ok(planned.ok, `the ${solid.kind} must be created (${planned.ok ? '' : planned.reason})`)
+    store().loadProject(planned.project)
+    assert.equal(switchWorkspaceFace('around'), true, 'the Around face is available after a write')
+  }
+
+  const targetIds: string[] = []
+  for (const start of BOLT_THREADS) {
+    const created = store().addRotaryPattern({
+      kind: 'thread',
+      start,
+      length: BOLT_THREAD_LENGTH,
+      pitch: THREAD_PITCH,
+      starts: 1,
+      depth: THREAD_DEPTH,
+    })
+    assert.ok(created.ok, `the Thread at ${start} must be created (${created.ok ? '' : created.reason})`)
+    targetIds.push(created.featureId)
+  }
+  const lineIds: string[] = []
+  for (const along of BOLT_LINES) {
+    const feature = lineFeature(`Polyline ${along}`, { x: along, y: -1.5 }, { x: along, y: 3 }, BOLT_LINE_TOP_Z, 0)
+    const current = store().project
+    store().loadProject({
+      ...projectWithFeatures(current, [...current.features, feature]),
+      featureTree: [...current.featureTree, { type: 'feature' as const, featureId: feature.id }],
+    })
+    assert.equal(switchWorkspaceFace('around'), true, 'the Around face is available after a write')
+    lineIds.push(feature.id)
+  }
+  targetIds.push(...lineIds)
+
+  const operationId = store().addOperation('follow_line', 'finish', { source: 'features', featureIds: targetIds })
+  assert.ok(operationId, 'the Follow line operation must be accepted')
+  store().updateOperation(operationId, {
+    toolRef: 'bolt-vbit',
+    carveDepth: THREAD_DEPTH,
+    stepdown: THREAD_DEPTH,
+  })
+  const project = store().project
+  const operation = project.operations.find((row) => row.id === operationId)
+  assert.ok(operation, 'the operation is in the project')
+  return { project, operation, lineIds }
+}
+
 /** Every along coordinate the operation moves through. */
 function alongExtent(moves: ToolpathResult['moves'], axis: 'x' | 'y' = 'x'): { min: number; max: number } {
   let min = Number.POSITIVE_INFINITY
@@ -283,9 +395,28 @@ function assertStopsShortOf(actual: number, expected: number, side: 'start' | 'e
   }
 }
 
-/** The V-bit's half-width at a height above its tip, capped at its radius. */
+/** A V-bit's half-width at a height above its tip, capped at its radius. */
+function coneHalfWidth(
+  heightAboveTip: number,
+  diameter = VBIT_DIAMETER,
+  angle = VBIT_INCLUDED_ANGLE,
+): number {
+  return Math.min(diameter / 2, Math.max(0, heightAboveTip) * Math.tan((angle * Math.PI) / 360))
+}
+
+/** The fixture's V-bit, in the two cases that use it. */
 function vBitHalfWidthAt(heightAboveTip: number): number {
-  return Math.min(VBIT_DIAMETER / 2, heightAboveTip * Math.tan((VBIT_INCLUDED_ANGLE * Math.PI) / 360))
+  return coneHalfWidth(heightAboveTip)
+}
+
+/**
+ * The radius a regular polygon's corners reach: `flats / 2 / cos(π / sides)`.
+ * A Polygon/Hex model's stored Z top is its across-flats radius, but the corners
+ * stand this much above the axis and sweep past the cutter as the bar turns
+ * (issue #1112 rt7-a correction 1).
+ */
+function cornerRadius(acrossFlats: number, sides = 6): number {
+  return acrossFlats / 2 / Math.cos(Math.PI / sides)
 }
 
 function findWarning(result: ToolpathResult, code: string): ToolpathResult['warnings'][number] {
@@ -296,7 +427,8 @@ function findWarning(result: ToolpathResult, code: string): ToolpathResult['warn
 
 // ---------------------------------------------------------------------------
 // 1. The bolt: the start is trimmed by the width of the V-bit at the Hex's
-//    surface, and the end by the same cutter against the uncut bar's shoulder.
+//    **corner** — the largest radius it presents at any angle (rt7-a) — and the
+//    end by the same cutter against the uncut bar's shoulder.
 // ---------------------------------------------------------------------------
 
 {
@@ -314,12 +446,18 @@ function findWarning(result: ToolpathResult, code: string): ToolpathResult['warn
   const { result } = envelope
   assert.ok(result.moves.some((move) => move.kind === 'cut'), 'the thread still cuts its band')
 
-  // The Hex's Z top is measured from the same Ø0.75 the Thread is cut on, so
-  // the neighbour's surface is exactly the guide's: the trim is the V-bit's
-  // half-width at the cut's own surface, 0.122 · tan(15°) = 0.0327 in — the
-  // 0.033 Frank measured on the part.
-  const hexTrim = vBitHalfWidthAt(THREAD_DEPTH)
-  assert.ok(Math.abs(hexTrim - 0.0327) < 1e-4, `the fixture's V-bit trims ${hexTrim} in, i.e. the 0.033 in the report`)
+  // The Hex's corners stand `0.375 / cos(30°)` = 0.4330 above the axis while the
+  // Thread is cut at 0.375, so the neighbour's corner is 0.0580 above the guide:
+  // the trim is the V-bit's half-width at (0.0580 + 0.122) above its tip,
+  // 0.1800 · tan(15°) = 0.0482 in. Measuring the stored across-flats radius
+  // instead would trim 0.0327 in and leave the corner gouging 0.0155 in (rt7-a).
+  const hexTrim = vBitHalfWidthAt(cornerRadius(MODEL_DIAMETER) - MODEL_DIAMETER / 2 + THREAD_DEPTH)
+  assert.ok(
+    Math.abs(hexTrim - 0.0482) < 1e-4,
+    `the fixture's V-bit trims at the Hex corner: ${hexTrim} in`,
+  )
+  const flatsTrim = vBitHalfWidthAt(THREAD_DEPTH)
+  assert.ok(hexTrim > flatsTrim + 0.015, 'the corner trim is meaningfully wider than the flats one')
   const extent = alongExtent(result.moves)
   assertStopsShortOf(extent.min, BAR_START + TURN_START + hexTrim, 'start', 'the Hex end face')
 
@@ -337,11 +475,11 @@ function findWarning(result: ToolpathResult, code: string): ToolpathResult['warn
   assert.equal(startWarning.params?.name, 'Thread', 'the warning names the trimmed feature')
   assert.equal(startWarning.params?.neighbour, 'Hex', 'and what it stays clear of')
   assert.equal(startWarning.params?.sideId, 'start', 'and the end it stopped at')
-  assert.equal(startWarning.params?.distance, '0.0327', 'and how far short it stopped')
+  assert.equal(startWarning.params?.distance, '0.0482', 'and how far short it stopped: the corner half-width it used')
   assert.equal(startWarning.params?.units, 'inch', 'in the project units')
   assert.equal(
     toolpathWarningText(startWarning),
-    'Thread: stopped 0.0327 inch short of Hex at the start so the cutter does not cut into it.',
+    'Thread: stopped 0.0482 inch short of Hex at the start so the cutter does not cut into it.',
     'the rendered message is the report\'s sentence',
   )
 
@@ -360,27 +498,39 @@ function findWarning(result: ToolpathResult, code: string): ToolpathResult['warn
   // operation alone starts from the unturned bar, whose surface is one radius
   // above the Turn's, so the shank would "cut" a bar that the rotary work
   // removes first. What the report is about is the part the rotary work leaves:
-  // material up to the Turn's surface everywhere in the Hex's band. So the
-  // check walks the emitted moves, samples the V-bit's own cone up to that
-  // surface, and measures how close its body comes to the Hex's end face.
+  // material up to the Hex's **corner** everywhere in its band, because the bar
+  // turns and the corner sweeps past every angular position the thread reaches.
+  // So the check walks the emitted moves, samples the V-bit's own cone up to
+  // that corner height, and measures how close its body comes to the Hex's end
+  // face.
   const frame = aroundFrameForOperation(project, operation)
   assert.ok(frame, 'the operation has an Around frame')
   const unrolled = unrolledProject(project, frame)
   const materials = aroundMaterialBands(project, frame)
   const hexEnd = BAR_START + HEX_START + HEX_LENGTH
-  const partSurface = unrolled.stock.thickness - (BAR_DIAMETER - MODEL_DIAMETER) / 2
-
-  const untrimmed = generateFollowLineToolpath(unrolled, operation)
-  const gouge = hexEnd - closestCutterApproachToHex(untrimmed.moves, partSurface)
+  const cornerSurface = cornerRadius(MODEL_DIAMETER)
   assert.ok(
-    Math.abs(gouge - hexTrim) < 1e-3,
-    `without the keep-out the cutter reaches ${gouge} into the Hex — the 0.033 in the report`,
+    cornerSurface > MODEL_DIAMETER / 2,
+    'the Hex corner stands above its across-flats radius, or the case proves nothing',
+  )
+
+  const probe = {
+    end: hexEnd,
+    surface: cornerSurface,
+    diameter: VBIT_DIAMETER,
+    angle: VBIT_INCLUDED_ANGLE,
+  }
+  const untrimmed = minCutterClearance(generateFollowLineToolpath(unrolled, operation).moves, probe)
+  assert.ok(
+    Math.abs(untrimmed.clearance + hexTrim) < 1e-3,
+    `without the keep-out the cutter reaches ${-untrimmed.clearance} into the Hex corner, matching the ${hexTrim} trim`,
   )
 
   const trimmed = generateFollowLineToolpath(unrolled, operation, materials)
+  const clearance = minCutterClearance(trimmed.moves, probe)
   assert.ok(
-    closestCutterApproachToHex(trimmed.moves, partSurface) >= hexEnd - 1e-9,
-    "with the keep-out no part of the cutter body reaches the Hex's end face",
+    clearance.clearance >= -1e-9,
+    `with the keep-out no part of the cutter body reaches the Hex's end face (${clearance.clearance})`,
   )
   assert.ok(
     trimmed.moves.some((move) => move.kind === 'cut'),
@@ -389,28 +539,51 @@ function findWarning(result: ToolpathResult, code: string): ToolpathResult['warn
 }
 
 /**
- * How far the cutter body's closest approach gets to `alongLimit`, measured
- * independently of the trim: every cut and plunge move is sampled along its
- * path, and at each sample the V-bit's profile is walked from its tip up to
- * `partSurface` — the height the neighbouring body's end face occupies.
+ * The cutter body's closest approach to a neighbouring body's end face,
+ * measured independently of the trim: every cut and plunge move is sampled
+ * along its path, and at each sample the V-bit's own cone is walked from its
+ * tip up to `surface` — the height the neighbour's material reaches — where its
+ * furthest reach is compared with the body's `end` face.
+ *
+ * The clearance is negative when the cutter body is inside the neighbour by
+ * that much. `reach` limits the samples to the stretch on the neighbour's side
+ * of its face, so a case with several features measures one neighbour at a
+ * time.
  */
-function closestCutterApproachToHex(
+function minCutterClearance(
   moves: ToolpathResult['moves'],
-  partSurface: number,
-): number {
-  const pathSamples = 24
-  const heightSteps = 16
-  let closest = Number.POSITIVE_INFINITY
+  options: {
+    /** The neighbour's end face along the bar. */
+    end: number
+    /** The neighbour's largest radius above the axis: how high its material reaches. */
+    surface: number
+    /** The V-bit's diameter and included angle. */
+    diameter: number
+    angle: number
+    /** Restrict the samples to this much beyond the end face. */
+    reach?: number
+  },
+): { clearance: number; along: number; aboveTip: number } {
+  const pathSamples = 64
+  const heightSteps = 32
+  const reach = options.reach ?? Number.POSITIVE_INFINITY
+  const maxHalfWidth = options.diameter / 2
+  const slope = Math.tan((options.angle * Math.PI) / 360)
+  let closest = { clearance: Number.POSITIVE_INFINITY, along: options.end, aboveTip: 0 }
   for (const move of moves) {
     if (move.kind !== 'cut' && move.kind !== 'plunge') continue
     for (let step = 0; step <= pathSamples; step += 1) {
       const t = step / pathSamples
       const along = move.from.x + (move.to.x - move.from.x) * t
+      if (along < options.end || along > options.end + reach) continue
       const tipZ = move.from.z + (move.to.z - move.from.z) * t
+      const top = options.surface - tipZ
+      if (top <= 0) continue
       for (let height = 0; height <= heightSteps; height += 1) {
-        const aboveTip = Math.max(0, partSurface - tipZ) * (height / heightSteps)
-        const halfWidth = Math.min(VBIT_DIAMETER / 2, aboveTip * Math.tan((VBIT_INCLUDED_ANGLE * Math.PI) / 360))
-        closest = Math.min(closest, along - halfWidth)
+        const aboveTip = top * (height / heightSteps)
+        const halfWidth = Math.min(maxHalfWidth, aboveTip * slope)
+        const clearance = along - halfWidth - options.end
+        if (clearance < closest.clearance) closest = { clearance, along, aboveTip }
       }
     }
   }
@@ -579,7 +752,9 @@ function closestCutterApproachToHex(
   assert.ok(envelope)
   const hexEnd = BAR_START + 2.5
   const hexStart = BAR_START + 2
-  const trim = vBitHalfWidthAt(THREAD_DEPTH)
+  // The Hex's corner is the neighbour here too (rt7-a): its flats radius is
+  // level with the line's surface, but the corners stand 0.058 in higher.
+  const trim = vBitHalfWidthAt(cornerRadius(MODEL_DIAMETER) - MODEL_DIAMETER / 2 + THREAD_DEPTH)
   const before = hexStart - trim
   const after = hexEnd + trim
 
@@ -665,7 +840,9 @@ function closestCutterApproachToHex(
   )
 
   // The larger section is still a wall: the same surface line, drawn on past
-  // the step, stops clear of it.
+  // the step, stops clear of it. rt7-a's supporting rule is keyed to a band that
+  // spans the guide's whole along extent, so this higher section — which only
+  // the line's far end reaches — keeps its trim.
   const crossed = buildCase({
     solids: [{ kind: 'turn', start: TURN_START, length: 2, diameter: largeRadius * 2, profile: steppedTurn }],
     thread: null,
@@ -796,6 +973,211 @@ function closestCutterApproachToHex(
   assert.ok(
     afterEnd < beforeEnd - 1e-3,
     `the endpoint must retreat when the Turn leaves: ${beforeEnd} → ${afterEnd}`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 11. Frank's bolt, rebuilt inline: the thread stays clear of the Hex **corner**
+//     (rt7-a correction 1), and the circumferential lines on the Turn are cut
+//     exactly as they were before the keep-out existed (correction 2).
+// ---------------------------------------------------------------------------
+
+{
+  const { project, operation, lineIds } = buildBoltCase()
+  const frame = aroundFrameForOperation(project, operation)
+  assert.ok(frame, 'the operation has an Around frame')
+  const unrolled = unrolledProject(project, frame)
+  const materials = aroundMaterialBands(project, frame)
+
+  // The Hex's band is 0.5625 in above the axis and its corners reach 0.6495:
+  // the band must report the corner, not the stored Z top (rt7-a).
+  const hexBands = materials.bands.filter((band) => band.kind === 'body')
+  assert.equal(hexBands.length, 2, 'the bolt has two Hex bands')
+  const corner = cornerRadius(BOLT_HEX.acrossFlats)
+  assert.ok(Math.abs(corner - 0.6495190528) < 1e-9, `the 1.125 in Hex corner is ${corner}`)
+  for (const band of hexBands) {
+    assert.ok(
+      Math.abs(band.surfaceZ - corner) < 1e-9,
+      `${band.name}'s keep-out height is its corner ${corner}, not its ${BOLT_HEX.acrossFlats / 2} across-flats radius`,
+    )
+  }
+
+  // The trim the report complains about: the V-bit at the corner height,
+  // (0.6495 − 0.375 + 0.122) · tan(15°) = 0.1062 in, not the 0.0829 the flats
+  // radius gave — a 0.023 in gouge.
+  const cornerTrim = coneHalfWidth(
+    corner - BOLT_TURN.diameter / 2 + THREAD_DEPTH,
+    BOLT_VBIT_DIAMETER,
+    BOLT_VBIT_INCLUDED_ANGLE,
+  )
+  assert.ok(Math.abs(cornerTrim - 0.1062) < 1e-4, `the corner half-width is ${cornerTrim} in, not 0.0829`)
+
+  const trimmed = generateFollowLineToolpath(unrolled, operation, materials)
+  const untrimmed = generateFollowLineToolpath(unrolled, operation)
+  const probe = { diameter: BOLT_VBIT_DIAMETER, angle: BOLT_VBIT_INCLUDED_ANGLE }
+
+  // Every cutting move on a Thread, against the Hex before it. The window is
+  // the thread's own two inches beyond the Hex's end face.
+  const clears: number[] = []
+  for (const band of hexBands) {
+    const surface = corner
+    const reach = BOLT_THREAD_LENGTH + 0.2
+    const gouge = minCutterClearance(untrimmed.moves, { ...probe, end: band.alongMax, surface, reach })
+    assert.ok(
+      Math.abs(gouge.clearance + cornerTrim) < 2e-3,
+      `without the keep-out the cutter reaches ${-gouge.clearance} into ${band.name}'s corner`,
+    )
+    const clear = minCutterClearance(trimmed.moves, { ...probe, end: band.alongMax, surface, reach })
+    assert.ok(clear.clearance >= 0, `the cutter body stays clear of ${band.name} (${clear.clearance})`)
+    assert.ok(
+      clear.clearance <= 3 * CLIPPER_STEP,
+      `${band.name}'s trim is the corner half-width, not a wider fudge (${clear.clearance})`,
+    )
+    clears.push(clear.clearance)
+  }
+  console.log(`  the bolt's minimum Hex clearance: ${Math.min(...clears)} in`)
+  const warnings = trimmed.warnings
+  const startWarnings = warnings.filter((row) => row.code === 'carveNeighbourTrimmed' && row.params?.sideId === 'start')
+  assert.equal(startWarnings.length, 2, 'both threads are warned about at their start')
+  for (const warning of startWarnings) {
+    assert.equal(warning.params?.distance, '0.1062', 'the warning reports the half-width actually used')
+  }
+
+  // -- The circumferential lines on the Turn ----------------------------------
+  //
+  // Their stored Z top (0.25 above the axis) is below the Turn's 0.375 surface.
+  // rt6-e read the Turn as a wall and dropped both lines with "nothing was
+  // cut"; the Turn spans the guide's own along extent, so it is the surface they
+  // are cut on, not a neighbour (rt7-a correction 2).
+  for (const along of BOLT_LINES) {
+    const cuts = trimmed.moves.filter((move) => move.kind === 'cut'
+      && Math.abs(move.from.x - along) < 1e-6
+      && Math.abs(move.to.x - along) < 1e-6)
+    assert.ok(cuts.length > 0, `the circumferential line at ${along} is cut`)
+  }
+  const away = warnings.filter((row) => row.code === 'carveNeighbourTrimmedAway')
+  assert.deepEqual(away, [], 'neither line is trimmed away: the Turn under it is its surface')
+  assert.deepEqual(
+    warnings.filter((row) => row.code.startsWith('carveNeighbour') && String(row.params?.name).startsWith('Polyline')),
+    [],
+    'the lines are not trimmed at all, so they cannot be warned about',
+  )
+
+  // Byte-identical to the pre-rt6-e behaviour: with only the two lines as the
+  // operation's targets, the keep-out changes nothing, move for move.
+  const linesOnly: Operation = {
+    ...operation,
+    id: 'lines-only',
+    target: { source: 'features', featureIds: lineIds },
+  }
+  assert.deepEqual(
+    generateFollowLineToolpath(unrolled, linesOnly, materials),
+    generateFollowLineToolpath(unrolled, linesOnly),
+    'a line on its own Turn is byte-identical to the path before the keep-out',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 12. Extending the supporting rule to every kind must not swallow a neighbour
+//     that only overlaps the guide: a line on the Turn is cut end to end, but
+//     the same line running off onto the bar still stops at the shoulder
+//     (rt7-a correction 2).
+// ---------------------------------------------------------------------------
+
+{
+  const turnNet = BAR_DIAMETER + MODEL_DIAMETER
+  const turnEnd = BAR_START + TURN_START + 1
+  const solids: SolidInput[] = [{ kind: 'turn', start: TURN_START, length: 1, diameter: MODEL_DIAMETER }]
+  const within = buildCase({
+    solids,
+    thread: null,
+    line: {
+      start: { x: BAR_START + TURN_START + 0.1, y: BAR_ZERO + 0.1 },
+      end: { x: turnEnd - 0.1, y: BAR_ZERO + 0.1 },
+      // 0.1 in below the Turn's own surface, the bolt's Polyline 6 shape: under
+      // the rt6-e rule the Turn read as a wall and the line was deleted.
+      zTop: turnNet / 2 - 0.1,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+  const withinEnvelope = computeOperationToolpath(within.project, within.operation)
+  assert.ok(withinEnvelope)
+  const withinCuts = withinEnvelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(withinCuts.length > 0, 'a line inside the Turn it is drawn on is cut, not deleted')
+  assert.deepEqual(
+    withinEnvelope.result.warnings.filter((row) => row.code.startsWith('carveNeighbour')),
+    [],
+    'its own Turn spans the guide, so it is the surface and not a neighbour',
+  )
+  const withinExtent = alongExtent(withinCuts)
+  assertStopsShortOf(withinExtent.min, BAR_START + TURN_START + 0.1, 'start', 'the line keeps its own start')
+  assertStopsShortOf(withinExtent.max, turnEnd - 0.1, 'end', 'and its own end')
+
+  const runsOff = buildCase({
+    solids,
+    thread: null,
+    line: {
+      start: { x: BAR_START + TURN_START + 0.1, y: BAR_ZERO + 0.1 },
+      end: { x: turnEnd + 0.2, y: BAR_ZERO + 0.1 },
+      // On the Turn's surface, running past its end onto the uncut bar: the
+      // handoff's own example of a guide crossing onto a higher band.
+      zTop: turnNet / 2,
+    },
+    toolRef: 'vbit',
+    carveDepth: THREAD_DEPTH,
+  })
+  const offEnvelope = computeOperationToolpath(runsOff.project, runsOff.operation)
+  assert.ok(offEnvelope)
+  const offCuts = offEnvelope.result.moves.filter((move) => move.kind === 'cut')
+  assert.ok(offCuts.length > 0, 'the part of the line on the Turn is still cut')
+  const offExtent = alongExtent(offCuts)
+  assertStopsShortOf(offExtent.min, BAR_START + TURN_START + 0.1, 'start', 'the line keeps its own start on the Turn')
+  // The uncut bar past the Turn's end stands above the line, so the guide stops
+  // a cutter radius short of the shoulder even though the Turn spans the rest.
+  assertStopsShortOf(offExtent.max, turnEnd - VBIT_DIAMETER / 2, 'end', 'the uncut bar the line runs onto')
+  const warning = findWarning(offEnvelope.result, 'carveNeighbourTrimmed')
+  assert.equal(warning.params?.neighbourId, 'bar', 'the bar it runs onto is the neighbour')
+  assert.equal(warning.params?.sideId, 'end', 'at its far end')
+}
+
+// ---------------------------------------------------------------------------
+// 13. A flat Hex (rotation changes the corner angle) still uses the
+//     circumradius: a rotation moves where the corners are, never how far out
+//     they reach (rt7-a correction 1).
+// ---------------------------------------------------------------------------
+
+{
+  const trims: number[] = []
+  for (const rotationDeg of [0, 30]) {
+    const { project, operation } = buildCase({
+      solids: [
+        { kind: 'polygon', start: HEX_START, length: HEX_LENGTH, sides: 6, acrossFlats: MODEL_DIAMETER, rotationDeg },
+        { kind: 'turn', start: TURN_START, length: TURN_LENGTH, diameter: MODEL_DIAMETER },
+      ],
+      thread: { start: THREAD_START, length: THREAD_LENGTH, depth: THREAD_DEPTH },
+      toolRef: 'vbit',
+      carveDepth: THREAD_DEPTH,
+    })
+    const frame = aroundFrameForOperation(project, operation)
+    assert.ok(frame)
+    const band = aroundMaterialBands(project, frame).bands.find((row) => row.kind === 'body')
+    assert.ok(band, 'the Hex is the body band')
+    // A corner-up Hex's own stored Z top already is the corner, so the band is
+    // the larger of that (a Float32 mesh top) and the parameter's circumradius.
+    assert.ok(
+      Math.abs(band.surfaceZ - cornerRadius(MODEL_DIAMETER)) < 1e-6,
+      `rotation ${rotationDeg}: the band reports the corner ${cornerRadius(MODEL_DIAMETER)}, got ${band.surfaceZ}`,
+    )
+    const envelope = computeOperationToolpath(project, operation)
+    assert.ok(envelope)
+    trims.push(alongExtent(envelope.result.moves).min)
+  }
+  assertStopsShortOf(
+    trims[0]!,
+    trims[1]!,
+    'start',
+    'the flat Hex (rotation 0) stops as far short of its corners as the corner-up one (rotation 30)',
   )
 }
 

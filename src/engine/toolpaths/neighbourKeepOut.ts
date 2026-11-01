@@ -29,7 +29,11 @@
  *
  * 1. Each material band the caller supplies (from `aroundMaterialBands`) whose
  *    surface counts as a wall for its kind — see `AroundMaterialKind` — is a
- *    keep-out interval along the bar.
+ *    keep-out interval along the bar. A band that spans the guide's own along
+ *    extent is the surface the guide is cut on, whatever its kind, so it is
+ *    never a wall; a band that only overlaps the extent keeps every rule. Each
+ *    band's height is the largest radius it presents at any angle, never its
+ *    across-flats radius (see `AroundMaterialKind`).
  * 2. That interval is grown by the cutter's real half-width at the height of
  *    the neighbour's surface: `(height above the tip) · tan(angle / 2)` for a
  *    V-bit capped at the tool radius, the radius for a flat or ball cutter,
@@ -186,28 +190,32 @@ export function trimGuideForNeighbourMaterial(input: NeighbourTrimInput): Neighb
 }
 
 /**
- * Whether one band is a wall for a guide on `guideSurfaceZ`. `turn` and `bar`
- * are surfaces a follow line is cut *on*, so they count only where they stand
- * above the guide; a `body` counts at or above, because its end face is a wall
- * even where its top is level with the guide's surface (see
- * `AroundMaterialKind`).
+ * Whether one band is a wall for a guide on `guideSurfaceZ`.
  *
- * The exception is the body that **supports** the guide (issue #1112 rt6-e
- * correction 1): a line drawn wholly inside a Hex's own band and level with
- * its top is cut on that Hex, not beside it, so the Hex is its surface and not
- * a neighbour. Its end faces are then not walls either — a body whose own top
- * is being cut has no exposed face inside the band. A guide that crosses the
- * body or stops beside it is still kept clear of it: Frank's bolt, where the
- * Thread starts exactly at the Hex's end, is that case.
+ * The band — or bands — that span the guide's **own along extent** are the
+ * surface it is cut on, never a neighbour, for every kind (issue #1112 rt7-a
+ * correction 2). A circumferential line drawn around a Turn reads its stored Z
+ * top as below the Turn's surface, which is not a disagreement about material:
+ * the line is *on* that Turn, and treating the Turn as a wall dropped the whole
+ * line with "nothing was cut". This extends the rt6-e `body` rule (`supports`) to
+ * `turn` and `bar`: a `body` counts at or above the guide's surface because its
+ * end face is a wall even where its top is level with the guide's, and a
+ * `turn`/`bar` only where it stands above it, but none of them is a wall over
+ * its own along span.
+ *
+ * A band that only *overlaps* the guide's extent still keeps every rule it had:
+ * a guide that crosses a body, stops beside it, or starts on a smaller Turn and
+ * runs off onto uncut bar or onto a larger Turn step meets the higher band as a
+ * wall for the part of the guide on the lower one. Frank's bolt, where the
+ * Thread starts exactly at the Hex's end, is that case: the Hex ends where the
+ * guide starts, so it does not span the guide and remains a wall.
  */
 function isWall(band: AroundMaterialBand, guideSurfaceZ: number, guide: GuideExtent): boolean {
-  if (band.kind !== 'body') return band.surfaceZ > guideSurfaceZ + SURFACE_TOLERANCE
-  if (band.surfaceZ < guideSurfaceZ - SURFACE_TOLERANCE) return false
-  const levelWithGuide = band.surfaceZ <= guideSurfaceZ + SURFACE_TOLERANCE
-  const supports = levelWithGuide
-    && band.alongMin <= guide.min + ALONG_TOLERANCE
+  const spansGuide = band.alongMin <= guide.min + ALONG_TOLERANCE
     && band.alongMax >= guide.max - ALONG_TOLERANCE
-  return !supports
+  if (spansGuide) return false
+  if (band.kind !== 'body') return band.surfaceZ > guideSurfaceZ + SURFACE_TOLERANCE
+  return band.surfaceZ >= guideSurfaceZ - SURFACE_TOLERANCE
 }
 
 /**

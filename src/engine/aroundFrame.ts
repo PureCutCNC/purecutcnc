@@ -47,7 +47,8 @@ import { getStockBounds, isAroundSetup, rectProfile } from '../types/project'
 import type { BarStock, Operation, Project } from '../types/project'
 import { barCentre, barInscribedRadius, isBarStock } from '../types/barStock'
 import { getFeatureGeometryBounds } from '../text'
-import { TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import { POLYGON_CANNED_KIND, TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import { normalizePolygonCannedParams } from '../cannedShapes/generators/polygon'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { rotaryTurnSurfaceSections } from '../store/helpers/rotarySurface'
 import { setupForOperation } from './setupOrientation'
@@ -224,9 +225,21 @@ export function unrolledProject(project: Project, frame: AroundFrame): Project {
  * - `body` — a Polygon/Hex or a placed model: a distinct body with an end face.
  *   It counts at **or above** the guide's surface, because a body whose top is
  *   level with the guide is still a wall the cutter's flank enters. Frank's bolt
- *   is exactly that case: the Hex's Z top and the Thread's surface are both
- *   measured from the same Ø0.75, and at 0.122 deep a 30° V-bit is 0.0327 half-
- *   width at that height — the 0.033 in the report.
+ *   is exactly that case: the Hex ends where the Thread starts, both measured
+ *   from the same Ø0.75. Measuring that Hex by its 0.5625 across-flats radius
+ *   (rt6-e) trimmed 0.0327 in and left the corner cutting 0.023 in into the
+ *   body; its corners stand 0.6495 above the axis and that is the height that
+ *   counts, so the trim is 0.1062 in.
+ *
+ * A band's height is the **largest radius it presents at any angle**, not its
+ * stored Z top (issue #1112 rt7-a correction 1). A canned Polygon's Z top is its
+ * across-flats radius, but its corners stand `flats/2 / cos(π/sides)` above the
+ * axis and sweep past the cutter as the bar turns; see `bodySurfaceZ`. Measuring
+ * the flats radius let the V-bit cut 0.023 into Frank's Hex at the thread's
+ * start. A Turn section is a cylinder, so its section radius already is its
+ * maximum, and a placed model's Z top is its bounding box's top — the largest
+ * up direction, which is the maximum for a body of revolution but not for every
+ * silhouette (RISKS of the slice names the limit).
  */
 export type AroundMaterialKind = 'bar' | 'turn' | 'body'
 
@@ -316,7 +329,9 @@ export function aroundMaterialBands(project: Project, frame: AroundFrame): Aroun
       kind,
       alongMin: clippedMin,
       alongMax: clippedMax,
-      surfaceZ: resolveDimensionRef(project, feature.z_top) - frame.radius,
+      surfaceZ: kind === 'body'
+        ? bodySurfaceZ(project, definition, feature, frame)
+        : resolveDimensionRef(project, feature.z_top) - frame.radius,
     })
   }
 
@@ -330,6 +345,43 @@ export function aroundMaterialBands(project: Project, frame: AroundFrame): Aroun
     surfaceZ: project.stock.thickness - frame.radius,
   }))
   return { axis: frame.axis, bands: [...bands, ...bodies] }
+}
+
+/**
+ * A body's keep-out height: the largest radius it presents at any angle
+ * (issue #1112 rt7-a correction 1).
+ *
+ * A canned Polygon stores its across-flats radius as the model's Z top, but its
+ * corners stand `flats/2 / cos(π/sides)` above the axis — 0.6495 for Frank's
+ * 1.125 in Hex — and they sweep past the cutter as the bar turns. Measuring the
+ * flats radius let the V-bit cut 0.023 in too close. The circumradius comes from
+ * the shape's own parameters, so it is exact and independent of the stored
+ * rotation: a rotation moves where the corners are, not how far out they reach,
+ * and at an in-between angle both stored extents read short of the corner.
+ *
+ * Any other body keeps its Z top, which is the largest distance in the up
+ * direction: exact for a Turn section (a cylinder, measured by
+ * `aroundMaterialBands` before this point) and for a placed model of revolution.
+ * An imported silhouette whose corners reach further sideways than its top does
+ * is under-reported — the slice's RISKS names that limit, because the exact
+ * maximum would need the mesh, not the band's stored height.
+ *
+ * The result is never below the stored Z top, so a body raised in Z cannot end
+ * up with a smaller keep-out than before this correction.
+ */
+function bodySurfaceZ(
+  project: Project,
+  definition: Project['featureDefinitions'][string] | undefined,
+  feature: Project['features'][number],
+  frame: AroundFrame,
+): number {
+  const top = resolveDimensionRef(project, feature.z_top) - frame.radius
+  const canned = definition?.canned
+  if (!canned || canned.kind !== POLYGON_CANNED_KIND) return top
+  const params = normalizePolygonCannedParams(canned.params)
+  if (!params) return top
+  const circumradius = params.acrossFlats / (2 * Math.cos(Math.PI / params.sides))
+  return Math.max(top, circumradius)
 }
 
 /** `[min, max]` minus every covered interval, in ascending order. */
