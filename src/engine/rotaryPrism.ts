@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import { getStockBounds, roundStockCentre } from '../types/project'
-import type { RoundStock } from '../types/project'
+import { getStockBounds } from '../types/project'
+import { barCentre, type RotaryBarGeometry } from '../types/barStock'
 import { computeMeshBounds } from './importedMesh'
 import type { ImportedTriangleMesh } from './importedMesh'
 
 /**
- * A regular polygon prism generated inside a round bar (issue #1016 C2, the
- * hex/polygon half).
+ * A regular polygon prism generated inside a round bar or square blank
+ * (issue #1016 C2, the hex/polygon half; a canned Polygon can sit in either).
  *
  * The prism is plain geometry: it is handed to the model loaders and the
  * rotary sampler (#1015) as an ordinary imported mesh. Nothing here stores a
@@ -45,7 +45,7 @@ import type { ImportedTriangleMesh } from './importedMesh'
  *   conversion, so a whole turn is an identity and a very large finite angle
  *   cannot overflow `degrees × π / 180` into a non-finite rotation.
  * - The mesh is emitted in final stock coordinates: on the centreline at
- *   `roundStockCentre(stock)` across the bar, on the bar's Z centreline at
+ *   `barCentre(stock)` across the bar, on the bar's Z centreline at
  *   `diameter / 2`, and at the absolute `alongStart`/`alongEnd` positions along
  *   it. No other transform is needed before use.
  * - The two rings carry exactly the `sides` cross-section vertices, with no
@@ -103,11 +103,11 @@ const TOLERANCE = 1e-4
 function validate(
   input: RotaryPolygonPrismInput,
   diameter: number,
-  axis: RoundStock['axis'],
+  axis: 'x' | 'y',
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
 ): void {
   if (!Number.isFinite(diameter) || diameter <= 0) {
-    throw new RangeError(`Rotary polygon needs a positive finite stock diameter, got ${diameter}.`)
+    throw new RangeError(`Rotary polygon needs a positive finite stock size, got ${diameter}.`)
   }
 
   // The centreline and both axial extents come from these bounds; a broken
@@ -153,7 +153,7 @@ function validate(
   // this stock. The corner radius is the binding figure, not acrossFlats.
   const acrossCorners = acrossFlats / Math.cos(Math.PI / sides)
   if (acrossCorners > diameter + TOLERANCE) {
-    throw new RangeError(`Rotary polygon across-corners ${acrossCorners} exceeds the ${diameter} stock diameter.`)
+    throw new RangeError(`Rotary polygon across-corners ${acrossCorners} exceeds the ${diameter} stock size.`)
   }
 }
 
@@ -223,7 +223,7 @@ function assertEmittedGeometry(positions: Float32Array, index: readonly number[]
  *   duplicated ring vertex, or a degenerate triangle).
  */
 export function buildRotaryPolygonPrism(
-  stock: RoundStock,
+  stock: RotaryBarGeometry,
   input: RotaryPolygonPrismInput,
 ): ImportedTriangleMesh {
   const bounds = getStockBounds(stock)
@@ -233,7 +233,7 @@ export function buildRotaryPolygonPrism(
   const sides = input.sides
   const alongStart = input.alongStart
   const alongEnd = input.alongEnd
-  const acrossCentre = roundStockCentre(stock)
+  const acrossCentre = barCentre(stock)
   const radius = diameter / 2
 
   // Cross-section vertices in the bar's own (across, up) plane. The half-step

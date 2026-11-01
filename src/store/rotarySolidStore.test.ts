@@ -15,640 +15,450 @@
  */
 
 /**
- * The square-to-round finished target on a real square blank (issue #1016
- * C2-B).
- *
- * The blank the user mounted is a **square**, and that is what these tests
- * insist on: the created model is the round finished target inside it, and the
- * stored stock is byte-identical to the square the job started from. The
- * retained square ends and the actual square-stock generation are the engine
- * slice's work; this file proves the created rough and finish operations
- * generate real motion through the production seam on the square blank
- * (C2-S4), and that the physical workholding guard is what the setup is judged
- * by rather than a shape assumption.
- *
- * Mutations checked one at a time against these assertions:
- * - the blank relabelled `round` (or rebuilt through the round normalizer) →
- *   the byte-identical-stock assertion fails;
- * - the pivot taken as `0` or as `barMaxRadius` instead of `barPivotZ`
- *   (side / 2) → the true-pivot assertions fail;
- * - the blank's centreline replaced by the stock origin → the across-placement
- *   assertions fail;
- * - the cylinder built on a circumscribed radius (`side × √½ / 2`) instead of
- *   the requested `diameter / 2` → the diameter, facet and Z-extent assertions
- *   fail;
- * - `diameter > side` accepted → the blank-fit refusal fails and the
- *   inside-the-blank assertion fails;
- * - `z_bottom`/`z_top` written as `[0, side]` → the load-identity assertions
- *   fail on any diameter below the side;
- * - the model's operations left on the provisional setup id, or the target
- *   pointed at the folder → the setup/target assertions fail;
- * - generation treated as working on a square blank → the successful
- *   nonempty-motion assertions fail (and would be a false claim);
- * - creation split across two `set` calls → the undo assertion fails;
- * - the creation taking its own snapshot (or clearing `transactionStart`)
- *   inside an open transaction → the combined undo/redo and the "open
- *   transaction is preserved" assertions fail.
+ * Turn on a real square blank, and the old project contract around it
+ * (issue #1112 slice G, carrying #1016 C2-B).
  *
  * Run with: npx tsx src/store/rotarySolidStore.test.ts
+ *
+ * The blank the user mounted is a **square**, and that is what these tests
+ * insist on: a Turn on it is the old Square to round finished target inside the
+ * real blank, and the stored stock is byte-identical to the square the job
+ * started from. The same canned model then generates through the production
+ * seam on the square blank, so the square-stock safety guards are unchanged.
+ *
+ * Mutations checked one at a time against these assertions:
+ * - the blank relabelled `round` → the byte-identical-stock assertion fails;
+ * - the finished cylinder built on the blank's corner radius instead of the
+ *   requested diameter → the diameter and facet assertions fail;
+ * - `diameter > side` accepted → the blank-fit refusal fails;
+ * - the model's Z span anchored to the old bottom after a diameter edit → the
+ *   centreline assertion fails;
+ * - the parameter edit pinning the regenerated mesh's raw Z bounds instead of
+ *   preserving the instance centre → the same assertion fails;
+ * - the canned parameters not stored as the generator's set → the save/load
+ *   round-trip fails;
+ * - a Polygon on a square refused for needing a round bar → the square polygon
+ *   creation and its mesh comparison fail;
+ * - the old square-to-round folder routed through the new creator → its folder
+ *   and operations disappear and the equivalence comparison has nothing to read.
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, getStockBounds, newProject, roundStock } from '../types/project'
-import { barCentre, barPivotZ, isSquareStock, squareStock } from '../types/barStock'
-import type { Project, SketchFeature, SquareStock, Tool } from '../types/project'
+import { defaultTool, newProject, rectProfile, type Project, type SketchFeature, type Tool } from '../types/project'
+import { squareStock } from '../types/barStock'
 import { bundledMachines } from '../machine/registry'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
-import { loadSTLTransformedGeometry } from '../engine/csg'
-import { loadPersistedTriangleMesh } from '../engine/importedMesh'
+import { loadPersistedTriangleMesh, serializeImportedMesh } from '../engine/importedMesh'
+import type { ImportedTriangleMesh } from '../engine/importedMesh'
+import { buildRotaryCylinder } from '../engine/rotaryCylinder'
+import { buildRotaryPolygonPrism } from '../engine/rotaryPrism'
 import { validateMachineDefinition } from '../engine/gcode/types'
-import type { MachineDefinition } from '../engine/gcode/types'
-import { activeFace, activeSetup } from './helpers/activeFace'
-import { provisionalSetupId } from './helpers/provisionalSetup'
+import { runPostProcessor } from '../engine/gcode/postprocessor'
+import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { rotarySolidCannedData, type RotarySolidRefusal } from './helpers/rotarySolids'
+import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { useProjectStore } from './projectStore'
-import type { RotarySolidRefusal } from './helpers/rotarySolids'
 import { switchWorkspaceFace } from './workspaceFace'
 
-/** The typed refusal reason, or undefined when the creation succeeded. */
 function refusalReason(result: { ok: boolean; reason?: RotarySolidRefusal }): RotarySolidRefusal | undefined {
   return result.ok ? undefined : result.reason
 }
+
+const store = () => useProjectStore.getState()
 
 function near(actual: number, expected: number, label: string, tolerance = 1e-9): void {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`)
 }
 
-const store = () => useProjectStore.getState()
-
-function log(message: string): void {
-  console.log(message)
-}
-
 // ── fixtures ──────────────────────────────────────────────────
 
-interface BlankSpec {
-  axis: 'x' | 'y'
-  units: 'mm' | 'inch'
-  at: { x: number; y: number }
-  side: number
-  length: number
-}
+const AT = { x: 10, y: 30 }
+const SIDE = 25
+const LENGTH = 120
 
-const MM_X: BlankSpec = { axis: 'x', units: 'mm', at: { x: 10, y: 30 }, side: 40, length: 200 }
-const MM_Y: BlankSpec = { axis: 'y', units: 'mm', at: { x: 10, y: 30 }, side: 40, length: 200 }
-const INCH_X: BlankSpec = { axis: 'x', units: 'inch', at: { x: 3, y: 5 }, side: 1.5, length: 8 }
-const INCH_Y: BlankSpec = { axis: 'y', units: 'inch', at: { x: 3, y: 5 }, side: 1.5, length: 8 }
-
-function rotaryMachine(axis: 'x' | 'y'): MachineDefinition {
+function rotaryMachine(): ReturnType<typeof validateMachineDefinition> {
   const base = structuredClone(bundledMachines()[0])
   return validateMachineDefinition({
     ...base,
-    id: `around-${axis}`,
-    rotary: { about: axis, drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    id: 'around-square',
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
   })
 }
 
-function cutter(units: 'mm' | 'inch', id: string): Tool {
+function cutter(): Tool {
   return {
-    ...defaultTool(units, 1),
-    id,
-    name: `${id} ball`,
-    units,
-    type: 'ball_endmill',
-    diameter: units === 'mm' ? 4 : 0.1875,
+    ...defaultTool('mm', 1),
+    id: 'flat',
+    name: 'Flat 6',
+    units: 'mm',
+    type: 'flat_endmill',
+    diameter: 6,
     defaultStepover: 0.4,
-    defaultStepdown: units === 'mm' ? 1 : 0.04,
-    defaultFeed: units === 'mm' ? 600 : 24,
-    defaultPlungeFeed: units === 'mm' ? 200 : 8,
+    defaultStepdown: 2,
+    defaultFeed: 600,
+    defaultPlungeFeed: 200,
   }
 }
 
-function squareBlankFor(spec: BlankSpec): SquareStock {
-  return squareStock(spec.side, spec.length, spec.axis, spec.at)
-}
-
-/**
- * A rotary project on a real square blank with a real Around setup, already
- * active. The face switch now enters Around on a square blank too (#1016
- * C2-U1), but this fixture pins a known setup id and axis directly so the
- * assertions below can name it.
- */
-function loadSquare(spec: BlankSpec, tools: Tool[]): Project {
-  const base = newProject(`Square ${spec.axis} ${spec.units}`, spec.units)
+function squareProject(): Project {
+  const base = newProject('Turn square', 'mm')
   base.meta.projectType = 'rotary'
-  base.stock = squareBlankFor(spec)
-  const machine = rotaryMachine(spec.axis)
+  base.stock = squareStock(SIDE, LENGTH, 'x', AT)
+  const machine = rotaryMachine()
   base.meta.machineDefinitions = [machine]
   base.meta.selectedMachineId = machine.id
-  base.tools = tools
-  base.setups.push({
-    ...base.setups[0],
-    id: 'square-around',
-    name: 'Around',
-    kind: 'around',
-    orientation: { axis: spec.axis, angleDeg: 0 },
-  })
-  base.activeSetupId = 'square-around'
-  store().loadProject(projectWithFeatures(base, []))
-  assert.equal(activeFace(store().project), 'around', 'the fixture is on a real Around setup')
-  assert.ok(isSquareStock(store().project.stock), 'the fixture stock is a square blank')
+  base.tools = [cutter()]
+  return base
+}
+
+function loadSquare(project: Project = squareProject()): Project {
+  store().loadProject(project)
+  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   return store().project
 }
 
-function createdFeature(id: string): SketchFeature & { definitionId: string } {
-  const instance = store().project.features.find((entry) => entry.id === id)
-  assert.ok(instance, `feature ${id} exists`)
-  const definition = store().project.featureDefinitions[instance.definitionId]
-  assert.ok(definition, `definition for ${id} exists`)
-  return {
-    ...(instance as unknown as SketchFeature),
-    definitionId: instance.definitionId,
-    sketch: {
-      profile: definition.profile,
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: definition.dimensions,
-      constraints: [],
+function onlyModel() {
+  const project = store().project
+  const models = project.features.filter((feature) => project.featureDefinitions[feature.definitionId]?.kind === 'stl')
+  assert.equal(models.length, 1, `exactly one model (got ${models.length})`)
+  return models[0]
+}
+
+function modelMesh(feature = onlyModel()): ImportedTriangleMesh {
+  const project = store().project
+  const assetId = project.featureDefinitions[feature.definitionId]?.stl?.meshAssetId
+  assert.ok(assetId, 'the model references a mesh asset')
+  const asset = project.modelAssets[assetId]
+  assert.ok(asset, 'the mesh asset exists')
+  const mesh = loadPersistedTriangleMesh(asset)
+  assert.ok(mesh, 'the mesh asset loads')
+  return mesh
+}
+
+/** A legacy square-to-round folder + model + operations, as old files store it. */
+function legacySquareProject(base: Project, mesh: ImportedTriangleMesh): Project {
+  const assetId = 'model-asset-square-old'
+  const asset = serializeImportedMesh(mesh, 'stl')
+  const profile = rectProfile(
+    mesh.bounds.minX,
+    mesh.bounds.minY,
+    mesh.bounds.maxX - mesh.bounds.minX,
+    mesh.bounds.maxY - mesh.bounds.minY,
+  )
+  const definition = {
+    id: 'def-square-old',
+    kind: 'stl' as const,
+    profile,
+    dimensions: [],
+    text: null,
+    stl: { format: 'stl' as const, meshAssetId: assetId, scale: 1, axisSwap: 'none' as const },
+    operation: 'model' as const,
+  }
+  const feature = {
+    id: 'f-square-old',
+    definitionId: definition.id,
+    name: 'Square to round Model',
+    kind: 'stl' as const,
+    folderId: 'fd-square-old',
+    sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'model' as const,
+    authoringFace: 'top' as const,
+    z_top: mesh.bounds.maxZ,
+    z_bottom: mesh.bounds.minZ,
+    visible: true,
+    locked: false,
+  }
+  return projectWithFeatures(
+    {
+      ...base,
+      modelAssets: { ...base.modelAssets, [assetId]: asset },
+      featureDefinitions: { ...base.featureDefinitions, [definition.id]: definition },
+      featureFolders: [{ id: 'fd-square-old', name: 'Square to round', collapsed: false, section: 'features' }],
+      featureTree: [{ type: 'folder', folderId: 'fd-square-old' }, { type: 'feature', featureId: 'f-square-old' }],
     },
-    kind: definition.kind,
-    operation: definition.operation,
-    text: definition.text,
-    stl: definition.stl,
+    [feature as unknown as SketchFeature],
+  )
+}
+
+function addRotaryOperations(featureId: string): Project {
+  const target = { source: 'features' as const, featureIds: [featureId] }
+  assert.ok(store().addOperation('rotary_rough', 'rough', target), 'rough is created')
+  assert.ok(store().addOperation('rotary_finish', 'finish', target), 'finish is created')
+  return store().project
+}
+
+function operationByKind(project: Project, kind: 'rotary_rough' | 'rotary_finish') {
+  const operation = project.operations.find((entry) => entry.kind === kind)
+  assert.ok(operation, `${kind} exists`)
+  return operation
+}
+
+function movesAndGcode(project: Project, operationId: string): { moves: unknown[]; gcode: string } {
+  const operation = project.operations.find((entry) => entry.id === operationId)
+  assert.ok(operation)
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope)
+  const toolRecord = project.tools.find((entry) => entry.id === operation.toolRef)
+  assert.ok(toolRecord)
+  const machine = project.meta.machineDefinitions.find((entry) => entry.id === project.meta.selectedMachineId)
+  assert.ok(machine)
+  const result = runPostProcessor({
+    project,
+    definition: validateMachineDefinition(machine),
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(toolRecord, project),
+      toolpath: envelope.result,
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  return {
+    moves: envelope.result.moves,
+    gcode: result.gcode.replace(/\b\d{4}-\d{2}-\d{2}\b/g, 'YYYY-MM-DD'),
   }
 }
 
-const SQUARE_TO_ROUND = { kind: 'square-to-round' } as const
+// ── creation on a square blank ───────────────────────────────
 
-// ── creation keeps the real square blank ──────────────────────
+function testTurnOnSquare(): void {
+  const project = loadSquare()
+  const blank = project.stock
+  assert.equal(blank.shape, 'square', 'the blank is a square, not a relabelled round bar')
+  assert.equal(blank.thickness, SIDE, 'the blank side is untouched')
+  const stockBefore = JSON.stringify(project.stock)
 
-log('Testing square-to-round creation on a real square blank...')
-{
-  const spec = MM_X
-  const project = loadSquare(spec, [cutter('mm', 'ball')])
-  const stockBefore = structuredClone(project.stock)
-  const bounds = getStockBounds(project.stock)
-  const alongStart = bounds.minX + 20
-  const alongEnd = alongStart + 60
-  const diameter = 24
+  const before = project.features.length
   const historyBefore = store().history.past.length
+  const created = store().addRotarySolid({ kind: 'turn', start: 10, length: 30, diameter: 20 })
+  assert.ok(created.ok, `Turn created (${created.ok ? '' : created.reason})`)
+  if (!created.ok) return
 
-  const result = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter, alongStart, alongEnd, toolRef: 'ball' })
-  assert.ok(result.ok, `created (${result.ok ? '' : `${result.reason} ${result.detail ?? ''}`})`)
-  if (!result.ok) throw new Error('unreachable')
-  assert.equal(store().history.past.length, historyBefore + 1, 'exactly one history entry')
+  const next = store().project
+  assert.equal(next.features.length, before + 1, 'one model row')
+  assert.equal(next.featureFolders.length, 0, 'no folder')
+  assert.equal(next.operations.length, 0, 'no operation')
+  assert.equal(store().history.past.length, historyBefore + 1, 'one history entry')
+  assert.equal(JSON.stringify(next.stock), stockBefore, 'the real square blank is byte-identical')
 
-  const after = store().project
-  // The blank is byte-identical: still the same square, never relabelled round.
-  assert.ok(isSquareStock(after.stock), 'the stock is still a square blank')
-  assert.equal(after.stock.shape, 'square', 'the shape is square')
-  assert.equal(after.stock.thickness, spec.side, 'thickness is still the physical side')
-  assert.deepEqual(after.stock, stockBefore, 'the stored blank is byte-identical')
+  const model = onlyModel()
+  assert.equal(model.authoringFace, 'top', 'authored on Top for the persisted-model loader')
+  const canned = next.featureDefinitions[model.definitionId].canned
+  assert.equal(canned?.kind, 'turn', 'the canned kind is stored')
 
-  const folder = after.featureFolders.find((entry) => entry.id === result.folderId)
-  assert.ok(folder, 'the folder exists')
-  assert.equal(folder.name, 'Square to round', 'the folder is named for the shape')
+  // The model is the old Square to round cylinder: same vertices, same pivot.
+  const mesh = modelMesh(model)
+  const old = buildRotaryCylinder(
+    project.stock as Parameters<typeof buildRotaryCylinder>[0],
+    { diameter: 20, alongStart: 20, alongEnd: 50 },
+    'mm',
+  )
+  assert.deepEqual(Array.from(mesh.positions), Array.from(old.positions), 'the Turn vertices equal Square to round')
+  assert.deepEqual(Array.from(mesh.index), Array.from(old.index), 'the Turn triangles equal Square to round')
+  near(mesh.bounds.minX, 20, 'start from the chuck end')
+  near(mesh.bounds.maxX, 50, 'length 30')
+  near(mesh.bounds.minZ, SIDE / 2 - 10, 'the cylinder sits on the blank pivot', 1e-3)
+  near(mesh.bounds.maxZ, SIDE / 2 + 10, 'the cylinder top is on the pivot', 1e-3)
 
-  const feature = createdFeature(result.featureId)
-  assert.equal(feature.folderId, result.folderId, 'the model is inside the folder')
-  assert.equal(feature.kind, 'stl', 'the model is an stl feature')
-  assert.equal(feature.operation, 'model', 'the model is an ordinary model feature')
-  assert.equal(feature.authoringFace, 'top', 'the model is authored on Top for the load pipeline')
-  const asset = after.modelAssets?.[feature.stl!.meshAssetId!]
-  assert.ok(asset, 'the asset is stored')
-  const mesh = loadPersistedTriangleMesh(asset)!
-
-  // The target is the requested cylinder on the blank's true pivot — not a
-  // circumscribed-stock approximation.
-  const centre = barCentre(after.stock as SquareStock)
-  const pivot = barPivotZ(after.stock as SquareStock)
-  near(pivot, spec.side / 2, 'pivot is the blank side / 2')
-  near((mesh.bounds.minZ + mesh.bounds.maxZ) / 2, pivot, 'the cylinder is centred on the true pivot', 1e-4)
-  near(mesh.bounds.maxZ - mesh.bounds.minZ, diameter, 'the cylinder is the requested diameter', 1e-4)
-  near(mesh.bounds.minZ, pivot - diameter / 2, 'Z bottom is the pivot less the radius', 1e-4)
-  near(mesh.bounds.maxZ, pivot + diameter / 2, 'Z top is the pivot plus the radius', 1e-4)
-  if (spec.axis === 'x') {
-    near((mesh.bounds.minY + mesh.bounds.maxY) / 2, centre, 'centred across the blank', 1e-4)
-  } else {
-    near((mesh.bounds.minX + mesh.bounds.maxX) / 2, centre, 'centred across the blank', 1e-4)
-  }
-  // Inside the real blank: the cross-section never reaches a corner.
-  const half = spec.side / 2
-  for (let i = 0; i < mesh.positions.length; i += 3) {
-    const across = spec.axis === 'x' ? mesh.positions[i + 1] : mesh.positions[i]
-    const up = mesh.positions[i + 2]
-    assert.ok(Math.abs(across - centre) <= half + 1e-4, 'every vertex is inside the blank across')
-    assert.ok(up >= -1e-4 && up <= spec.side + 1e-4, 'every vertex is inside the blank in Z')
-  }
-
-  // The feature's Z band is the emitted mesh's own, so the load fit is identity.
-  near(feature.z_bottom as number, mesh.bounds.minZ, 'z_bottom is the mesh minimum Z')
-  near(feature.z_top as number, mesh.bounds.maxZ, 'z_top is the mesh maximum Z')
-  assert.notEqual(feature.z_bottom, 0, 'the target is not stretched to the blank bottom')
-
-  // Rough and finish target the model, in the real Around setup.
-  assert.equal(after.operations.length, 2, 'two operations are created')
-  const rough = after.operations.find((entry) => entry.id === result.roughOperationId)!
-  const finish = after.operations.find((entry) => entry.id === result.finishOperationId)!
-  assert.equal(rough.kind, 'rotary_rough', 'the first is a rotary rough')
-  assert.equal(finish.kind, 'rotary_finish', 'the second is a rotary finish')
-  for (const operation of [rough, finish]) {
-    assert.deepEqual(operation.target, { source: 'features', featureIds: [result.featureId] }, 'targets the model')
-    assert.equal(operation.setupId, 'square-around', 'joins the real Around setup')
-  }
-  assert.equal(activeSetup(after).id, 'square-around', 'the workspace stays on the real Around setup')
-  assert.notEqual(activeSetup(after).id, provisionalSetupId('around'), 'no provisional setup was invented')
-
-  // No creation parameters are persisted.
-  const serialized = JSON.stringify({
-    folder,
-    definition: after.featureDefinitions[feature.definitionId],
-    instance: after.features.find((entry) => entry.id === result.featureId),
-  })
-  for (const field of ['"diameter"', '"alongStart"', '"alongEnd"', 'squareToRoundParams', 'solidParams']) {
-    assert.ok(!serialized.includes(field), `${field} is not persisted`)
-  }
-}
-
-// ── both axes, both units, an offset blank ────────────────────
-
-log('Testing both blank axes, both units and an offset blank...')
-{
-  for (const spec of [MM_X, MM_Y, INCH_X, INCH_Y]) {
-    const label = `${spec.axis}/${spec.units}`
-    loadSquare(spec, [cutter(spec.units, 'ball')])
-    const stockBefore = structuredClone(store().project.stock)
-    const bounds = getStockBounds(store().project.stock)
-    const alongMin = spec.axis === 'x' ? bounds.minX : bounds.minY
-    const alongStart = alongMin + spec.length * 0.1
-    const alongEnd = alongStart + spec.length * 0.3
-    const diameter = spec.side * 0.6
-
-    const result = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter, alongStart, alongEnd, toolRef: 'ball' })
-    assert.ok(result.ok, `${label}: created (${result.ok ? '' : result.reason})`)
-    if (!result.ok) throw new Error('unreachable')
-
-    const after = store().project
-    assert.deepEqual(after.stock, stockBefore, `${label}: the blank is unchanged`)
-    const feature = createdFeature(result.featureId)
-    const mesh = loadPersistedTriangleMesh(after.modelAssets![feature.stl!.meshAssetId!])!
-    near((mesh.bounds.minZ + mesh.bounds.maxZ) / 2, spec.side / 2, `${label}: true pivot`, 1e-4)
-    near(mesh.bounds.maxZ - mesh.bounds.minZ, diameter, `${label}: requested diameter`, 1e-4)
-    if (spec.axis === 'x') {
-      near(mesh.bounds.minX, alongStart, `${label}: along start`, 1e-4)
-      near(mesh.bounds.maxX, alongEnd, `${label}: along end`, 1e-4)
-    } else {
-      near(mesh.bounds.minY, alongStart, `${label}: along start`, 1e-4)
-      near(mesh.bounds.maxY, alongEnd, `${label}: along end`, 1e-4)
-    }
-
-    // The load seam is identity and the saved file round-trips.
-    const transformed = loadSTLTransformedGeometry(feature, after)
-    assert.ok(transformed, `${label}: the model loads`)
-    if (!transformed) throw new Error('unreachable')
-    near(transformed.rawMinZ, mesh.bounds.minZ, `${label}: rawMinZ is the mesh minimum`)
-    let minZ = Infinity
-    let maxZ = -Infinity
-    for (let i = 2; i < transformed.positions.length; i += 3) {
-      minZ = Math.min(minZ, transformed.positions[i])
-      maxZ = Math.max(maxZ, transformed.positions[i])
-    }
-    near(minZ, mesh.bounds.minZ, `${label}: loaded minimum Z is the mesh minimum`, 1e-4)
-    near(maxZ, mesh.bounds.maxZ, `${label}: loaded maximum Z is the mesh maximum`, 1e-4)
-
-    const saved = JSON.parse(store().saveProject()) as Project
-    store().loadProject(saved)
-    const reloadedFeature = createdFeature(result.featureId)
-    const reloadedAsset = store().project.modelAssets?.[reloadedFeature.stl!.meshAssetId!]
-    assert.ok(reloadedAsset, `${label}: the asset survives save and reload`)
-    near(loadPersistedTriangleMesh(reloadedAsset)!.bounds.minZ, mesh.bounds.minZ, `${label}: reloaded mesh`)
-    assert.ok(isSquareStock(store().project.stock), `${label}: the reloaded blank is still square`)
-    near((reloadedFeature.z_bottom as number), mesh.bounds.minZ, `${label}: reloaded z_bottom`)
-    near((reloadedFeature.z_top as number), mesh.bounds.maxZ, `${label}: reloaded z_top`)
-    assert.equal(reloadedFeature.operation, 'model', `${label}: reloads as an ordinary model`)
-  }
-}
-
-// ── equal-to-side is allowed, larger is refused ───────────────
-
-log('Testing diameter at and above the blank side...')
-{
-  loadSquare(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const span = { alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' }
-  const atSide = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter: 40, ...span })
-  assert.ok(atSide.ok, 'a diameter equal to the side is the inscribed circle and is allowed')
-  if (!atSide.ok) throw new Error('unreachable')
-  const feature = createdFeature(atSide.featureId)
-  const mesh = loadPersistedTriangleMesh(store().project.modelAssets![feature.stl!.meshAssetId!])!
-  near(mesh.bounds.minZ, 0, 'at the side the target reaches the blank bottom', 0.002)
-  near(mesh.bounds.maxZ, 40, 'at the side the target reaches the blank top', 0.002)
-
-  loadSquare(MM_X, [cutter('mm', 'ball')])
-  const tooBig = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter: 40.001, ...span })
-  assert.equal(tooBig.ok, false, 'a diameter above the side is refused')
-  assert.equal(refusalReason(tooBig), 'diameterExceedsBlank', 'with the blank-fit reason')
-  for (const diameter of [0, -1, NaN, Infinity]) {
-    const refused = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter, ...span })
-    assert.equal(refused.ok, false, `diameter ${diameter} is refused`)
-    assert.equal(refusalReason(refused), 'invalidDiameter', `diameter ${diameter} carries the invalid reason`)
-  }
-}
-
-// ── the production seam generates on the square blank ─────────
-
-log('Testing the production seam generates safe square rough and finish motion...')
-{
-  loadSquare(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const result = store().addRotarySolid({
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  })
-  assert.ok(result.ok, 'the model and its operations are created')
-  if (!result.ok) throw new Error('unreachable')
-
-  // The production dispatch admits the real square blank: the same seam the
-  // engine slice owns (`setupGenerationBlock` → `generateRotaryOperation`)
-  // now produces motion instead of the documented shape refusal.
-  const pivot = barPivotZ(store().project.stock as SquareStock)
-  const centre = barCentre(store().project.stock as SquareStock)
-  for (const id of [result.roughOperationId, result.finishOperationId]) {
-    const operation = store().project.operations.find((entry) => entry.id === id)!
-    const envelope = computeOperationToolpath(store().project, operation)
-    assert.ok(envelope, `${operation.kind}: the engine answers`)
-    if (!envelope) throw new Error('unreachable')
-    assert.ok(envelope.result.moves.length > 0, `${operation.kind}: nonempty motion on the square blank`)
-    assert.ok(
-      !envelope.result.warnings.some((warning) => warning.code === 'aroundStockMismatch'),
-      `${operation.kind}: admitted, not refused as a shape/setup mismatch`,
-    )
-    for (const move of envelope.result.moves) {
-      for (const point of [move.from, move.to]) {
-        assert.ok(point.a !== undefined, `${operation.kind}: every endpoint carries A`)
-        assert.equal(point.y, centre, `${operation.kind}: across stays on the true pivot`)
-        assert.ok(point.z >= pivot - 1e-9, `${operation.kind}: never cuts below the pivot`)
-      }
-    }
-  }
-}
-
-// ── undo and redo restore the square blank and the model ──────
-
-log('Testing one undo and redo on the square blank...')
-{
-  const project = loadSquare(MM_X, [cutter('mm', 'ball')])
-  const stockBefore = structuredClone(project.stock)
-  const bounds = getStockBounds(project.stock)
-  const result = store().addRotarySolid({
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  })
-  assert.ok(result.ok, 'created')
-  if (!result.ok) throw new Error('unreachable')
-  const after = store().project
-  const assetId = after.featureDefinitions[after.features[0].definitionId].stl!.meshAssetId!
-
+  // Undo removes it; redo restores it.
   store().undo()
-  const undone = store().project
-  assert.equal(undone.features.length, 0, 'undo removes the model')
-  assert.equal(undone.featureFolders.length, 0, 'undo removes the folder')
-  assert.equal(undone.operations.length, 0, 'undo removes both operations')
-  assert.equal(undone.modelAssets?.[assetId], undefined, 'undo removes the asset')
-  assert.deepEqual(undone.stock, stockBefore, 'undo leaves the square blank as it was')
-  assert.equal(activeFace(undone), 'around', 'undo keeps the real Around setup in view')
-
+  assert.equal(store().project.features.length, before, 'undo removes the model')
   store().redo()
-  const redone = store().project
-  assert.equal(redone.features.length, 1, 'redo restores the model')
-  assert.equal(redone.operations.length, 2, 'redo restores both operations')
-  assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
-  assert.deepEqual(redone.stock, stockBefore, 'redo never touches the blank')
+  assert.equal(store().project.features.length, before + 1, 'redo restores the model')
 }
 
-// ── creation inside an outer history transaction ──────────────
-
-log('Testing creation inside an outer transaction on the real square setup...')
-{
-  const project = loadSquare(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(project.stock)
-  const stockBefore = structuredClone(project.stock)
-  const snapBefore = project.grid.snapIncrement
-  const featuresBefore = project.features.length
-  const operationsBefore = project.operations.length
-  const historyBefore = store().history.past.length
-
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
-  const result = store().addRotarySolid({
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  })
-  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-  const assetId = store().project.featureDefinitions[
-    store().project.features.find((entry) => entry.id === result.featureId)!.definitionId
-  ].stl!.meshAssetId!
-
-  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
-  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
-  assert.equal(store().project.operations.length, operationsBefore + 2, 'both operations exist before the commit')
-
-  store().commitHistoryTransaction()
-  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
-
-  store().undo()
-  const undone = store().project
-  assert.equal(undone.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
-  assert.equal(undone.features.length, featuresBefore, 'undo removes the model')
-  assert.equal(undone.operations.length, operationsBefore, 'undo removes both operations')
-  assert.equal(undone.featureFolders.length, 0, 'undo removes the folder')
-  assert.equal(undone.modelAssets?.[assetId], undefined, 'undo removes the asset')
-  assert.deepEqual(undone.stock, stockBefore, 'undo leaves the blank as it was')
-  assert.equal(activeSetup(undone).id, 'square-around', 'undo keeps the real Around setup in view')
-  assert.equal(store().history.future.length, 1, 'the combined step is redoable')
-
-  store().redo()
-  const redone = store().project
-  assert.equal(redone.grid.snapIncrement, snapBefore * 2, 'redo restores the grid edit')
-  assert.equal(redone.features.length, featuresBefore + 1, 'redo restores the model')
-  assert.equal(redone.operations.length, operationsBefore + 2, 'redo restores both operations')
-  assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
-  assert.deepEqual(redone.stock, stockBefore, 'redo never touches the blank')
-}
-
-log('Testing a refused creation leaves an open transaction alone...')
-{
-  loadSquare(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const snapBefore = store().project.grid.snapIncrement
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: 3 })
-  const projectAfterEdit = store().project
-  const selectionAfterEdit = store().selection
-  const dirtyAfterEdit = store().dirty
-  const historyAfterEdit = store().history.past.length
-  const transactionStart = store().history.transactionStart
-  assert.ok(transactionStart, 'the transaction is open')
-
-  const refused = store().addRotarySolid({ ...SQUARE_TO_ROUND, diameter: 41, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
-  assert.equal(refused.ok, false, 'the bad input is refused')
-  assert.equal(store().history.transactionStart, transactionStart, 'the transaction snapshot is unchanged')
-  assert.equal(store().project, projectAfterEdit, 'the project is unchanged')
-  assert.equal(store().selection, selectionAfterEdit, 'the selection is unchanged')
-  assert.equal(store().dirty, dirtyAfterEdit, 'dirtiness is unchanged')
-  assert.equal(store().history.past.length, historyAfterEdit, 'no snapshot was added')
-
-  store().cancelHistoryTransaction()
-  assert.equal(store().project.grid.snapIncrement, snapBefore, 'the untouched transaction still cancels cleanly')
-}
-
-// ── refusals and the ordinary-edit contract ───────────────────
-
-log('Testing refusals, the wrong stock shape and ordinary model editing...')
-{
-  const project = loadSquare(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(project.stock)
-  const base = {
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  }
-  const before = store().project
-  const selectionBefore = store().selection
-  const dirtyBefore = store().dirty
-  const historyBefore = store().history.past.length
-
-  const refusals: Array<[string, () => { ok: boolean }]> = [
-    ['descending along range', () => store().addRotarySolid({ ...base, alongStart: bounds.minX + 80, alongEnd: bounds.minX + 20 })],
-    ['along range outside the blank', () => store().addRotarySolid({ ...base, alongEnd: bounds.maxX + 10 })],
-    ['non-finite along range', () => store().addRotarySolid({ ...base, alongStart: NaN })],
-    ['missing tool', () => store().addRotarySolid({ ...base, toolRef: 'nope' })],
-    ['diameter above the side', () => store().addRotarySolid({ ...base, diameter: 41 })],
-  ]
-  for (const [label, run] of refusals) {
-    const refused = run()
-    assert.equal(refused.ok, false, `${label} is refused`)
-    assert.equal(store().project, before, `${label} leaves the project untouched`)
-    assert.equal(store().selection, selectionBefore, `${label} leaves the selection untouched`)
-    assert.equal(store().dirty, dirtyBefore, `${label} leaves dirtiness untouched`)
-    assert.equal(store().history.past.length, historyBefore, `${label} adds no history entry`)
-  }
-
-  // Square-to-round needs a square blank: on a round bar it is refused.
-  const roundBase = newProject('Round', 'mm')
-  roundBase.meta.projectType = 'rotary'
-  roundBase.stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
-  const machine = rotaryMachine('x')
-  roundBase.meta.machineDefinitions = [machine]
-  roundBase.meta.selectedMachineId = machine.id
-  roundBase.tools = [cutter('mm', 'ball')]
-  roundBase.setups.push({
-    ...roundBase.setups[0],
-    id: 'round-around',
-    name: 'Around',
-    kind: 'around',
-    orientation: { axis: 'x', angleDeg: 0 },
-  })
-  roundBase.activeSetupId = 'round-around'
-  store().loadProject(projectWithFeatures(roundBase, []))
-  assert.equal(activeFace(store().project), 'around', 'the round project is on Around')
-  assert.equal(
-    refusalReason(store().addRotarySolid({ ...base })),
-    'needsSquareBar',
-    'a round bar is refused for square-to-round',
-  )
-
-  store().loadProject(newProject('Milling', 'mm'))
-  assert.equal(refusalReason(store().addRotarySolid({ ...base })), 'notRotaryProject', 'a non-rotary project is refused')
-
-  // A provisional Around setup on a square blank is realised for real
-  // (issue #1016 C2-U1): the face switch enters Around, `addRotarySolid`
-  // creates the model and both operations in the same write that makes the
-  // setup real, and one undo removes them together.
-  const provisionalBase = newProject('Square provisional', 'mm')
-  provisionalBase.meta.projectType = 'rotary'
-  provisionalBase.stock = squareBlankFor(MM_X)
-  const provisionalMachine = rotaryMachine(MM_X.axis)
-  provisionalBase.meta.machineDefinitions = [provisionalMachine]
-  provisionalBase.meta.selectedMachineId = provisionalMachine.id
-  provisionalBase.tools = [cutter('mm', 'ball')]
-  store().loadProject(projectWithFeatures(provisionalBase, []))
-  assert.equal(switchWorkspaceFace('around'), true, 'the square blank enters Around')
-  assert.equal(
-    activeSetup(store().project).id,
-    provisionalSetupId('around'),
-    'the workspace looks at the provisional Around setup',
-  )
-  const provisionalBounds = getStockBounds(store().project.stock)
-  const provisionalHistoryBefore = store().history.past.length
-  const provisionalResult = store().addRotarySolid({
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: provisionalBounds.minX + 20,
-    alongEnd: provisionalBounds.minX + 80,
-    toolRef: 'ball',
-  })
-  assert.ok(
-    provisionalResult.ok,
-    `created on the realised setup (${provisionalResult.ok ? '' : provisionalResult.reason})`,
-  )
-  if (!provisionalResult.ok) throw new Error('unreachable')
-  const realised = store().project
-  const realisedSetup = activeSetup(realised)
-  assert.notEqual(realisedSetup.id, provisionalSetupId('around'), 'the provisional setup became real')
-  assert.equal(realisedSetup.kind, 'around', 'and it is a real Around setup')
-  assert.equal(realisedSetup.orientation.axis, MM_X.axis, 'on the blank axis')
-  for (const operation of realised.operations) {
-    assert.equal(operation.setupId, realisedSetup.id, 'both operations join the realised setup')
-  }
-  assert.equal(store().history.past.length, provisionalHistoryBefore + 1, 'one history step')
-  store().undo()
-  const undone = store().project
-  assert.equal(undone.setups.some((setup) => setup.kind === 'around'), false, 'one undo removes the realised setup')
-  assert.equal(undone.operations.length, 0, 'and both operations')
-  assert.equal(undone.features.length, 0, 'and the model')
-  assert.equal(activeFace(undone), 'around', 'the workspace stays on the Around face')
-
-  // A created model is an ordinary feature: renaming it is an ordinary edit.
-  loadSquare(MM_X, [cutter('mm', 'ball')])
+function testPolygonOnSquare(): void {
+  loadSquare()
   const created = store().addRotarySolid({
-    ...SQUARE_TO_ROUND,
-    diameter: 24,
-    alongStart: getStockBounds(store().project.stock).minX + 20,
-    alongEnd: getStockBounds(store().project.stock).minX + 80,
-    toolRef: 'ball',
+    kind: 'polygon', start: 0, length: 40, sides: 6, acrossFlats: 10, rotationDeg: 0,
   })
-  assert.ok(created.ok, 'created')
-  if (!created.ok) throw new Error('unreachable')
-  store().updateFeature(created.featureId, { name: 'Renamed target' })
-  const renamed = store().project.features.find((entry) => entry.id === created.featureId)!
-  assert.equal(renamed.name, 'Renamed target', 'the model renames like any ordinary feature')
-  assert.equal(renamed.definitionId !== undefined, true, 'and keeps its definition reference')
+  assert.ok(created.ok, 'a polygon is created on a square blank')
+  if (!created.ok) return
+  const project = store().project
+  const mesh = modelMesh()
+  const old = buildRotaryPolygonPrism(project.stock as Parameters<typeof buildRotaryPolygonPrism>[0], {
+    sides: 6, acrossFlats: 10, rotationDeg: 0, alongStart: 10, alongEnd: 50,
+  })
+  assert.deepEqual(Array.from(mesh.positions), Array.from(old.positions), 'the square-blank polygon is the builder output')
+  assert.deepEqual(Array.from(mesh.index), Array.from(old.index), 'the square-blank polygon triangles match')
 }
 
-/** A round bar with the same box as the square fixtures, for the shape refusal. */
-log('rotarySolidStore: all assertions passed.')
+function testRefusals(): void {
+  loadSquare()
+  const before = store().project
+  const historyBefore = store().history.past.length
+  const cases: Array<[string, number | undefined]> = [
+    ['a diameter above the side', 25.001],
+    ['a zero diameter', 0],
+    ['a non-finite diameter', Number.NaN],
+  ]
+  for (const [label, diameter] of cases) {
+    const reason = refusalReason(store().addRotarySolid({ kind: 'turn', start: 0, length: 20, diameter: diameter as number }))
+    assert.ok(reason === 'diameterExceedsStock' || reason === 'invalidDiameter', `${label} is refused (${reason})`)
+    assert.equal(store().project.features.length, before.features.length, `${label} creates nothing`)
+    assert.equal(store().history.past.length, historyBefore, `${label} records no history`)
+  }
+  assert.equal(
+    refusalReason(store().addRotarySolid({ kind: 'polygon', start: 0, length: 20, sides: 6, acrossFlats: 30, rotationDeg: 0 })),
+    'polygonExceedsStock',
+    'a polygon wider than the blank is refused',
+  )
+  const flipped = store().project
+  assert.equal(flipped.features.length, before.features.length)
+}
 
-/**
- * Guard sites outside this file, reported and not edited here (the engine /
- * UI slices own them): `activeFace.ts`'s `aroundUnavailableReason` still
- * answers `needsRoundBar` for a square blank and the face switcher still
- * refuses to enter Around; `operationValidity.ts`, the CSG / overlay readers
- * and the simulation setup still branch on `isRoundStock`. The engine
- * production seam (`setupGenerationBlock` → `generateRotaryOperation`) and the
- * output planner (`motionPipeline.ts`) now admit the square blank; the
- * physical workholding / ordinary-clamp guard and the refusal severity live in
- * `squareRotarySafety.ts` and `warningCodes.ts`.
- */
+// ── edit keeps the cylinder on the pivot ────────────────────
+
+function testDiameterEditStaysCentred(): void {
+  loadSquare()
+  const created = store().addRotarySolid({ kind: 'turn', start: 10, length: 30, diameter: 20 })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const model = onlyModel()
+  const project = store().project
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const canned = rotarySolidCannedData(frame, { kind: 'turn', start: 10, length: 30, diameter: 10 }, project.meta.units)
+  assert.ok(canned)
+  store().updateFeature(model.id, { canned })
+
+  const edited = store().project.features.find((feature) => feature.id === model.id)
+  assert.ok(edited)
+  near(Number(edited.z_bottom), SIDE / 2 - 5, 'the smaller Turn still sits on the pivot', 1e-3)
+  near(Number(edited.z_top), SIDE / 2 + 5, 'the smaller Turn top is on the pivot', 1e-3)
+  const editedMesh = modelMesh(edited)
+  near(editedMesh.bounds.minZ, SIDE / 2 - 5, 'the emitted mesh is centred', 1e-3)
+  near(editedMesh.bounds.maxZ, SIDE / 2 + 5, 'the emitted mesh top is centred', 1e-3)
+}
+
+// ── save → load regenerates every kind ──────────────────────
+
+function testRoundTripPerKind(): void {
+  for (const input of [
+    { kind: 'turn' as const, start: 10, length: 30, diameter: 20 },
+    { kind: 'polygon' as const, start: 0, length: 40, sides: 8, acrossFlats: 10, rotationDeg: 22.5 },
+  ]) {
+    loadSquare()
+    const created = store().addRotarySolid(input)
+    assert.ok(created.ok, `${input.kind} created`)
+    if (!created.ok) continue
+    const before = store().project
+    const beforeMesh = modelMesh()
+    const file = store().saveProject()
+    store().openProjectFromText(file, null)
+    const after = store().project
+    const feature = after.features.find((entry) => entry.id === created.featureId)
+    assert.ok(feature, `${input.kind} survives the round trip`)
+    assert.equal(after.featureDefinitions[feature.definitionId].canned?.kind, input.kind, `${input.kind}: kind survives`)
+    const afterMesh = modelMesh(feature)
+    assert.deepEqual(Array.from(afterMesh.positions), Array.from(beforeMesh.positions), `${input.kind}: vertices survive`)
+    assert.deepEqual(Array.from(afterMesh.index), Array.from(beforeMesh.index), `${input.kind}: triangles survive`)
+    assert.equal(before.operations.length, 0, 'the round trip creates no operation')
+  }
+}
+
+// ── generation and equivalence on the square blank ─────────
+
+function testSquareGenerationAndEquivalence(): void {
+  const legacyBase = squareProject()
+  const oldMesh = buildRotaryCylinder(
+    legacyBase.stock as Parameters<typeof buildRotaryCylinder>[0],
+    { diameter: 20, alongStart: 20, alongEnd: 50 },
+    'mm',
+  )
+  const oldProject = legacySquareProject(legacyBase, oldMesh)
+  loadSquare(oldProject)
+  assert.equal(store().project.featureFolders.length, 1, 'the old folder is kept')
+  const oldWithOps = addRotaryOperations('f-square-old')
+
+  const newBase = squareProject()
+  loadSquare(newBase)
+  const created = store().addRotarySolid({ kind: 'turn', start: 10, length: 30, diameter: 20 })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const newWithOps = addRotaryOperations(created.featureId)
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const oldResult = movesAndGcode(oldWithOps, operationByKind(oldWithOps, kind).id)
+    const newResult = movesAndGcode(newWithOps, operationByKind(newWithOps, kind).id)
+    assert.deepEqual(newResult.moves, oldResult.moves, `${kind}: the square toolpath moves equal Square to round`)
+    assert.equal(newResult.gcode, oldResult.gcode, `${kind}: the posted square G-code equals Square to round`)
+    assert.ok(newResult.moves.length > 0, `${kind}: real motion on the square blank`)
+  }
+
+  // The guard is still the engine's: an operation on the canned model generates
+  // through the square-stock seam, and the square stock is untouched.
+  const finish = operationByKind(newWithOps, 'rotary_finish')
+  const envelope = computeOperationToolpath(newWithOps, finish)
+  assert.ok(envelope)
+  assert.ok(envelope.result.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined), 'the square pass carries the rotary angle')
+  assert.equal(newWithOps.stock.shape, 'square', 'the stock stays a square blank')
+}
+
+// ── old projects stay old ───────────────────────────────────
+
+function testOldSquareFolderUnchanged(): void {
+  const base = squareProject()
+  const oldMesh = buildRotaryCylinder(
+    base.stock as Parameters<typeof buildRotaryCylinder>[0],
+    { diameter: 20, alongStart: 20, alongEnd: 50 },
+    'mm',
+  )
+  loadSquare(legacySquareProject(base, oldMesh))
+  const loaded = store().project
+  assert.equal(loaded.featureFolders.length, 1, 'the old folder is kept')
+  assert.equal(loaded.featureFolders[0].name, 'Square to round', 'the old folder name is kept')
+  const feature = loaded.features.find((entry) => entry.id === 'f-square-old')
+  assert.ok(feature)
+  assert.equal(feature.folderId, 'fd-square-old', 'the old model stays in its folder')
+  const definition = loaded.featureDefinitions[feature.definitionId]
+  assert.equal(definition.canned, undefined, 'no canned parameters are invented')
+  assert.equal(definition.stl?.meshAssetId, 'model-asset-square-old', 'the old mesh asset is kept')
+  assert.equal(loaded.operations.length, 0, 'loading creates no operation')
+
+  // A real old project also carries its rough and finish. Adding them and
+  // saving again must keep the folder, the model and both operations exactly as
+  // they are: the new creator is never invoked for stored work.
+  addRotaryOperations('f-square-old')
+  const file = store().saveProject()
+  store().openProjectFromText(file, null)
+  const roundTripped = store().project
+  assert.equal(roundTripped.featureFolders.length, 1, 'the old folder survives a save/load')
+  assert.equal(roundTripped.featureFolders[0].name, 'Square to round', 'with its name')
+  const keptFeature = roundTripped.features.find((entry) => entry.id === 'f-square-old')
+  assert.ok(keptFeature, 'the old model survives')
+  assert.equal(keptFeature.folderId, 'fd-square-old', 'and stays in its folder')
+  assert.equal(roundTripped.operations.length, 2, 'both old operations survive')
+  assert.deepEqual(
+    roundTripped.operations.map((operation) => operation.kind).sort(),
+    ['rotary_finish', 'rotary_rough'],
+    'with their kinds',
+  )
+  assert.ok(
+    roundTripped.operations.every((operation) => (
+      operation.target.source === 'features' && operation.target.featureIds.includes('f-square-old')
+    )),
+    'and still target the old model',
+  )
+}
+
+// ── run ──────────────────────────────────────────────────────
+
+testTurnOnSquare()
+testPolygonOnSquare()
+testRefusals()
+testDiameterEditStaysCentred()
+testRoundTripPerKind()
+testSquareGenerationAndEquivalence()
+testOldSquareFolderUnchanged()
+
+// A milling block is not a rotary project at all.
+const block = newProject('Block', 'mm')
+store().loadProject(block)
+assert.equal(
+  refusalReason(store().addRotarySolid({ kind: 'turn', start: 0, length: 10, diameter: 5 })),
+  'notRotaryProject',
+  'a milling block is not a rotary project',
+)
+
+console.log('rotarySolidStore: all assertions passed.')

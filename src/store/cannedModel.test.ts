@@ -46,6 +46,7 @@ import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { cannedShapeIsExpandable } from '../cannedShapes'
 import { cannedShapeModelAssetId, rebuildCannedShapeModel } from '../cannedShapes/model'
 import { loadSTLTransformedGeometry } from '../engine/csg'
+import { isGhostFeature } from './helpers/activeFace'
 import { readFileSync } from 'node:fs'
 import {
   registerTestCannedShapes,
@@ -401,6 +402,38 @@ test('save and load keep stl.scale, the instance transform and the scaled height
     [edited.width, edited.depth, edited.height],
     [80, 60, 30],
     'a parameter edit applies the kept scale to the regenerated mesh',
+  )
+})
+
+test('a canned model is not a ghost on any face, while an ordinary model still is', () => {
+  const project = seed()
+  const aroundSetup = {
+    ...project.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around' as const,
+    orientation: { axis: 'x' as const, angleDeg: 0 },
+  }
+  const faceProject = {
+    setups: [aroundSetup],
+    activeSetupId: aroundSetup.id,
+    featureDefinitions: project.featureDefinitions,
+  }
+  assertEqual(isGhostFeature(faceProject, project.features[0]), false, 'the canned model row is selectable on Around')
+
+  const plainDefinition: FeatureDefinition = {
+    ...project.featureDefinitions['def-model'],
+    id: 'def-plain-model',
+    canned: undefined,
+  }
+  const withPlain = {
+    ...faceProject,
+    featureDefinitions: { ...faceProject.featureDefinitions, [plainDefinition.id]: plainDefinition },
+  }
+  assertEqual(
+    isGhostFeature(withPlain, { authoringFace: 'top', definitionId: plainDefinition.id }),
+    true,
+    'an ordinary imported model keeps its old ghost rule, so old folders load unchanged',
   )
 })
 

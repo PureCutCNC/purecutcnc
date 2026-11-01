@@ -275,6 +275,11 @@ async function wrappedLine(page: Page, operationId: string): Promise<WrappedLine
 }
 
 test('the 3D view draws the wrapped Around pass on the real bar', async ({ app, ui }, testInfo) => {
+  // Two workers on a software-rendered runner push this past the default 60 s:
+  // the drag alone took 15 s and each screenshot 3.3 s here, and the run only
+  // crossed the limit at the last assertion, after every check had passed
+  // (run 40481546489). The Simulation test below sets the same budget.
+  test.setTimeout(120_000)
   const { page } = app
   const project = await seedAroundProject(page)
   expect((project.stock as RoundStock).shape).toBe('round')

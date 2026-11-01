@@ -32,7 +32,7 @@ import { isMachinable } from '../helpers/featureRoles'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
-import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate } from '../helpers/operationDefaults'
+import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate, withCannedPatternTargetDepth } from '../helpers/operationDefaults'
 import { rejectedOperationTargets, targetAllowedInSetup } from '../../engine/setupTargets'
 import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
@@ -61,6 +61,13 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
     index += 1
   }
   return `${baseName} ${index}`
+}
+
+/** Whether two targets name the same set, so a repeated patch is not a change. */
+function sameOperationTarget(a: OperationTarget, b: OperationTarget): boolean {
+  if (a.source === 'stock' || b.source === 'stock') return a.source === b.source
+  return a.featureIds.length === b.featureIds.length
+    && a.featureIds.every((featureId) => b.featureIds.includes(featureId))
 }
 
 export function createOperationsSlice(
@@ -182,6 +189,12 @@ export function createOperationsSlice(
             if (!isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)) {
               return operation
             }
+            // A Follow line cuts a canned Thread/Flutes at the feature's own
+            // stored depth, whichever path changed the target (decision 3,
+            // #1112): "Add to operation" merges the target here too, so the
+            // rule belongs in the store rather than in each UI handler.
+            const targetChanged = patch.target !== undefined
+              && !sameOperationTarget(operation.target, nextOperation.target)
             // A target or setup edit may not hand the operation a feature its
             // setup cannot reach (issue #946). Judged on what the edit adds: a
             // target that became unreachable some other way — its feature was
@@ -193,7 +206,7 @@ export function createOperationsSlice(
                 .some((verdict) => !before.has(verdict.featureId))
               if (introduced) return operation
             }
-            return nextOperation
+            return targetChanged ? withCannedPatternTargetDepth(s.project, nextOperation) : nextOperation
           }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

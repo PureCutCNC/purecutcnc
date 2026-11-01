@@ -46,6 +46,9 @@ import {
   IDENTITY_MATRIX,
 } from '../../types/project'
 import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
+import { multiplyMatrix, rotateMatrix, translateMatrix } from '../helpers/instanceTransforms'
+import { addCannedShapeFeature } from '../helpers/cannedShapeCreation'
+import { CHAMFER_RECT_CANNED_KIND, ELLIPSE_CANNED_KIND, NGON_CANNED_KIND, ROUND_RECT_CANNED_KIND, SLOT_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { toBlockStock } from '../helpers/stockShape'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
@@ -1284,9 +1287,9 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'circle', circleProfile(cx, cy, r), name, depth))
     },
 
-    addEllipseFeature: (name, cx, cy, rx, ry, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'ellipse', ellipseProfile(cx, cy, rx, ry), name, depth))
-    },
+    addEllipseFeature: (name, cx, cy, rx, ry, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ELLIPSE_CANNED_KIND, params: { rx, ry } },
+        ellipseProfile(cx, cy, rx, ry), translateMatrix(cx, cy), depth),
 
     addPolygonFeature: (name, points, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', polygonProfile(points), name, depth))
@@ -1297,11 +1300,18 @@ export function createFeatureSlice(
     },
 
     addSlotFeature: (name, p1, p2, width, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', slotProfile(p1, p2, width), name, depth))
+      const length = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+      const centre = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      addCannedShapeFeature(get(), name, { kind: SLOT_CANNED_KIND, params: { length, width } },
+        slotProfile(p1, p2, width),
+        multiplyMatrix(translateMatrix(centre.x, centre.y), rotateMatrix(angle)), depth)
     },
 
     addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) =>
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth)),
+      addCannedShapeFeature(get(), name,
+        { kind: NGON_CANNED_KIND, params: { sides, size: circumradius, rotation: (firstVertexAngle * 180) / Math.PI } },
+        ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), translateMatrix(cx, cy), depth),
 
     addGearFeature: createAddGearFeatureAction(set, get),
 
@@ -1309,13 +1319,13 @@ export function createFeatureSlice(
 
     addRotarySolid: createAddRotarySolidAction(set, get),
 
-    addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addRoundRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ROUND_RECT_CANNED_KIND, params: { width: w, height: h, radius: corner } },
+        roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
 
-    addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addChamferRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: CHAMFER_RECT_CANNED_KIND, params: { width: w, height: h, chamfer: corner } },
+        chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
 
     expandTextFeature: (textFeatureId) => {
       const state = get()

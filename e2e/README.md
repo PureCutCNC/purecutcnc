@@ -33,7 +33,7 @@ uploaded on every run; the HTML report is uploaded on failures.
 | Lane | Command | Coverage |
 |------|---------|----------|
 | Settings and import | `npm run test:e2e:settings` | Appearance, localization, themes, units, machines, tool library, geometry import |
-| Project editing | `npm run test:e2e:project-input` | Feature references, bulk edits, model orientation, distribution, nesting, text and sketch sessions |
+| Project editing | `npm run test:e2e:project-input` | Feature references, bulk edits, canned-ellipse radius handles, model orientation, distribution, nesting, text and sketch sessions |
 | CAM and interaction | `npm run test:e2e:workflow-ui` | CAM operations and surface finish, export, selection, panels, simulation and WebGL recovery |
 | Generation and rendering | `npm run test:e2e:generation` | Default worker/GPU on a fresh profile, stored inline/Canvas choices, worker↔inline parity, Stop/Resume, worker-startup fallback, GPU/Canvas display |
 
@@ -59,6 +59,7 @@ remains the full local-suite command.
 Current smoke targets:
 
 - `appearance.smoke.spec.ts` — Dark/Light/System switching, persistence, system-media response, project-state isolation, and tablet touch targets.
+- `ellipseRadiusHandle.smoke.spec.ts` — a canned ellipse's two radius handles (issue #1112 w3e-a): a placed, rotated ellipse's X and Y handles are dragged on the canvas one at a time; each drag writes only its own radius in the ellipse's rotated frame, and a single undo restores both.
 - `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
 - `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.

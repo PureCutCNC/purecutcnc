@@ -296,10 +296,10 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
         </>
         )}
 
-        {/* Around solids and, on a round bar, Thread and Flutes. The solid
-            entries self-guard on the bar shape, so exactly one of Polygon and
-            Square to round is offered; the group renders only on Around, so no
-            empty rail section is left behind on a flat face. */}
+        {/* Turn and Polygon, and on a round bar Thread and Flutes. The solid
+            entries work on either bar shape; Thread and Flutes self-guard on a
+            round bar. The group renders only on Around, so no empty rail
+            section is left behind on a flat face. */}
         {aroundFace && (
           <div className="tool-rail__section">
             <RotarySolidActions variant="rail" />

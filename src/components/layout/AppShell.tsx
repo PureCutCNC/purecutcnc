@@ -35,6 +35,8 @@ import { FaceBanner } from './FaceBanner'
 import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
 import { CommandNoticeToast } from './CommandNoticeToast'
+import { RotaryPatternDialogHost } from './toolbar/RotaryPatternDialog'
+import { RotarySolidDialogHost } from './toolbar/RotarySolidDialog'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
@@ -917,6 +919,11 @@ export function AppShell({
       </footer>
 
       <CommandNoticeToast />
+      {/* One dialog host for the creation drawer and the Properties editor. It
+          lives here, not in Properties, because that panel is mounted twice
+          while its expanded modal is open. */}
+      <RotaryPatternDialogHost />
+      <RotarySolidDialogHost />
 
       {/* ── Expanded panel modal ── */}
       {expandedPanel && (
