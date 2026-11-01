@@ -41,7 +41,10 @@
  *    a Turn or a Polygon authored on Top is offered enabled on Around (where
  *    Frank found it greyed out), the ghost menu offers the same entry above the
  *    way to its own face, and a kind with no registered opener is refused with
- *    Properties' own reason rather than a face's (issue #1112 rt7-c).
+ *    Properties' own reason rather than a face's (issue #1112 rt7-c);
+ *  - the menu shows **one** edit entry per kind, the one Properties offers in
+ *    Shape: "Edit {shape}…" for a generated shape and no Edit sketch at all,
+ *    Edit sketch alone for every other feature (issue #1112 rt7-i).
  *
  * Mutations checked one at a time:
  *  - showing "Expand to features" for Turn/Polygon → the absence assertion
@@ -62,7 +65,11 @@
  *  - putting `onOtherFace` back into the "Edit {shape}…" entry's `disabled` → the
  *    Around tests lose their enabled entry;
  *  - dropping the "Edit {shape}…" entry from the ghost menu → the ghost test
- *    loses it and its ordering assertion (rt7-c).
+ *    loses it and its ordering assertion (rt7-c);
+ *  - rendering the disabled "Edit sketch" for a canned shape again → the
+ *    one-edit-entry assertions fail in every canned kind's menu (rt7-i);
+ *  - showing the generated shape's editor for a plain feature → the plain
+ *    feature's one-entry assertion fails (rt7-i).
  *
  * Run with: NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/featureContextMenu.test.ts
  */
@@ -238,6 +245,23 @@ function textOf(host: HTMLElement): string {
   return host.textContent ?? ''
 }
 
+/**
+ * The menu's edit entries: "Edit sketch", and a generated shape's own
+ * "Edit {shape}…". Exactly one of them may be present (issue #1112 rt7-i).
+ */
+function editEntries(host: HTMLElement): HTMLButtonElement[] {
+  return menuButtons(host).filter((button) => {
+    const label = itemLabel(button)
+    return label === enMessages['featureTree.contextMenu.editSketch']
+      || /^Edit .+…$/.test(label)
+  })
+}
+
+/** An item's own label, without the reason line a refused entry carries. */
+function itemLabel(button: HTMLButtonElement): string {
+  return ((button.querySelector('.feature-context-menu__item-label') ?? button).textContent ?? '').trim()
+}
+
 // ── Fixtures ─────────────────────────────────────────────────────
 
 const OUTLINE_KINDS = ['ellipse', 'slot', 'ngon', 'roundrect', 'chamferrect', 'gear', 'thread', 'flutes'] as const
@@ -273,6 +297,23 @@ function cannedRow(kind: string): SketchFeature {
 
 function cannedProject(kind: string): Project {
   return projectWithFeatures(newProject('canned menu', 'mm'), [cannedRow(kind)])
+}
+
+/** A drawn rectangle: no canned kind, so its one edit entry is Edit sketch. */
+function plainRow(): SketchFeature {
+  return {
+    id: 'plain',
+    name: 'Plain',
+    kind: 'rect',
+    folderId: null,
+    sketch: cannedRow('ellipse').sketch,
+    operation: 'subtract',
+    authoringFace: 'top',
+    z_top: 4,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
 }
 
 /**
@@ -352,7 +393,6 @@ async function testCannedMenuItems(): Promise<void> {
 
     // The refusals a generated shape carries are the short reason.
     for (const label of [
-      enMessages['featureTree.contextMenu.editSketch'],
       enMessages['featureTree.contextMenu.addConstraint'],
       enMessages['featureTree.contextMenu.offset'],
       enMessages['featureTree.contextMenu.join'],
@@ -367,6 +407,13 @@ async function testCannedMenuItems(): Promise<void> {
       )
       assert(button.getAttribute('title') === refusal, `${kind}: ${label} keeps the same reason as its tooltip`)
     }
+
+    // One edit entry only: the shape's own editor, never a second (disabled)
+    // Edit sketch beside it (issue #1112 rt7-i).
+    assert(
+      !buttonByLabel(host, enMessages['featureTree.contextMenu.editSketch']),
+      `${kind}: a generated shape shows no Edit sketch entry at all`,
+    )
   }
 }
 
@@ -416,9 +463,10 @@ const SWITCH_REASON = enMessages['featureTree.face.switchToTopToEdit']
 // canned selection is the bar edit `rotaryMove.ts` owns (offered on every
 // face), and the three transforms are refused for the shape's own reason rather
 // than the face's (issue #1112 rt7-f). Every other bulk edit still refuses with
-// the face's.
+// the face's. Edit sketch is absent for the same shape for a different reason:
+// a generated shape shows its own editor as its one edit entry, so there is no
+// Edit sketch to refuse (issue #1112 rt7-i).
 const EDITABLE_LABELS = [
-  'featureTree.contextMenu.editSketch',
   'featureTree.contextMenu.addConstraint',
   'featureTree.contextMenu.offset',
   'featureTree.contextMenu.join',
@@ -509,6 +557,13 @@ async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
     )
     assert(button.getAttribute('title') === SWITCH_REASON, `${label} carries the reason as its tooltip too`)
   }
+
+  // A generated shape's one edit entry is its own editor: there is no second,
+  // disabled Edit sketch beside it, on this face either (issue #1112 rt7-i).
+  assert(
+    !buttonByLabel(host, enMessages['featureTree.contextMenu.editSketch']),
+    'the generated shape shows no Edit sketch entry',
+  )
 
   // The three transforms are refused for the shape's reason, not the face's:
   // a face switch would not make a generated shape resizable, and the editor
@@ -872,19 +927,7 @@ async function testRotaryCannedTransformsAreRefused(): Promise<void> {
  */
 async function testOtherCannedKindsKeepTheirTransforms(): Promise<void> {
   const ellipse = { ...cannedRow('ellipse'), authoringFace: 'top' as const }
-  const plain: SketchFeature = {
-    id: 'plain',
-    name: 'Plain',
-    kind: 'rect',
-    folderId: null,
-    sketch: cannedRow('ellipse').sketch,
-    operation: 'subtract',
-    authoringFace: 'top',
-    z_top: 4,
-    z_bottom: 0,
-    visible: true,
-    locked: false,
-  }
+  const plain: SketchFeature = plainRow()
   const project = projectWithFeatures(newProject('canned transforms', 'mm'), [ellipse, plain])
 
   for (const id of ['canned-ellipse', 'plain']) {
@@ -902,6 +945,46 @@ async function testOtherCannedKindsKeepTheirTransforms(): Promise<void> {
   }
 }
 
+/**
+ * Issue #1112 rt7-i: one edit entry per kind, the same one Properties offers in
+ * Shape. Frank: "on the context menu we also show only one of the edit
+ * options." A generated shape shows "Edit {shape}…" and no Edit sketch at all;
+ * every other feature shows Edit sketch and nothing else.
+ */
+async function testOneEditEntryPerKind(): Promise<void> {
+  for (const kind of [...OUTLINE_KINDS, ...MODEL_KINDS]) {
+    const featureId = `canned-${kind}`
+    const host = await renderMenu(cannedProject(kind), featureId)
+    const entries = editEntries(host)
+    const shapeName = enMessages[`canned.${kind}.name` as keyof typeof enMessages]
+    const editLabel = enMessages['featureTree.properties.canned.edit'].replace('{shape}', shapeName)
+    assert(entries.length === 1,
+      `${kind}: exactly one edit entry, got ${JSON.stringify(entries.map((entry) => textOf(entry)))}`)
+    assert(itemLabel(entries[0]) === editLabel,
+      `${kind}: the one edit entry is "${editLabel}", got "${itemLabel(entries[0])}"`)
+  }
+
+  // A drawn feature is the other half of the rule: Edit sketch alone, enabled,
+  // and wired to the edit it names.
+  const calls: string[] = []
+  const project = projectWithFeatures(newProject('plain menu', 'mm'), [plainRow()])
+  const host = await renderMenu(project, 'plain', { actions: callRecordingActions(calls) })
+  const entries = editEntries(host)
+  assert(entries.length === 1, 'a plain feature has exactly one edit entry')
+  assert(itemLabel(entries[0]) === enMessages['featureTree.contextMenu.editSketch'],
+    `its edit entry is Edit sketch, got "${itemLabel(entries[0])}"`)
+  assert(!entries[0].hasAttribute('disabled'), 'and it is offered while on its own face')
+  entries[0].click()
+  assert(calls.includes('editSketch'), `clicking it starts the sketch edit, got ${JSON.stringify(calls)}`)
+
+  // Properties' rule, read here too: no generated-shape editor exists to show.
+  assert(
+    !buttonByLabel(host, enMessages['featureTree.properties.canned.edit']
+      .replace('{shape}', enMessages['canned.ellipse.name'])),
+    'a plain feature offers no generated-shape editor',
+  )
+}
+
 async function main(): Promise<void> {
   await testCannedMenuItems()
   await testCannedEntriesAct()
@@ -911,6 +994,7 @@ async function main(): Promise<void> {
   await testAroundMenuOffersTheCannedEditor()
   await testCannedKindWithoutAnEditorIsRefusedForItsOwnReason()
   await testOtherFaceSketchEditingIsUnchanged()
+  await testOneEditEntryPerKind()
   await testRotaryCannedMoveIsOfferedOnAround()
   await testRotaryCannedTransformsAreRefused()
   await testOtherCannedKindsKeepTheirTransforms()

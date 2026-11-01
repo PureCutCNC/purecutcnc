@@ -317,7 +317,11 @@ export function FeatureContextMenu({
   const otherFaceSwitchReason = faceBusy ? t('appShell.face.busy') : undefined
   const otherFaceOr = (reason: string | undefined) => otherFaceEditingReason ?? reason
   const selectionOr = (reason: string | undefined) => selectionEditingReason ?? reason
-  const editSketchReason = otherFaceOr(menuFeatureIsCanned ? cannedRefusal : undefined)
+  // Edit sketch is now the one edit entry a drawn feature shows, and a
+  // generated shape shows its own editor instead of it — so the shape's
+  // "Expand to features first" refusal no longer belongs to this entry, only
+  // the face's (issue #1112 rt7-i).
+  const editSketchReason = otherFaceEditingReason
   const constraintReason = otherFaceOr(
     menuFeatureIsCanned
       ? cannedRefusal
@@ -576,12 +580,14 @@ export function FeatureContextMenu({
             ) : null}
           </div>
           <div className="feature-context-menu__separator" />
-          {/* A generated shape is edited by its parameters, so its own editor
-              leads the edit group; Expand follows Edit sketch, which it is the
-              way out of (#1112 F2). A model kind has no plain features to
-              expand into, exactly as Properties shows it. The editor is the
-              one edit a face does not gate — Properties offers it on Around
-              and so must this entry (#1112 rt7-c). */}
+          {/* One edit entry per kind, the same one Properties offers in Shape: a
+              generated shape is edited by its parameters, so its own editor is
+              the only edit here — Expand follows it, which is the way out of the
+              shape (#1112 F2). Every other feature gets Edit sketch alone
+              (issue #1112 rt7-i). A model kind has no plain features to expand
+              into, exactly as Properties shows it. The editor is the one edit a
+              face does not gate — Properties offers it on Around and so must
+              this entry (#1112 rt7-c). */}
           {cannedLabelKey ? (
             <button
               className={menuItemClass(editCannedReason)}
@@ -594,16 +600,17 @@ export function FeatureContextMenu({
                 {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
               </MenuItemText>
             </button>
-          ) : null}
-          <button
-            className={menuItemClass(editSketchReason)}
-            type="button"
-            onClick={() => actions.editSketch(menuFeature.id)}
-            disabled={menuFeatureIsCanned || onOtherFace}
-            title={editSketchReason}
-          >
-            <MenuItemText reason={editSketchReason}>{t('featureTree.contextMenu.editSketch')}</MenuItemText>
-          </button>
+          ) : (
+            <button
+              className={menuItemClass(editSketchReason)}
+              type="button"
+              onClick={() => actions.editSketch(menuFeature.id)}
+              disabled={onOtherFace}
+              title={editSketchReason}
+            >
+              <MenuItemText reason={editSketchReason}>{t('featureTree.contextMenu.editSketch')}</MenuItemText>
+            </button>
+          )}
           {cannedExpandable ? (
             <button
               className={menuItemClass(otherFaceEditingReason)}

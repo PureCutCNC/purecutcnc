@@ -746,10 +746,14 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
       await expect(menu).toBeVisible()
       await expect(ui.contextMenu.itemExact(menu, 'Edit ellipse…')).toBeEnabled()
       await expect(ui.contextMenu.itemExact(menu, 'Expand to features')).toBeEnabled()
-      // "Edit sketch" refuses a generated shape, and the refusal is visible text
-      // under the label — the row a finger has to read, and the one that used to
-      // stay under 44px (issue #1112 F2).
-      const refused = menu.locator('.feature-context-menu__item--reason').filter({ hasText: 'Edit sketch' })
+      // One edit entry only: a generated shape's menu offers its own editor and
+      // no "Edit sketch" at all, the same single entry Properties offers in
+      // Shape (issue #1112 rt7-i). The menu still shows its refusals as visible
+      // text, on rows a finger has to read (issue #1112 F2).
+      await expect(ui.contextMenu.item(menu, 'Edit sketch')).toHaveCount(0)
+      // The refusals the menu still carries stay visible text under the label —
+      // the row a finger has to read (issue #1112 F2).
+      const refused = menu.locator('.feature-context-menu__item--reason').filter({ hasText: 'Add constraint' })
       await expect(refused).toContainText(/generated|Expand to features/i)
       await expectTouchTargets(page, '.feature-context-menu')
       await expectInsideViewport(page, menu, `context menu (canned shape, ${shape} blank)`)

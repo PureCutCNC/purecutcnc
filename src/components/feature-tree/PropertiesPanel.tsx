@@ -1811,6 +1811,22 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </>
           ) : null}
+          {isCannedShape ? null : (
+            // The one edit action Shape offers a drawn feature, in the place a
+            // generated shape's "Edit {shape}…" sits: a text run's own editor
+            // disables it, exactly as the bottom-row button it replaces did
+            // (issue #1112 rt7-i). The bottom row is Delete alone now.
+            <div className="properties-actions" style={{ marginTop: '12px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
+                disabled={isTextFeature}
+              >
+                {t('featureTree.properties.stock.editSketch')}
+              </button>
+            </div>
+          )}
           {isTextFeature ? (
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
@@ -1844,17 +1860,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 { count: linkedOnOtherFace },
               )}
             </p>
-          ) : null}
-          {hasLinkedInstances ? (
-            <div className="properties-actions" style={{ marginTop: '8px' }}>
-              <button
-                className="feat-btn"
-                type="button"
-                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
-              >
-                {t('featureTree.properties.makeUnique')}
-              </button>
-            </div>
           ) : null}
         </DisclosureSection>
         {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId && !isGeneratedModel ? (
@@ -1960,6 +1965,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             />
             <span>{t("featureTree.properties.locked")}</span>
           </label>
+          {/* A shared shape's way out of the link is an instance decision, not a
+              property of the geometry, so it lives here rather than in Shape
+              (issue #1112 rt7-i). Visibility is unchanged: only while the shape
+              is shared. */}
+          {hasLinkedInstances ? (
+            <div className="properties-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.makeUnique')}
+              </button>
+            </div>
+          ) : null}
         </DisclosureSection>
         {hasSelfIntersection ? (
           <div className="properties-warning">
@@ -1973,15 +1993,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         ) : null}
       </div>
       <div className="properties-actions">
-        <button
-          className="feat-btn"
-          type="button"
-          onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
-          disabled={isTextFeature || isCannedShape}
-          title={isCannedShape ? t('featureTree.properties.canned.sketchDisabled') : undefined}
-        >
-          {t('featureTree.properties.stock.editSketch')}
-        </button>
+        {/* Delete is the one action left outside the sections: the edit action
+            sits in Shape and Make unique in Instance (issue #1112 rt7-i). */}
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           {t('featureTree.properties.deleteFeature')}
         </button>
