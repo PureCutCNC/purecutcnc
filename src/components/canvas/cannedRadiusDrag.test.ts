@@ -24,9 +24,10 @@
  *   1. Handles exist only while that ellipse's Edit panel is open. A plain
  *      selection draws none and cannot start a drag (Frank, round 7).
  *   2. A drag writes the panel's field text — the same edit path a keystroke
- *      takes — and never the project. The write is *held*, so the canvas preview
- *      follows the pointer while the stored parameters wait for Save
- *      (issue #1112 rt7-g review).
+ *      takes — and never the project. The field is *held*: the canvas preview
+ *      follows the pointer while the project keeps that field's stored value
+ *      until Save, and typing another field does not release it
+ *      (issues #1112 rt7-g review, rt7-g correction).
  *   3. The fields and the handles are one value in both directions: typing a
  *      radius moves its handle, and dragging moves the field.
  *   4. The handle follows the same snap gate a dragged circle control does, and
@@ -45,7 +46,7 @@ import type { ProjectStore } from '../../store/types'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { ELLIPSE_RADIUS_MIN, ellipseRadiusCentre, ellipseRadiusHandlePoint, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
 import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
-import { closeCannedEditDraft, getCannedEditDraft, openCannedEditDraft, setCannedEditDraftField } from './cannedEditDraft'
+import { cannedEditPreviewValues, closeCannedEditDraft, getCannedEditDraft, openCannedEditDraft, setCannedEditDraftField } from './cannedEditDraft'
 import {
   beginCannedRadiusDrag,
   cannedEditHandleParams,
@@ -91,6 +92,11 @@ function store(): ProjectStore {
   return useProjectStore.getState()
 }
 
+/** The fixture project's unit system: the draft text is written in it. */
+function units(): Project['meta']['units'] {
+  return store().project.meta.units
+}
+
 function storedParams(featureId: string): { rx: number; ry: number } {
   const canned = resolveFeatureInstance(store().project, featureId)?.canned
   assert.ok(canned, `feature ${featureId} is canned`)
@@ -119,13 +125,13 @@ assert.equal(
 )
 
 // A session for another row, or for another kind, is not this ellipse's editor.
-openCannedEditDraft('f-other', 'ellipse', { rx: '30', ry: '20' })
+openCannedEditDraft('f-other', 'ellipse', { rx: '30', ry: '20' }, units())
 assert.equal(
   beginCannedRadiusDrag(ellipse, 0, getCannedEditDraft()),
   null,
   'another row being edited does not give this ellipse handles',
 )
-openCannedEditDraft(ellipse.id, 'ngon', { sides: '6', size: '10', rotation: '0' })
+openCannedEditDraft(ellipse.id, 'ngon', { sides: '6', size: '10', rotation: '0' }, units())
 assert.equal(
   beginCannedRadiusDrag(ellipse, 0, getCannedEditDraft()),
   null,
@@ -135,7 +141,7 @@ closeCannedEditDraft()
 
 // ── 2. In Edit ellipse mode the fields place the handles ───────────────
 
-openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' })
+openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' }, units())
 const opened = getCannedEditDraft()
 assert.ok(opened, 'the Edit ellipse session is open')
 const drawParams = cannedEditHandleParams(ellipse, opened, null)
@@ -176,20 +182,33 @@ assert.equal(store().history.past.length, undoSteps, 'no pointer move adds an un
 assert.equal(publishCannedRadiusDrag(preview), true, 'the drag publishes a changed field')
 assert.equal(getCannedEditDraft()?.values.rx, '70', 'the drag writes the panel’s rx field')
 assert.equal(getCannedEditDraft()?.values.ry, '20', 'the drag never rewrites the other field')
-assert.equal(
-  getCannedEditDraft()?.previewHeld,
-  true,
+assert.deepEqual(
+  getCannedEditDraft()?.heldFields,
+  ['rx'],
   'the dragged field is held out of the project until Save (issue #1112 rt7-g review)',
 )
 assert.deepEqual(storedParams(ellipse.id), storedParameters, 'publishing writes no project parameters')
 assert.equal(store().history.past.length, undoSteps, 'the drag is not an undo step before Save')
 
-// A keystroke is a live preview again, so the F1 behaviour of a typed value is
-// untouched by the drag's held preview.
+// A keystroke on the dragged field makes that field a typed value again, so the
+// F1 behaviour of a typed value is untouched by the drag's held field.
 setCannedEditDraftField(ellipse.id, 'rx', '71')
-assert.equal(getCannedEditDraft()?.previewHeld, false, 'a typed field resumes the live preview')
+assert.deepEqual(getCannedEditDraft()?.heldFields, [], 'typing the dragged field resumes its live preview')
 publishCannedRadiusDrag(preview)
-assert.equal(getCannedEditDraft()?.previewHeld, true, 'the drag holds its preview again')
+assert.deepEqual(getCannedEditDraft()?.heldFields, ['rx'], 'the drag holds its field again')
+
+// The corrected rule (issue #1112 rt7-g correction): typing *another* field in
+// the same session must not release the dragged field's hold, or the typed
+// write would carry the dragged radius into the project before Save.
+setCannedEditDraftField(ellipse.id, 'ry', '25')
+assert.deepEqual(
+  getCannedEditDraft()?.heldFields,
+  ['rx'],
+  'typing another field keeps the dragged field held',
+)
+const previewValues = cannedEditPreviewValues(getCannedEditDraft()!, { rx: '30', ry: '20' })
+assert.equal(previewValues.rx, '30', 'the project preview keeps the stored rx')
+assert.equal(previewValues.ry, '25', 'while the typed ry previews live')
 
 // The handles now follow the field the drag wrote.
 const draggedParams = cannedEditHandleParams(ellipse, getCannedEditDraft(), null)
@@ -241,7 +260,7 @@ const rotated = {
     f: 80,
   },
 }
-openCannedEditDraft(rotated.id, 'ellipse', { rx: '30', ry: '20' })
+openCannedEditDraft(rotated.id, 'ellipse', { rx: '30', ry: '20' }, units())
 const rotatedStart = beginCannedRadiusDrag(rotated, 0, getCannedEditDraft())
 assert.ok(rotatedStart, 'the rotated ellipse starts an X drag')
 // The placed X handle, pulled out to a radius of 60 in the same direction.
@@ -380,7 +399,7 @@ assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes that it drew 
 assert.equal('ellipseDraft' in canvasDataset, false, 'a plain selection previews no draft')
 
 // Edit mode: both handles, and the outline drawn at the panel's parameters.
-openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' })
+openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' }, units())
 runDrawPass()
 assert.deepEqual(drawnHandleAxes, [['rx', 'ry']], 'the open panel draws both handles')
 assert.equal(canvasDataset.radiusHandles, '2', 'the pass publishes the two handles it drew')
@@ -391,7 +410,7 @@ assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the drawn outline carries
 // stored one. This is the preview the review asked to see without the store.
 setCannedEditDraftField(ellipse.id, 'rx', '45', { holdPreview: true })
 runDrawPass()
-assert.equal(getCannedEditDraft()?.previewHeld, true, 'the drag is held')
+assert.deepEqual(getCannedEditDraft()?.heldFields, ['rx'], 'the drag is held')
 assert.equal(canvasDataset.radiusHandles, '2', 'the dragged ellipse still draws its handles')
 assert.equal(canvasDataset.ellipseDraft, '45,20', 'the canvas previews the dragged radius')
 assert.equal(drawnFeatures[0]?.canned?.params.rx, 45, 'the drawn outline is the dragged radius')
@@ -409,4 +428,3 @@ assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes the empty cou
 assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the outline is the stored radius again')
 
 console.log('✓ ellipse radius drag: edit-mode-only handles, field writes, snap gate, rotated frame')
-

@@ -22,10 +22,11 @@
  * page-level workflow panel the creation tools use. Every valid field value is
  * previewed live through `useCannedShapePreview`, and Apply commits that preview
  * so it is one undo step and linked copies follow. The one exception is a
- * radius the ellipse's canvas handles drag: that write is *held*, drawn by the
- * canvas from the panel's draft, so the project keeps its stored parameters
- * until Save (issue #1112 rt7-g review). There is no second React root and no
- * modal.
+ * radius the ellipse's canvas handles drag: that field is *held*, drawn by the
+ * canvas from the panel's draft and kept at its stored value in the project —
+ * for the rest of the session, so typing the other radius does not carry it
+ * into the project — until Save (issue #1112 rt7-g review). There is no second
+ * React root and no modal.
  */
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -68,6 +69,7 @@ import { GearFields } from './GearParameterPanel'
 import { RotaryPatternPanel } from './RotaryPatternPanel'
 import { RotarySolidPanel } from './RotarySolidPanel'
 import {
+  cannedEditPreviewValues,
   closeCannedEditDraft,
   getCannedEditDraft,
   openCannedEditDraft,
@@ -237,18 +239,18 @@ function FlatCannedShapeEditPanel({
   // handles write the same text, so typing and dragging are one edit path
   // (issue #1112 rt7-g).
   const draft = useSyncExternalStore(subscribeCannedEditDraft, getCannedEditDraft, getCannedEditDraft)
-  const draftValues = draft && draft.featureId === featureId && draft.kind === cannedKind
-    ? draft.values
+  const sessionDraft = draft && draft.featureId === featureId && draft.kind === cannedKind
+    ? draft
     : null
-  // A radius the canvas handles dragged: the field shows it and the canvas
-  // draws it, but the project keeps its stored parameters until Save
-  // (issue #1112 rt7-g review).
-  const previewHeld = draft !== null
-    && draft.featureId === featureId
-    && draft.kind === cannedKind
-    && draft.previewHeld
-  const values = draftValues
-    ?? (request && canned ? editorInitialValues(request, canned.params) : {})
+  // The stored parameters as field text: what a field the handles dragged keeps
+  // in the project until Save (issue #1112 rt7-g correction).
+  const units = project.meta.units
+  const storedValues = request && canned ? editorInitialValues(request, canned.params) : {}
+  // A unit switch converts the stored parameters but not field text already on
+  // screen. That draft is replaced from the project instead of previewed: its
+  // numbers belong to the old unit system (issue #1112 rt7-g correction).
+  const staleUnits = sessionDraft !== null && sessionDraft.units !== units
+  const values = sessionDraft ? sessionDraft.values : storedValues
   const [gearParams, setGearParams] = useState<GearCreationParams>(
     () => (storedGear ? gearCreationParamsOf(storedGear) : defaultGearCreationParams(20)),
   )
@@ -276,7 +278,7 @@ function FlatCannedShapeEditPanel({
     if (!canned || !request || !cannedKind) return
     const current = getCannedEditDraft()
     if (current && current.featureId === featureId && current.kind === cannedKind) return
-    openCannedEditDraft(featureId, cannedKind, editorInitialValues(request, canned.params))
+    openCannedEditDraft(featureId, cannedKind, editorInitialValues(request, canned.params), units)
     // Opened once per panel. A stored change afterwards is a reseed, not a
     // reopen — `canned` is rebuilt on every render and would refire this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,30 +295,41 @@ function FlatCannedShapeEditPanel({
   // keeps the last valid preview on screen. Apply commits that one preview
   // (issue #1112 F1).
   //
-  // A radius the handles dragged is the exception: `previewHeld` means the
-  // project keeps the stored parameters until Save, and the canvas draws the
-  // dragged radius from the draft (`cannedEditHandleParams`). So dragging is an
-  // edit of the panel, never of the project (issue #1112 rt7-g review).
+  // A radius the handles dragged is the exception, and it stays one for the
+  // rest of the session: its field previews at the stored value while every
+  // *typed* field still previews live. Passing the whole draft here is what let
+  // a keystroke in another field carry the dragged radius into the project
+  // before Save (issue #1112 rt7-g correction). The canvas keeps drawing the
+  // dragged radius from the draft (`cannedEditHandleParams`), so dragging is an
+  // edit of the panel, never of the project.
+  const previewNormalized = isGear || !request || !sessionDraft || staleUnits
+    ? normalized
+    : flatNormalized(request, cannedEditPreviewValues(sessionDraft, storedValues))
   const { commitPreview } = useCannedShapePreview({
     featureId,
-    draft: canned && normalized && !previewHeld
-      ? { kind: canned.kind, params: normalized }
+    // A draft from another unit system is not previewed at all: its text is
+    // replaced with the converted stored values by the reseed effect below.
+    draft: canned && previewNormalized && !staleUnits
+      ? { kind: canned.kind, params: previewNormalized }
       : null,
   })
 
-  // A stored change the fields did not produce (an undo while the panel is
-  // open) lands back in the fields. The panel's own live preview writes the
-  // stored parameters too, so those are skipped: rewriting them would replace
-  // text the user is still typing, or that a handle just dragged.
+  // A stored change the fields did not produce (an undo) lands back in the
+  // fields. The panel's own live preview writes the stored parameters too, so
+  // those are skipped — compared through the held-field projection the preview
+  // uses, or a typed field next to a dragged one would look like someone else's
+  // change and wipe the dragged text. A draft from another unit system is always
+  // replaced: the projection reads the stored side, so it could never see the
+  // switch.
   const storedParamsKey = canned ? JSON.stringify(canned.params) : ''
   useEffect(() => {
     if (!request || !canned) return
-    if (normalized && sameEditorFields(request, canned.params, normalized)) return
-    seedCannedEditDraft(featureId, editorInitialValues(request, canned.params))
-    // The stored parameters are the trigger; `request`/`canned` are rebuilt each
-    // render and would refire this on every keystroke.
+    if (!staleUnits && previewNormalized && sameEditorFields(request, canned.params, previewNormalized)) return
+    seedCannedEditDraft(featureId, editorInitialValues(request, canned.params), units)
+    // The stored parameters and the unit system are the triggers; `request` and
+    // `canned` are rebuilt each render and would refire this on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storedParamsKey])
+  }, [storedParamsKey, staleUnits, units])
 
   if (!canned) return null
 
@@ -433,7 +446,12 @@ function openCannedShapeEdit(featureId: string): void {
   const canned = feature?.canned
   const request = canned ? EDITOR_REQUESTS[canned.kind] ?? null : null
   if (canned && request) {
-    openCannedEditDraft(featureId, canned.kind, editorInitialValues(request, canned.params))
+    openCannedEditDraft(
+      featureId,
+      canned.kind,
+      editorInitialValues(request, canned.params),
+      useProjectStore.getState().project.meta.units,
+    )
     return
   }
   // A gear or a rotary kind edits other state, not these fields.

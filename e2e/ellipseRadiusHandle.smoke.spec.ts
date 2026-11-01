@@ -26,7 +26,9 @@
  * review). A drag writes the panel's Radius X / Radius Y field and the canvas
  * draws the dragged outline, while the project keeps its stored parameters until
  * Save commits the whole session as one undo step; Cancel discards the drag
- * exactly as it discards a typed value.
+ * exactly as it discards a typed value. Typing the other radius afterwards
+ * previews that field live but still does not store the dragged one before Save
+ * (issue #1112 rt7-g correction, round 2).
  *
  * A placed, rotated ellipse draws one handle at the end of its local X axis and
  * one at the end of its local Y axis — in the ellipse's own frame, so a 30°
@@ -453,10 +455,22 @@ test('the X handle writes the panel field and only Save stores rx', async ({ app
   expectNear(beforeSave.ry, RADII.ry, 'and the other radius is not either')
   expect(await undoDepth(app.page), 'a drag before Save is not an undo step').toBe(undoBeforeDrag)
 
+  // Typing the other radius previews live but must not carry the dragged rx
+  // into the project with it (issue #1112 rt7-g correction, round 2): this mixed
+  // sequence used to store {rx: dragged, ry: typed} before Save.
+  await page
+    .locator('.canvas-workflow-panel--creation .canvas-workflow-panel__parameter-fields input')
+    .nth(1)
+    .fill('25')
+  const mixed = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(mixed.rx, RADII.rx, 'typing ry leaves the dragged rx unpersisted')
+  expectNear(mixed.ry, 25, 'the typed ry previews live')
+  expectNear(Number((await radiusFields(app.page)).rx), asked, 'the dragged field keeps its text through the typed edit')
+
   await saveEditPanel(app.page)
   const after = await storedEllipse(app.page, ellipse.definitionId)
   expectNear(after.rx, asked, 'Save stores the dragged rx')
-  expectNear(after.ry, RADII.ry, 'Save leaves ry alone')
+  expectNear(after.ry, 25, 'Save stores the typed ry too')
   expect(await undoDepth(app.page), 'Save commits the whole session as one undo step').toBe(undoBeforeDrag + 1)
   await expectDrawnHandles(app.page, 0, 'Save takes the handles away')
 

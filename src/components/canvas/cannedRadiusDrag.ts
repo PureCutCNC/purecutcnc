@@ -22,11 +22,13 @@
  * (Frank, round 7: "we should only show dots when in edit ellipse mode and
  * allow point drag, and manual changes"). Dragging is not an edit of the
  * project at all — every pointer move writes the dragged radius into the
- * panel's field text (`cannedEditDraft.ts`) as a *held* preview, which the
- * canvas draws (outline and handles alike) while the stored parameters wait for
- * Save (issue #1112 rt7-g review). So a dragged radius is one undo step on Save
- * and is discarded by Cancel exactly like a typed one, and there is no store
- * write here to drift from the typed path.
+ * panel's field text (`cannedEditDraft.ts`) as a *held* field, which the canvas
+ * draws (outline and handles alike) while the project keeps that field's stored
+ * radius until Save (issue #1112 rt7-g review). The hold is per field and lasts
+ * the session: typing the other radius previews live but does not store the
+ * dragged one (issue #1112 rt7-g correction). So a dragged radius is one undo
+ * step on Save and is discarded by Cancel exactly like a typed one, and there
+ * is no store write here to drift from the typed path.
  */
 
 import type { Matrix2D, Point } from '../../types/project'
@@ -159,9 +161,10 @@ export function moveCannedRadiusDrag(
  * value also takes: the panel re-renders and Save commits the whole session as
  * one undo step. The write is *held*, so the canvas draws the dragged radius
  * (the outline and the handles are placed by the draft) while the project keeps
- * the stored parameters until Save (issue #1112 rt7-g review) — the drag is an
- * edit of the panel, not of the project. Returns whether the field changed, so
- * a gated pointer move does not churn the draft.
+ * that field's stored radius until Save (issue #1112 rt7-g review) — the drag is
+ * an edit of the panel, not of the project, and typing another field later in
+ * the same session does not persist it (issue #1112 rt7-g correction). Returns
+ * whether the field changed, so a gated pointer move does not churn the draft.
  */
 export function publishCannedRadiusDrag(state: CannedRadiusDragState): boolean {
   return setCannedEditDraftField(state.featureId, state.axis, String(state.params[state.axis]), {

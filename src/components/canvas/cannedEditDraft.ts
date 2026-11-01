@@ -24,18 +24,23 @@
  * dragged radius is one undo step on Save and is discarded by Cancel exactly
  * like a typed one.
  *
- * A drag additionally marks the draft `previewHeld`: the canvas still draws the
- * dragged radius (the outline and the handles read this draft), but the panel
- * keeps it out of the project until Save, so a dragged radius is not a stored
- * parameter before the user commits it (issue #1112 rt7-g review). A keystroke
- * clears the flag, which keeps the live preview a typed value has had since
- * issue #1112 F1.
+ * A drag additionally records its field in `heldFields`: the canvas still draws
+ * the dragged radius (the outline and the handles read this draft), but the
+ * panel keeps that field at its stored value in the project until Save, so a
+ * dragged radius is not a stored parameter before the user commits it (issue
+ * #1112 rt7-g review). The hold is per field, not per draft: typing another
+ * field must not release it, or the typed write would carry the dragged radius
+ * into the project with it (`cannedEditPreviewValues`). Typing the dragged field
+ * itself makes that field a typed value again, which keeps the live preview a
+ * typed value has had since issue #1112 F1.
  *
  * A module-level store rather than React state because the canvas draw loop and
  * the pointer handlers read it outside React's render; the panel subscribes
  * with `useSyncExternalStore`. Only one canned-edit session exists at a time
  * (the canvas renders one panel), so there is one draft.
  */
+
+import type { Units } from '../../utils/units'
 
 /** The fields of the open flat-shape editor, as text. */
 export interface CannedEditDraft {
@@ -46,18 +51,28 @@ export interface CannedEditDraft {
   /** Field key → the text in its input, exactly as shown. */
   values: Record<string, string>
   /**
-   * The values came from a handle drag, so the canvas previews them while the
-   * project keeps the stored parameters until Save (issue #1112 rt7-g review).
+   * The unit system the text is written in. A unit switch converts the stored
+   * parameters but not text a person is already typing, so a draft whose units
+   * no longer match the project is replaced instead of previewed — otherwise it
+   * would write the old unit's numbers into the new project (issue #1112 rt7-g
+   * correction).
    */
-  previewHeld: boolean
+  units: Units
+  /**
+   * The fields a handle dragged, so their text is an edit of the panel until
+   * Save. The project previews every *other* field live, which is why this is a
+   * set of keys and not one draft-wide flag (issue #1112 rt7-g correction).
+   */
+  heldFields: readonly string[]
 }
 
 /** Options for one field write; a drag holds its preview out of the project. */
 export interface CannedEditFieldOptions {
   /**
    * Keep the change in the canvas preview only. The panel's field shows it and
-   * the canvas draws it, but nothing reaches the project until Save — the
-   * difference between a dragged radius and a typed one (issue #1112 rt7-g).
+   * the canvas draws it, but the project keeps that field's stored value until
+   * Save — the difference between a dragged radius and a typed one (issue #1112
+   * rt7-g).
    */
   holdPreview?: boolean
 }
@@ -94,27 +109,37 @@ export function openCannedEditDraft(
   featureId: string,
   kind: string,
   values: Record<string, string>,
+  units: Units,
 ): void {
-  replace({ featureId, kind, values: { ...values }, previewHeld: false })
+  replace({ featureId, kind, values: { ...values }, units, heldFields: [] })
 }
 
 /**
  * Replace every field from stored parameters — a stored change the fields did
  * not produce (an undo while the panel is open). Does nothing when no editor
  * for that row is open, so a late write cannot resurrect a closed session. The
- * values are the project's, so the preview is live again.
+ * values are the project's, in the project's units, so nothing is held any more.
  */
-export function seedCannedEditDraft(featureId: string, values: Record<string, string>): void {
+export function seedCannedEditDraft(
+  featureId: string,
+  values: Record<string, string>,
+  units: Units,
+): void {
   if (!draft || draft.featureId !== featureId) return
-  replace({ ...draft, values: { ...values }, previewHeld: false })
+  replace({ ...draft, values: { ...values }, units, heldFields: [] })
 }
 
 /**
  * One field's text, from a keystroke or from dragging that radius' handle.
  *
- * A drag passes `holdPreview`, which is what keeps the project on its stored
- * parameters until Save; anything else (a keystroke) writes a live preview
- * again, as every canned editor has done since issue #1112 F1.
+ * A drag passes `holdPreview`, which records its field as held: the project
+ * keeps that field's stored value until Save. A keystroke makes its own field a
+ * typed value again — the live preview every canned editor has had since issue
+ * #1112 F1 — but it never releases a *different* field's hold, because the
+ * typed write must not carry a dragged radius into the project with it (issue
+ * #1112 rt7-g correction). A write of the text a field already holds records a
+ * hold only; it never releases one, so a no-op keystroke cannot persist a
+ * dragged value either.
  */
 export function setCannedEditDraftField(
   featureId: string,
@@ -126,13 +151,36 @@ export function setCannedEditDraftField(
   if (!draft || draft.featureId !== featureId) return false
   if (draft.values[key] === text) {
     // The text already matches — a drag that came back to the stored radius.
-    // Nothing to write, but the held state it set must not leak into a later
-    // typed edit, so a hold is still recorded when it changes the draft's mode.
-    if (holdPreview && !draft.previewHeld) replace({ ...draft, previewHeld: true })
+    // Nothing to write, but a hold it has not recorded yet still changes which
+    // values the project previews.
+    if (holdPreview && !draft.heldFields.includes(key)) {
+      replace({ ...draft, heldFields: [...draft.heldFields, key] })
+    }
     return false
   }
-  replace({ ...draft, values: { ...draft.values, [key]: text }, previewHeld: holdPreview })
+  const heldFields = holdPreview
+    ? (draft.heldFields.includes(key) ? draft.heldFields : [...draft.heldFields, key])
+    : draft.heldFields.filter((held) => held !== key)
+  replace({ ...draft, values: { ...draft.values, [key]: text }, heldFields })
   return true
+}
+
+/**
+ * The field text the *project* should preview: the draft for every typed field,
+ * and the stored text for every field a handle dragged. That is what keeps a
+ * dragged radius unpersisted for the rest of the session even after the user
+ * types in another field, without taking the typed field's live preview away
+ * (issue #1112 rt7-g correction).
+ */
+export function cannedEditPreviewValues(
+  draft: CannedEditDraft,
+  storedValues: Record<string, string>,
+): Record<string, string> {
+  const values = { ...storedValues }
+  for (const [key, text] of Object.entries(draft.values)) {
+    if (!draft.heldFields.includes(key)) values[key] = text
+  }
+  return values
 }
 
 /**
