@@ -7,3 +7,5 @@
 - [`manual-impact/`](manual-impact/INDEX.md) — parser and CLI for the PR description's Manual impact section (#818).
 
 - [`download-manifest-gate/`](download-manifest-gate/INDEX.md) — deploy-side version gate for the public download manifests (#1000).
+
+- [`baseline-metrics/`](baseline-metrics/INDEX.md) — WP0 read-only fixture/command baseline; measures `.camj` size, embedded assets, serialization cost and snapshot-size projection.

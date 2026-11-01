@@ -33,6 +33,11 @@ import '../../styles/layout.css'
 import { useI18n } from '../../i18n/i18nContext'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { UnitConversionDialog } from '../project/UnitConversionDialog'
+import { CommandPaletteHost } from '../commandPalette/CommandPaletteHost'
+import {
+  COMMAND_PALETTE_IMPORT_EVENT,
+  COMMAND_PALETTE_TEXT_EVENT,
+} from './toolbar/useToolbarPaletteEvents'
 import { UnitConversionContext } from '../project/UnitConversionContext'
 
 
@@ -898,6 +903,15 @@ export function AppShell({
       )}
         </div>
       </ExpandedPanelContext.Provider>
+      <CommandPaletteHost
+        onNewProject={() => window.dispatchEvent(new Event('purecutcnc:new-project'))}
+        onImportGeometry={() => window.dispatchEvent(new Event(COMMAND_PALETTE_IMPORT_EVENT))}
+        onExportModel={onExportModel}
+        onPrintDesign={onPrintDesign}
+        onRequestText={() => window.dispatchEvent(new Event(COMMAND_PALETTE_TEXT_EVENT))}
+        onZoomToModel={onZoomToModel}
+      />
+
       {pendingUnits && pendingUnits !== project.meta.units ? (
         <UnitConversionDialog
           fromUnits={project.meta.units}
