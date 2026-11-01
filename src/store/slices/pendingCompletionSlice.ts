@@ -33,7 +33,7 @@ import type { ProjectStore } from '../types'
 import { transformProfile } from '../../geometry/profile'
 import { translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
-import { moveCannedRotaryFeatures, rotaryMoveTranslateDelta } from '../helpers/rotaryMove'
+import { moveCannedRotaryFeatures, rotaryCopyStepDelta, rotaryMoveTranslateDelta } from '../helpers/rotaryMove'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -209,7 +209,7 @@ export function createPendingCompletionSlice(
           // and the source band still stays where it is — what changes is only
           // *where* the row lands: the same projected, clamped displacement the
           // preview drew, so a copy travels along the bar, keeps within its
-          // ends, and a Turn/Polygon copy stays a body about the axis. A
+          // ends, and every kind's copy stays a band on the axis. A
           // non-rotary selection gets its own displacement back unchanged. For
           // a move this is also the fallback when the shared band cannot be
           // written (a linked copy outside the selection, or a start the
@@ -238,6 +238,10 @@ export function createPendingCompletionSlice(
                   normalizedCopyCount,
                   s.project.featureDefinitions,
                   effectiveCopyMode,
+                  // Each copy is placed from where the one before it landed, so
+                  // the bar's clamp applies to every placement rather than to
+                  // the first one only (issue #1112 rt7-f review).
+                  (step) => rotaryCopyStepDelta(s.project, entityIds, dx, dy, step),
                 )
               : []
 

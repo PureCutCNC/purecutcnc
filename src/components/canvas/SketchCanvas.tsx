@@ -176,7 +176,7 @@ import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMi
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { projectMovePreviewPoint } from '../../store/helpers/rotaryMove'
+import { projectMovePreviewPoint, rotaryCopyStepDelta } from '../../store/helpers/rotaryMove'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
@@ -1588,11 +1588,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
             const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
             for (let index = 2; index <= parsedCount; index += 1) {
+              // Copy `index` is placed by the same clamp every copy uses, from
+              // where the one before it landed: a canned rotary band cannot
+              // travel past the bar's end just because the drag was repeated
+              // (issue #1112 rt7-f review). A non-rotary copy gets the plain
+              // multiple back, exactly as before.
+              const placement = rotaryCopyStepDelta(
+                project,
+                pendingMove.entityIds,
+                targetPoint.x - pendingMove.fromPoint.x,
+                targetPoint.y - pendingMove.fromPoint.y,
+                index,
+              )
               for (const feature of features) {
                 const repeatedPreview = translateProfile(
                   feature.sketch.profile,
-                  (targetPoint.x - pendingMove.fromPoint.x) * index,
-                  (targetPoint.y - pendingMove.fromPoint.y) * index,
+                  placement.dx,
+                  placement.dy,
                 )
                 drawPreviewProfile(ctx, repeatedPreview, vt, `Copy ${index}`)
               }

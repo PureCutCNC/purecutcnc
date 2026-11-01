@@ -31,6 +31,9 @@
  * 2. **Every preview publisher projects**: the one setter the drag, the typed
  *    distance and a resnap all call stores the committed point, so a raw typed
  *    target cannot reach the outline unprojected.
+ * 3. **Every repeated copy outline is clamped**: with a copy count greater than
+ *    one, each outline is placed by the same bar clamp the commit uses, from
+ *    where the previous copy landed (issue #1112 rt7-f review).
  *
  * Run with: npx tsx src/components/canvas/movePreviewDraw.test.ts
  *
@@ -42,7 +45,9 @@
  * - removing the clamp from `projectMovePreviewPoint`/`rotaryMoveDelta` → the
  *   same assertion reads 400;
  * - excluding `mode === 'copy'` from the projection (the old rule) → the copy
- *   section keeps the raw typed point and its assertion fails.
+ *   section keeps the raw typed point and its assertion fails;
+ * - multiplying the projected displacement by the copy index in the repeated
+ *   outline loop → the counted copy outlines land at +180 and +270.
  */
 
 /// <reference types="node" />
@@ -63,7 +68,7 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import { useProjectStore } from '../../store/projectStore'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
-import { projectMovePreviewPoint } from '../../store/helpers/rotaryMove'
+import { projectMovePreviewPoint, rotaryCopyStepDelta } from '../../store/helpers/rotaryMove'
 import { translateProfile } from './previewPrimitives'
 
 const store = () => useProjectStore.getState()
@@ -122,10 +127,11 @@ function drawMoveOutline(
   toPoint: Point | null,
   previewPoint: Point | null,
   distanceEdit: { kind: 'move' | 'copy'; distance: string } | null = { kind: 'move', distance: '400' },
+  options: { mode?: 'move' | 'copy'; copyCount?: string } = {},
 ): DrawnOutline[] {
   const drawn: DrawnOutline[] = []
   const pendingMove = {
-    mode: 'move' as const,
+    mode: options.mode ?? 'move' as const,
     entityType: 'feature',
     entityIds: [polygonId],
     fromPoint: from,
@@ -157,7 +163,8 @@ function drawMoveOutline(
     drawPreviewProfile: (_ctx: unknown, profile: { start: Point }, _vt: unknown, label: string) => {
       drawn.push({ start: { ...profile.start }, label })
     },
-    copyCountDraft: '1',
+    copyCountDraft: options.copyCount ?? '1',
+    rotaryCopyStepDelta,
     snap: { isActiveSnapPoint: () => false },
     ctx: {},
     drawClampFootprint() {},
@@ -211,6 +218,34 @@ assert.deepEqual(
   clampedDraw[0].start,
   { x: resolvedPolygon.sketch.profile.start.x + 90, y: resolvedPolygon.sketch.profile.start.y },
   'the outline is drawn where a typed 400-unit move will actually store the band',
+)
+
+// ── every repeated copy outline stops at the bar end ───────
+//
+// A copy count draws the further copies at a multiple of the drag. On the bar
+// that multiple is clamped from where the previous copy landed, or the outlines
+// stack past the end while the commit stops at it (issue #1112 rt7-f review:
+// a 10 mm Turn copied three times reached 110, 200 and 290 mm on a 120 mm bar).
+// The typed 400-unit drag clamps the first copy at +90, so the second and third
+// outlines must be drawn at that same +90, never at +180 and +270.
+//
+// Named mutation: multiplying the projected displacement by the copy index in
+// the draw pass → the second and third outlines are drawn past the bar.
+
+const countedDraw = drawMoveOutline(clickTarget, clampedPreview, { kind: 'copy', distance: '400' }, {
+  mode: 'copy',
+  copyCount: '3',
+})
+assert.equal(countedDraw.length, 3, 'three copy outlines are drawn')
+assert.deepEqual(
+  countedDraw.map((outline) => outline.start.x - resolvedPolygon.sketch.profile.start.x),
+  [90, 90, 90],
+  'every repeated copy outline stops at the bar end instead of stacking past it',
+)
+assert.deepEqual(
+  countedDraw.map((outline) => outline.start.y),
+  [resolvedPolygon.sketch.profile.start.y, resolvedPolygon.sketch.profile.start.y, resolvedPolygon.sketch.profile.start.y],
+  'every repeated copy outline stays on the bar axis',
 )
 
 // ── every preview publisher projects ───────────────────────

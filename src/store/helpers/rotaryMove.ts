@@ -27,16 +27,19 @@
  * - the **along** part of a drag becomes a change of the stored start, clamped
  *   to the bar exactly like the Polygon panel's `start`/`length` range, so
  *   `Edit Turn…`/`Edit Thread…` and the regenerated model follow it;
- * - the **across** part is kept only for Thread/Flutes, where across the sheet
- *   is a turn around the bar and a commit has always kept it. A Turn or Polygon
- *   is a body about the bar's axis, so its across motion is dropped — that is
- *   the off-axis excursion Frank saw, and the reason the finished move looked
- *   like it snapped back onto the bar.
+ * - the **across** part is dropped for all four kinds (issue #1112 rt7-f
+ *   review). Frank asked for the preview "locked to the bar axis"; a canned
+ *   rotary shape's only freedom along the sheet is its band, and the off-axis
+ *   excursion is the bug rt6-d set out to remove. Thread and Flutes used to keep
+ *   it on the theory that across the sheet is a turn around the bar — but a
+ *   turn around the bar is the bar's own rotation, not a placement, so the
+ *   result was a shape the bar cannot hold and a Move that visibly slid off the
+ *   axis. Nothing is lost that the shape can express.
  *
  * A move is expressed on the *definition* (the stored start), exactly like a
  * parameter edit, so a linked copy follows it the same way a Polygon's
- * parameter edit moves its linked copies. The instance transform carries only
- * the across part, which no canned kind but Thread/Flutes has.
+ * parameter edit moves its linked copies. The instance transform is left
+ * untouched: a rotary move changes the band, never a placement.
  *
  * The clamp reads the band where it is *placed*, so a translated copy travels
  * as far as its own band has room. The write it lands on is still the shared
@@ -73,7 +76,6 @@ import {
 import { storedFrameOf } from '../../cannedShapes/generators/rotaryPatternParams'
 import { cannedShapeFrame } from '../../cannedShapes'
 import { applyCannedShapeModelSpans, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
-import { moveDelta, multiplyMatrix } from './instanceTransforms'
 
 /** The four canned kinds whose band lies on the bar (Turn, Polygon, Thread, Flutes). */
 export const ROTARY_MOVE_KINDS: readonly string[] = [
@@ -83,7 +85,11 @@ export const ROTARY_MOVE_KINDS: readonly string[] = [
   FLUTES_CANNED_KIND,
 ]
 
-/** The kinds that are a body about the bar's axis, so across motion means nothing. */
+/**
+ * The kinds modelled as a solid body about the bar's axis: they carry their own
+ * bar-frame snapshot and a regenerated mesh, unlike Thread/Flutes, which draw
+ * lines on whatever surface they land on.
+ */
 const ROTARY_MODEL_KINDS = new Set<string>([TURN_CANNED_KIND, POLYGON_CANNED_KIND])
 
 /** Numeric slack for "did the move change anything" and the band bounds. */
@@ -171,9 +177,10 @@ export function rotaryMoveBand(
 }
 
 /**
- * The displacement a move of these features actually applies: the along part
- * clamped so every band stays between the bar's ends, plus the across part for
- * Thread/Flutes only.
+ * The displacement a move of these features actually applies: the along part,
+ * clamped so every band stays between the bar's ends, and nothing across — a
+ * rotary canned band has no across placement, for any of the four kinds
+ * (issue #1112 rt7-f review).
  *
  * Returning the input unchanged for anything that is not a canned rotary move
  * keeps this callable from the shared preview code without a branch at the call
@@ -190,7 +197,6 @@ export function rotaryMoveDelta(
 
   const direction = alongStartDirection(axis)
   const along = axis === 'x' ? dx : dy
-  const across = axis === 'x' ? dy : dx
 
   // Every selected band has to stay on the bar, so the allowed start change is
   // the intersection of their own ranges. The range is the *placed* band's —
@@ -212,11 +218,8 @@ export function rotaryMoveDelta(
 
   const startDelta = Math.min(Math.max(along * direction, lowest), highest)
   const appliedAlong = startDelta * direction
-  const keepsAcross = features.every((feature) => !!feature.canned && !ROTARY_MODEL_KINDS.has(feature.canned.kind))
 
-  return axis === 'x'
-    ? { dx: appliedAlong, dy: keepsAcross ? across : 0 }
-    : { dx: keepsAcross ? across : 0, dy: appliedAlong }
+  return axis === 'x' ? { dx: appliedAlong, dy: 0 } : { dx: 0, dy: appliedAlong }
 }
 
 /** Where the canvas preview draws the feature for a proposed drag: the committed place. */
@@ -231,15 +234,59 @@ export function projectedRotaryMovePoint(
 }
 
 /**
+ * The displacement copy number `step` (1-based) of a rotary canned selection is
+ * placed by, clamped to the bar *from where the previous copy landed*.
+ *
+ * A count greater than one does not repeat one clamp: a copy is placed by a
+ * multiple of the drag, so the first copy can stop at the bar's end and the
+ * second, placed another `dx` further, lands past it (issue #1112 rt7-f review:
+ * a 10 mm Turn copied three times on a 120 mm bar landed at 110, 200 and
+ * 290 mm). Each step therefore re-runs the same clamp the single-copy
+ * projection uses, from the band the previous step left, so every copy is a
+ * placement the bar can hold.
+ *
+ * A selection that is not a canned rotary one gets the ordinary multiple of the
+ * drag back, which is what a copy has always been, so the copy builders and the
+ * canvas can call this for every feature copy without a branch of their own.
+ */
+export function rotaryCopyStepDelta(
+  project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
+  featureIds: readonly string[],
+  dx: number,
+  dy: number,
+  step: number,
+): { dx: number; dy: number } {
+  const features = rotaryMoveFeatures(project, featureIds)
+  const axis = rotaryMoveAxis(project, features)
+  if (!axis) return { dx: dx * step, dy: dy * step }
+
+  const direction = alongStartDirection(axis)
+  // The displacement `rotaryMoveDelta` answers with is in stock coordinates;
+  // `alongOffset` is in stored-start units, so the two are linked by the bar's
+  // own direction. `along` stays in stock coordinates, which is what the copy
+  // transform is written in.
+  let along = 0
+  for (let index = 1; index <= step; index += 1) {
+    const placed = features.map((feature) => ({
+      ...feature,
+      alongOffset: (feature.alongOffset ?? 0) + along * direction,
+    }))
+    const applied = rotaryMoveDelta(project, placed, dx, dy)
+    along += axis === 'x' ? applied.dx : applied.dy
+  }
+  return axis === 'x' ? { dx: along, dy: 0 } : { dx: 0, dy: along }
+}
+
+/**
  * Where a row's own instance places its band along the bar, in stored-start
  * units: the translation component along the axis, signed the way `start`
  * runs from the chuck end.
  *
  * A linked copy is the same definitions translated, so this is what separates
  * its band from the shared start. Only the translation is read — a canned rotary
- * row is created and moved by translation, so rotation and scale cannot arise
- * for it — and the bar's own ends are what the clamp measures the placed band
- * against.
+ * row is created by translation and its only other placement is a copy's, so a
+ * rotation or scale can only arrive from a decoded file — and the bar's own ends
+ * are what the clamp measures the placed band against.
  */
 function instanceAlongOffset(row: FeatureInstance, axis: 'x' | 'y'): number {
   const along = axis === 'x' ? row.transform.e : row.transform.f
@@ -428,9 +475,9 @@ function movedCannedBand(
  * bar) and the generic move should run instead.
  *
  * One write: the definition's stored start (so the edit panel and the
- * regenerated model follow), the model's mesh, every linked instance's Z span,
- * and the across displacement a Thread/Flutes keeps. The caller adds the undo
- * entry, so a move stays one step.
+ * regenerated model follow), the model's mesh and every linked instance's Z
+ * span. Nothing is written across, for any of the four kinds (issue #1112 rt7-f
+ * review). The caller adds the undo entry, so a move stays one step.
  *
  * A definition is shared with every linked copy, so its stored start belongs to
  * all of them. This returns null — the caller's per-instance translate — unless
@@ -478,18 +525,13 @@ export function moveCannedRotaryFeatures(
   if (!axis) return null
   const delta = rotaryMoveDelta(project, moveFeatures, to.x - from.x, to.y - from.y)
 
-  // The across part is the only thing the instance transform carries; the along
-  // part lives in the stored start.
-  const acrossX = axis === 'x' ? 0 : delta.dx
-  const acrossY = axis === 'x' ? delta.dy : 0
   const startMoves = canned
     .map((data) => (data ? movedCannedBand(project, data, delta) : null))
     .filter((data): data is CannedShapeData => data !== null)
   if (startMoves.length !== canned.length) return null
 
   const changedStart = startMoves.some((data, index) => data !== canned[index])
-  const movedAcross = Math.abs(acrossX) > TOLERANCE || Math.abs(acrossY) > TOLERANCE
-  if (!changedStart && !movedAcross) return project
+  if (!changedStart) return project
 
   let featureDefinitions = project.featureDefinitions
   const changedDefinitions = new Set<string>()
@@ -508,13 +550,6 @@ export function moveCannedRotaryFeatures(
     changedDefinitions.add(row.definitionId)
   })
 
-  let nextFeatures = movedAcross
-    ? project.features.map((row) => {
-        if (!featureIds.includes(row.id)) return row
-        return { ...row, transform: multiplyMatrix(moveDelta(acrossX, acrossY), row.transform) }
-      })
-    : project.features
-
   const modelDefinitionIds = new Set(
     [...changedDefinitions].filter((id) => {
       const data = featureDefinitions[id]?.canned
@@ -526,15 +561,13 @@ export function moveCannedRotaryFeatures(
       { ...project, featureDefinitions },
       modelDefinitionIds,
     )
-    featureDefinitions = rebuilt.featureDefinitions
-    nextFeatures = applyCannedShapeModelSpans(project, nextFeatures, rebuilt.models)
     return {
       ...project,
-      features: nextFeatures,
-      featureDefinitions,
+      features: applyCannedShapeModelSpans(project, project.features, rebuilt.models),
+      featureDefinitions: rebuilt.featureDefinitions,
       modelAssets: rebuilt.modelAssets,
     }
   }
 
-  return { ...project, features: nextFeatures, featureDefinitions }
+  return { ...project, featureDefinitions }
 }
