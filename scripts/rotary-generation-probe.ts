@@ -66,6 +66,12 @@
  * — the name's, a job note's, a stamp-shaped comment's — is program text and
  * still moves the hash.
  *
+ * `--async` measures the same operations through the asynchronous rotary driver
+ * (#1115 slice p-d1): `computeOperationToolpathAsync`, which runs the batch
+ * through its in-process serial runner. The report's `engine.entry` says which
+ * entry produced the numbers, and every baseline check is unchanged, so a run
+ * on the async path either matches the stored baseline exactly or fails.
+ *
  * `--pass-direction <around|along>` builds a pass-direction control in memory:
  * the selected operations are copied with `rotaryPassDirection` changed after
  * the fixture is loaded and never written back. The handoff forbids saving a
@@ -80,7 +86,8 @@
  *
  * Usage:
  *   npx tsx scripts/rotary-generation-probe.ts --project <file.camj> --operation <id> [--operation <id>…]
- *       [--pass-direction <around|along>] [--out <json>] [--root <checkout>] [--baseline <json>]
+ *       [--pass-direction <around|along>] [--async] [--out <json>] [--root <checkout>]
+ *       [--baseline <json>]
  *
  * The result JSON defaults to `work/rotary-generation-probe.json` in this
  * checkout. Nothing is ever written back to the fixture.
@@ -132,6 +139,8 @@ export interface ProbeArgs {
   baseline: string | null
   /** A pass-direction control built in memory after load, or null. */
   passDirection: PassDirection | null
+  /** Measure the asynchronous rotary driver instead of the synchronous one. */
+  rotaryAsync: boolean
 }
 
 export interface OperationIdentity {
@@ -239,6 +248,16 @@ interface EngineTree {
     operation: Operation,
     options?: { trace?: boolean },
   ): { result: ToolpathResult } | null
+  /**
+   * The asynchronous rotary entry (#1115 slice p-d1), where the measured
+   * checkout has one. Optional because `--root` may name an older tree -- the
+   * pre-#1050 reference, for one -- that predates it.
+   */
+  computeOperationToolpathAsync?(
+    project: Project,
+    operation: Operation,
+    options?: { trace?: boolean },
+  ): Promise<{ result: ToolpathResult } | null>
   normalizeToolForProject(tool: Tool, project: Project): NormalizedTool
   runPostProcessor(input: PostProcessorInput): PostProcessorResult
   validateMachineDefinition(raw: unknown): MachineDefinition
@@ -274,6 +293,11 @@ export async function loadEngineTree(root: string): Promise<EngineTree> {
       operation: Operation,
       options?: { trace?: boolean },
     ): { result: ToolpathResult } | null
+    computeOperationToolpathAsync?(
+      project: Project,
+      operation: Operation,
+      options?: { trace?: boolean },
+    ): Promise<{ result: ToolpathResult } | null>
   }>('src/engine/toolpaths/generateOperation.ts')
   const geometry = await load<{ normalizeToolForProject(tool: Tool, project: Project): NormalizedTool }>(
     'src/engine/toolpaths/geometry.ts',
@@ -308,6 +332,9 @@ export async function loadEngineTree(root: string): Promise<EngineTree> {
     commit: engineCommit(root),
     normalizeProject: projectFormat.normalizeProject,
     computeOperationToolpath: generation.computeOperationToolpath,
+    ...(typeof generation.computeOperationToolpathAsync === 'function'
+      ? { computeOperationToolpathAsync: generation.computeOperationToolpathAsync }
+      : {}),
     normalizeToolForProject: geometry.normalizeToolForProject,
     runPostProcessor: postprocessor.runPostProcessor,
     validateMachineDefinition: types.validateMachineDefinition,
@@ -348,6 +375,7 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
   let root = defaults.root
   let baseline: string | null = null
   let passDirection: PassDirection | null = null
+  let rotaryAsync = false
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
@@ -377,6 +405,9 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
       case '--baseline':
         baseline = value()
         break
+      case '--async':
+        rotaryAsync = true
+        break
       case '--pass-direction': {
         const direction = value()
         if (!isPassDirection(direction)) {
@@ -401,6 +432,7 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
     root: resolve(root),
     baseline: baseline === null ? null : resolve(baseline),
     passDirection,
+    rotaryAsync,
   }
 }
 
@@ -779,14 +811,25 @@ function generationDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function operationReport(
+async function operationReport(
   tree: EngineTree,
   project: Project,
   operation: Operation,
-): OperationReport {
+  rotaryAsync: boolean,
+): Promise<OperationReport> {
   const tool = toolFor(tree, project, operation)
-  const run = (): ToolpathResult => {
-    const envelope = tree.computeOperationToolpath(project, operation)
+  // `--async` measures the asynchronous rotary driver; every other run stays on
+  // the synchronous entry, which is the app's generation path.
+  const asyncEntry = rotaryAsync ? tree.computeOperationToolpathAsync : undefined
+  if (rotaryAsync && asyncEntry === undefined) {
+    throw new ProbeError(
+      `${tree.root} has no computeOperationToolpathAsync, so --async cannot measure it`,
+    )
+  }
+  const run = async (): Promise<ToolpathResult> => {
+    const envelope = asyncEntry === undefined
+      ? tree.computeOperationToolpath(project, operation)
+      : await asyncEntry(project, operation)
     if (!envelope) {
       throw new ProbeError(`the engine returned no toolpath for operation ${operation.id}`)
     }
@@ -797,14 +840,14 @@ function operationReport(
   // timed — not the load, not the post — because the number #1115 promises is
   // a generation time.
   const coldStart = performance.now()
-  let result = run()
+  let result = await run()
   const coldMs = roundMs(performance.now() - coldStart)
 
   const warmMs: number[] = []
   const digests = new Set<string>([digestMoves(result.moves)])
   for (let index = 0; index < WARM_RUNS; index += 1) {
     const start = performance.now()
-    result = run()
+    result = await run()
     warmMs.push(roundMs(performance.now() - start))
     digests.add(digestMoves(result.moves))
   }
@@ -1148,14 +1191,18 @@ export async function measure(args: ProbeArgs): Promise<ProbeReport> {
 
   const operations: OperationReport[] = []
   for (const operation of measured) {
-    operations.push(operationReport(tree, project, operation))
+    operations.push(await operationReport(tree, project, operation, args.rotaryAsync))
   }
 
   return {
     probe: PROBE_NAME,
     version: PROBE_VERSION,
     generatedAt: new Date().toISOString(),
-    engine: { entry: ENGINE_ENTRY, root: tree.root, commit: tree.commit },
+    engine: {
+      entry: args.rotaryAsync ? `${ENGINE_ENTRY}Async` : ENGINE_ENTRY,
+      root: tree.root,
+      commit: tree.commit,
+    },
     fixture: {
       path: args.project,
       bytes: bytes.length,
@@ -1234,7 +1281,8 @@ function formatTable(report: ProbeReport, base: string): string {
 }
 
 const USAGE = `Usage: npx tsx scripts/rotary-generation-probe.ts --project <file.camj> --operation <id> [--operation <id>…]
-       [--pass-direction <around|along>] [--out <json>] [--root <checkout>] [--baseline <json>]
+       [--pass-direction <around|along>] [--async] [--out <json>] [--root <checkout>]
+       [--baseline <json>]
 
   --project   the .camj to read (never written)
   --operation operation id to measure; repeat for more than one
@@ -1242,6 +1290,9 @@ const USAGE = `Usage: npx tsx scripts/rotary-generation-probe.ts --project <file
               build an along/around control in memory: the selected operations
               are copied with that pass direction after load, and the fixture
               stays untouched (so the report's fixture hash is the original's)
+  --async     measure the asynchronous rotary driver (computeOperationToolpathAsync)
+              through its in-process serial batch runner; refused when the
+              measured checkout has no such entry
   --out       result JSON (default: work/rotary-generation-probe.json in this checkout);
               rejects the fixture's own path, including a symlink or hardlink to it
   --root      checkout whose engine is measured (default: this checkout)

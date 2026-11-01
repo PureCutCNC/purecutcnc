@@ -983,6 +983,52 @@ check('the CLI measures an along control in memory and leaves the fixture bytes 
   }
 })
 
+// ── the asynchronous rotary driver measures the same output ───
+
+check('the CLI measures the asynchronous rotary driver with an identical program', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rotary-probe-async-'))
+  const fixture = join(directory, 'square-rotary-async.camj')
+  const syncOut = join(directory, 'sync.json')
+  const asyncOut = join(directory, 'async.json')
+  try {
+    const project = squareRotaryProject('around')
+    const ids = project.operations.map((operation) => operation.id)
+    writeFileSync(fixture, JSON.stringify(project))
+
+    const sync = measureControl(fixture, ids, syncOut)
+    assert.equal(sync.status, 0, `expected the synchronous run to measure; stdout ${sync.stdout} stderr ${sync.stderr}`)
+    const async = measureControl(fixture, ids, asyncOut, ['--async'])
+    assert.equal(async.status, 0, `expected the asynchronous run to measure; stdout ${async.stdout} stderr ${async.stderr}`)
+
+    const syncReport = JSON.parse(readFileSync(syncOut, 'utf8')) as ProbeReport
+    const asyncReport = JSON.parse(readFileSync(asyncOut, 'utf8')) as ProbeReport
+    assert.equal(syncReport.engine.entry, 'computeOperationToolpath')
+    assert.equal(asyncReport.engine.entry, 'computeOperationToolpathAsync',
+      'the report names the entry that produced the numbers')
+    assert.deepEqual(
+      asyncReport.operations.map((operation) => ({
+        id: operation.id,
+        moves: operation.moves,
+        program: operation.program.digest,
+        warnings: operation.warnings,
+      })),
+      syncReport.operations.map((operation) => ({
+        id: operation.id,
+        moves: operation.moves,
+        program: operation.program.digest,
+        warnings: operation.warnings,
+      })),
+      'the async driver must produce the same moves, posted program and warnings as the synchronous one',
+    )
+    // Not vacuous: the fixture really emits motion on both paths.
+    for (const operation of asyncReport.operations) {
+      assert.ok(operation.moves.count > 0, `${operation.id} must emit moves for the parity claim to mean anything`)
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 // ── argument parsing ─────────────────────────────────────────
 
 check('arguments are parsed strictly', () => {
@@ -995,6 +1041,11 @@ check('arguments are parsed strictly', () => {
   assert.equal(args.out, defaults.out)
   assert.equal(args.root, defaults.root)
   assert.equal(args.passDirection, null, 'a run without the flag measures the fixture as saved')
+  assert.equal(args.rotaryAsync, false, 'a run without --async measures the synchronous entry')
+  assert.equal(
+    parseProbeArgs(['--project', 'fixture.camj', '--operation', 'op0021', '--async'], defaults).rotaryAsync,
+    true,
+  )
   assert.match(args.baseline ?? '', /base\.json$/)
   const control = parseProbeArgs(
     ['--project', 'fixture.camj', '--operation', 'op0021', '--pass-direction', 'along'],
