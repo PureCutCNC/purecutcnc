@@ -16,20 +16,17 @@
 
 /**
  * The four rotary canned kinds have no Z range in Properties (issue #1112
- * rt6-a, item 39). A Thread and Flutes replace it with a line naming the Depth,
- * the surface it is measured from and where that surface sits (rt6-c); a Turn
- * and a Polygon show no line at all (rt7-b), because their own summary already
- * names the diameter or across flats and the Z it reaches.
+ * rt6-a, item 39). Frank: "what is the purpose of the Z top/bottom for the
+ * rotary canned features? it does not seem to make sense." It has none — the
+ * span is built from the parameter the Edit panel writes (Thread/Flutes Depth,
+ * Turn Diameter, Polygon across flats) — so the control is gone.
  *
- * Frank: "what is the purpose of the Z top/bottom for the rotary canned
- * features? it does not seem to make sense." It has none — the span is built
- * from the parameter the Edit panel writes (Thread/Flutes Depth, Turn Diameter,
- * Polygon across flats) — so the control is gone. Then, of the read-only line:
- * "I don't think we need to show this again for turn", "same for the hex". A
- * plain canned shape and an imported model keep their Z control, and a mixed
- * selection edits only the shapes that own one. A Thread in a multi-selection
- * keeps reporting its Depth even beside a construction row, which owns no Z
- * either (#1112 rt7-b correction 1).
+ * Since rt7-d a Thread's or Flutes' Depth is not a line of its own under
+ * Instance any more: it is appended to the shape's own **Shape** summary, with
+ * the surface the depth is measured from and that surface's Z, and without the
+ * "set in Edit …" half the Edit button under the line already implies. A Turn
+ * and a Polygon still report nothing (rt7-b), because their summary already
+ * names the diameter or across flats and the Z it reaches.
  *
  * The panel is rendered for real: the Z control lives on the Instance tab and
  * the orientation section on its own, so both are opened the way a click does.
@@ -40,26 +37,28 @@
  *   fails, because the Turn's span is overwritten with the shared Z top;
  * - `zFromParameters={false}` on the orientation section → the Turn's "no Lift
  *   and no height figure" assertion fails;
- * - the Thread line reading `pitch` instead of `depth` → its value assertion
- *   fails;
- * - the surface clause dropped from the Thread line → its "below Turn (Ø …, surface
- *   at Z …)" assertion fails;
+ * - the Thread's Depth read from `pitch` instead of `depth` → its merged-line
+ *   value assertion fails;
+ * - the surface clause dropped from the merged line → the Thread's, the
+ *   Flutes' and the bare-bar Thread's "below … (Ø …, surface at Z …)"
+ *   assertions fail;
  * - the bar's surface Z read as half the thickness (the axis, not the surface)
  *   → the Thread and the warned Flutes lines fail;
+ * - the old read-only line rendered again under Instance (a second
+ *   `data-testid="canned-z-source"`) → "no second read-only line" and "the
+ *   Depth is stated once" fail;
  * - `cannedShapeSurface` returning null → the Turn's and Polygon's summary
  *   assertions fail;
  * - the surface Z read from the blank's size instead of its axis → the
  *   square-blank Turn summary assertion fails;
- * - the Turn line shown again (`zSource.turn` back in `REPORTS_Z_SOURCE`) → the
- *   Turn's "no Z-source line" assertion fails;
- * - the Polygon line shown again (`zSource.polygon` back) → the Polygon's
- *   assertion fails;
+ * - `cannedShapeDepth` widened to report a Turn or a Polygon → each of their
+ *   exact summary assertions fails, because the line would gain a depth clause;
  * - a Turn/Polygon-only selection falling through to the "follows stock" line
  *   → that selection's assertion fails;
- * - `selectedZOwnedSources.length > 0` dropped from the panel condition (a line
- *   reported only when *every* selected kind owns its span) → the Thread +
- *   construction assertion fails, because its Depth disappears behind
- *   "Follows stock" (#1112 rt7-b correction 1).
+ * - `selectedReportsCannedDepth` dropped from the panel condition (the slot
+ *   filled only when *every* selected kind owns its span) → the Thread +
+ *   construction assertion fails, because the slot claims "Follows stock"
+ *   (#1112 rt7-b correction 1, kept by rt7-d).
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/cannedZRange.test.ts
@@ -257,21 +256,28 @@ function mount(): Mounted {
   }
 }
 
-/** The read-only line, or null when the panel shows a Z control instead. */
+/**
+ * The read-only line rt7-d removed, or null when the panel shows none. A Thread
+ * or Flutes must never render it again: its Depth lives on the Shape summary.
+ */
 function zSourceLine(mounted: Mounted): { text: string } | null {
   const line = mounted.html().match(/<p[^>]*data-testid="canned-z-source"[^>]*>(.*?)<\/p>/)
   return line ? { text: line[1] } : null
 }
 
-/** How many Z-source lines the panel shows (a multi-selection can show several). */
-function zSourceLineCount(mounted: Mounted): number {
-  return mounted.html().match(/data-testid="canned-z-source"/g)?.length ?? 0
-}
-
-/** The `Shape` summary line, which names the surface a Turn/Polygon reaches. */
+/** The `Shape` summary line, which since rt7-d also carries the Depth. */
 function summaryLine(mounted: Mounted): { text: string } | null {
   const line = mounted.html().match(/<p[^>]*data-testid="canned-shape-summary"[^>]*>(.*?)<\/p>/)
   return line ? { text: line[1] } : null
+}
+
+/**
+ * How many times the panel states one sentence — the merged summary says the
+ * Depth once, and a second line (the removed Instance one) would say it twice.
+ * Case-insensitive so a line that starts its own sentence still counts.
+ */
+function statementCount(mounted: Mounted, text: string): number {
+  return mounted.html().toLowerCase().split(text.toLowerCase()).length - 1
 }
 
 function hasZSlider(mounted: Mounted): boolean {
@@ -287,18 +293,31 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   return mounted
 }
 
-// ── a Thread has no Z control (mutation 1, 2, 5) ─────────────
+// ── a Thread on a Turn: one line, summary + depth + surface ──
+//
+// Frank was shown two lines for one shape (issue #1112 rt7-d): "Thread · 1-start
+// · pitch 0.2 · length 2" under Shape, and "Depth 0.122 in below Turn (…) · set
+// in Edit thread…" under Instance. They are one line now, in the Shape section
+// where the summary already was, and the Instance section has nothing to say.
 
 {
   const { threadId } = loadWithShapes()
   const mounted = await renderSingle(threadId)
+  mounted.openSection('Shape')
+  await flush()
   assert.equal(hasZSlider(mounted), false, 'a Thread has no Z range control')
-  const line = zSourceLine(mounted)
-  assert.ok(line, 'a Thread shows its Depth read-only instead')
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'a Thread shows its Shape summary line')
   assert.equal(
-    line.text,
-    'Depth 1.2 mm below Turn (Ø 30 mm, surface at Z 35) · set in Edit thread…',
-    'the line names the Edit panel field and value, the surface it is measured from and that surface\'s Z',
+    summary.text,
+    'Thread · 1-start · pitch 2 · length 20 · depth 1.2 mm below Turn (Ø 30 mm, surface at Z 35)',
+    'the one line is the summary, then the Depth, its surface and that surface\'s Z',
+  )
+  assert.equal(zSourceLine(mounted), null, 'no second read-only line under Instance')
+  assert.equal(
+    statementCount(mounted, 'depth 1.2 mm'),
+    1,
+    'the Depth is stated once, not once per section',
   )
   mounted.unmount()
 }
@@ -308,16 +327,77 @@ async function renderSingle(featureId: string): Promise<Mounted> {
 {
   const { flutesId } = loadWithShapes()
   const mounted = await renderSingle(flutesId)
+  mounted.openSection('Shape')
+  await flush()
   assert.equal(hasZSlider(mounted), false, 'Flutes have no Z range control')
-  const line = zSourceLine(mounted)
-  assert.ok(line, 'Flutes show their Depth read-only instead')
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'Flutes show their Shape summary line')
   // This band runs past the Turn's end, so it measures from the bar and repeats
   // the warning word for word instead of claiming the Turn's diameter.
   assert.equal(
-    line.text,
-    'Depth 0.8 mm below the bar (Ø 40 mm, surface at Z 40) · '
-      + "This pattern crosses the end of Turn, where the bar's diameter changes. · set in Edit flutes…",
+    summary.text,
+    'Flutes · 4 · twist 0.5 turns · length 20 · depth 0.8 mm below the bar '
+      + '(Ø 40 mm, surface at Z 40) · '
+      + 'This pattern crosses the end of Turn, where the bar\'s diameter changes.',
     'the warned Flutes line says it is measured from the bar and why',
+  )
+  assert.equal(zSourceLine(mounted), null, 'no second read-only line under Instance')
+  assert.equal(statementCount(mounted, 'depth 0.8 mm'), 1, 'and the Depth is stated once')
+  mounted.unmount()
+}
+
+// ── a Thread with no Turn under it still shows the summary and depth ──
+//
+// On the bare bar there is no Turn to measure from, so the bar supplies the
+// surface — the same clause the removed line carried (rt7-d keeps the values and
+// their computation, only where they are shown moves).
+
+{
+  // The Turn is created after the Thread, so the Thread sits on the plain bar.
+  store().loadProject(rotaryProject())
+  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
+  const bareThread = store().addRotaryPattern({
+    kind: 'thread',
+    start: 5,
+    length: 20,
+    pitch: 2,
+    starts: 1,
+    depth: 1.2,
+  })
+  assert.ok(bareThread.ok, 'the Thread is created on the bare bar')
+  const mounted = await renderSingle(bareThread.featureId)
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'the bare-bar Thread shows its summary')
+  assert.equal(
+    summary.text,
+    'Thread · 1-start · pitch 2 · length 20 · depth 1.2 mm below the bar (Ø 40 mm, surface at Z 40)',
+    'with no Turn under it the line still names the depth and the bar surface it is measured from',
+  )
+  assert.equal(zSourceLine(mounted), null, 'and no second line under Instance')
+  mounted.unmount()
+}
+
+// ── a Depth whose surface cannot be resolved keeps its number ─
+//
+// The surface comes from the bar (`rotaryPatternFrame` needs a round one). A
+// file whose bar is no longer round resolves none, so the merged line keeps the
+// Depth and drops only the clause — never the whole line, and never a stale
+// surface Z.
+
+{
+  const { threadId } = loadWithShapes()
+  store().setStock(squareStock(25, 120, 'x'))
+  const mounted = await renderSingle(threadId)
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'a Thread still shows its summary')
+  assert.equal(
+    summary.text,
+    'Thread · 1-start · pitch 2 · length 20 · depth 1.2 mm',
+    'the Depth keeps its number when no surface can be resolved',
   )
   mounted.unmount()
 }
@@ -328,10 +408,9 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const { turnId } = loadWithShapes()
   const mounted = await renderSingle(turnId)
   assert.equal(hasZSlider(mounted), false, 'a Turn has no Z range control')
-  // No line either (rt7-b): the Turn's summary below already says Ø30 and where
-  // that surface sits, so Frank asked for the repeat to go.
+  // No line either (rt7-b, kept by rt7-d): the Turn's summary below already
+  // says Ø30 and where that surface sits, so a second sentence repeated it.
   assert.equal(zSourceLine(mounted), null, 'a Turn shows no Z-source line')
-  assert.equal(mounted.html().includes('set in Edit turn'), false, 'and no leftover Turn line')
   assert.equal(mounted.html().includes('Follows stock'), false, 'nor a claim that the Turn follows the stock')
 
   // The summary names where that diameter's surface sits: the bar axis (20) plus
@@ -343,7 +422,7 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   assert.equal(
     summary.text,
     'Turn · start 5 · length 30 · Ø30 · surface at Z 35',
-    'the Turn summary adds the Z its surface reaches',
+    'the Turn summary adds the Z its surface reaches, and no Depth',
   )
 
   // The orientation section still offers the rotations — but a generated
@@ -367,7 +446,6 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   // Same as the Turn (rt7-b): "same for the hex". Its summary names the across
   // flats and the Z the flats reach, so the line was the same sentence twice.
   assert.equal(zSourceLine(mounted), null, 'a Polygon shows no Z-source line')
-  assert.equal(mounted.html().includes('set in Edit polygon'), false, 'and no leftover Polygon line')
   assert.equal(
     mounted.html().includes('Follows stock'),
     false,
@@ -382,7 +460,7 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   assert.equal(
     summary.text,
     'Polygon · start 100 · length 20 · 6 sides · across flats 20 · rotation 0° · flats at Z 30',
-    'the Polygon summary adds the Z its flats reach',
+    'the Polygon summary adds the Z its flats reach, and no Depth',
   )
   mounted.unmount()
 }
@@ -412,13 +490,19 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   mounted.unmount()
 }
 
-// ── a plain canned shape keeps its Z control ─────────────────
+// ── a plain canned shape keeps its Z control and its summary ──
 
 {
   const { ellipseId } = loadWithShapes()
   const mounted = await renderSingle(ellipseId)
   assert.equal(hasZSlider(mounted), true, 'an ellipse keeps its Z range control')
   assert.equal(zSourceLine(mounted), null, 'and shows no read-only line')
+  // Another canned kind's summary is untouched: no Depth, no surface clause.
+  mounted.openSection('Shape')
+  await flush()
+  const summary = summaryLine(mounted)
+  assert.ok(summary, 'the ellipse shows its summary')
+  assert.equal(summary.text, 'Ellipse · 10 × 6', 'a shape that owns no Depth reports none')
   mounted.unmount()
 }
 
@@ -473,6 +557,12 @@ async function renderSingle(featureId: string): Promise<Mounted> {
 }
 
 // ── a selection of only rotary kinds offers no Z editor ──────
+//
+// Neither kind has a shared Z to edit, and since rt7-d neither reports its value
+// here either: a Thread's Depth rides on its own Shape summary, which a
+// multi-selection does not show. What must not happen is the "follows stock"
+// line, which would be a wrong answer about a shape whose span comes from its
+// Edit panel.
 
 {
   const { threadId, turnId } = loadWithShapes()
@@ -480,14 +570,10 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const mounted = mount()
   await flush()
   assert.equal(hasZSlider(mounted), false, 'no Z editor when every selected shape owns its span')
-  assert.equal(
-    zSourceLineCount(mounted),
-    1,
-    'only the Thread reports its value in a Thread + Turn selection',
-  )
+  assert.equal(zSourceLine(mounted), null, 'and no separate Z-source line for either')
   const html = mounted.html()
-  assert.equal(html.includes('Depth 1.2 mm · set in Edit thread…'), true, 'the Thread value is reported')
-  assert.equal(html.includes('set in Edit turn'), false, 'the Turn value is not repeated (rt7-b)')
+  assert.equal(html.includes('Follows stock'), false, 'nor a claim that they follow the stock')
+  assert.equal(html.includes('depth 1.2 mm'), false, 'the Depth stays on the instance summary')
   mounted.unmount()
 }
 
@@ -503,19 +589,18 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const mounted = mount()
   await flush()
   assert.equal(hasZSlider(mounted), false, 'no Z editor for a Turn + Polygon selection')
-  assert.equal(zSourceLineCount(mounted), 0, 'and no Z-source line for either')
+  assert.equal(zSourceLine(mounted), null, 'and no Z-source line for either')
   const html = mounted.html()
   assert.equal(html.includes('Follows stock'), false, 'and no "Follows stock" line either')
   mounted.unmount()
 }
 
-// ── a Thread + construction selection keeps reporting the Thread ─
+// ── a Thread + construction selection stays silent, not wrong ─
 //
 // A construction feature owns no Z either, so the selection has nothing to
-// edit — but the Thread's Depth must stay on screen. Reporting only when *every*
-// selected kind is a machinable rotary kind hid this line and replaced it with
-// "Follows stock", which is a wrong answer about a Thread whose depth comes
-// from its Edit panel (#1112 rt7-b correction 1).
+// edit. The slot must stay empty rather than claim "Follows stock" — a wrong
+// answer about a Thread whose depth comes from its Edit panel (#1112 rt7-b
+// correction 1, still guarded by `selectedReportsCannedDepth` after rt7-d).
 
 {
   const { ellipseId, threadId } = loadWithShapes()
@@ -531,13 +616,7 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const mounted = mount()
   await flush()
   assert.equal(hasZSlider(mounted), false, 'a Thread + construction selection has no shared Z editor')
-  const line = zSourceLine(mounted)
-  assert.ok(line, 'and still reports the Thread Depth')
-  assert.equal(
-    line.text,
-    'Depth 1.2 mm · set in Edit thread…',
-    'with the same field and value the Thread reports on its own',
-  )
+  assert.equal(zSourceLine(mounted), null, 'and no separate Z-source line')
   assert.equal(
     mounted.html().includes('Follows stock'),
     false,

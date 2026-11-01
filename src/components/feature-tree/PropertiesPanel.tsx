@@ -46,18 +46,16 @@ import { getFeatureGeometryProfiles } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { textPathRefreshState } from '../../store/helpers/textPathSource'
 import {
+  cannedShapeDepth,
   cannedShapeEditorFor,
   cannedShapeIsExpandable,
   cannedShapeLabelKey,
   cannedShapeSummary,
   cannedShapeSurface,
   cannedShapeZIsOwned,
-  cannedShapeZSource,
   isCannedFeature,
-  uniqueCannedZSources,
 } from '../../cannedShapes'
-import type { CannedShapeZSource } from '../../cannedShapes'
-import { CannedZSourceLine } from './CannedZSourceLine'
+import { CannedShapeSummaryLine } from './CannedShapeSummaryLine'
 import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../../store/helpers/rotarySurface'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
@@ -200,17 +198,14 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
   // The rotary canned kinds have no Z control to share: their span comes from
   // the parameter their Edit panel writes, so a multi-selection leaves them out
-  // of the shared editor (#1112 rt6-a, item 39). Only a Thread and Flutes then
-  // report where their value comes from; a Turn and a Polygon report nothing
-  // (rt7-b), so a selection made only of kinds that own their span must not fall
-  // through to the "follows stock" line below — that would be a wrong answer
-  // (#1112 rt7-b). A Thread keeps reporting whenever it is in the selection,
-  // even beside a construction row that owns no Z either: only the *absence* of
-  // a source may leave the slot empty (#1112 rt7-b correction 1).
-  const selectedZOwnedSources = uniqueCannedZSources(
-    allSelectedFeatures
-      .map((feature) => cannedShapeZSource(feature.canned))
-      .filter((source): source is CannedShapeZSource => source !== null),
+  // of the shared editor (#1112 rt6-a, item 39). Since rt7-d a Thread's or
+  // Flutes' Depth is reported on its own Shape summary, which a multi-selection
+  // does not show — but the slot must still stay empty rather than fall through
+  // to the "follows stock" line below, because the span does come from the Edit
+  // panel (#1112 rt7-b). A Turn and a Polygon report nothing either, so a
+  // selection of kinds that all own their span stays empty too.
+  const selectedReportsCannedDepth = allSelectedFeatures.some(
+    (feature) => cannedShapeDepth(feature.canned) !== null,
   )
   const selectedAllOwnTheirZ = allSelectedFeatures.length > 0
     && allSelectedFeatures.every((feature) => isMachinable(feature) && cannedShapeZIsOwned(feature.canned))
@@ -1489,22 +1484,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
-            ) : selectedZOwnedSources.length > 0 || selectedAllOwnTheirZ ? (
+            ) : selectedReportsCannedDepth || selectedAllOwnTheirZ ? (
               // Nothing selected here has a shared Z to edit: either a Thread
-              // or Flutes reports where its value comes from, or every selected
-              // feature takes its span from its Edit panel — so the "follows
-              // stock" line below would be a second wrong answer (#1112 rt6-a,
-              // item 39). A source is reported whenever one exists, even beside
-              // a row that owns no Z of its own (a construction feature); the
-              // lines are empty only when a Turn or a Polygon alone is
-              // selected, since each reports none (#1112 rt7-b).
-              selectedZOwnedSources.map((source) => (
-                <CannedZSourceLine
-                  key={`${source.messageKey}-${source.value}`}
-                  source={source}
-                  units={units}
-                />
-              ))
+              // or Flutes reports a Depth, or every selected feature takes its
+              // span from its Edit panel — so the "follows stock" line below
+              // would be a wrong answer (#1112 rt6-a, item 39). No line here
+              // either: since rt7-d a Thread's or Flutes' Depth is part of its
+              // own Shape summary, which a multi-selection does not show, and a
+              // Turn and a Polygon report none (#1112 rt7-b).
+              null
             ) : (
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
@@ -1550,23 +1538,22 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const cannedEditor = cannedShapeEditorFor(selectedFeature)
   const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
   // The four rotary kinds build their span from a parameter of their own, so
-  // the Instance section shows that value read-only instead of a Z control
-  // that could only fight the regenerate (#1112 rt6-a, item 39). The kind is
-  // what hides the control, so a parameter set too corrupt to read a number
-  // from leaves the slot empty rather than bringing the slider back. Only a
-  // Thread and Flutes report that value: a Turn and a Polygon show no line at
-  // all, because their summary already names the parameter and its surface Z
-  // (#1112 rt7-b).
+  // the Instance section shows no Z control that could only fight the regenerate
+  // (#1112 rt6-a, item 39). The kind is what hides the control, so a parameter
+  // set too corrupt to read a number from leaves the slot empty rather than
+  // bringing the slider back.
   const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
-  const cannedZSource = isCannedShape ? cannedShapeZSource(selectedFeature.canned) : null
-  // A Thread/Flutes Depth is measured from a surface, so the line says which
-  // one and where it sits: the resolver the cut itself uses, plus the Z of that
-  // surface (#1112 rt6-c). Only this one row's surface is resolved here — a
-  // multi-selection reports the shared values without guessing one row's.
-  const cannedZSurface = cannedZSource?.surfaceMessageKey
+  // A Thread's or Flutes' Depth is reported on the Shape summary line, and since
+  // rt7-d it is measured from a surface there: the resolver the cut itself uses,
+  // plus the Z of that surface (#1112 rt6-c). Only this one row's surface is
+  // resolved — a multi-selection shows no summary to put it on.
+  const cannedDepth = isCannedShape ? cannedShapeDepth(selectedFeature.canned) : null
+  const cannedDepthSurface = cannedDepth !== null
     ? rotaryPatternSurfaceOfFeature(project, selectedFeature.id)
     : null
-  const cannedZSurfaceZ = cannedZSurface ? rotarySurfaceZ(project.stock, cannedZSurface.diameter) : null
+  const cannedDepthSurfaceZ = cannedDepthSurface
+    ? rotarySurfaceZ(project.stock, cannedDepthSurface.diameter)
+    : null
   // A Turn's diameter and a Polygon's across flats are the height Properties
   // reports, so their summary line names the Z those surfaces reach: the axis
   // plus the radius, from the same helper the Thread span uses (rt6-c).
@@ -1761,12 +1748,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           {isCannedShape ? (
             <>
               {cannedSummary ? (
-                <p className="properties-linked-face-note" data-testid="canned-shape-summary">
-                  {t(cannedSummary.key as MessageKey, cannedSummary.values)}
-                  {cannedSurface && cannedSurfaceZ !== null
-                    ? ` · ${t(cannedSurface.messageKey as MessageKey, { value: formatLength(cannedSurfaceZ, units) })}`
-                    : ''}
-                </p>
+                <CannedShapeSummaryLine
+                  summary={cannedSummary}
+                  surface={cannedSurface && cannedSurfaceZ !== null
+                    ? { surface: cannedSurface, z: cannedSurfaceZ }
+                    : null}
+                  depth={cannedDepth}
+                  depthSurface={cannedDepthSurface && cannedDepthSurfaceZ !== null
+                    ? { surface: cannedDepthSurface, z: cannedDepthSurfaceZ }
+                    : null}
+                  units={units}
+                />
               ) : (
                 <p className="properties-linked-face-note" data-testid="canned-shape-unknown">
                   {t('featureTree.properties.canned.unknown')}
@@ -1898,22 +1890,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <FaceZRange features={[selectedFeature]} />
           ) : cannedZOwned ? (
             // Thread, Flutes, Turn and Polygon: the span is built from the
-            // parameter the Edit panel writes, so there is nothing here to
-            // edit. Thread and Flutes report that value, the surface it is
-            // measured from and where it lives (#1112 rt6-a item 39, rt6-c); a
-            // Turn and a Polygon report nothing, because their summary line
-            // already names the parameter and the Z it reaches (#1112 rt7-b).
-            cannedZSource
-              ? (
-                <CannedZSourceLine
-                  source={cannedZSource}
-                  units={units}
-                  surface={cannedZSurface && cannedZSurfaceZ !== null
-                    ? { surface: cannedZSurface, z: cannedZSurfaceZ }
-                    : null}
-                />
-              )
-              : null
+            // parameter the Edit panel writes, so there is nothing here to edit
+            // — and since rt7-d nothing to report either. A Thread's and
+            // Flutes' Depth and the surface it is measured from are on the Shape
+            // summary line, one section up, with the Edit button right under it;
+            // a Turn and a Polygon already name their parameter and its surface
+            // Z on that same summary (#1112 rt7-b).
+            null
           ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}

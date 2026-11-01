@@ -58,12 +58,11 @@ export type {
   CannedShapeOutline,
   CannedShapeSummary,
 } from './types'
-export type { CannedShapeSurface, CannedShapeZSource } from './zSource'
+export type { CannedShapeSurface } from './zSource'
 export {
+  cannedShapeDepth,
   cannedShapeSurface,
   cannedShapeZIsOwned,
-  cannedShapeZSource,
-  uniqueCannedZSources,
 } from './zSource'
 export { defineCannedShape } from './types'
 export { clearCannedShapeCache } from './cache'

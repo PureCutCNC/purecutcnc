@@ -260,17 +260,17 @@ export const featureTreeEn = {
   'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
   'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
   'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
-  // A Thread and Flutes own their Z span and report it: Properties names the
-  // parameter the Edit panel writes instead of offering a Z control (issue
-  // #1112 rt6-a). A Turn and a Polygon own theirs too but report no line — their
-  // summary already shows the diameter/across flats and its surface Z (rt7-b).
-  'featureTree.properties.canned.zSource.thread': 'Depth {value} · set in Edit thread…',
-  'featureTree.properties.canned.zSource.flutes': 'Depth {value} · set in Edit flutes…',
-  // A Thread/Flutes depth is measured from a surface, so the same line names it
+  // A Thread and Flutes own their Z span, so Properties offers no Z control and
+  // names the Depth the Edit panel writes on the shape's own summary line — one
+  // line, with the Edit button right under it, instead of a second read-only
+  // line under Instance (issue #1112 rt6-a, rt7-d). A Turn and a Polygon own
+  // theirs too but report no Depth: their summary already shows the
+  // diameter/across flats and its surface Z (rt7-b).
+  'featureTree.properties.canned.depth': 'depth {value}',
+  // A Thread/Flutes Depth is measured from a surface, so the same clause names it
   // with its diameter and Z, and repeats the warning for a surface that is not
   // one diameter (issue #1112 rt6-c).
-  'featureTree.properties.canned.zSource.threadSurface': 'Depth {value} {surface} · set in Edit thread…',
-  'featureTree.properties.canned.zSource.flutesSurface': 'Depth {value} {surface} · set in Edit flutes…',
+  'featureTree.properties.canned.depth.surface': 'depth {value} {surface}',
   'featureTree.properties.canned.surface.onTurn': 'below {name} (Ø {diameter}, surface at Z {value})',
   'featureTree.properties.canned.surface.bar': 'below the bar (Ø {diameter}, surface at Z {value})',
   'featureTree.properties.canned.surface.warned': 'below the bar (Ø {diameter}, surface at Z {value}) · {warning}',

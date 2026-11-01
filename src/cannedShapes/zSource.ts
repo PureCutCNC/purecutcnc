@@ -15,9 +15,9 @@
  */
 
 /**
- * Which canned kinds own their Z span, the value that sets it, and the surface a
- * Turn or Polygon presents (issue #1112 rt6-a item 39, extended by rt6-c and
- * rt7-b).
+ * Which canned kinds own their Z span, the Depth a Thread or Flutes reports, and
+ * the surface a Turn or Polygon presents (issue #1112 rt6-a item 39, extended by
+ * rt6-c, rt7-b and rt7-d).
  *
  * Frank asked what the Z top/bottom is for on the rotary canned features. It is
  * not a control: the same four kinds already carry the value the span is built
@@ -33,15 +33,21 @@
  * for all four kinds; the stored `z_top`/`z_bottom` are still written by the
  * Edit panels and read by toolpaths, 3D and simulation exactly as before.
  *
- * Only a **Thread or Flutes** also gets a read-only line: its Depth appears
- * nowhere else in Properties, so the line names the field, the value and the
- * panel that changes it, and **which surface** the depth is measured from
- * (`surfaceMessageKey`; the surface itself is resolved by
- * `store/helpers/rotarySurface.ts`, never guessed here). A **Turn or Polygon**
- * gets no line (rt7-b): since rt6-c its own summary line already names the
- * diameter or across flats *and* the Z that surface reaches
- * (`cannedShapeSurface`), so the second sentence Frank was shown repeated what
- * the first already said.
+ * A **Thread or Flutes** reports the Depth (`cannedShapeDepth`) so Properties
+ * can append it to the shape's own summary sentence — "Thread · 1-start · pitch
+ * 0.2 · length 2 · depth 0.122 in below Turn (Ø 0.75 in, surface at Z 1.125)"
+ * (rt7-d). Frank asked for the two lines he was shown — that summary, and a
+ * separate read-only "Depth … · set in Edit thread…" line under Instance — to
+ * become one, and for the "set in Edit …" half to go because the Edit button
+ * already sits right under the line. So this module reports the *value* and
+ * leaves the sentence to the caller.
+ *
+ * A **Turn or Polygon** reports no Depth at all (rt7-b): since rt6-c its summary
+ * already names the diameter or across flats *and* the Z that surface reaches
+ * (`cannedShapeSurface`), so a second sentence repeated what the first said.
+ *
+ * Which surface a Thread's or Flutes' Depth is measured from is resolved by
+ * `store/helpers/rotarySurface.ts`, never guessed here.
  */
 
 import type { CannedShapeData } from '../types/project'
@@ -51,29 +57,6 @@ import {
   THREAD_CANNED_KIND,
   TURN_CANNED_KIND,
 } from './generators/kinds'
-
-/** The read-only line Properties shows for a Thread or Flutes. */
-export interface CannedShapeZSource {
-  /** i18n key naming the field, its value, and the panel that changes it. */
-  messageKey: string
-  /** The length the Edit panel's field writes, in project units. */
-  value: number
-  /**
-   * The same line with a `{surface}` slot, for the kinds measured from a
-   * surface a Turn or the bar supplies. Used only when the surface could be
-   * resolved for one selected row.
-   */
-  surfaceMessageKey?: string
-}
-
-interface ReportedByEditPanel {
-  /** The stored parameter the Edit panel's own field writes. */
-  field: string
-  /** The message for that field, its value and where to change it. */
-  messageKey: string
-  /** The message naming the surface, when the kind is measured from one. */
-  surfaceMessageKey?: string
-}
 
 /**
  * The four kinds whose span the Edit panel controls: a Turn's and a Polygon's
@@ -89,64 +72,34 @@ const SPAN_OWNED_BY_EDIT_PANEL: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The two kinds that also report their value, in the Edit panel's own words
- * (`dialogs.rotary.depth`), so the two surfaces can never disagree about what
- * sets the depth. A Turn and a Polygon are absent on purpose (rt7-b): their
- * summary line already carries the diameter or across flats and the Z it
- * reaches, and Frank asked for the repeat to go.
+ * The two kinds that report their Depth, in the Edit panel's own word for the
+ * field (`dialogs.rotary.depth`). A Turn and a Polygon are absent on purpose
+ * (rt7-b): their summary line already carries the diameter or across flats and
+ * the Z it reaches.
  */
-const REPORTS_Z_SOURCE: Record<string, ReportedByEditPanel> = {
-  [THREAD_CANNED_KIND]: {
-    field: 'depth',
-    messageKey: 'featureTree.properties.canned.zSource.thread',
-    surfaceMessageKey: 'featureTree.properties.canned.zSource.threadSurface',
-  },
-  [FLUTES_CANNED_KIND]: {
-    field: 'depth',
-    messageKey: 'featureTree.properties.canned.zSource.flutes',
-    surfaceMessageKey: 'featureTree.properties.canned.zSource.flutesSurface',
-  },
-}
+const REPORTS_DEPTH: ReadonlySet<string> = new Set([
+  THREAD_CANNED_KIND,
+  FLUTES_CANNED_KIND,
+])
 
 /**
  * True when the Edit panel, not the Properties Z range, sets this kind's span.
- * True for all four rotary kinds — including the two that report no line.
+ * True for all four rotary kinds — including the two that report no Depth.
  */
 export function cannedShapeZIsOwned(canned: CannedShapeData | null | undefined): boolean {
   return !!canned && SPAN_OWNED_BY_EDIT_PANEL.has(canned.kind)
 }
 
 /**
- * Keep one line per distinct parameter value: a multi-selection of three
- * identical threads owns the same Depth, and saying it three times adds nothing.
- * Two threads of different depths keep both lines.
+ * The Depth the Edit panel's field writes, for the two kinds measured down from
+ * a surface; `null` for every other kind, and for a parameter set too corrupt to
+ * carry a number (the shape's summary is `null` then too, so nothing renders).
  */
-export function uniqueCannedZSources(
-  sources: readonly CannedShapeZSource[],
-): CannedShapeZSource[] {
-  return sources.filter((source, index) => sources.findIndex(
-    (other) => other.messageKey === source.messageKey && other.value === source.value,
-  ) === index)
-}
-
-/**
- * The read-only line's message and value, or `null` for a kind that reports
- * none — a Turn or Polygon, a kind Properties edits itself, or a parameter set
- * that carries no usable number.
- */
-export function cannedShapeZSource(
-  canned: CannedShapeData | null | undefined,
-): CannedShapeZSource | null {
-  if (!canned) return null
-  const reported = REPORTS_Z_SOURCE[canned.kind]
-  if (!reported) return null
-  const value = canned.params?.[reported.field]
+export function cannedShapeDepth(canned: CannedShapeData | null | undefined): number | null {
+  if (!canned || !REPORTS_DEPTH.has(canned.kind)) return null
+  const value = canned.params?.depth
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  return {
-    messageKey: reported.messageKey,
-    value,
-    ...(reported.surfaceMessageKey ? { surfaceMessageKey: reported.surfaceMessageKey } : {}),
-  }
+  return value
 }
 
 /**
