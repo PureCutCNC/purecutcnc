@@ -318,8 +318,7 @@ function buildCase(spec: CaseSpec): { project: Project; operation: Operation } {
 }
 
 // ---------------------------------------------------------------------------
-// Frank's bolt, rebuilt inline (scripts/issue-1112-rt7-a-bolt.camj, which is a
-// probe input only and never a fixture): an inch Ø1.5 bar, a 1.125 in Hex then
+// Frank's bolt test file, rebuilt inline (the file itself is not a fixture): an inch Ø1.5 bar, a 1.125 in Hex then
 // a Ø0.75 Turn, a Thread on each of them, and two circumferential lines drawn
 // on the Turn below its surface.
 // ---------------------------------------------------------------------------
