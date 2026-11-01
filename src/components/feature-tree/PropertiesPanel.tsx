@@ -204,7 +204,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // report where their value comes from; a Turn and a Polygon report nothing
   // (rt7-b), so a selection made only of kinds that own their span must not fall
   // through to the "follows stock" line below — that would be a wrong answer
-  // (#1112 rt7-b).
+  // (#1112 rt7-b). A Thread keeps reporting whenever it is in the selection,
+  // even beside a construction row that owns no Z either: only the *absence* of
+  // a source may leave the slot empty (#1112 rt7-b correction 1).
   const selectedZOwnedSources = uniqueCannedZSources(
     allSelectedFeatures
       .map((feature) => cannedShapeZSource(feature.canned))
@@ -1487,13 +1489,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
-            ) : selectedAllOwnTheirZ ? (
-              // Every selected feature takes its span from its Edit panel, so
-              // there is no shared Z to edit — the "follows stock" line below
-              // would be a second wrong answer (#1112 rt6-a, item 39). The
-              // lines can be empty: a Turn or a Polygon reports none, because
-              // its summary already names the parameter and the Z it reaches
-              // (#1112 rt7-b).
+            ) : selectedZOwnedSources.length > 0 || selectedAllOwnTheirZ ? (
+              // Nothing selected here has a shared Z to edit: either a Thread
+              // or Flutes reports where its value comes from, or every selected
+              // feature takes its span from its Edit panel — so the "follows
+              // stock" line below would be a second wrong answer (#1112 rt6-a,
+              // item 39). A source is reported whenever one exists, even beside
+              // a row that owns no Z of its own (a construction feature); the
+              // lines are empty only when a Turn or a Polygon alone is
+              // selected, since each reports none (#1112 rt7-b).
               selectedZOwnedSources.map((source) => (
                 <CannedZSourceLine
                   key={`${source.messageKey}-${source.value}`}

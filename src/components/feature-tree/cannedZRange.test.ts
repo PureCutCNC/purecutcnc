@@ -27,7 +27,9 @@
  * Polygon across flats) — so the control is gone. Then, of the read-only line:
  * "I don't think we need to show this again for turn", "same for the hex". A
  * plain canned shape and an imported model keep their Z control, and a mixed
- * selection edits only the shapes that own one.
+ * selection edits only the shapes that own one. A Thread in a multi-selection
+ * keeps reporting its Depth even beside a construction row, which owns no Z
+ * either (#1112 rt7-b correction 1).
  *
  * The panel is rendered for real: the Z control lives on the Instance tab and
  * the orientation section on its own, so both are opened the way a click does.
@@ -53,7 +55,11 @@
  * - the Polygon line shown again (`zSource.polygon` back) → the Polygon's
  *   assertion fails;
  * - a Turn/Polygon-only selection falling through to the "follows stock" line
- *   → that selection's assertion fails.
+ *   → that selection's assertion fails;
+ * - `selectedZOwnedSources.length > 0` dropped from the panel condition (a line
+ *   reported only when *every* selected kind owns its span) → the Thread +
+ *   construction assertion fails, because its Depth disappears behind
+ *   "Follows stock" (#1112 rt7-b correction 1).
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/cannedZRange.test.ts
@@ -90,6 +96,7 @@ const { projectWithFeatures } = await import('../../test/projectFixtures')
 const { bundledMachines } = await import('../../machine/registry')
 const { validateMachineDefinition } = await import('../../engine/gcode/types')
 const { switchWorkspaceFace } = await import('../../store/workspaceFace')
+const { resolvedProjectFeatures } = await import('../../store/helpers/resolveFeatures')
 
 type Project = Awaited<ReturnType<typeof newProject>>
 type FeatureDefinition = import('../../types/project').FeatureDefinition
@@ -499,6 +506,43 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   assert.equal(zSourceLineCount(mounted), 0, 'and no Z-source line for either')
   const html = mounted.html()
   assert.equal(html.includes('Follows stock'), false, 'and no "Follows stock" line either')
+  mounted.unmount()
+}
+
+// ── a Thread + construction selection keeps reporting the Thread ─
+//
+// A construction feature owns no Z either, so the selection has nothing to
+// edit — but the Thread's Depth must stay on screen. Reporting only when *every*
+// selected kind is a machinable rotary kind hid this line and replaced it with
+// "Follows stock", which is a wrong answer about a Thread whose depth comes
+// from its Edit panel (#1112 rt7-b correction 1).
+
+{
+  const { ellipseId, threadId } = loadWithShapes()
+  store().updateFeatures([ellipseId], { operation: 'construction' })
+  assert.equal(
+    resolvedProjectFeatures(store().project).find((feature) => feature.id === ellipseId)?.operation,
+    'construction',
+    'the second selected feature is construction geometry',
+  )
+
+  store().selectFeatures([threadId, ellipseId])
+  assert.equal(store().selection.selectedFeatureIds.length, 2, 'the Thread and the construction row are both selected')
+  const mounted = mount()
+  await flush()
+  assert.equal(hasZSlider(mounted), false, 'a Thread + construction selection has no shared Z editor')
+  const line = zSourceLine(mounted)
+  assert.ok(line, 'and still reports the Thread Depth')
+  assert.equal(
+    line.text,
+    'Depth 1.2 mm · set in Edit thread…',
+    'with the same field and value the Thread reports on its own',
+  )
+  assert.equal(
+    mounted.html().includes('Follows stock'),
+    false,
+    'instead of claiming the selection follows the stock',
+  )
   mounted.unmount()
 }
 
