@@ -40,7 +40,11 @@
  *    into `[0, barLength - length]`, the Polygon panel's own range.
  * 4. **One undo step**, and undo puts the start, the mesh and the Thread's span
  *    back.
- * 5. A **copy** move is untouched: a copy is a new row, not this band.
+ * 5. A **copy** is a new row, placed by the same projection: along the bar,
+ *    clamped at its ends, with the across part kept only for Thread/Flutes,
+ *    exactly as a move of the same shape is. The source band stays where it is
+ *    and the copy is the linked instance it always was (issue #1112 rt7-f:
+ *    Frank's copy slid off the bar's axis while a move stayed on it).
  * 6. **An unselected linked copy stays put**: a definition is shared with every
  *    linked copy, so the band write only happens when the selection holds all of
  *    them (the review of rt6-d found a move moving an unselected copy). Otherwise
@@ -53,6 +57,13 @@
  *    the same definition translated, so a moved copy has to be clamped from
  *    where it actually sits. Otherwise repeated moves walk it past the bar's
  *    end (the second review of rt6-d).
+ * 9. **A move on the Around sheet is the same bar move** (issue #1112 rt7-f):
+ *    the sheet is stock X and Y unrolled across (`components/canvas/aroundSheet`),
+ *    so the along direction, the clamp, the Thread/Flutes surface sync and the
+ *    one undo step are identical on Top and on Around. The face's refusal was
+ *    the context menu's other-face gate, which is where the Around case is
+ *    pinned as *offered* (`components/feature-tree/featureContextMenu.test.ts`);
+ *    the store and the canvas never gated by face.
  *
  * Other mutations checked one at a time:
  * - the preview projection returning the raw point → the Turn/Polygon
@@ -74,7 +85,13 @@
  *   the moved copy lands off the bar, by the diagonal;
  * - clamping a linked copy against the shared definition's start instead of its
  *   own placed band → the repeated move stores 125 on a 120 bar, and the group
- *   move drives the translated copy past the end.
+ *   move drives the translated copy past the end;
+ * - dropping the copy's projection from `projectedMoveTarget` → the copy
+ *   preview assertions fail (the drawn place keeps the raw across component);
+ * - dropping it from the copy branch of `completePendingMove` → the copied row
+ *   lands off the bar by the diagonal under a preview that stayed on it;
+ * - dropping the clamp from the copy's displacement → the clamped-copy
+ *   assertion finds the copy past the bar's end.
  */
 
 import assert from 'node:assert/strict'
@@ -406,22 +423,213 @@ assert.deepEqual(
   'the across component is dropped on a Y bar too',
 )
 
-// ── a copy is a new row, not a band ─────────────────────────
+// ── a move on Around is the same bar move ───────────────────
 //
-// The generic copy path is untouched: the source's stored start does not move
-// and the copy is placed at the offset, exactly as before this rule.
+// Frank: "move is only in Top for all rotary features. we should allow move in
+// the Around, with the same method we did for top now." The refusal he hit is
+// the context menu's other-face gate (pinned as *offered* in
+// `feature-tree/featureContextMenu.test.ts`); the store and the canvas never
+// gated by face, and the Around sheet is stock X and Y unrolled across
+// (`components/canvas/aroundSheet.ts`), so along the bar is the same coordinate
+// on both sheets. What this pins is that the whole move — the projection, the
+// clamp, the Thread's surface and the undo step — is identical there, with the
+// rows authored exactly as the app authors them: a Turn on Top, a Thread and a
+// Flutes on Around (`store/helpers/rotarySolids.ts`, `rotaryPatterns.ts`).
 
+const aroundCases: {
+  kind: 'turn' | 'thread' | 'flutes'
+  add: () => string
+  acrossKept: boolean
+}[] = [
+  { kind: 'turn', add: () => addTurn(10, 20, 10), acrossKept: false },
+  { kind: 'thread', add: () => addPattern('thread', 40, 10), acrossKept: true },
+  { kind: 'flutes', add: () => addPattern('flutes', 40, 10), acrossKept: true },
+]
+
+for (const entry of aroundCases) {
+  load()
+  const id = entry.add()
+  const where = `${entry.kind} moved on Around`
+  const from = { x: 30, y: 5 }
+  const to = { x: 45, y: 11 }
+  const previewed = preview(id, from, to)
+  const alongBefore = placedAlongStart(id)
+  const acrossBefore = resolveFeatureInstance(store().project, id)!.sketch.profile.start.y
+  const historyBefore = store().history.past.length
+
+  move(id, from, to)
+
+  const after = resolveFeatureInstance(store().project, id)!
+  near(after.sketch.profile.start.x - alongBefore, previewed.x - from.x,
+    `${where}: the band moves as far along the bar as the preview drew`)
+  near(after.sketch.profile.start.x - alongBefore, to.x - from.x,
+    `${where}: the along component is kept in full`)
+  if (entry.acrossKept) {
+    near(after.sketch.profile.start.y - acrossBefore, to.y - from.y,
+      `${where}: across the sheet is kept, as its commit has always kept it`)
+  } else {
+    near(previewed.y, from.y, `${where}: the preview stays on the bar axis`)
+    near(after.sketch.profile.start.y, acrossBefore, `${where}: the band stays on the bar axis`)
+  }
+  assert.equal(store().history.past.length, historyBefore + 1, `${where}: the move is one undo step`)
+  store().undo()
+  near(placedAlongStart(id), alongBefore, `${where}: undo puts the band back`)
+  store().redo()
+  near(placedAlongStart(id), alongBefore + (to.x - from.x), `${where}: redo moves it again`)
+}
+
+// The bar's ends clamp on the Around sheet exactly as they do on Top, and undo
+// puts the whole move back in one step.
 load()
-const copiedFrom = addPolygon(20, 10, 12)
-store().startCopyFeature(copiedFrom)
-store().setPendingMoveFrom({ x: 0, y: 0 })
-store().completePendingMove({ x: 30, y: 5 })
-assert.equal(featureIds().length, 2, 'the copy is a second row')
-near(storedStart(copiedFrom), 20, 'the source band did not move')
-const copyRow = store().project.features.find((feature) => feature.id !== copiedFrom)
-assert.ok(copyRow, 'the copy row exists')
-assert.deepEqual(copyRow.transform, { a: 1, b: 0, c: 0, d: 1, e: 30, f: 5 },
-  'the copy keeps the ordinary 2D offset a copy always had')
+const aroundEdgeTurn = addTurn(10, 20, 10)
+move(aroundEdgeTurn, { x: 20, y: 0 }, { x: 400, y: 0 })
+near(storedStart(aroundEdgeTurn), BAR_LENGTH - 20, 'a drag past the far end clamps to it on Around')
+move(aroundEdgeTurn, { x: 100, y: 0 }, { x: -400, y: 0 })
+near(storedStart(aroundEdgeTurn), 0, 'a drag past the chuck end clamps to it on Around')
+
+// The Thread/Flutes surface sync is the same on Around: moving the Turn takes
+// every band that lay on it back to the bar's own surface, in the same write.
+load()
+const aroundSurfaceTurn = addTurn(10, 20, 10)
+const aroundSurfaceThread = addPattern('thread', 12, 6)
+const aroundHistoryBefore = store().history.past.length
+near(Number(resolveFeatureInstance(store().project, aroundSurfaceThread)!.z_top), BAR_RADIUS + 5,
+  'the Thread starts on the Turn on Around too')
+move(aroundSurfaceTurn, { x: 20, y: 0 }, { x: 35, y: 0 })
+near(Number(resolveFeatureInstance(store().project, aroundSurfaceThread)!.z_top), BAR_DIAMETER,
+  'the Thread follows the moved Turn back to the bar surface on Around')
+assert.equal(store().history.past.length, aroundHistoryBefore + 1,
+  'the Turn move and the Thread it re-measures are one undo step on Around')
+store().undo()
+near(Number(resolveFeatureInstance(store().project, aroundSurfaceThread)!.z_top), BAR_RADIUS + 5,
+  'undo puts the Thread back on the Turn on Around')
+
+// ── a copy is placed along the bar, on Top and on Around ────
+//
+// Frank: "copy does not lock the rotary axis and it should". A copy is a new
+// row placed by its own instance translate, so the displacement that places it
+// is the projection that places a moved band: along the bar, clamped at the
+// bar's ends, with the across part kept only for Thread/Flutes — exactly as a
+// move of the same shape keeps it. The source band stays where it is and the
+// copy is the linked instance it always was.
+//
+// Named mutations: dropping the projection from `projectedMoveTarget` → the
+// preview assertions fail (the drawn copy keeps the raw across component);
+// dropping it from the copy branch of `completePendingMove` → the copy lands
+// off the bar while the preview stayed on it.
+
+/** Copy one row by a drag, from the point to the point, and answer the new id. */
+function copyBy(
+  featureId: string,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  mode: 'reference' | 'independent' = 'reference',
+): string {
+  const before = new Set(featureIds())
+  store().startCopyFeature(featureId, mode)
+  store().setPendingMoveFrom(from)
+  store().completePendingMove(to)
+  const created = featureIds().find((id) => !before.has(id))
+  assert.ok(created, 'the copy created a row')
+  return created
+}
+
+const copyCases: {
+  face: 'top' | 'around'
+  kind: 'turn' | 'polygon' | 'thread' | 'flutes'
+  add: () => string
+  acrossKept: boolean
+}[] = [
+  { face: 'top', kind: 'turn', add: () => addTurn(20, 10, 10), acrossKept: false },
+  { face: 'top', kind: 'polygon', add: () => addPolygon(20, 10, 12), acrossKept: false },
+  { face: 'around', kind: 'turn', add: () => addTurn(20, 10, 10), acrossKept: false },
+  { face: 'around', kind: 'polygon', add: () => addPolygon(20, 10, 12), acrossKept: false },
+  { face: 'around', kind: 'thread', add: () => addPattern('thread', 20, 10), acrossKept: true },
+  { face: 'around', kind: 'flutes', add: () => addPattern('flutes', 20, 10), acrossKept: true },
+]
+
+for (const entry of copyCases) {
+  load()
+  const id = entry.add()
+  if (entry.face === 'top') assert.equal(switchWorkspaceFace('top'), true, `${entry.kind}: the workspace enters Top`)
+  const where = `${entry.kind} copied on ${entry.face}`
+  const from = { x: 25, y: 5 }
+  const to = { x: 55, y: 11 }
+  const previewed = projectedMoveTarget(
+    store().project,
+    { mode: 'copy', entityType: 'feature', entityIds: [id] },
+    from,
+    to,
+  )
+  const sourceAlongBefore = placedAlongStart(id)
+  const sourceAcrossBefore = resolveFeatureInstance(store().project, id)!.sketch.profile.start.y
+  const sourceStoredBefore = storedStart(id)
+  const historyBefore = store().history.past.length
+
+  const copyId = copyBy(id, from, to)
+
+  const copyRow = store().project.features.find((feature) => feature.id === copyId)
+  const sourceRow = store().project.features.find((feature) => feature.id === id)
+  assert.equal(copyRow?.definitionId, sourceRow?.definitionId,
+    `${where}: the copy is the linked instance it always was`)
+  near(placedAlongStart(copyId) - sourceAlongBefore, previewed.x - from.x,
+    `${where}: the copy lands as far along the bar as the preview drew it`)
+  near(placedAlongStart(copyId) - sourceAlongBefore, to.x - from.x,
+    `${where}: the along component is kept in full`)
+  if (entry.acrossKept) {
+    near(resolveFeatureInstance(store().project, copyId)!.sketch.profile.start.y - sourceAcrossBefore,
+      to.y - from.y, `${where}: across the sheet is kept, as a move of it keeps it`)
+  } else {
+    near(previewed.y, from.y, `${where}: the copy preview stays on the bar axis`)
+    near(resolveFeatureInstance(store().project, copyId)!.sketch.profile.start.y, sourceAcrossBefore,
+      `${where}: the copy itself stays on the bar axis`)
+  }
+  near(placedAlongStart(id), sourceAlongBefore, `${where}: the source band did not move`)
+  near(storedStart(id), sourceStoredBefore, `${where}: the source keeps its stored start`)
+  assert.equal(store().history.past.length, historyBefore + 1, `${where}: the copy is one undo step`)
+}
+
+// The clamp is the move's clamp: a copy dragged past the bar's end stops with
+// its own band at the end, as a move of it does.
+//
+// Named mutation: dropping the projection's clamp from the copy's displacement
+// → the copy lands past the bar.
+load()
+const clampedCopySource = addTurn(20, 10, 10)
+const clampedCopy = copyBy(clampedCopySource, { x: 20, y: 0 }, { x: 400, y: 0 })
+near(placedAlongStart(clampedCopy), BAR_LENGTH - 10,
+  'a copy dragged past the far end stops at the bar end')
+const clampedAgain = copyBy(clampedCopy, { x: 20, y: 0 }, { x: -400, y: 0 })
+near(placedAlongStart(clampedAgain), 0, 'and a copy dragged past the chuck end stops at it')
+near(storedStart(clampedAgain), storedStart(clampedCopySource),
+  'a copy never writes the shared band, so neither end changes the stored start')
+
+// A copied Thread is measured on the surface it lands on: copied off the Turn's
+// band it sits back on the bar, which is where its depth is measured from.
+load()
+const surfaceTurn = addTurn(10, 20, 10)
+const surfaceThread = addPattern('thread', 12, 6)
+near(Number(resolveFeatureInstance(store().project, surfaceThread)!.z_top), BAR_RADIUS + 5,
+  'the Thread starts on the turned surface')
+const surfaceCopy = copyBy(surfaceThread, { x: 20, y: 0 }, { x: 60, y: 0 })
+near(Number(resolveFeatureInstance(store().project, surfaceCopy)!.z_top), BAR_DIAMETER,
+  'the copied Thread is measured from the bar surface it landed on')
+near(Number(resolveFeatureInstance(store().project, surfaceThread)!.z_top), BAR_RADIUS + 5,
+  'the source Thread stays on the Turn it sits on')
+assert.ok(surfaceTurn, 'the Turn the source Thread sits on is still there')
+
+// An independent copy keeps its own definition, as every independent copy does,
+// and is placed by the same projection.
+load()
+const independentSource = addPolygon(20, 10, 12)
+const independentCopy = copyBy(independentSource, { x: 20, y: 0 }, { x: 35, y: 8 }, 'independent')
+const independentSourceRow = store().project.features.find((feature) => feature.id === independentSource)
+const independentCopyRow = store().project.features.find((feature) => feature.id === independentCopy)
+assert.ok(independentCopyRow && independentSourceRow, 'both rows exist')
+assert.notEqual(independentCopyRow.definitionId, independentSourceRow.definitionId,
+  'an independent copy gets its own definition')
+near(placedAlongStart(independentCopy), 35,
+  'the independent copy still travels only along the bar')
 
 // ── an unselected linked copy does not move ─────────────────
 //

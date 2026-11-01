@@ -164,6 +164,19 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const cannedRefusal = sketchCommands.predicates.hasCannedSelectedFeatures
     ? t('sketch.canned.actionRefused')
     : undefined
+  // A rotary canned shape refuses the three transforms, and its Resize names
+  // its own editor — the same reasons the context menu shows (issue #1112
+  // rt7-f). The rail is a third door onto the same commands.
+  const rotaryTransformRefusal = sketchCommands.predicates.hasRotaryCannedSelectedFeatures
+    ? t('sketch.canned.actionRefused')
+    : undefined
+  const rotaryResizeRefusal = sketchCommands.predicates.rotaryCannedShapeLabelKey
+    ? t('featureTree.contextMenu.resizeCannedTooltip', {
+        edit: t('featureTree.properties.canned.edit', {
+          shape: t(sketchCommands.predicates.rotaryCannedShapeLabelKey as MessageKey),
+        }),
+      })
+    : rotaryTransformRefusal
   const creationCommands = useCreationShapeCommands({
     onRequestText: () => setShowTextDialog(true),
   })
@@ -314,9 +327,9 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <RailButton icon="copy" label={t('appShell.toolRail.copy')} active={sketchCommands.transform.copy.active} onClick={sketchCommands.transform.copy.onActivate} />
             <RailButton icon="move" label={t('appShell.toolRail.move')} active={sketchCommands.transform.move.active} disabled={!sketchCommands.transform.move.enabled} onClick={sketchCommands.transform.move.onActivate} />
             <RailButton icon="trash" label={t('appShell.toolRail.delete')} onClick={sketchCommands.transform.delete.onActivate} />
-            <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
-            <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
-            <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
+            <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} disabledReason={rotaryResizeRefusal} onClick={sketchCommands.transform.resize.onActivate} />
+            <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} disabledReason={rotaryTransformRefusal} onClick={sketchCommands.transform.rotate.onActivate} />
+            <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} disabledReason={rotaryTransformRefusal} onClick={sketchCommands.transform.mirror.onActivate} />
             <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.offset.onActivate} />
             <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.constraint.onActivate} />
             <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} disabled={!sketchCommands.boolean.join.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.join.onActivate} />

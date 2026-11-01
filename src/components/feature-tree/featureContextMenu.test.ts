@@ -412,13 +412,14 @@ async function testCannedEntriesAct(): Promise<void> {
 // ── Item 10: a feature authored on another face ─────────────────
 
 const SWITCH_REASON = enMessages['featureTree.face.switchToTopToEdit']
+// Move, Resize, Rotate and Mirror are deliberately absent: Move of a rotary
+// canned selection is the bar edit `rotaryMove.ts` owns (offered on every
+// face), and the three transforms are refused for the shape's own reason rather
+// than the face's (issue #1112 rt7-f). Every other bulk edit still refuses with
+// the face's.
 const EDITABLE_LABELS = [
   'featureTree.contextMenu.editSketch',
   'featureTree.contextMenu.addConstraint',
-  'featureTree.contextMenu.move',
-  'featureTree.contextMenu.resize',
-  'featureTree.contextMenu.rotate',
-  'featureTree.contextMenu.mirror',
   'featureTree.contextMenu.offset',
   'featureTree.contextMenu.join',
   'featureTree.contextMenu.cut',
@@ -459,6 +460,15 @@ async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
     buttonByLabel(host, enMessages['featureTree.contextMenu.copy']),
     'the other-face menu is the normal one (Copy is offered)',
   )
+
+  // ...and so is Move: a Turn's or Hex's band moves along the bar, which is the
+  // same edit on Top and on Around, so the face does not refuse it (rt7-f).
+  const moveButton = buttonByLabel(host, enMessages['featureTree.contextMenu.move'])
+  assert(moveButton, 'Move is offered for a rotary canned shape on Around')
+  assert(!moveButton.hasAttribute('disabled'),
+    `Move of a rotary canned shape runs on Around, got "${textOf(moveButton)}"`)
+  assert(!textOf(moveButton).includes(SWITCH_REASON),
+    `Move no longer refuses with "${SWITCH_REASON}", got "${textOf(moveButton)}"`)
   const switchButton = buttonByLabel(host, SWITCH_REASON)
   assert(switchButton, 'the way to the feature’s own face leads the menu')
   assert(!switchButton.hasAttribute('disabled'), 'the switch is available')
@@ -498,6 +508,27 @@ async function testOtherFaceMenuIsTheNormalOne(): Promise<void> {
       `${label} says "${SWITCH_REASON}", got "${textOf(button)}"`,
     )
     assert(button.getAttribute('title') === SWITCH_REASON, `${label} carries the reason as its tooltip too`)
+  }
+
+  // The three transforms are refused for the shape's reason, not the face's:
+  // a face switch would not make a generated shape resizable, and the editor
+  // Resize names is offered right here (issue #1112 rt7-f).
+  const polyName = enMessages['canned.polygon.name']
+  const resizeReason = enMessages['featureTree.contextMenu.resizeCannedTooltip']
+    .replace('{edit}', enMessages['featureTree.properties.canned.edit'].replace('{shape}', polyName))
+  const resize = buttonByLabel(host, enMessages['featureTree.contextMenu.resize'])
+  assert(resize, 'Resize is present for another face\'s rotary shape')
+  assert(resize.hasAttribute('disabled'), 'Resize is refused for a rotary shape')
+  assert(textOf(resize).includes(resizeReason), `Resize says "${resizeReason}", got "${textOf(resize)}"`)
+  assert(resize.getAttribute('title') === resizeReason, 'Resize carries the editor reason as its tooltip')
+  for (const key of ['featureTree.contextMenu.rotate', 'featureTree.contextMenu.mirror'] as const) {
+    const button = buttonByLabel(host, enMessages[key])
+    assert(button, `${enMessages[key]} is present for another face's rotary shape`)
+    assert(button.hasAttribute('disabled'), `${enMessages[key]} is refused for a rotary shape`)
+    assert(textOf(button).includes(enMessages['sketch.canned.actionRefused']),
+      `${enMessages[key]} says "${enMessages['sketch.canned.actionRefused']}", got "${textOf(button)}"`)
+    assert(button.getAttribute('title') === enMessages['sketch.canned.actionRefused'],
+      `${enMessages[key]} carries the same reason as its tooltip`)
   }
 
   // The generated shape's own editor is the exception the face does not gate:
@@ -720,6 +751,157 @@ async function testOtherFaceSketchEditingIsUnchanged(): Promise<void> {
   )
 }
 
+// ── Issue #1112 rt7-f: Move on Around ──────────────────────
+
+/**
+ * Frank: "copy is allowed in top and Around, but move is only in Top for all
+ * rotary features. we should allow move in the Around". A Move of a Turn,
+ * Polygon, Thread or Flutes moves its band along the bar, which is the same
+ * edit on both sheets, so the other-face gate no longer refuses it — and the
+ * entry still starts the move, rather than being offered and inert.
+ */
+async function testRotaryCannedMoveIsOfferedOnAround(): Promise<void> {
+  const rows = [
+    cannedModelRow('turn', 'turn', 'Turn'),
+    cannedModelRow('hex', 'polygon', 'Hex'),
+    { ...cannedRow('thread'), id: 'thread', name: 'Thread', operation: 'subtract' as const, authoringFace: 'around' as const },
+    { ...cannedRow('flutes'), id: 'flutes', name: 'Flutes', operation: 'subtract' as const, authoringFace: 'around' as const },
+  ]
+  const project = squareRotaryProjectWith(rows)
+
+  for (const row of rows) {
+    const calls: string[] = []
+    // A Turn or Hex is authored on Top, so it must be cuttable from Around for
+    // the normal menu to render at all; a Thread or Flutes is authored here.
+    const targetable = (row.authoringFace ?? 'top') !== 'around'
+      ? validQuickOperationsForFeatureOnActiveFace(project, row.id).length > 0
+      : false
+    assert((row.authoringFace ?? 'top') === 'around' || targetable,
+      `${row.id}: an Around operation can cut it, so the normal menu renders`)
+    const host = await renderMenu(project, row.id, {
+      targetableFromFace: targetable,
+      actions: callRecordingActions(calls),
+    })
+
+    const move = buttonByLabel(host, enMessages['featureTree.contextMenu.move'])
+    assert(move, `${row.id}: Move is present on Around`)
+    assert(!move.hasAttribute('disabled'), `${row.id}: Move is offered on Around, got "${textOf(move)}"`)
+    assert(!textOf(move).includes(SWITCH_REASON),
+      `${row.id}: Move does not refuse with the face's reason, got "${textOf(move)}"`)
+    assert(move.getAttribute('title') === null, `${row.id}: Move carries no refusal tooltip`)
+
+    move.click()
+    assert(calls.includes('moveFeature'),
+      `${row.id}: clicking Move starts the move, got ${JSON.stringify(calls)}`)
+  }
+}
+
+// ── Issue #1112 rt7-f: Rotate, Resize and Mirror are refused ──
+
+/** The face the app authors a rotary canned kind on. */
+const KIND_FACE: Record<string, 'top' | 'around'> = {
+  turn: 'top',
+  polygon: 'top',
+  thread: 'around',
+  flutes: 'around',
+}
+
+/** The same project seen from `face`. */
+function projectOnFace(project: Project, face: 'top' | 'around'): Project {
+  const setup = project.setups.find((entry) => (entry.kind === 'around' ? 'around' : 'top') === face)
+  assert(setup, `the fixture has a ${face} setup`)
+  return { ...project, activeSetupId: setup!.id }
+}
+
+/**
+ * Frank: "the rotate, resize, mirror should probably not be allowed in the
+ * context menu (resize should point to the edit, others not allowed)". A
+ * rotary shape's size lives in its parameters, so Resize names that editor and
+ * Rotate/Mirror say what Offset and Join already say.
+ */
+async function testRotaryCannedTransformsAreRefused(): Promise<void> {
+  const rows = [
+    cannedModelRow('turn', 'turn', 'Turn'),
+    cannedModelRow('hex', 'polygon', 'Hex'),
+    { ...cannedRow('thread'), id: 'thread', name: 'Thread', operation: 'subtract' as const, authoringFace: 'around' as const },
+    { ...cannedRow('flutes'), id: 'flutes', name: 'Flutes', operation: 'subtract' as const, authoringFace: 'around' as const },
+  ]
+  const aroundProject = squareRotaryProjectWith(rows)
+
+  for (const row of rows) {
+    const face = KIND_FACE[row.canned!.kind]
+    const project = face === 'top' ? projectOnFace(aroundProject, 'top') : aroundProject
+    const targetable = face === 'around'
+      ? false
+      : validQuickOperationsForFeatureOnActiveFace(project, row.id).length > 0
+    const host = await renderMenu(project, row.id, { targetableFromFace: targetable })
+    const shapeName = enMessages[`canned.${row.canned!.kind}.name` as keyof typeof enMessages]
+    const editorReason = enMessages['featureTree.contextMenu.resizeCannedTooltip']
+      .replace('{edit}', enMessages['featureTree.properties.canned.edit'].replace('{shape}', shapeName))
+
+    const resize = buttonByLabel(host, enMessages['featureTree.contextMenu.resize'])
+    assert(resize, `${row.id}: Resize is present`)
+    assert(resize.hasAttribute('disabled'), `${row.id}: Resize is refused for a rotary shape`)
+    assert(textOf(resize).includes(editorReason),
+      `${row.id}: Resize says "${editorReason}", got "${textOf(resize)}"`)
+    assert(resize.getAttribute('title') === editorReason,
+      `${row.id}: Resize carries the editor reason as its tooltip`)
+
+    for (const key of ['featureTree.contextMenu.rotate', 'featureTree.contextMenu.mirror'] as const) {
+      const button = buttonByLabel(host, enMessages[key])
+      assert(button, `${row.id}: ${enMessages[key]} is present`)
+      assert(button.hasAttribute('disabled'), `${row.id}: ${enMessages[key]} is refused for a rotary shape`)
+      assert(textOf(button).includes(enMessages['sketch.canned.actionRefused']),
+        `${row.id}: ${enMessages[key]} says "${enMessages['sketch.canned.actionRefused']}", got "${textOf(button)}"`)
+      assert(button.getAttribute('title') === enMessages['sketch.canned.actionRefused'],
+        `${row.id}: ${enMessages[key]} carries the same reason as its tooltip`)
+    }
+
+    // The way out the reason names is still offered on this face.
+    const edit = buttonByLabel(host, enMessages['featureTree.properties.canned.edit']
+      .replace('{shape}', shapeName))
+    assert(edit && !edit.hasAttribute('disabled'),
+      `${row.id}: the editor the Resize reason names is offered, as Properties offers it`)
+  }
+}
+
+/**
+ * The rule the change must not widen: the other canned kinds keep today's
+ * behaviour. An ellipse's outline is a plain profile, so the three transforms
+ * are offered for it exactly as they were — on Top and on Around.
+ */
+async function testOtherCannedKindsKeepTheirTransforms(): Promise<void> {
+  const ellipse = { ...cannedRow('ellipse'), authoringFace: 'top' as const }
+  const plain: SketchFeature = {
+    id: 'plain',
+    name: 'Plain',
+    kind: 'rect',
+    folderId: null,
+    sketch: cannedRow('ellipse').sketch,
+    operation: 'subtract',
+    authoringFace: 'top',
+    z_top: 4,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+  const project = projectWithFeatures(newProject('canned transforms', 'mm'), [ellipse, plain])
+
+  for (const id of ['canned-ellipse', 'plain']) {
+    const host = await renderMenu(project, id)
+    for (const key of [
+      'featureTree.contextMenu.resize',
+      'featureTree.contextMenu.rotate',
+      'featureTree.contextMenu.mirror',
+    ] as const) {
+      const button = buttonByLabel(host, enMessages[key])
+      assert(button, `${id}: ${enMessages[key]} is present`)
+      assert(!button.hasAttribute('disabled'),
+        `${id}: ${enMessages[key]} is offered, as before, got "${textOf(button)}"`)
+    }
+  }
+}
+
 async function main(): Promise<void> {
   await testCannedMenuItems()
   await testCannedEntriesAct()
@@ -729,6 +911,9 @@ async function main(): Promise<void> {
   await testAroundMenuOffersTheCannedEditor()
   await testCannedKindWithoutAnEditorIsRefusedForItsOwnReason()
   await testOtherFaceSketchEditingIsUnchanged()
+  await testRotaryCannedMoveIsOfferedOnAround()
+  await testRotaryCannedTransformsAreRefused()
+  await testOtherCannedKindsKeepTheirTransforms()
   console.log('feature context menu tests passed')
 }
 
@@ -738,5 +923,9 @@ async function main(): Promise<void> {
 // asserts on it (issue #1112 rt7-c).
 registerCannedShapeEditor('turn', noop)
 registerCannedShapeEditor('polygon', noop)
+// The two kinds the rt7-f Resize reason names on the Around face, where the app
+// registers them from the rotary pattern panel.
+registerCannedShapeEditor('thread', noop)
+registerCannedShapeEditor('flutes', noop)
 
 await main()

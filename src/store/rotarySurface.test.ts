@@ -83,6 +83,7 @@ import {
   newProject,
   rectProfile,
   roundStock,
+  type Matrix2D,
   type Project,
   type SketchFeature,
   type Tool,
@@ -96,6 +97,7 @@ import { barPivotZ } from '../types/barStock'
 import { squareStock } from '../types/barStock'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { rotarySolidCannedData } from './helpers/rotarySolids'
+import { multiplyMatrix, rotateDelta, scaleDelta } from './helpers/instanceTransforms'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import {
   rotaryPatternSurface,
@@ -164,6 +166,21 @@ function addThread(start: number, length: number, depth = 1): string {
   const result = store().addRotaryPattern({ kind: 'thread', start, length, pitch: 2, depth })
   assert.ok(result.ok, `thread created (${result.ok ? '' : result.reason})`)
   return result.featureId
+}
+
+/**
+ * The project with one row's instance carrying `delta` on top of the placement
+ * it has — the matrix a decoded file can carry. No gesture writes a scale or a
+ * rotation onto a rotary canned shape any more (issue #1112 rt7-f), so a placed
+ * body can only arrive from a file; the resolver still reads it.
+ */
+function withPlacedTransform(project: Project, featureId: string, delta: Matrix2D): Project {
+  return {
+    ...project,
+    features: project.features.map((row) => (
+      row.id === featureId ? { ...row, transform: multiplyMatrix(delta, row.transform) } : row
+    )),
+  }
 }
 
 function threadZ(featureId: string): number {
@@ -401,31 +418,30 @@ store().completePendingMove({ x: 60, y: 0 })
 assertNear(threadZ(oldBand), BAR_DIAMETER, 'moving the Turn away moves the old band to the bar')
 assertNear(threadZ(newBand), BAR_RADIUS + 5, 'the band at the transformed span takes the Turn diameter')
 
-// Transform (uniform resize of the Turn) scales the diameter the band reads.
-// The pivot is on the bar's centreline so this stays a *coaxial* resize; a
-// resize about an off-centre pivot moves the body off the axis and is covered
-// by the placement cases below.
+// A placed scale is read from the placed body, not from the stored parameters.
+// Since issue #1112 rt7-f the gesture that used to produce one is refused for
+// these four kinds (`store/cannedShapeActions.test.ts` pins the refusal), so the
+// placement is written the way a decoded file carries it — on the instance
+// transform — and the resolver still has to read the body it is given: a 1.2x
+// Turn supplies a 1.2x radius. The pivot is on the bar's centreline, so this
+// stays a *coaxial* scale.
+//
+// Named mutation: reading the stored diameter alone → the band keeps Ø10 and
+// the assertion below reads BAR_RADIUS + 5.
 load()
 const resizeTurn = addTurn(20, 40, 10)
 const resizeThread = addThread(30, 20)
+assertNear(threadZ(resizeThread), BAR_RADIUS + 5, 'the thread starts on the Ø10 Turn')
+store().selectFeatures([resizeTurn])
 store().startResizeFeature(resizeTurn)
-store().setPendingTransformReferenceStart({ x: 40, y: 10 })
-store().setPendingTransformReferenceEnd({ x: 60, y: 10 })
-store().completePendingTransform({ x: 64, y: 10 })
-// An STL resize scales the instance Z band about its bottom, which lifts the
-// body off the bar's Z plane (5..17 after this 1.2x drag, axis at Z11). A
-// raised Turn is deliberately not a surface (see the Z-placement case below),
-// so re-centre it before reading the placed diameter: this assertion is about
-// the 1.2x radius, with the body coaxial again.
-store().updateFeature(resizeTurn, {
-  z_top: BAR_RADIUS + 6,
-  z_bottom: BAR_RADIUS - 6,
-})
+assert.equal(store().pendingTransform, null,
+  'Resize is refused for a Turn (rt7-f), so no gesture can place the scale below')
+store().loadProject(withPlacedTransform(store().project, resizeTurn, scaleDelta({ x: 40, y: 10 }, 1.2, 1.2)))
 assertNear(threadZ(resizeThread), BAR_RADIUS + 6, 'a 1.2x Turn supplies a 1.2x radius')
 assert.equal(
   rotaryPatternSurface(store().project, { start: 30, length: 20 }).kind,
   'turn',
-  'the resized Turn still resolves as one Turn',
+  'the scaled Turn still resolves as one Turn',
 )
 
 // Make unique: the copy keeps its own placement and definition, so editing the
@@ -553,17 +569,23 @@ assert.equal(
 )
 
 // ── a rotated Turn is tilted away from the bar axis ─────────
+//
+// Rotate is refused for these four kinds since rt7-f, so the placement is
+// written where a decoded file carries it, on the instance transform; the
+// resolver still reads a body it is given as a varying surface.
 
 load()
 const rotatedTurn = addTurn(20, 40, 10)
 const rotatedThread = addThread(25, 20)
+store().selectFeatures([rotatedTurn])
 store().startRotateFeature(rotatedTurn)
-store().setPendingTransformReferenceStart({ x: 40, y: 0 })
-store().setPendingTransformReferenceEnd({ x: 60, y: 0 })
-store().completePendingTransform({
-  x: 40 + 20 * Math.cos(Math.PI / 6),
-  y: 20 * Math.sin(Math.PI / 6),
-})
+assert.equal(store().pendingTransform, null,
+  'Rotate is refused for a Turn (rt7-f), so no gesture can place the tilt below')
+store().loadProject(withPlacedTransform(
+  store().project,
+  rotatedTurn,
+  rotateDelta({ x: 40, y: 0 }, Math.PI / 6),
+))
 assertNear(threadZ(rotatedThread), BAR_DIAMETER, 'a 30° Turn no longer reports the unrotated diameter')
 assert.equal(
   rotaryPatternSurfaceOfFeature(store().project, rotatedThread)?.kind,

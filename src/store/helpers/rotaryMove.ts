@@ -268,10 +268,16 @@ export function rotaryMoveFeatures(
 
 /**
  * A pending move's target point, projected onto the bar for a canned rotary
- * move and returned unchanged for every other move or for a copy (a copy is a
- * new row, not this feature's band). Both the pointer preview and the click
- * that ends the drag go through this, so the drawn guide, the typed default
- * distance and the stored result come from one place.
+ * move or copy and returned unchanged for every other move.
+ *
+ * A **copy** is projected too (issue #1112 rt7-f): Frank's copy of a rotary
+ * feature slid off the bar's axis while a move of the same shape stayed on it.
+ * A copy is placed by its own instance translate, so the same displacement that
+ * places a moved band places the copy, with the same clamp: the copy's band is
+ * the source band translated, so keeping `source + delta` inside the bar keeps
+ * the copy inside it too. Both the pointer preview and the click that ends the
+ * drag go through this, so the drawn guide, the typed default distance and the
+ * stored result come from one place.
  */
 export function projectedMoveTarget(
   project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
@@ -279,7 +285,7 @@ export function projectedMoveTarget(
   from: Point,
   to: Point,
 ): Point {
-  if (move.mode !== 'move' || move.entityType !== 'feature') return to
+  if (move.entityType !== 'feature') return to
   return projectedRotaryMovePoint(project, rotaryMoveFeatures(project, move.entityIds), from, to)
 }
 
@@ -288,9 +294,9 @@ export function projectedMoveTarget(
  *
  * Every way a preview point arrives — a pointer drag, a typed distance, a
  * resnap after typing — publishes through one call, and that call is this one,
- * so no path can draw a place the commit will not store. A copy and every
- * non-rotary move pass through unchanged, exactly as {@link projectedMoveTarget}
- * does.
+ * so no path can draw a place the commit will not store. A move and a copy
+ * project alike; every non-rotary selection, and every other entity type,
+ * passes through unchanged, exactly as {@link projectedMoveTarget} does.
  */
 export function projectMovePreviewPoint(
   project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,
@@ -303,13 +309,20 @@ export function projectMovePreviewPoint(
 }
 
 /**
- * The displacement a canned rotary move applies when it cannot write the
- * shared band — its definition also places a linked copy the selection does not
- * hold. That move keeps the definition and translates the selected rows, which
- * is what a Polygon's move did before this slice; the translation is the same
- * projection the preview drew, so the drawn place is still the stored one.
+ * The displacement the selected rows are actually translated by.
  *
- * A non-rotary move gets its displacement back unchanged.
+ * Three callers, one projection:
+ *  - a **move** that cannot write the shared band — its definition also places
+ *    a linked copy the selection does not hold — keeps the definition and
+ *    translates the selected rows, which is what a Polygon's move did before
+ *    this slice;
+ *  - a **copy** is placed by the same projected displacement (issue #1112
+ *    rt7-f), so a copy travels along the bar exactly as far as a move would and
+ *    stops at the bar's ends;
+ *  - a non-rotary selection gets its displacement back unchanged.
+ *
+ * The translation is the same projection the preview drew, so the drawn place
+ * is still the stored one.
  */
 export function rotaryMoveTranslateDelta(
   project: Pick<Project, 'stock' | 'features' | 'featureDefinitions'>,

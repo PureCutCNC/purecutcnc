@@ -435,6 +435,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': '没有兼容的操作',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': '未用于任何操作',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': '移除此项会使操作无效',
+  'featureTree.contextMenu.resizeCannedTooltip': '在 {edit} 中更改尺寸',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': '形状',

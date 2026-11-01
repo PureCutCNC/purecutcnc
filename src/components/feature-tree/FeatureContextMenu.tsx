@@ -27,6 +27,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { cannedShapeEditorFor, cannedShapeIsExpandable, cannedShapeLabelKey, isCannedFeature } from '../../cannedShapes'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { hasRotaryCannedFeature, isRotaryCannedFeature, isRotaryCannedMoveSelection } from '../../store/helpers/cannedShapeActions'
 
 /**
  * A disabled menu item's reason is visible text, not only a native `title`:
@@ -148,7 +149,18 @@ export function FeatureContextMenu({
   // A generated shape owns its geometry through parameters, so join/cut/
   // offset/constraints refuse a selection that contains one, and the menu
   // entries stay (disabled) so the reason can be read (#1112 A2).
-  const menuHasCannedSelection = resolveFeatureInstances(project, [...ids]).some(isCannedFeature)
+  const selectionRows = resolveFeatureInstances(project, [...ids])
+  const menuHasCannedSelection = selectionRows.some(isCannedFeature)
+  // The four rotary kinds (Turn, Polygon/Hex, Thread, Flutes) are refused the
+  // three transforms, and a Move of them is the bar edit that belongs to no
+  // face (issue #1112 rt7-f). The primary row leads the list so a Resize names
+  // *its* editor.
+  const selectionRowsPrimaryFirst = [
+    ...selectionRows.filter((feature) => feature.id === primaryId),
+    ...selectionRows.filter((feature) => feature.id !== primaryId),
+  ]
+  const menuHasRotaryCannedSelection = hasRotaryCannedFeature(selectionRows)
+  const menuRotaryMoveSelection = isRotaryCannedMoveSelection(project, selectionRowsPrimaryFirst)
   const menuFeatureIsCanned = isCannedFeature(menuFeature)
   // The generated shape's own two actions: its parameter editor (the same
   // opener Properties uses) and expansion into plain features. Both read the
@@ -179,6 +191,19 @@ export function FeatureContextMenu({
       : undefined
   const useAsStockReason = !menuCanUseAsStock
     ? t('featureTree.contextMenu.useAsStockDisabledTooltip') : undefined
+  // A rotary shape's Resize is refused because its size lives in the shape's
+  // own editor — the one edit that belongs to no face, so the reason names it
+  // exactly as the "Edit {shape}…" entry above does (issue #1112 rt7-f).
+  const rotaryShapeLabelKey = menuHasRotaryCannedSelection
+    ? cannedShapeLabelKey(selectionRowsPrimaryFirst.find(isRotaryCannedFeature)?.canned)
+    : null
+  const rotaryResizeReason = menuHasRotaryCannedSelection
+    ? rotaryShapeLabelKey
+      ? t('featureTree.contextMenu.resizeCannedTooltip', {
+          edit: t('featureTree.properties.canned.edit', { shape: t(rotaryShapeLabelKey as MessageKey) }),
+        })
+      : cannedRefusal
+    : undefined
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -298,9 +323,12 @@ export function FeatureContextMenu({
       ? cannedRefusal
       : menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
   )
-  const moveReason = selectionOr(
-    menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined,
-  )
+  // A Move of the four rotary kinds is the bar edit `rotaryMove.ts` owns, and
+  // it reads the same on every face, so the other-face refusal is the one gate
+  // it does not take (issue #1112 rt7-f). Every other selection keeps it.
+  const moveReason = (menuRotaryMoveSelection ? undefined : selectionEditingReason)
+    ?? (menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : undefined)
+  const moveDisabled = menuHasLockedSelection || (selectionOnOtherFace && !menuRotaryMoveSelection)
   const offsetReason = selectionOr(
     menuHasCannedSelection
       ? cannedRefusal
@@ -312,6 +340,17 @@ export function FeatureContextMenu({
       : !menuHasMultipleSelection ? t('featureTree.contextMenu.joinDisabledTooltip') : undefined,
   )
   const cutReason = selectionOr(menuHasCannedSelection ? cannedRefusal : undefined)
+  // The three transforms cannot be expressed by a rotary shape's parameters,
+  // so each is refused for the shape's own reason — the sentence Offset and
+  // Join show, or, for Resize, the editor that does own the size. The shape's
+  // reason wins over the face's: the face switch would not make a generated
+  // shape resizable, and the editor Resize names is offered on every face
+  // (issue #1112 rt7-f).
+  const resizeReason = rotaryResizeReason ?? selectionEditingReason
+  const rotateReason = (menuHasRotaryCannedSelection ? cannedRefusal : undefined) ?? selectionEditingReason
+  const transformDisabled = menuHasLockedSelection
+    || selectionOnOtherFace
+    || menuHasRotaryCannedSelection
   const changeFaceReason = selectionOr(
     menuHasLockedSelection
       ? t('featureTree.contextMenu.lockedTooltip')
@@ -595,7 +634,7 @@ export function FeatureContextMenu({
             className={menuItemClass(moveReason)}
             type="button"
             onClick={() => actions.moveFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || selectionOnOtherFace}
+            disabled={moveDisabled}
             title={moveReason}
           >
             <MenuItemText reason={moveReason}>
@@ -603,31 +642,31 @@ export function FeatureContextMenu({
             </MenuItemText>
           </button>
           <button
-            className={menuItemClass(selectionEditingReason)}
+            className={menuItemClass(resizeReason)}
             type="button"
             onClick={() => actions.resizeFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || selectionOnOtherFace}
-            title={selectionEditingReason}
+            disabled={transformDisabled}
+            title={resizeReason}
           >
-            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.resize')}</MenuItemText>
+            <MenuItemText reason={resizeReason}>{t('featureTree.contextMenu.resize')}</MenuItemText>
           </button>
           <button
-            className={menuItemClass(selectionEditingReason)}
+            className={menuItemClass(rotateReason)}
             type="button"
             onClick={() => actions.rotateFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || selectionOnOtherFace}
-            title={selectionEditingReason}
+            disabled={transformDisabled}
+            title={rotateReason}
           >
-            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.rotate')}</MenuItemText>
+            <MenuItemText reason={rotateReason}>{t('featureTree.contextMenu.rotate')}</MenuItemText>
           </button>
           <button
-            className={menuItemClass(selectionEditingReason)}
+            className={menuItemClass(rotateReason)}
             type="button"
             onClick={() => actions.mirrorFeature(menuFeature.id)}
-            disabled={menuHasLockedSelection || selectionOnOtherFace}
-            title={selectionEditingReason}
+            disabled={transformDisabled}
+            title={rotateReason}
           >
-            <MenuItemText reason={selectionEditingReason}>{t('featureTree.contextMenu.mirror')}</MenuItemText>
+            <MenuItemText reason={rotateReason}>{t('featureTree.contextMenu.mirror')}</MenuItemText>
           </button>
           <div className="feature-context-menu__separator" />
           <button

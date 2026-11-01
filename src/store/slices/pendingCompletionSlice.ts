@@ -201,15 +201,23 @@ export function createPendingCompletionSlice(
                 },
               }
             }
-            // A linked copy outside the selection holds this definition too, so
-            // the shared start cannot move without moving it (review of rt6-d).
-            // Translate the selected rows instead — what a Polygon's move always
-            // did — by the same projected displacement the preview drew, so the
-            // outline still lands where it was drawn.
-            const projected = rotaryMoveTranslateDelta(s.project, entityIds, dx, dy)
-            dx = projected.dx
-            dy = projected.dy
           }
+
+          // A copy of a canned rotary feature is placed like a move of one
+          // (issue #1112 rt7-f): Frank's copy slid off the bar's axis while a
+          // move of the same shape stayed on it. The copy is still a new row
+          // and the source band still stays where it is — what changes is only
+          // *where* the row lands: the same projected, clamped displacement the
+          // preview drew, so a copy travels along the bar, keeps within its
+          // ends, and a Turn/Polygon copy stays a body about the axis. A
+          // non-rotary selection gets its own displacement back unchanged. For
+          // a move this is also the fallback when the shared band cannot be
+          // written (a linked copy outside the selection, or a start the
+          // kind's own generator refuses — the reviews of rt6-d), so what the
+          // outline was dragged to is still what is stored.
+          const projected = rotaryMoveTranslateDelta(s.project, entityIds, dx, dy)
+          dx = projected.dx
+          dy = projected.dy
 
           const sourceFeatures = entityIds
             .map((featureId) => featureById(s.project, featureId))

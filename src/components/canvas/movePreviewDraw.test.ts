@@ -40,7 +40,9 @@
  * - assigning `nextPoint` without `projectMovePreviewPoint` in the setter (the
  *   old setter) → the typed target is stored 400 units away instead of clamped;
  * - removing the clamp from `projectMovePreviewPoint`/`rotaryMoveDelta` → the
- *   same assertion reads 400.
+ *   same assertion reads 400;
+ * - excluding `mode === 'copy'` from the projection (the old rule) → the copy
+ *   section keeps the raw typed point and its assertion fails.
  */
 
 /// <reference types="node" />
@@ -261,7 +263,10 @@ assert.deepEqual(
 )
 assert.equal(previewRef.current.session, 7, 'the preview keeps the move session')
 
-// A copy is not a band move, so its preview is untouched.
+// A copy is placed by the same projection (issue #1112 rt7-f): Frank's copy
+// slid off the bar's axis while a move stayed on it, so the copy's preview is
+// the copy's own landed place — along the bar, clamped, and on the axis for a
+// Turn/Polygon, exactly as the move's is.
 const copyRef: { current: { point: Point; session: number } | null } = { current: null }
 const setCopyPreview = createSetter(
   (fn: () => void) => fn,
@@ -272,6 +277,10 @@ const setCopyPreview = createSetter(
   () => {},
 )
 setCopyPreview({ point: rawTypedPoint, session: 7 })
-assert.deepEqual(copyRef.current?.point, rawTypedPoint, 'a copy preview keeps the ordinary 2D offset')
+assert.deepEqual(
+  copyRef.current?.point,
+  { x: from.x + (BAR_LENGTH - 20 - 10), y: from.y },
+  'a raw typed point is stored as the committed place of the copy: along the bar, clamped, no across offset',
+)
 
 console.log('movePreviewDraw.test.ts passed')

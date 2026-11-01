@@ -446,6 +446,7 @@ export const featureTreeEn = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'No compatible operations',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Not used in any operation',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Removing this would make the operation invalid',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Change the size in {edit}',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Shape',

@@ -350,6 +350,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'No hay operaciones compatibles',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'No se usa en ninguna operación',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Quitarlo invalidaría la operación',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Cambiar el tamaño en {edit}',
   'featureTree.properties.tabShape': 'Forma',
   'featureTree.properties.tabShape.rect': 'Rectangular',
   'featureTree.properties.tabShape.smooth': 'Suave',

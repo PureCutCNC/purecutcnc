@@ -429,6 +429,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'Keine kompatiblen Operationen',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Wird in keiner Operation verwendet',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Das Entfernen würde die Operation ungültig machen',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Größe in {edit} ändern',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Form',
