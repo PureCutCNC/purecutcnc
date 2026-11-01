@@ -42,7 +42,7 @@ import {
   type SketchProfile,
 } from '../types/project'
 import { transformProfile } from '../geometry/profile'
-import { getCannedShapeGenerator } from './registry'
+import { getCannedShapeEditor, getCannedShapeGenerator } from './registry'
 import { cachedCannedShapeOutlines } from './cache'
 import type {
   CannedShapeCapabilities,
@@ -84,6 +84,20 @@ export type CannedFeatureLike = Pick<SketchFeature, 'operation'> & {
 /** True when this feature draws itself from stored parameters. */
 export function isCannedFeature(feature: { canned?: CannedShapeData | null } | null | undefined): boolean {
   return !!feature?.canned
+}
+
+/**
+ * The parameter editor a feature offers, or `null` when it is not a canned
+ * shape or its kind registered no editor.
+ *
+ * This is the whole rule behind "Edit {shape}…": Properties and the feature
+ * context menu both read it, so no face can make one entry point offer what
+ * the other refuses (issue #1112 rt7-c).
+ */
+export function cannedShapeEditorFor(
+  feature: { canned?: CannedShapeData | null } | null | undefined,
+): ((featureId: string) => void) | null {
+  return feature?.canned ? getCannedShapeEditor(feature.canned.kind) : null
 }
 
 /** One generated outline with the operation the nesting rule gave it. */

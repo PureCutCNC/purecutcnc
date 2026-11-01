@@ -46,13 +46,13 @@ import { getFeatureGeometryProfiles } from '../../text'
 import { TextToolDialog } from '../project/TextToolDialog'
 import { textPathRefreshState } from '../../store/helpers/textPathSource'
 import {
+  cannedShapeEditorFor,
   cannedShapeIsExpandable,
   cannedShapeLabelKey,
   cannedShapeSummary,
   cannedShapeSurface,
   cannedShapeZIsOwned,
   cannedShapeZSource,
-  getCannedShapeEditor,
   isCannedFeature,
   uniqueCannedZSources,
 } from '../../cannedShapes'
@@ -1544,9 +1544,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const isCannedShape = isCannedFeature(selectedFeature)
   const cannedSummary = isCannedShape ? cannedShapeSummary(selectedFeature.canned) : null
   const cannedLabelKey = isCannedShape ? cannedShapeLabelKey(selectedFeature.canned) : null
-  const cannedEditor = isCannedShape && selectedFeature.canned
-    ? getCannedShapeEditor(selectedFeature.canned.kind)
-    : null
+  // The one "Edit {shape}…" rule Properties and the feature context menu both
+  // read, so neither entry point can offer a shape the other refuses — on any
+  // face (issue #1112 rt7-c).
+  const cannedEditor = cannedShapeEditorFor(selectedFeature)
   const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
   // The four rotary kinds build their span from a parameter of their own, so
   // the Instance section shows that value read-only instead of a Z control

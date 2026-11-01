@@ -25,7 +25,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
-import { cannedShapeIsExpandable, cannedShapeLabelKey, getCannedShapeEditor, isCannedFeature } from '../../cannedShapes'
+import { cannedShapeEditorFor, cannedShapeIsExpandable, cannedShapeLabelKey, isCannedFeature } from '../../cannedShapes'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
 /**
@@ -155,11 +155,17 @@ export function FeatureContextMenu({
   // same registry Properties reads, so a kind can never be offered there and
   // missing here (issue #1112 F2).
   const cannedLabelKey = menuFeatureIsCanned ? cannedShapeLabelKey(menuFeature?.canned) : null
-  const cannedEditor = menuFeatureIsCanned && menuFeature?.canned
-    ? getCannedShapeEditor(menuFeature.canned.kind)
-    : null
+  // One shared predicate with Properties, which carries no face condition: a
+  // Turn or a Polygon is authored on Top yet Properties offers its editor from
+  // Around too, so the menu must offer it there as well (issue #1112 rt7-c).
+  const cannedEditor = cannedShapeEditorFor(menuFeature)
   const cannedExpandable = menuFeatureIsCanned && cannedShapeIsExpandable(menuFeature?.canned)
   const cannedRefusal = t('sketch.canned.actionRefused')
+  // The refusal a canned feature shows whenever its kind has no editor — the
+  // same sentence and reasoning Properties shows in that state.
+  const editCannedReason = cannedEditor
+    ? undefined
+    : t('featureTree.properties.canned.editUnavailable')
   const addToOperationReason = menuAddToOperationCandidates.length === 0
     ? t('featureTree.contextMenu.addToOperationEmptyTooltip') : undefined
   const removeFromOperationReason = menuRemoveFromOperationCandidates.length === 0
@@ -184,7 +190,9 @@ export function FeatureContextMenu({
   }
 
   // A feature from the other face is a ghost here: the menu offers the way
-  // to its own face and the explicit face change, and no edit (issue #945).
+  // to its own face and the explicit face change, and no edit of its geometry
+  // (issue #945) — except a generated shape's parameter editor, which is the
+  // one edit that belongs to no face (#1112 rt7-c).
   const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
   const onOtherFace = menuFeature !== null && menuFeatureFace !== workspaceFace
   const switchFaceLabelFor = (face: SetupFace): string => t(
@@ -214,6 +222,22 @@ export function FeatureContextMenu({
         style={position}
         onContextMenu={(event) => event.preventDefault()}
       >
+        {/* The generated shape's parameter editor is the one edit that belongs
+            to no face: Properties offers it from every face, so the ghost menu
+            offers it here too, above the way to its own face (#1112 rt7-c). */}
+        {cannedLabelKey ? (
+          <button
+            className={menuItemClass(editCannedReason)}
+            type="button"
+            onClick={() => actions.editCannedShape(menuFeature.id)}
+            disabled={!cannedEditor}
+            title={editCannedReason}
+          >
+            <MenuItemText reason={editCannedReason}>
+              {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
+            </MenuItemText>
+          </button>
+        ) : null}
         <button
           className={menuItemClass(switchFaceReason)}
           type="button"
@@ -269,8 +293,6 @@ export function FeatureContextMenu({
   const otherFaceOr = (reason: string | undefined) => otherFaceEditingReason ?? reason
   const selectionOr = (reason: string | undefined) => selectionEditingReason ?? reason
   const editSketchReason = otherFaceOr(menuFeatureIsCanned ? cannedRefusal : undefined)
-  const editCannedReason = otherFaceEditingReason
-    ?? (cannedEditor ? undefined : t('featureTree.properties.canned.editUnavailable'))
   const constraintReason = otherFaceOr(
     menuFeatureIsCanned
       ? cannedRefusal
@@ -518,13 +540,15 @@ export function FeatureContextMenu({
           {/* A generated shape is edited by its parameters, so its own editor
               leads the edit group; Expand follows Edit sketch, which it is the
               way out of (#1112 F2). A model kind has no plain features to
-              expand into, exactly as Properties shows it. */}
+              expand into, exactly as Properties shows it. The editor is the
+              one edit a face does not gate — Properties offers it on Around
+              and so must this entry (#1112 rt7-c). */}
           {cannedLabelKey ? (
             <button
               className={menuItemClass(editCannedReason)}
               type="button"
               onClick={() => actions.editCannedShape(menuFeature.id)}
-              disabled={!cannedEditor || onOtherFace}
+              disabled={!cannedEditor}
               title={editCannedReason}
             >
               <MenuItemText reason={editCannedReason}>

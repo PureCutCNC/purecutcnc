@@ -771,8 +771,13 @@ test.describe('landscape tablet (1180 × 820, touch)', () => {
       const ghostMenu = ui.contextMenu.container(page)
       await expect(ghostMenu).toBeVisible()
       await expect(ui.contextMenu.itemExact(ghostMenu, 'Switch to top face to edit')).toBeVisible()
-      // Nothing here edits a model authored on the other face.
-      await expect(ui.contextMenu.itemExact(ghostMenu, 'Edit turn…')).toHaveCount(0)
+      // A generated shape's parameter editor belongs to no face: Properties
+      // offers "Edit turn…" from Bottom, so the ghost menu leads with it, above
+      // the way to the model's own face (issue #1112 rt7-c). No other edit of
+      // the model is offered here.
+      await expect(ui.contextMenu.itemExact(ghostMenu, 'Edit turn…')).toBeEnabled()
+      await expect(ui.contextMenu.itemExact(ghostMenu, 'Edit sketch')).toHaveCount(0)
+      await expect(ghostMenu.locator('button').first()).toContainText('Edit turn…')
       await expectTouchTargets(page, '.feature-context-menu')
       await expectInsideViewport(page, ghostMenu, `context menu (other face, ${shape} blank)`)
       await shoot(page, `context-menu-other-face-${shape}-landscape`)
