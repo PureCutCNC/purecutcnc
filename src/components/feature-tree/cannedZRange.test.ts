@@ -16,15 +16,18 @@
 
 /**
  * The four rotary canned kinds have no Z range in Properties (issue #1112
- * rt6-a, item 39), and the line that replaces it says which surface a
- * Thread/Flutes depth is measured from and where that surface sits (rt6-c).
+ * rt6-a, item 39). A Thread and Flutes replace it with a line naming the Depth,
+ * the surface it is measured from and where that surface sits (rt6-c); a Turn
+ * and a Polygon show no line at all (rt7-b), because their own summary already
+ * names the diameter or across flats and the Z it reaches.
  *
  * Frank: "what is the purpose of the Z top/bottom for the rotary canned
  * features? it does not seem to make sense." It has none — the span is built
  * from the parameter the Edit panel writes (Thread/Flutes Depth, Turn Diameter,
- * Polygon across flats) — so the control is gone and a read-only line names
- * that parameter instead. A plain canned shape and an imported model keep
- * their Z control, and a mixed selection edits only the shapes that own one.
+ * Polygon across flats) — so the control is gone. Then, of the read-only line:
+ * "I don't think we need to show this again for turn", "same for the hex". A
+ * plain canned shape and an imported model keep their Z control, and a mixed
+ * selection edits only the shapes that own one.
  *
  * The panel is rendered for real: the Z control lives on the Instance tab and
  * the orientation section on its own, so both are opened the way a click does.
@@ -44,7 +47,13 @@
  * - `cannedShapeSurface` returning null → the Turn's and Polygon's summary
  *   assertions fail;
  * - the surface Z read from the blank's size instead of its axis → the
- *   square-blank Turn summary assertion fails.
+ *   square-blank Turn summary assertion fails;
+ * - the Turn line shown again (`zSource.turn` back in `REPORTS_Z_SOURCE`) → the
+ *   Turn's "no Z-source line" assertion fails;
+ * - the Polygon line shown again (`zSource.polygon` back) → the Polygon's
+ *   assertion fails;
+ * - a Turn/Polygon-only selection falling through to the "follows stock" line
+ *   → that selection's assertion fails.
  *
  * Run with:
  *   NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/feature-tree/cannedZRange.test.ts
@@ -247,6 +256,11 @@ function zSourceLine(mounted: Mounted): { text: string } | null {
   return line ? { text: line[1] } : null
 }
 
+/** How many Z-source lines the panel shows (a multi-selection can show several). */
+function zSourceLineCount(mounted: Mounted): number {
+  return mounted.html().match(/data-testid="canned-z-source"/g)?.length ?? 0
+}
+
 /** The `Shape` summary line, which names the surface a Turn/Polygon reaches. */
 function summaryLine(mounted: Mounted): { text: string } | null {
   const line = mounted.html().match(/<p[^>]*data-testid="canned-shape-summary"[^>]*>(.*?)<\/p>/)
@@ -301,15 +315,17 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   mounted.unmount()
 }
 
-// ── a Turn: Diameter read-only, and no lift or height figure ──
+// ── a Turn: no Z-source line, and no lift or height figure ───
 
 {
   const { turnId } = loadWithShapes()
   const mounted = await renderSingle(turnId)
   assert.equal(hasZSlider(mounted), false, 'a Turn has no Z range control')
-  const line = zSourceLine(mounted)
-  assert.ok(line, 'a Turn shows its Diameter read-only instead')
-  assert.equal(line.text, 'Diameter 30 mm · set in Edit turn…', 'the Turn diameter is the regenerated height')
+  // No line either (rt7-b): the Turn's summary below already says Ø30 and where
+  // that surface sits, so Frank asked for the repeat to go.
+  assert.equal(zSourceLine(mounted), null, 'a Turn shows no Z-source line')
+  assert.equal(mounted.html().includes('set in Edit turn'), false, 'and no leftover Turn line')
+  assert.equal(mounted.html().includes('Follows stock'), false, 'nor a claim that the Turn follows the stock')
 
   // The summary names where that diameter's surface sits: the bar axis (20) plus
   // the radius (15) on a Ø40 bar (rt6-c).
@@ -335,15 +351,21 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   mounted.unmount()
 }
 
-// ── a Polygon: across flats read-only ────────────────────────
+// ── a Polygon: no Z-source line ──────────────────────────────
 
 {
   const { polygonId } = loadWithShapes()
   const mounted = await renderSingle(polygonId)
   assert.equal(hasZSlider(mounted), false, 'a Polygon has no Z range control')
-  const line = zSourceLine(mounted)
-  assert.ok(line, 'a Polygon shows its across-flats size read-only instead')
-  assert.equal(line.text, 'Across flats 20 mm · set in Edit polygon…', 'the Polygon size is the regenerated height')
+  // Same as the Turn (rt7-b): "same for the hex". Its summary names the across
+  // flats and the Z the flats reach, so the line was the same sentence twice.
+  assert.equal(zSourceLine(mounted), null, 'a Polygon shows no Z-source line')
+  assert.equal(mounted.html().includes('set in Edit polygon'), false, 'and no leftover Polygon line')
+  assert.equal(
+    mounted.html().includes('Follows stock'),
+    false,
+    'nor a claim that the Polygon follows the stock',
+  )
 
   // A Polygon presents its flats at the axis plus half the across flats (rt6-c).
   mounted.openSection('Shape')
@@ -451,9 +473,32 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const mounted = mount()
   await flush()
   assert.equal(hasZSlider(mounted), false, 'no Z editor when every selected shape owns its span')
+  assert.equal(
+    zSourceLineCount(mounted),
+    1,
+    'only the Thread reports its value in a Thread + Turn selection',
+  )
   const html = mounted.html()
   assert.equal(html.includes('Depth 1.2 mm · set in Edit thread…'), true, 'the Thread value is reported')
-  assert.equal(html.includes('Diameter 30 mm · set in Edit turn…'), true, 'and so is the Turn value')
+  assert.equal(html.includes('set in Edit turn'), false, 'the Turn value is not repeated (rt7-b)')
+  mounted.unmount()
+}
+
+// ── a Turn + Polygon selection reports nothing at all ────────
+//
+// Neither kind shows a line now (rt7-b), and neither has a Z editor, so the
+// slot must stay empty rather than fall through to "Follows stock" — which
+// would be a wrong answer about a shape whose span comes from its parameters.
+
+{
+  const { turnId, polygonId } = loadWithShapes()
+  store().selectFeatures([turnId, polygonId])
+  const mounted = mount()
+  await flush()
+  assert.equal(hasZSlider(mounted), false, 'no Z editor for a Turn + Polygon selection')
+  assert.equal(zSourceLineCount(mounted), 0, 'and no Z-source line for either')
+  const html = mounted.html()
+  assert.equal(html.includes('Follows stock'), false, 'and no "Follows stock" line either')
   mounted.unmount()
 }
 

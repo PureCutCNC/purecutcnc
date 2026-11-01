@@ -208,8 +208,6 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.unknown': 'Paramètres de forme d’une version plus récente',
   'featureTree.properties.canned.zSource.thread': 'Profondeur {value} · se règle dans « Modifier filetage… »',
   'featureTree.properties.canned.zSource.flutes': 'Profondeur {value} · se règle dans « Modifier rainures… »',
-  'featureTree.properties.canned.zSource.turn': 'Diamètre {value} · se règle dans « Modifier tournage… »',
-  'featureTree.properties.canned.zSource.polygon': 'Sur plats {value} · se règle dans « Modifier polygone… »',
   'featureTree.properties.canned.zSource.threadSurface': 'Profondeur {value} {surface} · se règle dans « Modifier filetage… »',
   'featureTree.properties.canned.zSource.flutesSurface': 'Profondeur {value} {surface} · se règle dans « Modifier rainures… »',
   'featureTree.properties.canned.surface.onTurn': 'sous {name} (Ø {diameter}, surface à Z {value})',

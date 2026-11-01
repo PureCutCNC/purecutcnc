@@ -257,8 +257,6 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.unknown': 'Formparameter aus einer neueren Version',
   'featureTree.properties.canned.zSource.thread': 'Tiefe {value} · einstellen in „Gewinde bearbeiten…“',
   'featureTree.properties.canned.zSource.flutes': 'Tiefe {value} · einstellen in „Nuten bearbeiten…“',
-  'featureTree.properties.canned.zSource.turn': 'Durchmesser {value} · einstellen in „Drehen bearbeiten…“',
-  'featureTree.properties.canned.zSource.polygon': 'Schlüsselweite {value} · einstellen in „Polygon bearbeiten…“',
   'featureTree.properties.canned.zSource.threadSurface': 'Tiefe {value} {surface} · einstellen in „Gewinde bearbeiten…“',
   'featureTree.properties.canned.zSource.flutesSurface': 'Tiefe {value} {surface} · einstellen in „Nuten bearbeiten…“',
   'featureTree.properties.canned.surface.onTurn': 'unter {name} (Ø {diameter}, Oberfläche bei Z {value})',

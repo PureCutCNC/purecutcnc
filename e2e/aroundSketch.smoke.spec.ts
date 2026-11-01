@@ -2090,12 +2090,14 @@ test('Edit polygon… reopens the dialog and a parameter change rebuilds the mes
   await expect(summary).toContainText('rotation 0°')
 
   // A Polygon has no Z range either: its height is the regenerated mesh's, set
-  // by the across-flats size in the dialog (issue #1112 rt6-a, item 39).
+  // by the across-flats size in the dialog (issue #1112 rt6-a, item 39), and no
+  // read-only line repeats the across flats its summary already shows, with the
+  // Z the flats reach (rt7-b).
   const polygonInstance = page.locator('.panel-properties').getByRole('button', { name: 'Instance', exact: true })
   if ((await polygonInstance.getAttribute('aria-expanded')) !== 'true') await polygonInstance.click()
   await expect(polygonInstance).toHaveAttribute('aria-expanded', 'true')
   await expect(page.locator('.properties-panel .z-range-slider')).toHaveCount(0)
-  await expect(page.getByTestId('canned-z-source')).toContainText('Across flats 15 mm · set in Edit polygon…')
+  await expect(page.getByTestId('canned-z-source')).toHaveCount(0)
 
   // The selected canned model shows the generic Properties Edit button; it
   // reopens the same typed dialog with the stored numbers.

@@ -15,14 +15,17 @@
  */
 
 /**
- * The read-only Z line for the four rotary canned kinds (issue #1112 rt6-a,
- * item 39; extended by rt6-c).
+ * The read-only Z line for a Thread and Flutes (issue #1112 rt6-a, item 39;
+ * extended by rt6-c).
  *
- * Properties has no Z control for a Thread, Flutes, Turn or Polygon: their span
- * is built from the parameter the Edit panel writes, so a Z slider could only
- * fight the regenerate. In its place this line names that parameter, its value
- * and the panel that changes it — the same field label and number the Edit
- * panel shows, so the two surfaces agree by construction.
+ * Properties has no Z control for the four rotary canned kinds: their span is
+ * built from the parameter the Edit panel writes, so a Z slider could only
+ * fight the regenerate. For a Thread or Flutes this line names that parameter,
+ * its value and the panel that changes it — the same field label and number the
+ * Edit panel shows, so the two surfaces agree by construction. A Turn and a
+ * Polygon get no line (rt7-b): their own summary already names the diameter or
+ * across flats and the Z it reaches, so the line Frank was shown only repeated
+ * it.
  *
  * rt6-c adds **which surface** a Thread/Flutes depth is measured from, with that
  * surface's diameter and its Z: "Depth 1.2 mm below Turn 1 (Ø 30 mm, surface at

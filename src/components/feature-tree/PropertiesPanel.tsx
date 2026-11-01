@@ -200,13 +200,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
   // The rotary canned kinds have no Z control to share: their span comes from
   // the parameter their Edit panel writes, so a multi-selection leaves them out
-  // of the shared editor and says where their value comes from instead (#1112
-  // rt6-a, item 39).
+  // of the shared editor (#1112 rt6-a, item 39). Only a Thread and Flutes then
+  // report where their value comes from; a Turn and a Polygon report nothing
+  // (rt7-b), so a selection made only of kinds that own their span must not fall
+  // through to the "follows stock" line below — that would be a wrong answer
+  // (#1112 rt7-b).
   const selectedZOwnedSources = uniqueCannedZSources(
     allSelectedFeatures
       .map((feature) => cannedShapeZSource(feature.canned))
       .filter((source): source is CannedShapeZSource => source !== null),
   )
+  const selectedAllOwnTheirZ = allSelectedFeatures.length > 0
+    && allSelectedFeatures.every((feature) => isMachinable(feature) && cannedShapeZIsOwned(feature.canned))
   // Line-operation features (including closed profiles) are treated as
   // open for Z purposes: they are engraved paths with bottom locked at
   // zero, never bottom-editable.
@@ -1482,10 +1487,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
-            ) : selectedZOwnedSources.length > 0 ? (
+            ) : selectedAllOwnTheirZ ? (
               // Every selected feature takes its span from its Edit panel, so
               // there is no shared Z to edit — the "follows stock" line below
-              // would be a second wrong answer (#1112 rt6-a, item 39).
+              // would be a second wrong answer (#1112 rt6-a, item 39). The
+              // lines can be empty: a Turn or a Polygon reports none, because
+              // its summary already names the parameter and the Z it reaches
+              // (#1112 rt7-b).
               selectedZOwnedSources.map((source) => (
                 <CannedZSourceLine
                   key={`${source.messageKey}-${source.value}`}
@@ -1540,7 +1548,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // the Instance section shows that value read-only instead of a Z control
   // that could only fight the regenerate (#1112 rt6-a, item 39). The kind is
   // what hides the control, so a parameter set too corrupt to read a number
-  // from leaves the slot empty rather than bringing the slider back.
+  // from leaves the slot empty rather than bringing the slider back. Only a
+  // Thread and Flutes report that value: a Turn and a Polygon show no line at
+  // all, because their summary already names the parameter and its surface Z
+  // (#1112 rt7-b).
   const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
   const cannedZSource = isCannedShape ? cannedShapeZSource(selectedFeature.canned) : null
   // A Thread/Flutes Depth is measured from a surface, so the line says which
@@ -1883,8 +1894,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : cannedZOwned ? (
             // Thread, Flutes, Turn and Polygon: the span is built from the
             // parameter the Edit panel writes, so there is nothing here to
-            // edit — only the value to report, the surface it is measured from
-            // and where it lives (#1112 rt6-a item 39, rt6-c).
+            // edit. Thread and Flutes report that value, the surface it is
+            // measured from and where it lives (#1112 rt6-a item 39, rt6-c); a
+            // Turn and a Polygon report nothing, because their summary line
+            // already names the parameter and the Z it reaches (#1112 rt7-b).
             cannedZSource
               ? (
                 <CannedZSourceLine

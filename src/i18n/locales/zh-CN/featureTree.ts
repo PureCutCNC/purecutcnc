@@ -263,8 +263,6 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.unknown': '来自较新版本的形状参数',
   'featureTree.properties.canned.zSource.thread': '深度 {value} · 在“编辑 螺纹…”中设置',
   'featureTree.properties.canned.zSource.flutes': '深度 {value} · 在“编辑 螺旋槽…”中设置',
-  'featureTree.properties.canned.zSource.turn': '直径 {value} · 在“编辑 车削…”中设置',
-  'featureTree.properties.canned.zSource.polygon': '对边宽度 {value} · 在“编辑 多边形…”中设置',
   'featureTree.properties.canned.zSource.threadSurface': '深度 {value} {surface} · 在“编辑 螺纹…”中设置',
   'featureTree.properties.canned.zSource.flutesSurface': '深度 {value} {surface} · 在“编辑 螺旋槽…”中设置',
   'featureTree.properties.canned.surface.onTurn': '在 {name} 之下（Ø {diameter}，表面在 Z {value}）',

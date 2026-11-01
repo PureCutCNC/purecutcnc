@@ -208,8 +208,6 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.canned.unknown': 'Parámetros de forma de una versión más reciente',
   'featureTree.properties.canned.zSource.thread': 'Profundidad {value} · se ajusta en «Editar rosca…»',
   'featureTree.properties.canned.zSource.flutes': 'Profundidad {value} · se ajusta en «Editar ranuras…»',
-  'featureTree.properties.canned.zSource.turn': 'Diámetro {value} · se ajusta en «Editar torneado…»',
-  'featureTree.properties.canned.zSource.polygon': 'Entre caras {value} · se ajusta en «Editar polígono…»',
   'featureTree.properties.canned.zSource.threadSurface': 'Profundidad {value} {surface} · se ajusta en «Editar rosca…»',
   'featureTree.properties.canned.zSource.flutesSurface': 'Profundidad {value} {surface} · se ajusta en «Editar ranuras…»',
   'featureTree.properties.canned.surface.onTurn': 'bajo {name} (Ø {diameter}, superficie en Z {value})',

@@ -260,12 +260,12 @@ export const featureTreeEn = {
   'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
   'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
   'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
-  // The four rotary kinds own their Z span: Properties names the parameter the
-  // Edit panel writes instead of offering a Z control (issue #1112 rt6-a).
+  // A Thread and Flutes own their Z span and report it: Properties names the
+  // parameter the Edit panel writes instead of offering a Z control (issue
+  // #1112 rt6-a). A Turn and a Polygon own theirs too but report no line — their
+  // summary already shows the diameter/across flats and its surface Z (rt7-b).
   'featureTree.properties.canned.zSource.thread': 'Depth {value} · set in Edit thread…',
   'featureTree.properties.canned.zSource.flutes': 'Depth {value} · set in Edit flutes…',
-  'featureTree.properties.canned.zSource.turn': 'Diameter {value} · set in Edit turn…',
-  'featureTree.properties.canned.zSource.polygon': 'Across flats {value} · set in Edit polygon…',
   // A Thread/Flutes depth is measured from a surface, so the same line names it
   // with its diameter and Z, and repeats the warning for a surface that is not
   // one diameter (issue #1112 rt6-c).
