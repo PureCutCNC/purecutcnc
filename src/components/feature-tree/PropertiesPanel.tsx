@@ -49,6 +49,7 @@ import {
   cannedShapeDepth,
   cannedShapeEditorFor,
   cannedShapeIsExpandable,
+  cannedShapeIsModel,
   cannedShapeLabelKey,
   cannedShapeSummary,
   cannedShapeSurface,
@@ -1543,6 +1544,14 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // set too corrupt to read a number from leaves the slot empty rather than
   // bringing the slider back.
   const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
+  // A generated model's solid is its mesh, rebuilt from its parameters on the
+  // bar's pivot, so it gets no 3D orientation section (issue #1112 rt7-e): a
+  // rotation about any axis but the bar would tip it off the bar axis, and
+  // turning about the bar is the Polygon editor's Rotation field — while a
+  // regenerate would undo a manual rotation anyway. The registry is what says a
+  // canned kind is a model, so a kind this build does not know still counts as
+  // generated rather than falling back to the imported-model controls.
+  const isGeneratedModel = isCannedShape || cannedShapeIsModel(selectedFeature.canned)
   // A Thread's or Flutes' Depth is reported on the Shape summary line, and since
   // rt7-d it is measured from a surface there: the resolver the cut itself uses,
   // plus the Z of that surface (#1112 rt6-c). Only this one row's surface is
@@ -1841,7 +1850,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </div>
           ) : null}
         </DisclosureSection>
-        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId ? (
+        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId && !isGeneratedModel ? (
           <ModelOrientationSection
             face={face}
             featureId={selectedFeature.id}
@@ -1850,10 +1859,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             zBottom={zBottom}
             units={units}
             linkedInstanceCount={linkedInstanceCount}
-            // A generated model's height is the regenerated mesh's, centred on
-            // the bar's pivot, so no lift field or height figure here (#1112
-            // rt6-a, item 39).
-            zFromParameters={isCannedShape}
           />
         ) : null}
         <DisclosureSection title={t('featureTree.properties.instance')} storageKey="feature-instance">

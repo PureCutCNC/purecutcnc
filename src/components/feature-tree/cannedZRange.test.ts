@@ -28,6 +28,14 @@
  * and a Polygon still report nothing (rt7-b), because their summary already
  * names the diameter or across flats and the Z it reaches.
  *
+ * rt7-e adds the other half of the same rule: a **generated** model gets no 3D
+ * orientation section at all. Frank approved hiding it — Rotate X/Y/Z would tip
+ * the solid off the bar axis, turning about the bar is the Polygon editor's
+ * Rotation field, and a regenerate would undo a manual rotation. An imported
+ * model keeps the section exactly as it was, and the other "Rotate" entries
+ * (context menu, toolbar, rail) stay what they always were: the 2D placement
+ * transform, which never writes `stl.orientation`.
+ *
  * The panel is rendered for real: the Z control lives on the Instance tab and
  * the orientation section on its own, so both are opened the way a click does.
  * Mutations checked one at a time against these assertions:
@@ -35,8 +43,8 @@
  *   → "a Thread has no Z range control" fails;
  * - the multi-selection exclusion dropped → the mixed-selection assertion
  *   fails, because the Turn's span is overwritten with the shared Z top;
- * - `zFromParameters={false}` on the orientation section → the Turn's "no Lift
- *   and no height figure" assertion fails;
+ * - `isGeneratedModel` dropped from the orientation-section gate (#1112 rt7-e)
+ *   → the Turn's and the Hex's "no 3D orientation section" assertions fail;
  * - the Thread's Depth read from `pitch` instead of `depth` → its merged-line
  *   value assertion fails;
  * - the surface clause dropped from the merged line → the Thread's, both
@@ -220,6 +228,7 @@ function addImportedModel(): string {
 
 interface Mounted {
   html: () => string
+  hasSection: (title: string) => boolean
   openSection: (title: string) => void
   unmount: () => void
 }
@@ -239,13 +248,15 @@ function mount(): Mounted {
       ),
     ))
   })
+  const header = (title: string): Element | undefined => Array.from(host.querySelectorAll('.disclosure-section__header'))
+    .find((candidate) => (candidate.textContent ?? '').trim() === title)
   return {
     html: () => host.innerHTML,
+    hasSection: (title) => header(title) !== undefined,
     openSection: (title) => {
-      const header = Array.from(host.querySelectorAll('.disclosure-section__header'))
-        .find((candidate) => (candidate.textContent ?? '').trim() === title)
-      assert.ok(header, `the panel has a "${title}" section`)
-      const button = header as unknown as HTMLButtonElement
+      const found = header(title)
+      assert.ok(found, `the panel has a "${title}" section`)
+      const button = found as unknown as HTMLButtonElement
       if (button.getAttribute('aria-expanded') === 'true') return
       button.click()
     },
@@ -459,15 +470,17 @@ async function renderSingle(featureId: string): Promise<Mounted> {
     'the Turn summary adds the Z its surface reaches, and no Depth',
   )
 
-  // The orientation section still offers the rotations — but a generated
-  // model's height is not something the user lifts or types.
-  mounted.openSection('3D orientation')
-  await flush()
+  // rt7-e: a generated model gets no 3D orientation section at all. Rotating it
+  // about X, Y or Z could only tip it off the bar axis, and turning about the
+  // bar is the Polygon editor's Rotation field.
+  assert.equal(mounted.hasSection('3D orientation'), false, 'a generated model has no 3D orientation section')
   const html = mounted.html()
-  assert.equal(html.includes('Lift'), false, 'a generated model shows no lift field')
-  assert.equal(html.includes('Model height:'), false, 'and no height figure')
-  assert.equal(html.includes('Rotate X'), true, 'the rotation controls it keeps are still there')
-  assert.equal(html.includes('Reset to import orientation'), true, 'and so is the reset action')
+  assert.equal(html.includes('Rotate X'), false, 'nor Rotate X')
+  assert.equal(html.includes('Rotate Y'), false, 'nor Rotate Y')
+  assert.equal(html.includes('Rotate Z'), false, 'nor Rotate Z')
+  assert.equal(html.includes('Lift'), false, 'nor a lift field')
+  assert.equal(html.includes('Model height:'), false, 'nor a height figure')
+  assert.equal(html.includes('Reset to import orientation'), false, 'nor a reset action')
   mounted.unmount()
 }
 
@@ -496,6 +509,10 @@ async function renderSingle(featureId: string): Promise<Mounted> {
     'Polygon · start 100 · length 20 · 6 sides · across flats 20 · rotation 0° · flats at Z 30',
     'the Polygon summary adds the Z its flats reach, and no Depth',
   )
+  // "same for the hex" (rt7-e): the section is absent for it too, and the
+  // rotation about the bar stays the editor's own Rotation field.
+  assert.equal(mounted.hasSection('3D orientation'), false, 'a generated Polygon has no 3D orientation section')
+  assert.equal(mounted.html().includes('Rotate X'), false, 'and no Rotate X to tip it off the bar axis')
   mounted.unmount()
 }
 
@@ -540,7 +557,7 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   mounted.unmount()
 }
 
-// ── an imported model keeps both its Z control and its lift ──
+// ── an imported model keeps the whole orientation section ───
 
 {
   loadWithShapes()
@@ -549,12 +566,50 @@ async function renderSingle(featureId: string): Promise<Mounted> {
   const mounted = await renderSingle(modelId)
   assert.equal(hasZSlider(mounted), true, 'an imported model keeps its Z range control')
   assert.equal(zSourceLine(mounted), null, 'and shows no read-only line')
+  // rt7-e hides the section for a *generated* model only. An imported mesh still
+  // gets the rotations, the lift, the height it can be lifted within, and reset.
+  assert.equal(mounted.hasSection('3D orientation'), true, 'an imported model still has its 3D orientation section')
   mounted.openSection('3D orientation')
   await flush()
   const html = mounted.html()
-  assert.equal(html.includes('Lift'), true, 'an imported model keeps its lift field')
-  assert.equal(html.includes('Model height:'), true, 'and its height figure')
+  assert.equal(html.includes('Rotate X'), true, 'it keeps Rotate X')
+  assert.equal(html.includes('Rotate Y'), true, 'Rotate Y')
+  assert.equal(html.includes('Rotate Z'), true, 'Rotate Z')
+  assert.equal(html.includes('Lift'), true, 'its lift field')
+  assert.equal(html.includes('Model height:'), true, 'its height figure')
+  assert.equal(html.includes('Reset to import orientation'), true, 'and the reset action')
   mounted.unmount()
+}
+
+// ── the other "Rotate" entries are placement, not orientation ─
+//
+// The handoff asked whether the context menu, the toolbar/rail button or a
+// keyboard action can reach the model orientation for a canned model. They all
+// dispatch `startRotateFeature` — the 2D placement transform every feature has
+// (see `store/cannedRefusals.test.ts`: move/rotate/mirror/copy keep a shape
+// canned) — and never write `stl.orientation`. This pins that boundary: after
+// the rotate workflow is armed on a Turn, its stored orientation is still
+// absent, so no reachable action but ModelOrientationSection can re-orient a
+// generated model.
+
+{
+  const { turnId } = loadWithShapes()
+  const turn = store().project.features.find((feature) => feature.id === turnId)
+  assert.ok(turn, 'the Turn exists')
+  const definition = store().project.featureDefinitions[turn.definitionId]
+  assert.equal(definition.stl?.orientation, undefined, 'a fresh Turn has no stored orientation')
+
+  store().selectFeature(turnId)
+  store().startRotateFeature(turnId)
+  const pending = store().pendingTransform
+  assert.equal(pending?.mode, 'rotate', 'the placement rotate workflow is armed')
+  assert.equal(pending?.entityType, 'feature', 'on the feature placement')
+  assert.equal(
+    store().project.featureDefinitions[turn.definitionId].stl?.orientation,
+    undefined,
+    'and the 2D placement rotate never writes the 3D orientation',
+  )
+  store().cancelPendingTransform()
 }
 
 // ── a mixed selection edits only the shapes that own a Z ─────

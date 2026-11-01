@@ -18,6 +18,13 @@
  * Post-import 3D orientation controls for an imported STL/OBJ model
  * (issue #241) — the answer to "my model came in lying on its side".
  *
+ * Offered only for a model whose mesh came from outside. A **generated** canned
+ * model (a Turn, a Polygon) gets no section at all (issue #1112 rt7-e): its
+ * solid is built from its parameters on the bar's pivot, so rotating it about
+ * X, Y or Z could only tip it off the bar axis, and turning it about the bar is
+ * the Polygon editor's Rotation field. Properties decides that; this component
+ * stays the imported-model controls it always was.
+ *
  * Numeric entry plus 90° quick-rotate rather than a drag gizmo: the real need
  * is quarter-turns, the app is precision-oriented, and the 3D viewport is a
  * preview with no manipulator infrastructure. Numeric entry is also tablet-safe
@@ -110,14 +117,6 @@ interface ModelOrientationSectionProps {
   /** How many instances share this definition; > 1 re-orients them together. */
   linkedInstanceCount: number
   /**
-   * True for a **generated** model (a canned Turn/Polygon): its height comes
-   * from its own parameters and its span is anchored to the bar's pivot, so the
-   * lift field and the height figure have nothing to say here — a lift would
-   * move the solid off the pivot and a height the user typed could only fight
-   * the regenerate (issue #1112 rt6-a, item 39).
-   */
-  zFromParameters?: boolean
-  /**
    * How angles read on the face in view (issue #945). The stored orientation
    * is in stock space; on Bottom the rotations about the axes the flip
    * reverses are shown and typed with their sense reversed, so a positive
@@ -136,7 +135,6 @@ export function ModelOrientationSection({
   units,
   linkedInstanceCount,
   face = STOCK_ANGLES,
-  zFromParameters = false,
 }: ModelOrientationSectionProps) {
   const { t, tPlural } = useI18n()
   // Re-deriving the silhouette, profile, and top view is a Z-slice projection
@@ -218,46 +216,42 @@ export function ModelOrientationSection({
           </div>
         </label>
       ))}
-      {zFromParameters ? null : (
-        <>
-          <label className="properties-field">
-            <span>{t('featureTree.properties.model.lift')}</span>
-            <input
-              key={`model-lift-${featureId}-${zBottom}`}
-              type="text"
-              inputMode="decimal"
-              defaultValue={formatLength(zBottom, units)}
-              disabled={busy}
-              spellCheck={false}
-              data-numeric-entry="true"
-              title={t('featureTree.properties.model.liftTooltip')}
-              onBlur={(event) => {
-                const parsed = parseLengthInput(event.currentTarget.value, units)
-                if (parsed === null || parsed < 0 || parsed === zBottom) {
-                  event.currentTarget.value = formatLength(zBottom, units)
-                  return
-                }
-                liftImportedModel(featureId, parsed)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.currentTarget.blur()
-                  return
-                }
-                if (event.key === 'Escape') {
-                  event.currentTarget.value = formatLength(zBottom, units)
-                  event.currentTarget.blur()
-                }
-              }}
-            />
-          </label>
-          <div className="properties-model-hint">
-            {t('featureTree.properties.model.heightHint', {
-              height: `${formatLength(height, units)} ${units === 'inch' ? 'in' : 'mm'}`,
-            })}
-          </div>
-        </>
-      )}
+      <label className="properties-field">
+        <span>{t('featureTree.properties.model.lift')}</span>
+        <input
+          key={`model-lift-${featureId}-${zBottom}`}
+          type="text"
+          inputMode="decimal"
+          defaultValue={formatLength(zBottom, units)}
+          disabled={busy}
+          spellCheck={false}
+          data-numeric-entry="true"
+          title={t('featureTree.properties.model.liftTooltip')}
+          onBlur={(event) => {
+            const parsed = parseLengthInput(event.currentTarget.value, units)
+            if (parsed === null || parsed < 0 || parsed === zBottom) {
+              event.currentTarget.value = formatLength(zBottom, units)
+              return
+            }
+            liftImportedModel(featureId, parsed)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.currentTarget.blur()
+              return
+            }
+            if (event.key === 'Escape') {
+              event.currentTarget.value = formatLength(zBottom, units)
+              event.currentTarget.blur()
+            }
+          }}
+        />
+      </label>
+      <div className="properties-model-hint">
+        {t('featureTree.properties.model.heightHint', {
+          height: `${formatLength(height, units)} ${units === 'inch' ? 'in' : 'mm'}`,
+        })}
+      </div>
       {linkedInstanceCount > 1 ? (
         <div className="properties-model-hint">
           {tPlural(
