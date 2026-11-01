@@ -21,7 +21,7 @@ import { circleProfile, newProject, polygonProfile, rectProfile, type FeatureIns
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
 import { normalizeProject } from '../../../store/projectStore'
-import { convertProjectUnits } from '../../../utils/units'
+import { convertProjectUnits, convertToolUnits } from '../../../utils/units'
 import { generateFinishSurfaceToolpath } from '../../toolpaths/finishSurface'
 import { flattenProfile } from '../../toolpaths/geometry'
 import { generateRoughSurfaceToolpath } from '../../toolpaths/roughSurface'
@@ -56,6 +56,17 @@ function tool(id: string, type: Tool['type'], diameter: number): Tool {
 function libraryTool(key: string, source: Tool): ToolLibraryEntry {
   const { id: _id, ...entry } = source
   return { ...entry, key }
+}
+
+/**
+ * The same project with its tool records written in `toUnits`. A unit switch
+ * keeps tools in their own units (`convertProjectUnits` does), and the planner
+ * may only choose tools written in the project's units — so a unit-parity
+ * fixture has to convert the records it expects to be picked (issue #1132).
+ */
+function withToolsInUnits(project: Project, toUnits: Tool['units']): Project {
+  const converted = convertProjectUnits(project, toUnits)
+  return { ...converted, tools: converted.tools.map((record) => convertToolUnits(record, toUnits)) }
 }
 
 function feature(
@@ -163,7 +174,7 @@ function testHelicalBoringStaysWithinTheBoreLimit(): void {
     feature('small-hole', 'subtract', circleProfile(0.5, 0.5, 0.125), 1, 0, 'circle'),
     feature('large-circle', 'subtract', circleProfile(2, 2, 0.5), 1, 0.5, 'circle'),
   ])
-  for (const project of [inchProject, convertProjectUnits(inchProject, 'mm')]) {
+  for (const project of [inchProject, withToolsInUnits(inchProject, 'mm')]) {
     const units = project.meta.units
     const plan = createCamPlan(project, [])
     const drills = plan.operations.filter((draft) => draft.operation.kind === 'drilling')
@@ -616,6 +627,55 @@ function testBundledToolUnitPreference(): void {
   )
 }
 
+function testPlanNeverMixesTheUnitSystems(): void {
+  // #1132: CAM Plan must choose and import only tools written in the project's
+  // units. The project's own records stay untouched (they are still assignable
+  // by hand), so a project switched to another unit simply has none of its
+  // tools in the plan's pool until they are written in the new units.
+  const inchProject = exampleProject()
+  const mixedTools: Tool[] = [
+    ...inchProject.tools,
+    { ...tool('metric-six', 'flat_endmill', 6), units: 'mm' },
+  ]
+  const mixedLibrary = [
+    libraryTool('lib-inch-ball', tool('lib-inch-ball', 'ball_endmill', 0.125)),
+    libraryTool('lib-mm-ball', { ...tool('lib-mm-ball', 'ball_endmill', 3), units: 'mm' as const }),
+  ]
+  const inchPlan = createCamPlan({ ...inchProject, tools: mixedTools }, mixedLibrary)
+  assert(inchPlan.tools.length > 0, 'the inch plan has a tool pool')
+  assert(inchPlan.tools.every((candidate) => candidate.tool.units === 'inch'), 'every inch-plan candidate is inch')
+  assert(!inchPlan.tools.some((candidate) => candidate.id === 'metric-six'), 'the metric project tool is not a candidate in an inch project')
+  assert(!inchPlan.tools.some((candidate) => candidate.id === 'cam-plan-tool:lib-mm-ball'), 'the metric library entry is not a candidate in an inch project')
+  assert(
+    inchPlan.operations.every((draft) => draft.operation.toolRef === null
+      || inchPlan.tools.some((candidate) => candidate.id === draft.operation.toolRef)),
+    'every inch-plan chosen tool is an inch pool member',
+  )
+  assert(inchPlan.operations.some((draft) => draft.operation.toolRef === 'quarter'), 'the inch plan still uses the project inch cutters')
+
+  // The metric mirror: a project switched to mm keeps its inch records, so every
+  // planned cutter has to come from the metric library.
+  const millimetreProject = convertProjectUnits(exampleProject(), 'mm')
+  const metricLibrary = [
+    libraryTool('lib-mm-quarter', convertToolUnits(tool('lib-mm-quarter', 'flat_endmill', 0.25), 'mm')),
+    libraryTool('lib-mm-eighth', convertToolUnits(tool('lib-mm-eighth', 'flat_endmill', 0.125), 'mm')),
+    libraryTool('lib-mm-drill', convertToolUnits(tool('lib-mm-drill', 'drill', 0.25), 'mm')),
+    libraryTool('lib-inch-quarter', tool('lib-inch-quarter', 'flat_endmill', 0.25)),
+  ]
+  const metricPlan = createCamPlan(millimetreProject, metricLibrary)
+  assert(metricPlan.tools.length > 0, 'the metric plan has a tool pool')
+  assert(metricPlan.tools.every((candidate) => candidate.tool.units === 'mm'), 'every metric-plan candidate is mm')
+  assert(!metricPlan.tools.some((candidate) => candidate.id === 'quarter'), 'the inch project tool is not a candidate in a metric project')
+  assert(!metricPlan.tools.some((candidate) => candidate.id === 'cam-plan-tool:lib-inch-quarter'), 'the inch library entry is not a candidate in a metric project')
+  assert(metricPlan.operations.some((draft) => draft.operation.toolRef !== null), 'the metric plan still finds cutters in its units')
+  assert(
+    metricPlan.operations.every((draft) => draft.operation.toolRef === null
+      || metricPlan.tools.some((candidate) => candidate.id === draft.operation.toolRef)),
+    'every metric-plan chosen tool is a metric pool member',
+  )
+  assert(!metricPlan.operations.some((draft) => draft.operation.toolRef === 'quarter'), 'no plan operation references an inch record')
+}
+
 function testFallbackNoToolAndUnits(): void {
   const base = newProject('CAM plan no tool', 'inch')
   base.stock.thickness = 1
@@ -627,7 +687,7 @@ function testFallbackNoToolAndUnits(): void {
   assert(noToolPlan.operations.some((draft) => draft.operation.kind === 'edge_route_inside' && draft.hardError), 'fallback inside route remains visibly unresolved when it also has no tool')
 
   const inchProject = exampleProject()
-  const millimetreProject = convertProjectUnits(inchProject, 'mm')
+  const millimetreProject = withToolsInUnits(inchProject, 'mm')
   const inchPlan = createCamPlan(inchProject, [])
   const millimetrePlan = createCamPlan(millimetreProject, [])
   const decisionKeys = (plan: ReturnType<typeof createCamPlan>) => plan.operations.map((draft) => `${draft.operation.kind}:${draft.operation.pass}`)
@@ -993,6 +1053,7 @@ testEdgeSharingSubtractChainsStayWithTheirParentPocket()
 testConnectedPocketsShareOneOperationWhenTheResolverOwnershipIsDirectional()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()
+testPlanNeverMixesTheUnitSystems()
 testFallbackNoToolAndUnits()
 testResolvedWorldTransformAndOrdering()
 testReactiveRestReconciliation()

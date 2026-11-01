@@ -6,7 +6,7 @@ Deterministic, transient CAM Plan. These modules analyze the current project and
 - `setupPlanning.ts` — active Bottom cutting-frame read model, same-setup operation context, and inverse conversion of rest masks to canonical stock XY (#1106).
 - `bottomSetup.test.ts` — asymmetric Bottom fixtures on both flip axes and in both units, planned/manual generation parity, Top coverage suppression, same-side reuse, rest materialization, and Around refusal.
 - `reconcileRest.ts` — scoped reactive rest-plan regeneration after a user corrects a source operation.
-- `toolPlanning.ts` — project/library tool normalization, feasibility filters, named part-scale limits, drilling compatibility, stable ranking, and user-facing choice reasons.
+- `toolPlanning.ts` — the plan's tool pool (project tools and bundled-library entries, and only those written in the project's units — issue #1132: the other unit system is never chosen or imported by conversion), feasibility filters, named part-scale limits, drilling compatibility, stable ranking, and user-facing choice reasons.
 - `types.ts` — ephemeral plan, operation, coverage, tool, rest-region, and shared-tab draft contracts.
 - `index.ts` — public planner exports.
 - `createCamPlan.test.ts` — representative 2.5D recognition, role/depth, unit/transform, tool-policy, ordering, residual, shared-tab, deterministic, and apply-safety fixtures.
