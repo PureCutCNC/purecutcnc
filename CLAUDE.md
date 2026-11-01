@@ -12,6 +12,7 @@ reference.
 - **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before the PR — locally, or `npm run build:gates` locally plus `pr-check.yml` dispatched on the pushed branch (AGENTS.md § Build & Verify).
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
 - **Protected paths → full lane.** `AGENTS.md`, the agent entrypoints (this file included), and engine/gcode/machine/format code — plan + approve required.
+- **No full local paths on GitHub.** Issues, PRs and comments use repo-relative paths (`work/x.camj`); OS paths are fine (`AGENTS.md` § Communication Style).
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
 
 Every task gets a GitHub issue; its plan and acceptance criteria live there and
