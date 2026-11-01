@@ -17,7 +17,7 @@
 import { isToolCompatibleWithOperation, withCompatibleOperationTool } from '../../toolPolicy'
 import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
-import { selectToolForOperation } from '../../engine/operations/toolSelection'
+import { selectToolForOperation, toolInUnits } from '../../engine/operations/toolSelection'
 import { materializeCamPlan } from '../helpers/camPlanApply'
 import { uniqueName } from '../../import'
 import { defaultTool, inferFeatureKind } from '../../types/project'
@@ -126,7 +126,13 @@ export function createOperationsSlice(
           resolvedToolRef = toolToAdd.id
         }
       } else {
-        const fallback = state.project.tools.find((tool) => isToolCompatibleWithOperation(tool, kind))
+        // The fallback is held to the same units rule as the selector (issue
+        // #1132): a project whose only compatible cutters are in the other unit
+        // system gets the project-units default tool with no reference, never
+        // one of them.
+        const fallback = state.project.tools.find((tool) =>
+          toolInUnits(tool, state.project.meta.units) && isToolCompatibleWithOperation(tool, kind),
+        )
         resolvedTool = fallback ?? defaultTool(state.project.meta.units, 1)
         resolvedToolRef = fallback?.id ?? null
       }

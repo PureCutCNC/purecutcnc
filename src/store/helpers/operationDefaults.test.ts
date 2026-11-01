@@ -15,16 +15,17 @@
  */
 
 /**
- * Focused tests for V-carve Line-target eligibility in operationDefaults
- * (issue #270 S2).
+ * Focused tests for operationDefaults: V-carve Line-target eligibility (issue
+ * #270 S2), fallback targets, and the project-units rule of the automatic
+ * tool fallback (issue #1132).
  *
  * Run with: npx tsx src/store/helpers/operationDefaults.test.ts
  */
 
-import type { FeatureOperation, OperationTarget, Project, SketchFeature } from '../../types/project'
-import { newProject, rectProfile } from '../../types/project'
+import type { FeatureOperation, OperationTarget, Project, SketchFeature, Tool } from '../../types/project'
+import { defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { isOperationTargetValid, fallbackOperationTarget } from './operationDefaults'
+import { defaultOperationForTarget, isOperationTargetValid, fallbackOperationTarget } from './operationDefaults'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAIL: ${message}`)
@@ -89,6 +90,26 @@ function makeModelFeature(id: string, operation: 'model' | 'add'): SketchFeature
 
 function projectWith(features: SketchFeature[]): Project {
   return projectWithFeatures(newProject(), features)
+}
+
+function makeTool(id: string, diameter: number, units: Tool['units'], overrides: Partial<Tool> = {}): Tool {
+  return {
+    id,
+    name: id,
+    units,
+    type: 'flat_endmill',
+    diameter,
+    vBitAngle: null,
+    flutes: 2,
+    material: 'carbide',
+    defaultRpm: 18000,
+    defaultFeed: 30,
+    defaultPlungeFeed: 12,
+    defaultStepdown: 0.1,
+    defaultStepover: 0.4,
+    maxCutDepth: 0,
+    ...overrides,
+  }
 }
 
 // ── isOperationTargetValid: V-carve + closed Line ──────────────────
@@ -239,6 +260,53 @@ function testFallbackRotaryTakesOnlyModelStl(): void {
   )
 }
 
+// ── defaultOperationForTarget: the fallback cutter is in project units ──
+
+function testFirstToolFallbackSkipsOtherUnits(): void {
+  const target = makeTarget(['s1'])
+  const features = [makeFeature('s1', 'subtract')]
+
+  // A mm project holding only an inch tool falls back to the mm default tool
+  // with no reference — never to the inch record (issue #1132).
+  const metric = projectWithFeatures({ ...newProject('t', 'mm'), tools: [makeTool('inch-quarter', 0.25, 'inch')] }, features)
+  const fallback = defaultOperationForTarget(metric, 'pocket', 'rough', target, 0)
+  assert(fallback.toolRef === null, 'no same-units tool means no tool reference')
+  assert(
+    Math.abs(fallback.stepdown - defaultTool('mm', 1).defaultStepdown) < 1e-9,
+    `defaults come from the project-units default tool, got ${fallback.stepdown}`,
+  )
+
+  // With a tool in the project's units present, that one is the fallback and
+  // the foreign-unit one is skipped even though it is listed first.
+  const mixed = projectWithFeatures({
+    ...newProject('t', 'mm'),
+    tools: [makeTool('inch-quarter', 0.25, 'inch'), makeTool('mm-six', 6, 'mm', { defaultStepdown: 2 })],
+  }, features)
+  const picked = defaultOperationForTarget(mixed, 'pocket', 'rough', target, 0)
+  assert(picked.toolRef === 'mm-six', `the same-units tool is the fallback, got ${picked.toolRef}`)
+  assert(picked.stepdown === 2, 'the fallback tool supplies the defaults')
+
+  // The inch mirror.
+  const imperial = projectWithFeatures({
+    ...newProject('t', 'inch'),
+    tools: [makeTool('mm-six', 6, 'mm')],
+  }, features)
+  assert(
+    defaultOperationForTarget(imperial, 'pocket', 'rough', target, 0).toolRef === null,
+    'an inch project does not fall back to a mm tool',
+  )
+
+  // The plasma branch is held to the same rule.
+  const plasmaProject = projectWithFeatures({
+    ...newProject('t', 'inch'),
+    tools: [makeTool('mm-torch', 1.2, 'mm', { type: 'plasma' })],
+  }, features)
+  assert(
+    defaultOperationForTarget(plasmaProject, 'plasma_profile', 'rough', target, 0).toolRef === null,
+    'a mm torch is not the inch project\'s fallback',
+  )
+}
+
 // ── Run ────────────────────────────────────────────────────────────
 
 testClosedLineValidTargetForVCarve()
@@ -255,5 +323,6 @@ testFallbackVCarveSkipsOpenLine()
 testFallbackVCarveStockWhenNoCompatible()
 testFallbackPocketRemainsSubtractOnly()
 testFallbackRotaryTakesOnlyModelStl()
+testFirstToolFallbackSkipsOtherUnits()
 
-console.log('operationDefaults V-carve Line-target tests passed')
+console.log('operationDefaults target, fallback and tool-units tests passed')

@@ -22,6 +22,7 @@
 
 import { useProjectStore } from './projectStore'
 import {
+  defaultTool,
   newProject,
   rectProfile,
   type Project,
@@ -31,7 +32,6 @@ import {
 import type { ToolLibraryEntry } from '../toolLibrary'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import { toolMatchesLibraryEntry } from '../components/cam/toolLibraryDialogModel'
-import { convertLength } from '../utils/units'
 import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -59,11 +59,11 @@ function makeFeature(id: string, operation: SketchFeature['operation'], w: numbe
   }
 }
 
-function flatTool(id: string, diameter: number): Tool {
+function flatTool(id: string, diameter: number, units: Tool['units'] = 'inch'): Tool {
   return {
     id,
     name: id,
-    units: 'inch',
+    units,
     type: 'flat_endmill',
     diameter,
     vBitAngle: null,
@@ -174,7 +174,7 @@ function testEngraveKeepsShallowDefault(): void {
   const base = newProject('t', 'mm')
   const project = projectWithFeatures({
     ...base,
-    tools: [flatTool('t-flat', 3)],
+    tools: [flatTool('t-flat', 3, 'mm')],
   }, [makeFeature('f', 'subtract', 40, 40)])
   seed(project)
 
@@ -253,7 +253,9 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
     'an edited drop feed makes it a different tool',
   )
 
-  // A library value in another unit is converted, not dropped or copied raw.
+  // A library value in another unit is never converted: the inch project gets
+  // no torch at all rather than a mm one (issue #1132). `selectToolForOperation`
+  // only considers entries written in the project's units.
   seed(project)
   const mmEntry: ToolLibraryEntry = {
     ...plasmaLibraryEntry,
@@ -265,17 +267,15 @@ function testAddPlasmaImportsTorchWithConsumables(): void {
     pierceHeight: 3.8,
     cutHeight: 1.5,
   }
-  useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [mmEntry])
-  const converted = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
-  assert(converted?.units === 'inch', 'the imported torch takes the project units')
+  const noTorchId = useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [mmEntry])
+  const withoutTorch = useProjectStore.getState().project
+  assert(noTorchId !== null, 'the operation is still created')
   assert(
-    Math.abs(converted.defaultPlungeFeed - convertLength(300, 'mm', 'inch')) < 1e-9,
-    `the drop feed is converted, got ${converted.defaultPlungeFeed}`,
+    withoutTorch.tools.every((tool) => tool.type !== 'plasma'),
+    'a mm library torch is not imported into an inch project',
   )
-  assert(
-    converted !== undefined && Math.abs(converted.pierceHeight! - convertLength(3.8, 'mm', 'inch')) < 1e-9,
-    `the pierce height is converted, got ${converted?.pierceHeight}`,
-  )
+  const noTorchOperation = withoutTorch.operations.find((operation) => operation.id === noTorchId)
+  assert(noTorchOperation?.toolRef === null, `the operation has no tool reference, got ${noTorchOperation?.toolRef}`)
 
   // A genuinely zero library value stays zero: the import must not invent a
   // physical standoff any more than normalization may.
@@ -318,11 +318,36 @@ function testAddPlasmaReusesTorchWithEditedPlungeFeed(): void {
   }
 }
 
+function testOtherUnitToolsAreNeverTheFallback(): void {
+  // #1132: with no tool in the project's units and no library, the operation is
+  // created against the project-units default tool with no reference. The
+  // metric cutter already in the project must not be picked by the fallback
+  // either — that was Frank's reported path.
+  const base = newProject('t', 'inch')
+  const project = projectWithFeatures({
+    ...base,
+    tools: [flatTool('t-six-mm', 6, 'mm')],
+  }, [makeFeature('f', 'subtract', 2, 2)])
+  seed(project)
+
+  const opId = useProjectStore.getState().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f'] }, [])
+  const next = useProjectStore.getState().project
+  assert(next.tools.length === 1, 'no tool is imported or added')
+  const op = next.operations.find((operation) => operation.id === opId)
+  assert(op !== undefined, 'expected the pocket operation to exist')
+  assert(op.toolRef === null, `the metric cutter is never the fallback, got ${op.toolRef}`)
+  assert(
+    op.stepdown === defaultTool('inch', 1).defaultStepdown,
+    `defaults come from the inch default tool, got ${op.stepdown}`,
+  )
+}
+
 testAddVCarveImportsVBit()
 testAddPocketReusesExistingFlatNoImport()
 testAddPlasmaReusesTorchWithEditedPlungeFeed()
 testVCarveDepthFallsBackToStockThickness()
 testEngraveKeepsShallowDefault()
 testAddPlasmaImportsTorchWithConsumables()
+testOtherUnitToolsAreNeverTheFallback()
 
 console.log('addOperationTool tests passed')
