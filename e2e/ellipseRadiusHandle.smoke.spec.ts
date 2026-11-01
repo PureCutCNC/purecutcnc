@@ -30,6 +30,12 @@
  * previews that field live but still does not store the dragged one before Save
  * (issue #1112 rt7-g correction, round 2).
  *
+ * The open panel is also what lets the press through: a `canned-edit` session
+ * borrows `pendingAdd` to show its side panel and places nothing, so it must not
+ * claim the pointer as a reference point pick. It did, and every press on a
+ * drawn handle was refused — the drag tests below were unreachable until that
+ * was fixed (issue #1112 rt7-g correction, round 3).
+ *
  * A placed, rotated ellipse draws one handle at the end of its local X axis and
  * one at the end of its local Y axis — in the ellipse's own frame, so a 30°
  * placement turns both handles with it. Dragging a handle changes only its own
@@ -458,7 +464,7 @@ test('the X handle writes the panel field and only Save stores rx', async ({ app
   // Typing the other radius previews live but must not carry the dragged rx
   // into the project with it (issue #1112 rt7-g correction, round 2): this mixed
   // sequence used to store {rx: dragged, ry: typed} before Save.
-  await page
+  await app.page
     .locator('.canvas-workflow-panel--creation .canvas-workflow-panel__parameter-fields input')
     .nth(1)
     .fill('25')
