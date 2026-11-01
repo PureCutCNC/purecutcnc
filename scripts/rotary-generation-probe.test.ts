@@ -20,13 +20,16 @@
  * The probe is the measuring instrument every later slice of #1115 trusts, so
  * its refusals are tested and not merely written: a wrong operation id, a
  * baseline whose fixture hash, stock/setup axis or settings differ, a changed
- * move or program digest, an output path that aliases the fixture, and a
- * program digest that must still notice a date outside the generated line each
- * have to fail. Those are exactly the mutations this slice is checked with
- * (accept a substituted operation, accept mismatched settings, skip the
- * move-hash comparison, normalize every date-shaped string, drop the axis from
- * the comparison, write over the fixture), so each assertion below is what
- * catches its mutation.
+ * move or program digest, an output path that aliases the fixture, a program
+ * digest that must still notice a date outside the generated header (including
+ * the header's own words inside an ordinary comment, or a second stamp-shaped
+ * comment after the header), and a pass-direction control built from the
+ * loaded operations instead of a saved copy each have to fail. Those are
+ * exactly the mutations this slice is checked with (accept a substituted
+ * operation, accept mismatched settings, skip the move-hash comparison,
+ * normalize every stamp-shaped line, normalize a stamp anywhere in a line,
+ * mutate a saved fixture for the along control, write over the fixture), so
+ * each assertion below is what catches its mutation.
  *
  * Run with: npx tsx scripts/rotary-generation-probe.test.ts
  */
@@ -38,14 +41,20 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { newProject } from '../src/types/project'
+import { newProject, defaultTool, rectProfile } from '../src/types/project'
+import type { Operation, Project, Tool } from '../src/types/project'
 import type { NormalizedTool, ToolpathMove } from '../src/engine/toolpaths/types'
-import type { Operation } from '../src/types/project'
+import { barCentre, barPivotZ, squareStock } from '../src/types/barStock'
+import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
+import { defaultOperationForTarget } from '../src/store/helpers/operationDefaults'
+import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
+import { projectWithFeatures } from '../src/test/projectFixtures'
 import {
   assertOutputIsNotFixture,
   compareReports,
   digestMoves,
   digestProgram,
+  isPassDirection,
   median,
   normalizeProgramDate,
   parseProbeArgs,
@@ -55,6 +64,7 @@ import {
   selectOperations,
   sha256,
   stableStringify,
+  withPassDirection,
 } from './rotary-generation-probe'
 import type { OperationReport, ProbeReport } from './rotary-generation-probe'
 
@@ -136,6 +146,127 @@ function movesFixture(count = 3): ToolpathMove[] {
   }))
 }
 
+/**
+ * A small, real square-bar rotary project whose generation is fast enough to
+ * run end to end (#1115 slice p-a). Purpose-built so the CLI test below can
+ * measure an actual along control instead of asserting a helper in isolation:
+ * one rough and one finish around a square blank, the shape the handoff's
+ * busto-rect fixture has.
+ */
+function squareRotaryProject(direction: 'around' | 'along'): Project {
+  const stock = squareStock(20, 40, 'x', { x: 0, y: 0 })
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const radius = 5
+  const segments = 96
+  // One cylinder of revolution around the bar: a square-to-round model.
+  const positions: number[] = []
+  const index: number[] = []
+  for (const along of [12, 28]) {
+    for (let j = 0; j < segments; j += 1) {
+      const angle = 2 * Math.PI * j / segments
+      positions.push(along, centre + radius * Math.cos(angle), pivot + radius * Math.sin(angle))
+    }
+  }
+  for (let ring = 0; ring + 1 < 2; ring += 1) {
+    for (let j = 0; j < segments; j += 1) {
+      const next = (j + 1) % segments
+      const a = ring * segments + j
+      const b = ring * segments + next
+      const c = (ring + 1) * segments + next
+      const d = (ring + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+
+  const base = newProject('Square rotary control', 'mm')
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.projectType = 'rotary'
+  base.meta.maxTravelZ = 25
+  base.stock = stock
+  base.origin = { name: 'Origin', x: 0, y: 0, z: stock.thickness, visible: true }
+  const tool: Tool = {
+    ...defaultTool('mm', 1),
+    id: 't1',
+    name: 'Flat 4',
+    units: 'mm',
+    type: 'flat_endmill',
+    diameter: 4,
+    defaultStepover: 0.5,
+    defaultStepdown: 1,
+  }
+  base.tools = [tool]
+  const mesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  base.modelAssets = { asset: serializeImportedMesh({ ...mesh, bounds: computeMeshBounds(mesh.positions) }, 'stl') }
+  const project = projectWithFeatures(base, [{
+    id: 'model',
+    name: 'Model',
+    kind: 'stl',
+    operation: 'model',
+    authoringFace: 'top',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(12, centre - radius, 16, 2 * radius),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
+    z_top: pivot + radius,
+    z_bottom: pivot - radius,
+    visible: true,
+    locked: false,
+  }])
+  project.setups.push({
+    ...project.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+  })
+  project.activeSetupId = 'around'
+  project.clamps = [{ ...defaultRoundWorkholding('chuck', stock, 'mm'), id: 'chuck', name: 'Chuck', visible: true }]
+  const target = { source: 'features' as const, featureIds: ['model'] }
+  const rough: Operation = {
+    ...defaultOperationForTarget(project, 'rotary_rough', 'rough', target, 0),
+    setupId: 'around',
+    rotaryPassDirection: direction,
+    stockToLeaveRadial: 0,
+    stepdown: 2,
+    stepover: 0.5,
+  }
+  const finish: Operation = {
+    ...defaultOperationForTarget(project, 'rotary_finish', 'finish', target, 1),
+    setupId: 'around',
+    rotaryPassDirection: direction,
+    stockToLeaveRadial: 0,
+    stepover: 0.5,
+  }
+  project.operations = [rough, finish]
+  return project
+}
+
+function measureControl(
+  fixture: string,
+  operations: readonly string[],
+  out: string,
+  extra: readonly string[] = [],
+): { status: number | null; stdout: string; stderr: string } {
+  const child = spawnSync(
+    process.execPath,
+    [
+      '--import', 'tsx', PROBE,
+      '--project', fixture,
+      ...operations.flatMap((id) => ['--operation', id]),
+      '--out', out,
+      ...extra,
+    ],
+    { encoding: 'utf8', timeout: 120_000 },
+  )
+  return { status: child.status, stdout: child.stdout, stderr: child.stderr }
+}
+
 const PROGRAM = [
   '; probe-fixture',
   '; Generated by PureCutCNC on 2026-11-01',
@@ -206,6 +337,7 @@ function reportFixture(
     stock: { shape: 'square', axis: 'x', thickness: 2 },
     warmRuns: 5,
     operations,
+    control: null,
   }
 }
 
@@ -367,11 +499,54 @@ check('the program digest ignores the generated date line and nothing else', () 
   const withCommentDate = PROGRAM.replace('; probe-fixture', '; probe-fixture, drawn 2026-11-01')
   assert.notEqual(withCommentDate, PROGRAM, 'the comment date is really in the fixture program')
   assert.notEqual(
-    digestProgram(withCommentDate.replace('2026-11-01', '2027-03-09')),
+    digestProgram(withCommentDate.replace('drawn 2026-11-01', 'drawn 2027-03-09')),
     digestProgram(withCommentDate),
     'a date-shaped string anywhere but the generated line is program text and must move the hash',
   )
+  // Review round 2: the header stamp's own words in an ordinary comment are not
+  // the header. The unanchored global regex collapsed them, so changing a job
+  // note's date left the hash unchanged.
+  const jobNote = (date: string): string =>
+    PROGRAM.replace('G20', `; job note: Generated by PureCutCNC on ${date}\nG20`)
+  assert.notEqual(
+    digestProgram(jobNote('2020-01-01')),
+    digestProgram(jobNote('2026-11-01')),
+    'changing the date in an ordinary comment that repeats the stamp must move the hash',
+  )
+  assert.equal(
+    digestProgram(jobNote('2020-01-01').replace('2026-11-01', '2027-03-09')),
+    digestProgram(jobNote('2020-01-01')),
+    'the real header date still collapses when an ordinary comment repeats the stamp',
+  )
+  // The header is the *first* stamp-shaped line; a later one is an operation
+  // comment and therefore not the header. A global match, even anchored, would
+  // collapse this one too.
+  const decoy = PROGRAM.replace('G20', '; Generated by PureCutCNC on 2020-01-01\nG20')
+  assert.notEqual(decoy, PROGRAM, 'the decoy stamp is really in the program')
+  assert.notEqual(
+    digestProgram(decoy.replace('on 2020-01-01', 'on 2021-01-01')),
+    digestProgram(decoy),
+    'a second stamp-shaped comment after the header is program text and must move the hash',
+  )
   assert.notEqual(digestProgram(PROGRAM.replace('G20', 'G21')), digestProgram(PROGRAM))
+})
+
+check('the header date still collapses in every bundled comment dialect', () => {
+  // Narrowing the match to the header must not stop it matching the header:
+  // these are the shapes the bundled definitions and the OpenSBP emitter write.
+  for (const line of [
+    '; Generated by PureCutCNC on 2026-11-01',
+    '( Generated by PureCutCNC on 2026-11-01 )',
+    "' Generated by PureCutCNC on 2026-11-01",
+    'N10 ; Generated by PureCutCNC on 2026-11-01',
+  ]) {
+    const program = `${line}\nG20\nG1 X1.0 F26\n`
+    assert.equal(
+      normalizeProgramDate(program),
+      `${line.replace('2026-11-01', '<date>')}\nG20\nG1 X1.0 F26\n`,
+      `the header line ${line} must still collapse`,
+    )
+  }
 })
 
 check('median of five', () => {
@@ -413,6 +588,87 @@ check('an output path that aliases the fixture is refused', () => {
   }
 })
 
+// ── the pass-direction control is built in memory ────────────
+
+check('an along control copies the operation in memory and never needs a saved fixture', () => {
+  const around = operationFixture()
+  const control = withPassDirection([around], 'along')
+  assert.deepEqual(control.map((operation) => operation.rotaryPassDirection), ['along'])
+  assert.equal(around.rotaryPassDirection, 'around', 'the loaded operation is never mutated')
+  assert.notEqual(control[0], around, 'the control is a copy, so generation cannot touch the loaded record')
+  assert.equal(
+    withPassDirection([around, operationFixture({ id: 'op0022', name: 'Rotary finish' })], 'along').length,
+    2,
+    'every selected operation is copied',
+  )
+  assert.throws(
+    () => withPassDirection([operationFixture({ kind: 'pocket', rotaryPassDirection: undefined })], 'along'),
+    (error: unknown) => error instanceof ProbeError
+      && /not a rotary operation/.test(error.message)
+      && /op0021/.test(error.message),
+    'a non-rotary operation has no pass direction to control',
+  )
+  // A saved rotary operation may omit the field (the generators read that as
+  // 'along'), and it is still controllable.
+  assert.equal(
+    withPassDirection([operationFixture({ rotaryPassDirection: undefined })], 'around')[0].rotaryPassDirection,
+    'around',
+  )
+  assert.equal(isPassDirection('along'), true)
+  assert.equal(isPassDirection('around'), true)
+  assert.equal(isPassDirection('sideways'), false)
+})
+
+check('the CLI measures an along control in memory and leaves the fixture bytes alone', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rotary-probe-control-'))
+  const fixture = join(directory, 'square-rotary.camj')
+  const alongOut = join(directory, 'along.json')
+  const aroundOut = join(directory, 'around.json')
+  try {
+    const project = squareRotaryProject('around')
+    const ids = project.operations.map((operation) => operation.id)
+    assert.equal(ids.length, 2)
+    const saved = JSON.stringify(project)
+    writeFileSync(fixture, saved)
+    const before = sha256(readFileSync(fixture))
+
+    const along = measureControl(fixture, ids, alongOut, ['--pass-direction', 'along'])
+    assert.equal(along.status, 0, `expected a measured control; stdout ${along.stdout} stderr ${along.stderr}`)
+    assert.match(along.stdout, /control: pass direction along, built in memory \(fixture unchanged\)/)
+    assert.equal(sha256(readFileSync(fixture)), before, 'the control reads the fixture, never rewrites it')
+    assert.equal(readFileSync(fixture, 'utf8'), saved, 'the fixture on disk is still the saved project')
+
+    const alongReport = JSON.parse(readFileSync(alongOut, 'utf8')) as ProbeReport
+    assert.deepEqual(alongReport.control, { passDirection: 'along' })
+    assert.deepEqual(
+      alongReport.operations.map((operation) => operation.identity.axis.passDirection),
+      ['along', 'along'],
+      'both selected operations were copied with the control direction',
+    )
+    assert.equal(alongReport.fixture.sha256, before, 'the result names the untouched fixture')
+
+    const around = measureControl(fixture, ids, aroundOut)
+    assert.equal(around.status, 0, `expected the saved direction to measure; stdout ${around.stdout} stderr ${around.stderr}`)
+    const aroundReport = JSON.parse(readFileSync(aroundOut, 'utf8')) as ProbeReport
+    assert.equal(aroundReport.control, null)
+    assert.deepEqual(
+      aroundReport.operations.map((operation) => operation.identity.axis.passDirection),
+      ['around', 'around'],
+    )
+    // The override reached generation, not only the report: an along pass is a
+    // different toolpath from the saved around one on the same fixture.
+    for (const [index, operation] of alongReport.operations.entries()) {
+      assert.notEqual(
+        operation.moves.digest,
+        aroundReport.operations[index].moves.digest,
+        `${operation.id}'s along control must generate along moves`,
+      )
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 // ── argument parsing ─────────────────────────────────────────
 
 check('arguments are parsed strictly', () => {
@@ -424,7 +680,17 @@ check('arguments are parsed strictly', () => {
   assert.deepEqual(args.operations, ['op0021', 'op0022'], 'repeated ids keep their order and are not duplicated')
   assert.equal(args.out, defaults.out)
   assert.equal(args.root, defaults.root)
+  assert.equal(args.passDirection, null, 'a run without the flag measures the fixture as saved')
   assert.match(args.baseline ?? '', /base\.json$/)
+  const control = parseProbeArgs(
+    ['--project', 'fixture.camj', '--operation', 'op0021', '--pass-direction', 'along'],
+    defaults,
+  )
+  assert.equal(control.passDirection, 'along')
+  assert.throws(
+    () => parseProbeArgs(['--project', 'fixture.camj', '--operation', 'op0021', '--pass-direction', 'sideways'], defaults),
+    /--pass-direction must be one of around, along/,
+  )
   assert.throws(() => parseProbeArgs(['--operation', 'op0021'], defaults), /--project/)
   assert.throws(() => parseProbeArgs(['--project', 'fixture.camj'], defaults), /--operation/)
   assert.throws(() => parseProbeArgs(['--project'], defaults), /needs a value/)
