@@ -21,8 +21,11 @@
  * button arms a `canned-edit` pending session, and this panel renders the same
  * page-level workflow panel the creation tools use. Every valid field value is
  * previewed live through `useCannedShapePreview`, and Apply commits that preview
- * so it is one undo step and linked copies follow. There is no second React root
- * and no modal.
+ * so it is one undo step and linked copies follow. The one exception is a
+ * radius the ellipse's canvas handles drag: that write is *held*, drawn by the
+ * canvas from the panel's draft, so the project keeps its stored parameters
+ * until Save (issue #1112 rt7-g review). There is no second React root and no
+ * modal.
  */
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -237,6 +240,13 @@ function FlatCannedShapeEditPanel({
   const draftValues = draft && draft.featureId === featureId && draft.kind === cannedKind
     ? draft.values
     : null
+  // A radius the canvas handles dragged: the field shows it and the canvas
+  // draws it, but the project keeps its stored parameters until Save
+  // (issue #1112 rt7-g review).
+  const previewHeld = draft !== null
+    && draft.featureId === featureId
+    && draft.kind === cannedKind
+    && draft.previewHeld
   const values = draftValues
     ?? (request && canned ? editorInitialValues(request, canned.params) : {})
   const [gearParams, setGearParams] = useState<GearCreationParams>(
@@ -278,13 +288,20 @@ function FlatCannedShapeEditPanel({
   const normalized = isGear
     ? gearDraft(gearParams, gearSizeValue)
     : flatNormalized(request, values)
-  // Every valid draft is written into the project as it is typed, so the sketch
-  // and the 3D preview follow the fields; a value the generator refuses keeps
-  // the last valid preview on screen. Apply commits that one preview
+  // Every valid typed draft is written into the project as it is typed, so the
+  // sketch and the 3D preview follow the fields; a value the generator refuses
+  // keeps the last valid preview on screen. Apply commits that one preview
   // (issue #1112 F1).
+  //
+  // A radius the handles dragged is the exception: `previewHeld` means the
+  // project keeps the stored parameters until Save, and the canvas draws the
+  // dragged radius from the draft (`cannedEditHandleParams`). So dragging is an
+  // edit of the panel, never of the project (issue #1112 rt7-g review).
   const { commitPreview } = useCannedShapePreview({
     featureId,
-    draft: canned && normalized ? { kind: canned.kind, params: normalized } : null,
+    draft: canned && normalized && !previewHeld
+      ? { kind: canned.kind, params: normalized }
+      : null,
   })
 
   // A stored change the fields did not produce (an undo while the panel is

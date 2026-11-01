@@ -24,21 +24,27 @@
  *   1. Handles exist only while that ellipse's Edit panel is open. A plain
  *      selection draws none and cannot start a drag (Frank, round 7).
  *   2. A drag writes the panel's field text — the same edit path a keystroke
- *      takes — and never the project, so the panel's live preview, Save and
- *      Cancel decide what happens to the shape.
+ *      takes — and never the project. The write is *held*, so the canvas preview
+ *      follows the pointer while the stored parameters wait for Save
+ *      (issue #1112 rt7-g review).
  *   3. The fields and the handles are one value in both directions: typing a
  *      radius moves its handle, and dragging moves the field.
  *   4. The handle follows the same snap gate a dragged circle control does, and
  *      a rotated placement still maps the pointer onto the ellipse's own axis.
+ *   5. The canvas feature pass itself draws those handles and the previewed
+ *      outline — the rule is executed, not just described by a helper — and
+ *      publishes the count for the browser spec (issue #1112 rt7-g review).
  */
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { newProject, type Point, type Project } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore } from '../../store/types'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { ELLIPSE_RADIUS_MIN, ellipseRadiusHandlePoint } from '../../cannedShapes/ellipseHandles'
+import { ELLIPSE_RADIUS_MIN, ellipseRadiusCentre, ellipseRadiusHandlePoint, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
+import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { closeCannedEditDraft, getCannedEditDraft, openCannedEditDraft, setCannedEditDraftField } from './cannedEditDraft'
 import {
   beginCannedRadiusDrag,
@@ -170,8 +176,20 @@ assert.equal(store().history.past.length, undoSteps, 'no pointer move adds an un
 assert.equal(publishCannedRadiusDrag(preview), true, 'the drag publishes a changed field')
 assert.equal(getCannedEditDraft()?.values.rx, '70', 'the drag writes the panel’s rx field')
 assert.equal(getCannedEditDraft()?.values.ry, '20', 'the drag never rewrites the other field')
+assert.equal(
+  getCannedEditDraft()?.previewHeld,
+  true,
+  'the dragged field is held out of the project until Save (issue #1112 rt7-g review)',
+)
 assert.deepEqual(storedParams(ellipse.id), storedParameters, 'publishing writes no project parameters')
 assert.equal(store().history.past.length, undoSteps, 'the drag is not an undo step before Save')
+
+// A keystroke is a live preview again, so the F1 behaviour of a typed value is
+// untouched by the drag's held preview.
+setCannedEditDraftField(ellipse.id, 'rx', '71')
+assert.equal(getCannedEditDraft()?.previewHeld, false, 'a typed field resumes the live preview')
+publishCannedRadiusDrag(preview)
+assert.equal(getCannedEditDraft()?.previewHeld, true, 'the drag holds its preview again')
 
 // The handles now follow the field the drag wrote.
 const draggedParams = cannedEditHandleParams(ellipse, getCannedEditDraft(), null)
@@ -264,4 +282,131 @@ assert(
   'the press may grab a handle while the Edit panel occupies pendingAdd',
 )
 
+// ── 7. The canvas feature pass draws the handles, and only in Edit mode ─
+
+// The properties above are decisions the draw pass makes; this section runs it.
+// A spec that only asks `cannedEditHandleParams` cannot see a pass that draws a
+// selected ellipse's handles from its stored parameters anyway, which is
+// exactly the reviewed escape (issue #1112 rt7-g review). The live feature pass
+// from `SketchCanvas.tsx` is executed with only unrelated layers stubbed, and
+// the handles, the previewed outline and the published draw count are read back.
+const canvasSource = readFileSync(new URL('./SketchCanvas.tsx', import.meta.url), 'utf8')
+const drawStart = canvasSource.indexOf('    if (sheet) drawAroundModelBands(')
+const drawEnd = canvasSource.indexOf('    const clipboardPlacement =', drawStart)
+assert(drawStart > 0 && drawEnd > drawStart, 'the canvas feature pass is present')
+const drawScript = ts.transpileModule(canvasSource.slice(drawStart, drawEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+}).outputText
+
+interface DrawnFeature {
+  id: string
+  canned?: { kind: string; params: { rx?: number; ry?: number } }
+}
+const canvasDataset: Record<string, string> = {}
+const drawnFeatures: DrawnFeature[] = []
+const drawnHandleAxes: string[][] = []
+const drawCtx = {
+  canvas: { width: 800, height: 600 },
+  save() {}, restore() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
+  arc() {}, fill() {}, stroke() {}, fillRect() {}, fillText() {}, setLineDash() {},
+} as unknown as CanvasRenderingContext2D
+// The selection a user has after clicking the ellipse: the row is selected, no
+// Edit panel is open, and that is the state that must draw no handles.
+const drawSelection = {
+  selectedFeatureIds: [ellipse.id] as string[],
+  selectedFeatureId: null as string | null,
+  hoveredFeatureId: null as string | null,
+  groupFolderId: null as string | null,
+  mode: 'feature' as const,
+  activeControl: null,
+}
+const drawDependencies = {
+  ctx: drawCtx,
+  canvas: { dataset: canvasDataset } as unknown as HTMLCanvasElement,
+  CANVAS_TEST_SEAMS: true,
+  sheet: null,
+  features: resolvedProjectFeatures(store().project),
+  project: store().project,
+  selection: drawSelection,
+  vt: { scale: 1, offsetX: 0, offsetY: 0 },
+  t: (key: string) => key,
+  drawAroundModelBands() {},
+  hiddenDistributionSourceIds: null,
+  operationHighlightIds: null,
+  drawOtherFace: () => new Set<string>(),
+  useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
+  drawRotarySolidSideViews: () => new Set<string>(),
+  drawOriginMarker() {},
+  activeOriginInStock: () => ({ x: 0, y: 0 }),
+  canvasPalette: {},
+  drawFeature: (_ctx: unknown, feature: DrawnFeature) => { drawnFeatures.push(feature) },
+  drawFeatureInfo() {},
+  drawLineFeatureBatch() {},
+  stlImageCacheRef: { current: new Map<string, unknown>() },
+  // The real helper, reading the real open panel's draft: a pass that drew from
+  // the stored parameters would be a different function here, and the plain
+  // selection below would draw two handles.
+  cannedRadius: {
+    dragRef: { current: null },
+    hoveredAxisRef: { current: null },
+    handleParams: (feature: Pick<typeof ellipse, 'id' | 'canned'>) =>
+      cannedEditHandleParams(feature, getCannedEditDraft(), null),
+  },
+  ellipseRadiusHandles,
+  ellipseRadiusCentre,
+  ELLIPSE_CANNED_KIND,
+  drawEllipseRadiusHandles: (_ctx: unknown, _centre: unknown, handles: { axis: string }[]) => {
+    drawnHandleAxes.push(handles.map((handle) => handle.axis))
+  },
+  drawRadiusMeasurement() {},
+  featureDisplayProfiles: () => [],
+  traceProfilePath() {},
+  canvasRgba: () => 'rgba(0, 0, 0, 1)',
+}
+const runDrawPass = (): void => {
+  drawnFeatures.length = 0
+  drawnHandleAxes.length = 0
+  for (const key of Object.keys(canvasDataset)) delete canvasDataset[key]
+  new Function(...Object.keys(drawDependencies), drawScript)(...Object.values(drawDependencies))
+}
+
+// Plain selection: the ellipse is on screen and selected, and the pass draws no
+// handles at all — the mutation "draw the handles on plain selection again"
+// fails here, not only in a helper test.
+runDrawPass()
+assert.equal(drawnFeatures.length, 1, 'the plain selection draws its outline')
+assert.deepEqual(drawnHandleAxes, [], 'a plain selection draws no radius handles')
+assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes that it drew no handles')
+assert.equal('ellipseDraft' in canvasDataset, false, 'a plain selection previews no draft')
+
+// Edit mode: both handles, and the outline drawn at the panel's parameters.
+openCannedEditDraft(ellipse.id, 'ellipse', { rx: '30', ry: '20' })
+runDrawPass()
+assert.deepEqual(drawnHandleAxes, [['rx', 'ry']], 'the open panel draws both handles')
+assert.equal(canvasDataset.radiusHandles, '2', 'the pass publishes the two handles it drew')
+assert.equal(canvasDataset.ellipseDraft, '30,20', 'the outline draws at the panel’s fields')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the drawn outline carries the draft rx')
+
+// A held drag: the pass draws the dragged radius while the project keeps the
+// stored one. This is the preview the review asked to see without the store.
+setCannedEditDraftField(ellipse.id, 'rx', '45', { holdPreview: true })
+runDrawPass()
+assert.equal(getCannedEditDraft()?.previewHeld, true, 'the drag is held')
+assert.equal(canvasDataset.radiusHandles, '2', 'the dragged ellipse still draws its handles')
+assert.equal(canvasDataset.ellipseDraft, '45,20', 'the canvas previews the dragged radius')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 45, 'the drawn outline is the dragged radius')
+assert.deepEqual(
+  storedParams(ellipse.id),
+  storedParameters,
+  'and the drawn preview changed no stored parameter',
+)
+
+// Closing the panel: no handles, and the outline back on the stored shape.
+closeCannedEditDraft()
+runDrawPass()
+assert.deepEqual(drawnHandleAxes, [], 'closing the panel takes the drawn handles away')
+assert.equal(canvasDataset.radiusHandles, '0', 'the pass publishes the empty count again')
+assert.equal(drawnFeatures[0]?.canned?.params.rx, 30, 'the outline is the stored radius again')
+
 console.log('✓ ellipse radius drag: edit-mode-only handles, field writes, snap gate, rotated frame')
+

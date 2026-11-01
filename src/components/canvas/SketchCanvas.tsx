@@ -183,6 +183,15 @@ import type { MessageKey } from '../../i18n/locales/en'
 
 export type { SketchCanvasHandle }
 
+/**
+ * Whether this build publishes the canvas' own test seams — the live view
+ * state, the move preview point and what the feature pass drew of the Edit-
+ * ellipse handles — for the browser specs. Dev-only, tree-shaken from
+ * production builds; a module constant so the draw pass does not repeat the
+ * check on every frame.
+ */
+const CANVAS_TEST_SEAMS = import.meta.env.DEV
+
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
   {
     isActive,
@@ -1089,6 +1098,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
+    // What this pass drew of the Edit-ellipse handles, published for the
+    // browser specs below: a selection-with-no-editor must draw none of them,
+    // and a handle must be seen rather than inferred from the drag.
+    let radiusHandlesDrawn = 0
+    let draftedEllipseParams: { rx: number; ry: number } | null = null
     for (const feature of features) {
       if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || sideViewIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
@@ -1097,16 +1111,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
 
-      // While the Edit-ellipse panel is open the outline and its two handles
-      // draw from that panel's fields — the drag changes the fields, never the
-      // project directly (issue #1112 rt7-g).
+      // While the Edit-ellipse panel is open its fields place the outline and
+      // the two handles: a dragged radius is held out of the project until Save
+      // (issue #1112 rt7-g review), so the canvas — not a store write — is what
+      // shows it. The handles read the same parameters.
       const radiusDrag = cannedRadius.dragRef.current
       const handleParams = cannedRadius.handleParams(feature)
-      const previewParams = handleParams && radiusDrag && radiusDrag.featureId === feature.id
-        ? radiusDrag.params
-        : null
-      const drawableFeature = previewParams
-        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: previewParams } }
+      const drawableFeature = handleParams
+        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: handleParams } }
         : feature
 
       const batchLine = feature.operation === 'line'
@@ -1134,6 +1146,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (activeHandle) {
           drawRadiusMeasurement(ctx, centre, activeHandle.world, vt, project.meta.units)
         }
+        radiusHandlesDrawn += handles.length
+        draftedEllipseParams = handleParams
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
@@ -1211,6 +1225,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.textBaseline = 'middle'
         ctx.fillText(String(feature.sketch.constraints.length), badgeC.cx - 8, badgeC.cy - 8)
         ctx.restore()
+      }
+    }
+    // Publish what this pass drew for the browser specs (issue #1112 rt7-g
+    // review): the radius handles are an in-canvas drawing, so a spec asserts
+    // the dots and the previewed outline instead of inferring them from a drag
+    // that may still have written nothing. Dev-only, like the view-state seam.
+    if (CANVAS_TEST_SEAMS) {
+      canvas.dataset.radiusHandles = String(radiusHandlesDrawn)
+      if (draftedEllipseParams) {
+        canvas.dataset.ellipseDraft = `${draftedEllipseParams.rx},${draftedEllipseParams.ry}`
+      } else {
+        delete canvas.dataset.ellipseDraft
       }
     }
     drawLineFeatureBatch(ctx, batchedLineFeatures, vt, sheet)

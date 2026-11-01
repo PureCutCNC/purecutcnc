@@ -22,10 +22,11 @@
  * (Frank, round 7: "we should only show dots when in edit ellipse mode and
  * allow point drag, and manual changes"). Dragging is not an edit of the
  * project at all — every pointer move writes the dragged radius into the
- * panel's field text (`cannedEditDraft.ts`), and the panel's ordinary live
- * preview and Save/Cancel handling do the rest. So a dragged radius is one undo
- * step on Save and is discarded by Cancel exactly like a typed one, and there
- * is no direct store write here to drift from the typed path.
+ * panel's field text (`cannedEditDraft.ts`) as a *held* preview, which the
+ * canvas draws (outline and handles alike) while the stored parameters wait for
+ * Save (issue #1112 rt7-g review). So a dragged radius is one undo step on Save
+ * and is discarded by Cancel exactly like a typed one, and there is no store
+ * write here to drift from the typed path.
  */
 
 import type { Matrix2D, Point } from '../../types/project'
@@ -155,10 +156,15 @@ export function moveCannedRadiusDrag(
 
 /**
  * Publish the drag as the panel's field text, which is the one edit path a typed
- * value also takes: the panel re-renders, its live preview writes the shape, and
- * Save commits the whole session as one undo step. Returns whether the field
- * changed, so a gated pointer move does not churn the draft.
+ * value also takes: the panel re-renders and Save commits the whole session as
+ * one undo step. The write is *held*, so the canvas draws the dragged radius
+ * (the outline and the handles are placed by the draft) while the project keeps
+ * the stored parameters until Save (issue #1112 rt7-g review) — the drag is an
+ * edit of the panel, not of the project. Returns whether the field changed, so
+ * a gated pointer move does not churn the draft.
  */
 export function publishCannedRadiusDrag(state: CannedRadiusDragState): boolean {
-  return setCannedEditDraftField(state.featureId, state.axis, String(state.params[state.axis]))
+  return setCannedEditDraftField(state.featureId, state.axis, String(state.params[state.axis]), {
+    holdPreview: true,
+  })
 }

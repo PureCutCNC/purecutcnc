@@ -533,28 +533,35 @@ for (const flatCase of FLAT_CASES) {
 }
 
 // A canned ellipse's radius handles belong to this panel (issue #1112 rt7-g):
-// the canvas drag is a field edit, so it previews live and Save/Cancel treat it
-// exactly like a typed radius.
-await scenario('Edit ellipse: dragging a handle writes the field and previews before Save', async () => {
+// the canvas drag is a field edit, but a *held* one — the panel and the canvas
+// follow the pointer while the project keeps its stored parameters until Save,
+// so a dragged radius is never a project change before the user commits it
+// (issue #1112 rt7-g review).
+await scenario('Edit ellipse: a dragged radius is held in the panel until Save', async () => {
   const featureId = flatProject('ellipse')
   const storedDefinition = definitionJson(featureId)
   const storedHistory = historyLength()
   const mounted = await openPanel(featureId, 'ellipse')
   try {
     await waitFor(() => panelInputs().length === 2, 'the two radius fields render')
-    const before = previewGeometry(featureId)
 
     const feature = resolveFeatureInstance(project(), featureId)
     assert(feature, 'the edited ellipse resolves')
     const drag = beginCannedRadiusDrag(feature, 0, getCannedEditDraft())
     assert(drag, 'the open panel lets the X handle start a drag')
     // The fixture ellipse sits at (40, 30), so a pointer at x = 85 asks for rx 45.
-    publishCannedRadiusDrag(updateCannedRadiusDrag(drag, { x: 85, y: 30 }))
+    const moved = updateCannedRadiusDrag(drag, { x: 85, y: 30 })
+    publishCannedRadiusDrag(moved)
     await flush()
 
     assert(panelInputs()[0].value === '45', `the X field holds the dragged radius, got ${panelInputs()[0].value}`)
     assert(panelInputs()[1].value === '20', 'the drag left the Y field alone')
-    assert(previewGeometry(featureId) !== before, 'the dragged radius previewed on the canvas')
+    // The one requirement the reviewed escape broke: a drag writes the panel,
+    // never the project. The canvas preview reads the same draft the handles do
+    // (`cannedRadiusDrag.test.ts` runs that draw pass).
+    assert(definitionJson(featureId) === storedDefinition, 'a dragged radius leaves the stored ellipse untouched until Save')
+    assert(cannedEditHandleParams(feature, getCannedEditDraft(), null)?.rx === 45, 'the canvas draws the dragged radius from the panel draft')
+    assert(cannedEditHandleParams(feature, getCannedEditDraft(), moved)?.rx === 45, 'while moving, the drag itself places the handle')
     assert(historyLength() === storedHistory, 'a dragged radius is not an undo step before Save')
 
     buttonByLabel('Save').click()
@@ -586,17 +593,14 @@ await scenario('Edit ellipse: Cancel discards a dragged radius like a typed one'
     publishCannedRadiusDrag(updateCannedRadiusDrag(drag, { x: 40, y: 60 }))
     await flush()
     assert(panelInputs()[1].value === '30', `the Y field holds the dragged radius, got ${panelInputs()[1].value}`)
-    assert(
-      resolveFeatureInstance(project(), featureId)?.canned?.params.ry === 30,
-      'the dragged radius previewed in the project',
-    )
+    assert(definitionJson(featureId) === storedDefinition, 'the dragged radius was held out of the project')
   } finally {
-    // Cancel/Escape closes the session and leaves the preview to restore.
+    // Cancel/Escape closes the session, which drops the held preview.
     store().cancelPendingAdd()
     mounted.unmount()
   }
   await flush()
-  assert(definitionJson(featureId) === storedDefinition, 'Cancel restored the stored ellipse')
+  assert(definitionJson(featureId) === storedDefinition, 'Cancel left the stored ellipse alone')
   assert(historyLength() === storedHistory, 'Cancel left the undo history alone')
 })
 

@@ -20,9 +20,13 @@
  * The handles belong to **Edit ellipse…**, not to a plain selection: a selected
  * ellipse draws none and nothing can be dragged, and they appear only while the
  * panel is open (Frank, round 7: "we should only show dots when in edit ellipse
- * mode"). A drag writes the panel's Radius X / Radius Y field, so the panel's
- * own preview follows the pointer, Save commits the whole session as one undo
- * step and Cancel puts the stored radius back.
+ * mode"). The plain-selection case asserts the drawing as well as the gesture —
+ * the feature pass publishes the handle count it drew (`data-radius-handles`),
+ * so a dot that is visible but not grabbable fails here (issue #1112 rt7-g
+ * review). A drag writes the panel's Radius X / Radius Y field and the canvas
+ * draws the dragged outline, while the project keeps its stored parameters until
+ * Save commits the whole session as one undo step; Cancel discards the drag
+ * exactly as it discards a typed value.
  *
  * A placed, rotated ellipse draws one handle at the end of its local X axis and
  * one at the end of its local Y axis — in the ellipse's own frame, so a 30°
@@ -135,6 +139,57 @@ async function openEditEllipse(page: Page, featureId: string): Promise<void> {
 async function radiusFields(page: Page): Promise<{ rx: string; ry: string }> {
   const inputs = page.locator('.canvas-workflow-panel--creation .canvas-workflow-panel__parameter-fields input')
   return { rx: await inputs.nth(0).inputValue(), ry: await inputs.nth(1).inputValue() }
+}
+
+/**
+ * How many radius handles the canvas feature pass drew on its last frame.
+ *
+ * The pass publishes the count on the sketch canvas (`data-radius-handles`,
+ * dev-only) because the handles are an in-canvas drawing: asserting that a
+ * plain selection cannot be dragged says nothing about dots that are drawn but
+ * not grabbable, which is exactly the reviewed escape (issue #1112 rt7-g
+ * review). `NaN` until a frame has drawn; poll it, since the pass runs on an
+ * animation frame.
+ */
+async function drawnRadiusHandles(page: Page): Promise<number> {
+  return canvas.sketch(page).evaluate(
+    (element) => Number((element as HTMLCanvasElement).dataset.radiusHandles),
+  )
+}
+
+/** Wait for the drawn frame to publish `count` handles. */
+async function expectDrawnHandles(page: Page, count: number, message: string): Promise<void> {
+  await expect.poll(() => drawnRadiusHandles(page), { message }).toBe(count)
+}
+
+/**
+ * Wait until the pass drew the edited ellipse at the panel's fields, then read
+ * the radii it actually drew.
+ */
+async function drawnEllipseDraft(
+  page: Page,
+  expected: { rx: string; ry: string },
+): Promise<{ rx: number; ry: number }> {
+  const wanted = { rx: Number(expected.rx), ry: Number(expected.ry) }
+  await page.waitForFunction(({ rx, ry }) => {
+    const sketch = document.querySelector('canvas.sketch-canvas') as HTMLCanvasElement | null
+    const drawn = sketch?.dataset.ellipseDraft
+    if (!drawn) return false
+    const [drawnRx, drawnRy] = drawn.split(',').map(Number)
+    return Math.abs(drawnRx - rx) < 1e-6 && Math.abs(drawnRy - ry) < 1e-6
+  }, wanted)
+  const drawn = await canvas.sketch(page).evaluate(
+    (element) => (element as HTMLCanvasElement).dataset.ellipseDraft ?? '',
+  )
+  const [rx, ry] = drawn.split(',').map(Number)
+  return { rx, ry }
+}
+
+/** The drafted radii the pass published, or `null` while no editor is open. */
+async function drawnEllipseDraftText(page: Page): Promise<string | null> {
+  return canvas.sketch(page).evaluate(
+    (element) => (element as HTMLCanvasElement).dataset.ellipseDraft ?? null,
+  )
 }
 
 /** How many committed undo steps the project has. */
@@ -337,8 +392,11 @@ function expectNear(actual: number, expected: number, label: string): void {
 test('a plain selection of a canned ellipse has no radius handles', async ({ app }) => {
   const ellipse = await seedRotatedEllipse(app.page)
   await settleView(app.page)
-  // The selection the seeding left is the plain one: no Edit panel, no handles.
+  // The selection the seeding left is the plain one: no Edit panel, and — the
+  // part the drag alone cannot see — no handles drawn on the canvas.
   await expect(app.page.locator('.canvas-workflow-panel--creation')).toHaveCount(0)
+  await expectDrawnHandles(app.page, 0, 'a plain selection draws no radius handles')
+  expect(await drawnEllipseDraftText(app.page), 'and previews no editor draft').toBeNull()
   const undoBefore = await undoDepth(app.page)
 
   // Press exactly where the X handle would be and pull: nothing moves, because
@@ -359,6 +417,7 @@ test('a plain selection of a canned ellipse has no radius handles', async ({ app
   expectNear(after.rx, RADII.rx, 'a press on a plain selection leaves rx alone')
   expectNear(after.ry, RADII.ry, 'a press on a plain selection leaves ry alone')
   expect(await undoDepth(app.page), 'and writes no undo step').toBe(undoBefore)
+  await expectDrawnHandles(app.page, 0, 'and the press draws no handles either')
 })
 
 test('the X handle writes the panel field and only Save stores rx', async ({ app }) => {
@@ -369,6 +428,7 @@ test('the X handle writes the panel field and only Save stores rx', async ({ app
 
   await openEditEllipse(app.page, ellipse.featureId)
   expect(await radiusFields(app.page)).toEqual({ rx: '30', ry: '20' })
+  await expectDrawnHandles(app.page, 2, 'the open editor draws both handles')
 
   // Pull the X handle further along the placed X axis: rx 30 → 55, as far as the
   // canvas allows.
@@ -377,11 +437,20 @@ test('the X handle writes the panel field and only Save stores rx', async ({ app
   expect(asked, `the X drag must stay on the canvas and pull the handle: it reached ${asked}`)
     .toBeGreaterThan(RADII.rx + MIN_PULL)
 
-  // The drag is the panel's field, not a direct write: the panel shows it, the
-  // Y field is untouched, and nothing is committed yet.
+  // The drag is the panel's field and the canvas' drawing, not a project write:
+  // the panel shows it, the Y field is untouched, the canvas draws the held
+  // draft, and the stored parameters are still the ones the session opened on
+  // (issue #1112 rt7-g review).
   const fields = await radiusFields(app.page)
   expectNear(Number(fields.rx), asked, 'the X drag fills the panel’s Radius X field')
   expect(Number(fields.ry), 'the drag leaves the Radius Y field alone').toBe(RADII.ry)
+  const previewed = await drawnEllipseDraft(app.page, fields)
+  expectNear(previewed.rx, asked, 'the canvas draws the dragged rx')
+  expect(previewed.ry, 'and the untouched ry').toBe(RADII.ry)
+  await expectDrawnHandles(app.page, 2, 'both handles stay on the canvas through the drag')
+  const beforeSave = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(beforeSave.rx, RADII.rx, 'a dragged radius is not stored before Save')
+  expectNear(beforeSave.ry, RADII.ry, 'and the other radius is not either')
   expect(await undoDepth(app.page), 'a drag before Save is not an undo step').toBe(undoBeforeDrag)
 
   await saveEditPanel(app.page)
@@ -389,6 +458,7 @@ test('the X handle writes the panel field and only Save stores rx', async ({ app
   expectNear(after.rx, asked, 'Save stores the dragged rx')
   expectNear(after.ry, RADII.ry, 'Save leaves ry alone')
   expect(await undoDepth(app.page), 'Save commits the whole session as one undo step').toBe(undoBeforeDrag + 1)
+  await expectDrawnHandles(app.page, 0, 'Save takes the handles away')
 
   await undo(app.page)
   const restored = await storedEllipse(app.page, ellipse.definitionId)
@@ -401,6 +471,7 @@ test('the Y handle changes ry, in the ellipse’s own rotated frame', async ({ a
   await settleView(app.page)
   const undoBeforeDrag = await undoDepth(app.page)
   await openEditEllipse(app.page, ellipse.featureId)
+  await expectDrawnHandles(app.page, 2, 'the open editor draws both handles')
 
   // Pull the Y handle along the placed Y axis: ry 20 → 45, as far as the canvas
   // allows.
@@ -412,6 +483,10 @@ test('the Y handle changes ry, in the ellipse’s own rotated frame', async ({ a
   const fields = await radiusFields(app.page)
   expectNear(Number(fields.ry), asked, 'the Y drag fills the panel’s Radius Y field')
   expect(Number(fields.rx), 'the drag leaves the Radius X field alone').toBe(RADII.rx)
+  const previewed = await drawnEllipseDraft(app.page, fields)
+  expectNear(previewed.ry, asked, 'the canvas draws the dragged ry')
+  const beforeSave = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(beforeSave.ry, RADII.ry, 'a dragged radius is not stored before Save')
 
   await saveEditPanel(app.page)
   const after = await storedEllipse(app.page, ellipse.definitionId)
@@ -435,12 +510,15 @@ test('Cancel discards a dragged radius like a typed one', async ({ app }) => {
   expect(radiusAlong('rx', reached), 'the drag must pull the X handle')
     .toBeGreaterThan(RADII.rx + MIN_PULL)
   expectNear(Number((await radiusFields(app.page)).rx), radiusAlong('rx', reached), 'the drag is in the field')
+  const held = await storedEllipse(app.page, ellipse.definitionId)
+  expectNear(held.rx, RADII.rx, 'a dragged radius is held out of the project before Save')
 
   await cancelEditPanel(app.page)
   const after = await storedEllipse(app.page, ellipse.definitionId)
-  expectNear(after.rx, RADII.rx, 'Cancel puts the stored rx back')
+  expectNear(after.rx, RADII.rx, 'Cancel leaves the stored rx as it was')
   expectNear(after.ry, RADII.ry, 'Cancel leaves ry alone')
   expect(await undoDepth(app.page), 'Cancel leaves the undo history alone').toBe(undoBeforeDrag)
+  await expectDrawnHandles(app.page, 0, 'Cancel takes the handles away')
 })
 
 test('a placed centre and rotation stay put through a radius drag', async ({ app }) => {

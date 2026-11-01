@@ -67,6 +67,10 @@ for (const axis of ['x', 'y'] as const) {
   const dependencies = {
     ctx, sheet, features, project: f.project, selection: f.selection,
     vt: { scale: 1, offsetX: 0, offsetY: 100 },
+    // The pass publishes what it drew of the Edit-ellipse handles for the
+    // browser specs (issue #1112 rt7-g review); the canvas is its target.
+    canvas: { dataset: {} as Record<string, string> } as unknown as HTMLCanvasElement,
+    CANVAS_TEST_SEAMS: true,
     t: (key: string, values?: { name?: string }) => values?.name ?? key,
     drawAroundModelBands, hiddenDistributionSourceIds: null, operationHighlightIds: null as Set<string> | null,
     drawOtherFace: () => new Set(), useFaceViewStore: { getState: () => ({ showOtherSide: false }) },
