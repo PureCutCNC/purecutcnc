@@ -1811,17 +1811,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </div>
             </>
           ) : null}
-          {isCannedShape ? null : (
+          {isCannedShape || isTextFeature ? null : (
             // The one edit action Shape offers a drawn feature, in the place a
-            // generated shape's "Edit {shape}…" sits: a text run's own editor
-            // disables it, exactly as the bottom-row button it replaces did
-            // (issue #1112 rt7-i). The bottom row is Delete alone now.
+            // generated shape's "Edit {shape}…" sits. A generated shape has its
+            // own editor in the block above, and so does a text run — its
+            // "Edit text…" reopens the run, so a sketch edit here would be a
+            // second, permanently disabled action (issue #1112 rt7-i). The
+            // bottom row is Delete alone now.
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
                 className="feat-btn"
                 type="button"
                 onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
-                disabled={isTextFeature}
               >
                 {t('featureTree.properties.stock.editSketch')}
               </button>

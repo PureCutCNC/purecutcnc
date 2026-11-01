@@ -30,7 +30,10 @@
  *  - Make unique renders inside Instance, and only while the shape is shared;
  *  - the bottom row outside the sections is Delete alone;
  *  - a generated shape's Properties show no "Edit sketch" anywhere, since its
- *    parameters own its geometry and its own editor is the one edit entry.
+ *    parameters own its geometry and its own editor is the one edit entry;
+ *  - a text run is edited by its own "Edit text…" dialog, so Shape shows that
+ *    alone and no "Edit sketch" (the disabled leftover it used to carry),
+ *    exactly as for a generated shape with its own editor.
  *
  * Mutations checked one at a time against these assertions:
  *  - rendering "Edit sketch" in the bottom row again → "the bottom row is
@@ -39,6 +42,8 @@
  *    the shared shape;
  *  - rendering the bottom-row "Edit sketch" for a canned shape → "a generated
  *    shape shows no Edit sketch at all" fails;
+ *  - rendering Shape's disabled "Edit sketch" for a text run again → "Shape
+ *    has exactly one edit action" fails for the run, as it did at 9b456ef7;
  *  - dropping the click handler from Shape's "Edit sketch" → the sketch-edit
  *    session assertion fails.
  *
@@ -72,7 +77,7 @@ const { PropertiesPanel } = await import('./PropertiesPanel')
 const { UnitConversionContext } = await import('../project/UnitConversionContext')
 const { createRoot } = await import('react-dom/client')
 const { flushSync } = await import('react-dom')
-const { newProject } = await import('../../types/project')
+const { newProject, rectProfile } = await import('../../types/project')
 const { projectWithFeatures } = await import('../../test/projectFixtures')
 
 type Project = ReturnType<typeof newProject>
@@ -84,6 +89,7 @@ async function flush(): Promise<void> {
 }
 
 const EDIT_SKETCH = enMessages['featureTree.properties.stock.editSketch']
+const EDIT_TEXT = enMessages['featureTree.properties.text.edit']
 const DELETE_FEATURE = enMessages['featureTree.properties.deleteFeature']
 const MAKE_UNIQUE = enMessages['featureTree.properties.makeUnique']
 const CANNED_EDIT = enMessages['featureTree.properties.canned.edit']
@@ -131,6 +137,37 @@ function addLinkedCopy(featureId: string): string {
     },
   })
   return copy.id
+}
+
+/**
+ * A text run, written as a feature draft because the app's own text tool needs
+ * a canvas pick to place it: same `kind`/`text`/frame the real action stores,
+ * which is all the panel reads. The dialog for it is what "Edit text…" reopens.
+ */
+function addTextFeature(): string {
+  const project = projectWithFeatures(emptyProject(), [{
+    id: 'run',
+    name: 'ABC',
+    kind: 'text',
+    operation: 'subtract',
+    visible: true,
+    locked: false,
+    z_top: 5,
+    z_bottom: 0,
+    folderId: null,
+    text: { text: 'ABC', style: 'skeleton', fontId: 'simple_stroke', size: 10 },
+    sketch: {
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+      profile: rectProfile(20, 20, 30, 10),
+    },
+  } as never])
+  store().loadProject(project)
+  const created = store().project.features[0]
+  assert.ok(created, 'the text run is created')
+  return created.id
 }
 
 // ── the panel, rendered for real ─────────────────────────────
@@ -293,6 +330,67 @@ async function testCannedShape(): Promise<void> {
   mounted.unmount()
 }
 
+// ── a text run: its own editor in Shape, no Edit sketch ──────
+
+async function testTextFeature(): Promise<void> {
+  const featureId = addTextFeature()
+  store().selectFeature(featureId)
+  const mounted = mount()
+  await mounted.openSection('Shape')
+
+  const shape = mounted.section('Shape')
+  assert.ok(shape, 'the panel renders the Shape section')
+  assert.ok(
+    shape.querySelector('[data-testid="text-summary"]'),
+    'the text run is the text branch, its summary is in Shape',
+  )
+  assert.ok(
+    buttonByLabel(shape, EDIT_TEXT),
+    `Shape carries "${EDIT_TEXT}", got ${JSON.stringify(labels(shape))}`,
+  )
+  // One edit action, as for every other kind: its own dialog, not a sketch
+  // edit whose button was permanently disabled for a text run.
+  assert.equal(
+    labels(shape).filter((label) => label.startsWith('Edit ')).length,
+    1,
+    `Shape has exactly one edit action, got ${JSON.stringify(labels(shape))}`,
+  )
+  assert.deepEqual(
+    labels(shape).filter((label) => label.startsWith('Edit ')),
+    [EDIT_TEXT],
+    'and that one action is the text editor',
+  )
+  // No Edit sketch anywhere — not in Shape, not in the bottom row, not in
+  // Instance: the run's text owns its geometry.
+  assert.ok(
+    !labels(mounted.host).includes(EDIT_SKETCH),
+    `a text run shows no "${EDIT_SKETCH}" at all, got ${JSON.stringify(labels(mounted.host))}`,
+  )
+
+  const bottom = mounted.bottomActions()
+  assert.deepEqual(labels(bottom), [DELETE_FEATURE], 'its bottom row is Delete alone too')
+  mounted.unmount()
+
+  // The text editor still works: the one edit action reopens its dialog with the
+  // run's own values, exactly as before.
+  const clickMount = mount()
+  await clickMount.openSection('Shape')
+  const edit = buttonByLabel(clickMount.section('Shape'), EDIT_TEXT)
+  assert.ok(edit, 'the text edit action renders')
+  assert.equal(edit.hasAttribute('disabled'), false, 'and is offered for an unlocked run')
+  edit.click()
+  await flush()
+  const title = clickMount.host.querySelector('.dialog-title')
+  assert.equal(
+    (title?.textContent ?? '').trim(),
+    enMessages['dialogs.textTool.editTitle'],
+    'clicking it reopens the text editor dialog',
+  )
+  const value = clickMount.host.querySelector('#text-tool-value') as HTMLInputElement | null
+  assert.equal(value?.value, 'ABC', 'with the run it opened on')
+  clickMount.unmount()
+}
+
 // ── a shared shape: Make unique in Instance ────────────────────
 
 async function testMakeUniqueLivesInInstance(): Promise<void> {
@@ -349,6 +447,7 @@ async function testMakeUniqueLivesInInstance(): Promise<void> {
 
 await testPlainFeature()
 await testCannedShape()
+await testTextFeature()
 await testMakeUniqueLivesInInstance()
 
 console.log('shape edit action tests passed')
