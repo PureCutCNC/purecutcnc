@@ -50,7 +50,7 @@ import {
 import { unpackResult } from './moveTransport'
 import { createRotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
 import type { RotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
-import { recordRotaryPoolReport } from './rotaryPoolTelemetry'
+import { recordRotaryCancelled, recordRotaryPoolReport } from './rotaryPoolTelemetry'
 import type { ExecutorRequest, GenerationExecutor } from './executor'
 import type { GenerationFailure, GenerationOutcome, GenerationStage } from './types'
 
@@ -163,6 +163,16 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
     }
     if (message.kind === 'rotaryRelease') {
       angleWorkers.release(message.slot)
+      return
+    }
+    // A superseded rotary generation reporting that it finished stopping (#1115
+    // p-d3 fix 2). It names the request that was cancelled, not the one now in
+    // flight, and it settles neither: the cancelled request was answered as
+    // cancelled when its successor was sent. Recorded so the app — and the
+    // suites that drive a real worker — can tell a settled cancellation from a
+    // batch left pending with the previous operation's data.
+    if (message.kind === 'rotaryCancelled') {
+      recordRotaryCancelled()
       return
     }
 

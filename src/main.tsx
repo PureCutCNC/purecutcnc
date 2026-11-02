@@ -254,7 +254,8 @@ if (import.meta.env.DEV) {
     /**
      * What the last rotary generation reported about its angle pool (#1115
      * p-d3). `batches > 0` with more than one worker is the evidence that the
-     * pool really sampled in a real browser.
+     * pool really sampled in a real browser; `cancelled` counts superseded
+     * generations that reported they stopped (p-d3 fix 2).
      */
     getRotaryPoolStats: async () => {
       const { readRotaryPoolTelemetry } = await import('./app/toolpathGeneration/rotaryPoolTelemetry')
@@ -307,6 +308,7 @@ declare global {
       getRotaryPoolStats: () => Promise<{
         last: { mode: string; workers: number; batches: number; fallback: string } | null
         generations: number
+        cancelled: number
       }>
       startJoinFeatures: (ids: string[]) => Promise<void>
       startRotateFeature: (featureId: string) => Promise<void>

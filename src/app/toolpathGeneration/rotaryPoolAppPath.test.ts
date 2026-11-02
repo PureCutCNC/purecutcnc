@@ -42,9 +42,14 @@
  *   workers ends it; the second result equals a fresh run and the first never
  *   posts anything. This is the property the generation counter exists for. The
  *   first pool is made to reach a real dispatched batch whose replies are held,
- *   so the cancellation happens mid-batch rather than mid-install, and the
- *   obsolete replies are then answered by hand — with the epoch and batch the
- *   cancelled pool asked for — to prove nothing consumes them.
+ *   so the cancellation happens mid-batch rather than mid-install. Three pieces
+ *   make the case non-vacuous (#1115 p-d3 fix 2): the cancelled generation has
+ *   to report that it actually settled (`rotaryCancelled`) rather than leaving a
+ *   batch pending; the successor is a *different* operation with different
+ *   moves, so a row borrowed from the cancelled one would be visible; and the
+ *   obsolete replies are answered by hand — with the epoch and batch the
+ *   cancelled pool asked for — while the successor is still in flight, so a late
+ *   reply has a live generation to corrupt and nothing consumes it.
  * - **Fallback.** A worker that cannot be created, one that fails to load, and a
  *   computation error: the first two rerun serially with identical output, the
  *   last stays an error. A pool failure is not allowed to hide the operation,
@@ -271,8 +276,21 @@ async function main(): Promise<void> {
   // ── cancellation: a second request ends the first, mid-batch ─────────────
   {
     const project = rotaryOperationFixture('x', 'rotary_finish')
-    const operation = project.operations[0]
-    const expected = direct(project, operation)
+    const cancelledOperation = project.operations[0]
+    // The successor is a *different operation in the same snapshot*: same
+    // imported mesh, different cutting data, so its moves differ from the
+    // cancelled operation's. Identical data would let a row borrowed from the
+    // cancelled generation pass as the successor's.
+    const successorOperation: Operation = {
+      ...cancelledOperation, id: 'after-cancel', name: 'After cancel', stepover: 0.35,
+    }
+    project.operations = [cancelledOperation, successorOperation]
+    const cancelledExpected = direct(project, cancelledOperation)
+    const successorExpected = direct(project, successorOperation)
+    check('cancellation: the two operations produce different moves',
+      canonicalize(successorExpected.result) !== canonicalize(cancelledExpected.result),
+      "the successor produces the cancelled operation's moves, so a borrowed row could not be seen")
+
     /** Batches the first request's workers received and never answered. */
     const held: HeldBatch[] = []
     let holding = true
@@ -295,7 +313,8 @@ async function main(): Promise<void> {
       app.driver.send({
         kind: 'generate',
         identity: {
-          documentKey: 1, workerEpoch: 0, requestId: 1, snapshotId: 1, operationId: operation.id, traceMode: false,
+          documentKey: 1, workerEpoch: 0, requestId: 1, snapshotId: 1,
+          operationId: cancelledOperation.id, traceMode: false,
         },
         rotary: { availableParallelism: 4 },
       })
@@ -304,25 +323,61 @@ async function main(): Promise<void> {
       check('cancellation: the first generation is mid-batch, not mid-attach',
         firstJobs > 0 && app.host.liveWorkers() >= 2,
         `${held.length} held batch(es), ${firstJobs} job(s), ${app.host.liveWorkers()} worker(s)`)
+      const cancelledSlots = app.requestedSlots.length
 
       // The successor is a different request and a pool of its own, and it
       // starts while the first request's batch is still unanswered.
       holding = false
       const successor = generate(app.driver, {
-        documentKey: 1, snapshotId: 1, requestId: 2, operationId: operation.id,
+        documentKey: 1, snapshotId: 1, requestId: 2, operationId: successorOperation.id,
       }, { parallelism: 4 })
+      let successorFinished = false
+      void successor.then(
+        () => { successorFinished = true },
+        () => { successorFinished = true },
+      )
+
+      // The cancelled computation settles **internally**: its in-flight batch is
+      // rejected by the pool's disposal, the async driver unwinds, and the worker
+      // reports that it stopped. A pool that only stopped *accepting* replies
+      // would leave the cancelled request pending for ever, and nothing else
+      // would show it — so this wait, not the successor's result, is what proves
+      // cancellation rather than abandonment.
+      await waitFor(() => app.cancelled.length >= 1, 'the cancelled generation to settle', 20_000)
+      const settles = app.cancelled.filter((message) => message.identity.requestId === 1)
+      check('cancellation: the cancelled computation settles internally',
+        settles.length === 1 && settles[0].identity.operationId === cancelledOperation.id,
+        `${app.cancelled.length} settle message(s): ${JSON.stringify(app.cancelled)}`)
+
+      // The successor then builds its own pool, with slot ids the cancelled pool
+      // never had (they are minted for the life of the worker, not per pool).
+      await waitFor(
+        () => app.requestedSlots.length > cancelledSlots,
+        'the successor to create its own angle workers',
+        20_000,
+      )
+      check('cancellation: the successor creates its own angle workers',
+        app.requestedSlots.length - cancelledSlots >= 2,
+        `${app.requestedSlots.length - cancelledSlots} new slot(s), slots ${JSON.stringify(app.requestedSlots)}`)
+
+      // Answer the cancelled request's batches *now* — with the epoch and batch
+      // the first pool asked for, and rows no real sample would hold — while the
+      // successor is still in flight. Nothing may consume them: not in this
+      // generation, and not in a later one.
+      check('cancellation: the obsolete replies are released while the successor is in flight',
+        !successorFinished, 'the successor had already finished, so a late reply had nothing live to reach')
+      for (const batch of held) releaseHeldBatch(batch)
+      await new Promise((settle) => setTimeout(settle, 100))
+
       const secondResult = await successor
-      compareWithSerial(secondResult, expected, 'cancellation: the successor')
+      compareWithSerial(secondResult, successorExpected, 'cancellation: the successor')
       check('cancellation: the successor really ran the pool',
         secondResult.rotary?.mode === 'parallel' && (secondResult.rotary?.batches ?? 0) >= 1,
         JSON.stringify(secondResult.rotary))
-
-      // Answer the cancelled request's batches *after* the successor finished,
-      // with the epoch and batch the first pool asked for and rows no real sample
-      // would hold. Nothing may consume them — not in this generation, and not
-      // in a later one.
-      for (const batch of held) releaseHeldBatch(batch)
-      await new Promise((settle) => setTimeout(settle, 100))
+      check("cancellation: the successor did not receive the cancelled operation's result",
+        secondResult.result !== null
+          && canonicalize(secondResult.result) !== canonicalize(cancelledExpected.result),
+        "the successor produced the cancelled operation's moves")
 
       // The first request was disposed while its batch was in flight, so nothing
       // may post for it — and the successor's result is the only terminal
@@ -334,6 +389,8 @@ async function main(): Promise<void> {
         firstTerminals.length === 0, `${firstTerminals.length} terminal message(s) for the cancelled request`)
       check('cancellation: the obsolete replies changed nothing',
         app.terminal.length === 1, `${app.terminal.length} terminal message(s)`)
+      check('cancellation: only the superseded generation reports that it stopped',
+        app.cancelled.length === 1, `${app.cancelled.length} settle message(s): ${JSON.stringify(app.cancelled)}`)
       check('cancellation: every angle worker is stopped, the cancelled request\'s included',
         app.host.liveWorkers() === 0, `${app.host.liveWorkers()} angle worker(s) still live`)
     } finally {

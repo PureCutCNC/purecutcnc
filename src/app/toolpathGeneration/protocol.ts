@@ -49,8 +49,15 @@ import type { GenerationFailure, GenerationStage, RequestIdentity } from './type
  * of a `MessageChannel`; the main thread answers with the angle worker itself,
  * or with `rotaryWorkerFailed`. `completed` optionally reports which way the
  * angle pool ran.
+ *
+ * v4 (issue #1115, slice p-d3 fix 2): `rotaryCancelled` reports that a
+ * superseded rotary generation has actually finished. A cancelled generation
+ * waits on an angle batch, so without that message the main thread could not
+ * tell "cancelled and stopped" from "cancelled and still holding the previous
+ * operation's data"; the bump is what stops a cached v3 worker from posting a
+ * kind its main thread would reject.
  */
-export const TOOLPATH_PROTOCOL_VERSION = 3
+export const TOOLPATH_PROTOCOL_VERSION = 4
 
 // ── Worker → main ────────────────────────────────────────────────────
 
@@ -147,6 +154,25 @@ export interface FailedMessage {
   failure: GenerationFailure
 }
 
+/**
+ * A superseded rotary generation has finished (#1115 p-d3 fix 2).
+ *
+ * Cancellation is only real if the cancelled computation reaches its end: its
+ * angle batch is rejected by `pool.dispose()`, the async driver unwinds, and the
+ * operation's prepared geometry is released. Until that happens the worker is
+ * still holding one cancelled operation's data while the next one runs.
+ *
+ * Posted for a **superseded** generation only, and only for rotary ones (every
+ * other kind is synchronous, so it cannot be cancelled mid-flight). It never
+ * carries a result and never settles a request — the request it names was
+ * settled as cancelled by the main thread when its successor was sent; this
+ * message is the proof that the worker's half stopped.
+ */
+export interface RotaryCancelledMessage {
+  kind: 'rotaryCancelled'
+  identity: RequestIdentity
+}
+
 export type WorkerToMain =
   | ReadyMessage
   | SnapshotReadyMessage
@@ -155,6 +181,7 @@ export type WorkerToMain =
   | FailedMessage
   | RotaryWorkerRequestMessage
   | RotaryReleaseMessage
+  | RotaryCancelledMessage
 
 // ── Main → worker ────────────────────────────────────────────────────
 
@@ -294,6 +321,8 @@ export function isWorkerToMain(value: unknown): value is WorkerToMain {
         && typeof (value.port as { postMessage?: unknown }).postMessage === 'function'
     case 'rotaryRelease':
       return isFiniteNumber(value.slot)
+    case 'rotaryCancelled':
+      return isRequestIdentity(value.identity)
     default:
       return false
   }

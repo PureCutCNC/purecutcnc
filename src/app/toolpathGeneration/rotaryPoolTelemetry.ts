@@ -15,7 +15,8 @@
  */
 
 /**
- * What the last rotary generation reported about its angle pool (#1115 p-d3).
+ * What the last rotary generation reported about its angle pool (#1115 p-d3),
+ * and what the worker said about the ones it cancelled.
  *
  * The pool runs *between* the generation worker and the angle workers, so the
  * main thread cannot see its batches directly. The generation worker therefore
@@ -37,16 +38,28 @@ export interface RotaryPoolTelemetry {
   readonly last: RotaryPoolReport | null
   /** How many rotary generations have reported since the page loaded. */
   readonly generations: number
+  /**
+   * How many superseded rotary generations have reported that they stopped
+   * (#1115 p-d3 fix 2). A cancellation that is abandoned mid-batch never
+   * increments this, which is the difference between "cancelled" and "still
+   * holding the previous operation's data".
+   */
+  readonly cancelled: number
 }
 
 let last: RotaryPoolReport | null = null
 let generations = 0
+let cancelled = 0
 
 export function recordRotaryPoolReport(report: RotaryPoolReport): void {
   last = report
   generations += 1
 }
 
+export function recordRotaryCancelled(): void {
+  cancelled += 1
+}
+
 export function readRotaryPoolTelemetry(): RotaryPoolTelemetry {
-  return { last, generations }
+  return { last, generations, cancelled }
 }

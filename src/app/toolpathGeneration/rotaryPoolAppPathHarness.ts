@@ -37,7 +37,7 @@ import { Worker } from 'node:worker_threads'
 
 import { ROTARY_ANGLE_PROTOCOL_VERSION } from '../../engine/toolpaths/rotaryAngleProtocol'
 import { isWorkerToMain } from './protocol'
-import type { WorkerToMain } from './protocol'
+import type { RotaryCancelledMessage, WorkerToMain } from './protocol'
 import { createRotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
 import type { RotaryAngleHostWorker, RotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
 import type { RotaryAngleMessagePort } from './rotaryAnglePortTransport'
@@ -121,6 +121,18 @@ export interface AppPath {
    * 30 s startup backstop and prove nothing about the failure path.
    */
   readonly failures: string[]
+  /**
+   * `rotaryCancelled` messages, in arrival order (#1115 p-d3 fix 2). Each one is
+   * a superseded rotary generation that reached its end; a cancelled generation
+   * whose batch was left pending never posts one.
+   */
+  readonly cancelled: RotaryCancelledMessage[]
+  /**
+   * Slot ids the coordinator asked the main thread to create angle workers for,
+   * in order. A superseded pool's slots are never reused (`nextSlot` is global),
+   * so a new id after a cancellation is the successor's own pool.
+   */
+  readonly requestedSlots: number[]
   close(): Promise<void>
 }
 
@@ -159,6 +171,8 @@ export function createAppPath(options: AppPathOptions = {}): AppPath {
   const createAngleWorker = options.createAngleWorker
   const terminal: WorkerToMain[] = []
   const failures: string[] = []
+  const cancelled: RotaryCancelledMessage[] = []
+  const requestedSlots: number[] = []
   let host: RotaryAnglePoolHost | null = null
   host = createRotaryAnglePoolHost({
     ...(createAngleWorker !== undefined ? { createWorker: createAngleWorker } : {}),
@@ -173,10 +187,12 @@ export function createAppPath(options: AppPathOptions = {}): AppPath {
     if (!isWorkerToMain(data)) return
     if (data.kind === 'completed' || data.kind === 'failed') terminal.push(data)
     if (data.kind === 'rotaryWorker') {
+      requestedSlots.push(data.slot)
       host?.attach(data.slot, data.port)
       return
     }
     if (data.kind === 'rotaryRelease') host?.release(data.slot)
+    if (data.kind === 'rotaryCancelled') cancelled.push(data)
   })
 
   return {
@@ -184,6 +200,8 @@ export function createAppPath(options: AppPathOptions = {}): AppPath {
     get host() { return host as RotaryAnglePoolHost },
     terminal,
     failures,
+    cancelled,
+    requestedSlots,
     close: async () => {
       host?.terminate()
       await driver.close()

@@ -48,6 +48,9 @@
  *
  * Cancellation is still `Worker.terminate()` from the owner for work that has
  * not reached an await; the generation counter is what covers the waiting part.
+ * A superseded rotary generation finishes by posting `rotaryCancelled`, so the
+ * main thread can prove the batch it cancelled really stopped instead of being
+ * left pending with the previous operation's geometry still attached.
  */
 
 import {
@@ -245,7 +248,15 @@ async function generateRotary(
   const report = poolReport(mine?.pool?.stats() ?? null)
   const stale = seq !== generation
   await releaseResources(mine)
-  if (stale) return
+  if (stale) {
+    // The cancelled generation has actually finished. Reporting it is the
+    // difference between "stopped" and "abandoned mid-await, still holding the
+    // previous operation's data": the batch is rejected by `dispose()`, so this
+    // is reached, and a cancelled generation that never gets here is visible
+    // instead of silent (#1115 p-d3 fix 2).
+    post({ kind: 'rotaryCancelled', identity })
+    return
+  }
   if (failure !== null) {
     fail(identity, failure)
     return
