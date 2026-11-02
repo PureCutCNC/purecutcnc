@@ -2496,7 +2496,93 @@ function roughFromTargets(
     leftoverCache.set(key, leftover)
     return leftover
   }
-  const linkPlan = (layer: number) => (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+  /**
+   * #1117: the at-layer cutting link, tried before the raised one.
+   *
+   * The finish already follows the model between rings (#1093); a rough rose
+   * above whatever its own earlier layers left and rapid across, because the
+   * link may have to remove a layer's band. It does not have to: the standing
+   * stock at any along position before this layer is `max(model,
+   * previousRadius)`, so a cut at `max(currentLayerRadius, rowTip)` removes
+   * exactly the band this layer removes at its own rings -- full lateral
+   * engagement, no deeper cut, no new feed (decision 1 of the approved plan).
+   * The `max` with `layerRadius` is the layer clamp: where the model is lower
+   * than this layer the link stays at the layer instead of diving to the model,
+   * and where the model rises above it the link follows the model, so the rise
+   * is protected rather than cut through.
+   *
+   * The row is the same dense, cutter-safe `linkRowAt` row the raised link and
+   * the finish use, so it carries the stock allowance, the steep-step rule the
+   * emitter applies to its legs, and the retained-stub floors. It is never
+   * derived by removing clearance from the raised candidate: the raised height
+   * is about earlier layers, and this candidate is about the current one.
+   *
+   * **What the cutter may meet** is proved from the same leftover walk the
+   * raised link uses: the material the earlier layers can have left over this
+   * span (`linkLeftoverAt`, already the ring grid's own tips, the cutter's along
+   * footprint and the ball's rise). At every sample it may exceed the link's
+   * height by at most **one layer's band** -- a stepdown -- plus the scallop the
+   * tool leaves between the two adjoining rings (the ball's rise at half this
+   * transition's own span) and one sampling cell. More than that means the
+   * earlier layers did not cut there at all -- a plateau above the layer -- and a
+   * stay-down link would plunge through it at depth, which is exactly the
+   * engagement spike the plan forbids. The first layer's leftover is the blank,
+   * so its links remove one band by construction.
+   *
+   * Everything that makes a stay-down cut unsafe or unprovable keeps the raised
+   * link: a `NaN` row sample (no model under the tool there, so the ring at that
+   * along position removes nothing and the link would cut uncut blank), more
+   * than one band of material to remove, a region (outside it the standing stock
+   * is the blank), a square blank (its corner-to-corner rule is a separate one),
+   * a changed angle (A0 to A360 is a commanded turn, not equal), a row the work
+   * budget refused, and a transition between rings that are not adjacent. The
+   * caller passes the previous ring's own along coordinate, so a ring that
+   * emitted nothing -- a skipped ring -- leaves `current` at an earlier along
+   * position and cannot link across the gap; a partial ring whose last run is
+   * the adjoining one is fine, exactly as the raised link already links partial
+   * runs at their shared angle.
+   */
+  const linkAtLayer = (layer: number, layerRadius: number, fromAlong: number, from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+    if (square || region !== null) return null
+    if (from.a === undefined || to.a === undefined || from.a !== to.a) return null
+    if (alongCoordinate(stock, from) !== fromAlong) return null
+    const toAlong = alongCoordinate(stock, to)
+    if (!(toAlong > fromAlong)) return null
+    const row = linkRowAt(from.a)
+    if (!row) return null
+    // The material the earlier layers left, over **the whole cutter body** at
+    // this height, not only the link's own ray: the body reaches material a few
+    // degrees either side, and on a model that is not a solid of revolution the
+    // neighbouring angle can stand higher than the ray does. The reach shrinks
+    // as the height rises, and the link's lowest height is the layer radius, so
+    // that height's window is the widest one this link can need.
+    const reach = bodyReachDeg(layerRadius)
+    const leftover = linkLeftoverAt(row, from.a, layer, reach)
+    if (leftover.length === 0) return null
+    // The scallop the tool leaves between two rings: a ball cuts lowest at its
+    // own along position and rises by `r - sqrt(r^2 - dx^2)` at either side, so
+    // the material between the two adjoining rings stands up to this much above
+    // the layer's previous radius. A flat leaves none.
+    const halfSpan = (toAlong - fromAlong) / 2
+    const scallop = tool.type === 'ball_endmill'
+      ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - Math.min(halfSpan, tool.radius) ** 2))
+      : 0
+    const allowance = params.stepdown + scallop + params.requestedCellSize
+    const steps: RotaryLinkStep[] = []
+    for (let i = 0; i < row.along.length; i++) {
+      const x = row.along[i]
+      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      const tip = row.tips[i]
+      if (!Number.isFinite(tip)) return null
+      const height = Math.max(tip, layerRadius)
+      if (leftover[i] - height > allowance + 1e-9) return null
+      steps.push({ to: point(x, height, from.a), kind: 'cut' })
+    }
+    steps.push({ to, kind: 'cut' })
+    return steps
+  }
+  /** The raised link (#1093): rise to the earlier layers' leftover, rapid across, drop. */
+  const raisedLinkPlan = (layer: number) => (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
     if (from.a === undefined || to.a === undefined || from.a !== to.a) return null
     const fromAlong = alongCoordinate(stock, from)
     const toAlong = alongCoordinate(stock, to)
@@ -2579,7 +2665,7 @@ function roughFromTargets(
         : null
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
-      const layerLink = linkPlan(layer)
+      const layerLink = raisedLinkPlan(layer)
       for (let i = 0; i < along.length; i++, ring++) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const forward = ring % 2 === 0
@@ -2591,7 +2677,18 @@ function roughFromTargets(
             && (insideRegion === null || insideRegion(along[i], angles[k]))
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
-        const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, layerLink, i > 0)
+        const runs = ringRuns(samples)
+        // #1117: the at-layer cut joins the preceding ring **of this layer** to
+        // this one -- `along[i - 1]` is where the tool was left if that ring
+        // emitted anything, so a skipped ring's wider gap never qualifies. A
+        // partial run links when the emitted angle is exactly shared, which the
+        // link itself checks; an A-changing corner transition keeps the raised
+        // or travel-height link.
+        const ringLink = i === 0
+          ? layerLink
+          : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
+            linkAtLayer(layer, layerRadius, along[i - 1], from, to) ?? layerLink(from, to)
+        const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, ringLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
       }
@@ -2672,13 +2769,18 @@ function roughFromTargets(
  * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and every sample
  * reads its own angle row. Consecutive rings are linked (#1093) at the
  * angle their runs share -- a full ring's end and the next ring's start, or a
- * square corner arc's touch-gate boundary -- along the bar at the highest
- * material this operation's own earlier layers left on the path, plus the 1 mm
- * clearance. The constant-height traverse is a **rapid**: it is in air by
- * construction, and a feed through air makes the machine creep. Its rise and
- * drop stay feeds; the first layer has nothing removed in front of it and keeps
- * the travel height, and an A-changing link is left to the old travel-height
- * rule (or its retract), because the surface link requires one exact angle.
+ * square corner arc's touch-gate boundary. Where the link can stay at the layer
+ * it is a **cutting feed** at `max(this layer's radius, the model)` along the
+ * bar (#1117): that removes only the band this layer removes anyway, so it
+ * neither cuts deeper nor adds a feed, and it is the common case on a round bar.
+ * Everything that cannot be proved safe keeps the raised link: it rises to the
+ * highest material this operation's own earlier layers left on the path, plus
+ * the 1 mm clearance, rapids across and drops back. The constant-height
+ * traverse is a **rapid**: it is in air by construction, and a feed through air
+ * makes the machine creep. Its rise and drop stay feeds; the first layer has
+ * nothing removed in front of it and, where no at-layer cut qualifies, keeps the
+ * travel height, and an A-changing link is left to the old travel-height rule
+ * (or its retract), because a surface link requires one exact angle.
  * Missing
  * keeps the along motion byte
  * for byte -- the shape of the motion, not its band: the slice-D retained-end

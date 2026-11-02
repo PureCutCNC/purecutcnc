@@ -753,9 +753,12 @@ const ROUND_FINISH_PARAMS = {
 // The program header stamps the wall clock (`commonContext.date` in
 // postprocessor.ts), so the capture day is pinned below before hashing; the
 // hashes above are the 2026-10-26 programs with only that field rewritten.
+// #1117 re-recorded the one row it changes on purpose -- `round/rotary_rough/
+// around` now links adjacent rings as cutting feeds at the layer instead of
+// rising over them -- from the same fixture and postprocessor.
 const NO_REGION_HASHES: Record<string, string> = {
   'round/rotary_rough/along': 'moves=57c161faf512400a warnings= gcode=53019c8531aafcfd',
-  'round/rotary_rough/around': 'moves=297f1c51c8abcf0c warnings= gcode=24cd956fa939064e',
+  'round/rotary_rough/around': 'moves=dbe260e73b76e511 warnings= gcode=515a23fd0b3c9529',
   'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
   'round/rotary_finish/around': 'moves=a7ebe0d9cd48dd07 warnings=rotaryFinishWithoutRough gcode=4cb6a2c9c5c1e547',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=53c3d57f9a4146bb',

@@ -3250,15 +3250,17 @@ for (const { entry, program } of CASES) {
                 + `stepover ${entry.stepover} cell ${entry.requestedCellSize})`)
             }
           } else {
-            // A rough link that stays a cut (it changes A, or its next cut is
-            // above the clearance plane) is the old travel-height motion; the
-            // rapid is checked above.
+            // A rough link that stays a cut is either the old travel-height
+            // motion or, since #1117, a link that stays at the current layer and
+            // cuts: that one removes at most this layer's own band, one
+            // stepdown, on top of the reference's discretisation allowance. The
+            // rapid is checked above; a link the generator refused stays a rapid.
             roughLinkChecks++
-            assert.ok(moveSurfaceWorst <= linkBiteAllowance,
+            assert.ok(moveSurfaceWorst <= entry.stepdown + linkBiteAllowance,
               `${entry.label}: a rough link at A${fromAngle.toFixed(2)} along `
               + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
               + `${moveSurfaceWorst.toFixed(4)} mm of the material the earlier layers left `
-              + `(allowed ${linkBiteAllowance.toFixed(4)})`)
+              + `(allowed ${(entry.stepdown + linkBiteAllowance).toFixed(4)}, one rough stepdown)`)
           }
         }
         if (stage.direction === 'around') {
