@@ -688,6 +688,58 @@ async function seedSquareBlankProject(page: Page): Promise<Project> {
   return await getProject(page) as unknown as Project
 }
 
+/**
+ * Pin the parallelism the angle-pool policy reads (#1115 p-d3 fix 1).
+ *
+ * `workerExecutor.availableParallelism()` reads `navigator.hardwareConcurrency`
+ * when a generation request is posted, and the required policy chooses serial
+ * for unknown concurrency or a machine of three cores or fewer. Left to the
+ * runner, the pool-active assertion below became a property of the CI
+ * container's core count: on a two-core container the run is serial and the
+ * parallel assertion fails for a reason that has nothing to do with the code.
+ * Each pool test therefore states its machine: `8` selects the pool, and
+ * `undefined` — a runtime that cannot report — selects serial.
+ */
+async function pinHardwareConcurrency(page: Page, value: number | undefined): Promise<void> {
+  await page.evaluate((next) => {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, get: () => next })
+  }, value)
+}
+
+/** What the generation worker last reported about its angle pool (#1115 p-d3). */
+async function readRotaryPool(page: Page): Promise<{
+  last: { mode: string; workers: number; batches: number; fallback: string } | null
+  generations: number
+} | null> {
+  return page.evaluate(async () => {
+    const hook = (window as unknown as {
+      __pcTest?: { getRotaryPoolStats?: () => Promise<{
+        last: { mode: string; workers: number; batches: number; fallback: string } | null
+        generations: number
+      }> }
+    }).__pcTest
+    return hook?.getRotaryPoolStats ? await hook.getRotaryPoolStats() : null
+  })
+}
+
+/**
+ * Run Square to round from the seeded blank through creation and generation.
+ *
+ * The pool tests below both need the same real workflow — the dialog, both
+ * rotary operations and the generation that follows — and differ only in the
+ * parallelism they pin, so the steps live here rather than twice.
+ */
+async function createSquareToRound(page: Page, ui: typeof import('./selectors')): Promise<void> {
+  await ui.rotarySolid.squareToRoundButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
+  await ui.rotarySolid.field(page, 'start').fill('10')
+  await ui.rotarySolid.field(page, 'length').fill('30')
+  await ui.rotarySolid.field(page, 'diameter').fill('20')
+  await ui.rotarySolid.createButton(page).click()
+  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+}
+
 /** Add a rotary operation through the real Add menu, the way a user does. */
 async function addRotaryOperation(page: Page, ui: typeof import('./selectors'), label: 'Rotary rough' | 'Rotary finish'): Promise<void> {
   const row = ui.setupCam.addMenu(page).locator('.cam-operation-item')
@@ -902,31 +954,19 @@ test('square to round generates inside the band and removes material', async ({ 
   // p-d3). Nothing else in the page observes them.
   const angleWorkerUrls: string[] = []
   page.on('worker', (worker) => { angleWorkerUrls.push(worker.url()) })
+  // Eight cores is a machine the required policy pools on: `min(angles, 8, 8 - 2)`
+  // is more than one worker, so this test asserts the pool and not the runner.
+  await pinHardwareConcurrency(page, 8)
   await seedSquareBlankProject(page)
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
-  await ui.rotarySolid.squareToRoundButton(page).click()
-  await expect(ui.rotarySolid.dialog(page)).toBeVisible()
-  await ui.rotarySolid.field(page, 'start').fill('10')
-  await ui.rotarySolid.field(page, 'length').fill('30')
-  await ui.rotarySolid.field(page, 'diameter').fill('20')
-  await ui.rotarySolid.createButton(page).click()
-  await expect(ui.rotarySolid.dialog(page)).toBeHidden()
-  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+  await createSquareToRound(page, ui)
 
   // #1115 p-d3: the rotary operations really sampled on the angle pool. The
   // hook carries the coordinator's own report, and the URL list proves the main
   // thread created module workers for it rather than the run quietly going
   // serial.
-  const rotaryPool = await page.evaluate(async () => {
-    const hook = (window as unknown as {
-      __pcTest?: { getRotaryPoolStats?: () => Promise<{
-        last: { mode: string; workers: number; batches: number; fallback: string } | null
-        generations: number
-      }> }
-    }).__pcTest
-    return hook?.getRotaryPoolStats ? await hook.getRotaryPoolStats() : null
-  })
+  const rotaryPool = await readRotaryPool(page)
   expect(rotaryPool?.generations ?? 0).toBeGreaterThan(0)
   expect(rotaryPool?.last?.mode).toBe('parallel')
   expect(rotaryPool?.last?.workers ?? 0).toBeGreaterThan(1)
@@ -985,6 +1025,44 @@ test('square to round generates inside the band and removes material', async ({ 
   await ui.viewMenu.option3d(page, 'Right view').click()
   await expect(canvas).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('square-to-round-3d-end-view.png') })
+})
+
+test('rotary generation falls back to serial when the machine cannot report parallelism', async ({ app, ui }) => {
+  test.setTimeout(180_000)
+  const { page } = app
+  const angleWorkerUrls: string[] = []
+  page.on('worker', (worker) => { angleWorkerUrls.push(worker.url()) })
+  // The required policy, from the other side of the pool-active test: unknown
+  // concurrency runs serially. What has to survive that decision is the
+  // operation — a fallback that generated nothing would be worse than a slow
+  // run — and it must not create a single angle worker while doing it.
+  await pinHardwareConcurrency(page, undefined)
+  await seedSquareBlankProject(page)
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+  await createSquareToRound(page, ui)
+
+  const rotaryPool = await readRotaryPool(page)
+  expect(rotaryPool?.generations ?? 0).toBeGreaterThan(0)
+  expect(rotaryPool?.last?.mode).toBe('serial')
+  expect(rotaryPool?.last?.fallback).toBe('none')
+  expect(rotaryPool?.last?.workers ?? -1).toBe(0)
+  expect(rotaryPool?.last?.batches ?? -1).toBe(0)
+  expect(angleWorkerUrls.filter((url) => url.includes('rotaryAngle.worker'))).toHaveLength(0)
+
+  // Both operations still generated a real band: the serial path is the same
+  // computation, merely on one thread.
+  const project = await getProject(page) as unknown as Project
+  const finish = project.operations.find((operation) => operation.kind === 'rotary_finish')!
+  const rough = project.operations.find((operation) => operation.kind === 'rotary_rough')!
+  const band = await pathSignature(page, finish.id)
+  expect(band.cutMoveCount).toBeGreaterThan(0)
+  expect(band.hasAngle).toBe(true)
+  expect(band.cutMinAlong).toBeGreaterThanOrEqual(10 - 1e-6)
+  expect(band.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
+  const roughBand = await pathSignature(page, rough.id)
+  expect(roughBand.cutMoveCount).toBeGreaterThan(0)
+  expect(roughBand.cutMinAlong).toBeGreaterThanOrEqual(10 - 1e-6)
+  expect(roughBand.cutMaxAlong).toBeLessThanOrEqual(40 + 1e-6)
 })
 
 // ── #1016 C2: square playback on the shared heightfield ──────────────

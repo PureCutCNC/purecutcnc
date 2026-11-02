@@ -18,7 +18,9 @@
  * The app's rotary generation path, end to end through the angle pool
  * (issue #1115, slice p-d3).
  *
- * Everything here runs the **shipped** modules on real threads:
+ * Everything here runs the **shipped** modules on real threads — the harness
+ * that boots them and the angle-worker fakes live in
+ * `rotaryPoolAppPathHarness.ts`:
  *
  * - `toolpath.worker.ts` through `workerThreadAdapter.ts`, exactly as
  *   `workerRuntime.test.ts` runs it;
@@ -38,7 +40,11 @@
  *   pool changes where an angle runs, never what it computes.
  * - **Cancellation.** A request that arrives while the first is waiting on angle
  *   workers ends it; the second result equals a fresh run and the first never
- *   posts anything. This is the property the generation counter exists for.
+ *   posts anything. This is the property the generation counter exists for. The
+ *   first pool is made to reach a real dispatched batch whose replies are held,
+ *   so the cancellation happens mid-batch rather than mid-install, and the
+ *   obsolete replies are then answered by hand — with the epoch and batch the
+ *   cancelled pool asked for — to prove nothing consumes them.
  * - **Fallback.** A worker that cannot be created, one that fails to load, and a
  *   computation error: the first two rerun serially with identical output, the
  *   last stays an error. A pool failure is not allowed to hide the operation,
@@ -56,7 +62,6 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Worker } from 'node:worker_threads'
 
 import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
 import { runPostProcessor } from '../../engine/gcode/postprocessor'
@@ -66,42 +71,24 @@ import { computeOperationToolpath } from '../../engine/toolpaths/generateOperati
 import type { OperationToolpathEnvelope } from '../../engine/toolpaths/generateOperation'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { canonicalize } from '../../engine/toolpaths/parityRecord'
-import { ROTARY_ANGLE_PROTOCOL_VERSION } from '../../engine/toolpaths/rotaryAngleProtocol'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { normalizeProject } from '../../store/helpers/projectFormat'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
 import type { Operation, Project } from '../../types/project'
 import { unpackResult } from './moveTransport'
-import { isWorkerToMain } from './protocol'
 import type { WorkerToMain } from './protocol'
-import { createRotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
-import type { RotaryAngleHostWorker, RotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
+import {
+  angleWorker,
+  brokenWorker,
+  createAppPath,
+  failingKernelWorker,
+  holdingAngleWorker,
+  releaseHeldBatch,
+  unnameableEpochWorker,
+} from './rotaryPoolAppPathHarness'
+import type { AppPath, GenerationDriver, HeldBatch } from './rotaryPoolAppPathHarness'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-
-/** The generation worker on a real thread, through the shipped adapter. */
-const GENERATION_ADAPTER_URL = new URL('./workerThreadAdapter.ts', import.meta.url).href
-const ANGLE_ADAPTER_URL = new URL('./rotaryAngleWorkerThreadAdapter.ts', import.meta.url).href
-
-/**
- * A plain-JavaScript bootstrap, evaluated as the worker's entry. Pointing
- * `new Worker()` at a TypeScript module fails on Node 20 (the entry resolves
- * before `--import tsx` registers), so the adapter is imported from an
- * already-running plain-JS entry. The catch turns a load failure into a message
- * the test would otherwise have to explain as a bare timeout.
- */
-function bootstrap(adapterUrl: string): string {
-  return `
-    import('tsx/esm/api')
-      .then((tsx) => tsx.tsImport(${JSON.stringify(adapterUrl)}, ${JSON.stringify(import.meta.url)}))
-      .catch((error) => {
-        require('node:worker_threads').parentPort.postMessage({
-          kind: 'bootstrapFailed',
-          message: String(error && error.stack ? error.stack : error),
-        })
-      })
-  `
-}
 
 let passed = 0
 let failed = 0
@@ -118,223 +105,6 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 30_0
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
-}
-
-/** A main-thread generation driver: send, and await the message that answers. */
-interface GenerationDriver {
-  worker: Worker
-  ready: Promise<WorkerToMain & { kind: 'ready' }>
-  send: (message: unknown) => void
-  await: (predicate: (message: WorkerToMain) => boolean) => Promise<WorkerToMain>
-  close: () => Promise<void>
-}
-
-function createGenerationDriver(): GenerationDriver {
-  const worker = new Worker(bootstrap(GENERATION_ADAPTER_URL), { eval: true })
-  worker.on('message', (data: unknown) => {
-    const message = data as { kind?: string; message?: string }
-    if (message?.kind !== 'bootstrapFailed') return
-    console.log(`   ✗ generation worker bootstrap failed: ${message.message ?? 'unknown'}`)
-    process.exit(1)
-  })
-  const waiting: { predicate: (message: WorkerToMain) => boolean; resolve: (message: WorkerToMain) => void }[] = []
-  const buffered: WorkerToMain[] = []
-
-  worker.on('message', (data: unknown) => {
-    if (!isWorkerToMain(data)) return
-    const index = waiting.findIndex((entry) => entry.predicate(data))
-    if (index >= 0) waiting.splice(index, 1)[0].resolve(data)
-    else buffered.push(data)
-  })
-
-  const awaitMessage = (predicate: (message: WorkerToMain) => boolean): Promise<WorkerToMain> => {
-    const index = buffered.findIndex(predicate)
-    if (index >= 0) return Promise.resolve(buffered.splice(index, 1)[0])
-    return new Promise((resolve) => { waiting.push({ predicate, resolve }) })
-  }
-
-  return {
-    worker,
-    ready: awaitMessage((message) => message.kind === 'ready') as Promise<WorkerToMain & { kind: 'ready' }>,
-    send: (message: unknown) => { worker.postMessage(message) },
-    await: awaitMessage,
-    close: async () => { await worker.terminate() },
-  }
-}
-
-/** The generation worker plus the main-thread pool host, wired as the app wires them. */
-interface AppPath {
-  readonly driver: GenerationDriver
-  readonly host: RotaryAnglePoolHost
-  /** `rotaryWorker` requests the harness is holding instead of attaching. */
-  readonly held: { slot: number; port: MessagePort }[]
-  /** Every terminal message this worker posted, in arrival order. */
-  readonly terminal: WorkerToMain[]
-  /**
-   * `rotaryWorkerFailed` messages forwarded to the coordinator. A startup
-   * failure has to reach the pool as a *failure*, not as a reply that never
-   * comes: without this, the test would still pass on the port transport's own
-   * 30 s startup backstop and prove nothing about the failure path.
-   */
-  readonly failures: string[]
-  holdRequests(): void
-  releaseHeld(): void
-  close(): Promise<void>
-}
-
-interface AppPathOptions {
-  /** Replace the angle worker construction; production uses the module worker. */
-  readonly createAngleWorker?: () => RotaryAngleHostWorker
-  readonly startupTimeoutMs?: number
-  /** Called for every `rotaryWorker` request before it is attached. */
-  readonly onWorkerRequest?: () => void
-}
-
-/**
- * Adapt a Node `worker_threads` worker to the main thread's `Worker` contract.
- *
- * The one difference that matters is event shape: a browser worker delivers
- * `MessageEvent`s, while `worker_threads` passes the value itself.
- */
-function adaptWorker(worker: Worker): RotaryAngleHostWorker {
-  return {
-    postMessage: (message: unknown, transfer?: Transferable[]) => {
-      worker.postMessage(message, transfer as never)
-    },
-    addEventListener: (type: string, handler: (event: never) => void) => {
-      if (type === 'message') {
-        worker.on('message', (value: unknown) => { (handler as (event: unknown) => void)({ data: value }) })
-      } else if (type === 'error') {
-        worker.on('error', (error: Error) => { (handler as (event: unknown) => void)(error) })
-      } else if (type === 'messageerror') {
-        worker.on('messageerror', (error: Error) => { (handler as (event: unknown) => void)(error) })
-      }
-    },
-    terminate: () => { void worker.terminate() },
-  }
-}
-
-function createAppPath(options: AppPathOptions = {}): AppPath {
-  const driver = createGenerationDriver()
-  const held: { slot: number; port: MessagePort }[] = []
-  let holding = false
-  const createAngleWorker = options.createAngleWorker
-  let host: RotaryAnglePoolHost | null = null
-  host = createRotaryAnglePoolHost({
-    ...(createAngleWorker !== undefined ? { createWorker: createAngleWorker } : {}),
-    ...(options.startupTimeoutMs !== undefined ? { startupTimeoutMs: options.startupTimeoutMs } : {}),
-    onFailure: (slot, message) => {
-      failures.push(message)
-      driver.send({ kind: 'rotaryWorkerFailed', slot, message })
-    },
-  })
-
-  const terminal: WorkerToMain[] = []
-  const failures: string[] = []
-
-  driver.worker.on('message', (data: unknown) => {
-    if (!isWorkerToMain(data)) return
-    if (data.kind === 'completed' || data.kind === 'failed') terminal.push(data)
-    if (data.kind === 'rotaryWorker') {
-      options.onWorkerRequest?.()
-      if (holding) {
-        held.push({ slot: data.slot, port: data.port })
-        return
-      }
-      host?.attach(data.slot, data.port)
-      return
-    }
-    if (data.kind === 'rotaryRelease') {
-      // A released slot must not be attached afterwards: the coordinator has
-      // closed its end, and a worker created for it would sample nothing.
-      const index = held.findIndex((entry) => entry.slot === data.slot)
-      if (index >= 0) held.splice(index, 1)
-      host?.release(data.slot)
-    }
-  })
-
-  return {
-    driver,
-    get host() { return host as RotaryAnglePoolHost },
-    held,
-    terminal,
-    failures,
-    holdRequests() { holding = true },
-    releaseHeld() {
-      holding = false
-      for (const entry of held.splice(0)) host?.attach(entry.slot, entry.port)
-    },
-    close: async () => {
-      host?.terminate()
-      await driver.close()
-    },
-  }
-}
-
-/** A Node angle worker running the shipped browser module. */
-function angleWorker(): RotaryAngleHostWorker {
-  return adaptWorker(new Worker(bootstrap(ANGLE_ADAPTER_URL), { eval: true }))
-}
-
-/** A fake angle worker that answers a batch with a computation error. */
-function failingKernelWorker(): RotaryAngleHostWorker {
-  const script = `
-    const { parentPort } = require('node:worker_threads')
-    const VERSION = ${JSON.stringify(ROTARY_ANGLE_PROTOCOL_VERSION)}
-    parentPort.postMessage({ kind: 'ready', protocolVersion: VERSION })
-    parentPort.on('message', (value) => {
-      const port = value && value.port
-      if (!port) return
-      port.onmessage = (event) => {
-        const request = event.data
-        if (request.kind === 'install') port.postMessage({ kind: 'installed', protocolVersion: VERSION })
-        else if (request.kind === 'plan') port.postMessage({ kind: 'planApplied', revision: request.revision })
-        else if (request.kind === 'batch') {
-          port.postMessage({
-            kind: 'error',
-            epoch: request.epoch,
-            batchId: request.batchId,
-            phase: 'compute',
-            message: 'kernel boom',
-          })
-        }
-      }
-      port.start && port.start()
-    })
-  `
-  return adaptWorker(new Worker(script, { eval: true }))
-}
-
-/**
- * A fake angle worker that answers the install with an error carrying **no
- * epoch** — a reply from a generation the pool cannot name.
- *
- * That is the one reply shape a coordinator must refuse rather than queue: there
- * is no batch it could belong to, and dropping it leaves the install waiting.
- */
-function unnameableEpochWorker(): RotaryAngleHostWorker {
-  const script = `
-    const { parentPort } = require('node:worker_threads')
-    const VERSION = ${JSON.stringify(ROTARY_ANGLE_PROTOCOL_VERSION)}
-    parentPort.postMessage({ kind: 'ready', protocolVersion: VERSION })
-    parentPort.on('message', (value) => {
-      const port = value && value.port
-      if (!port) return
-      port.onmessage = (event) => {
-        const request = event.data
-        if (request.kind === 'install') {
-          port.postMessage({ kind: 'error', epoch: -1, batchId: -1, phase: 'install', message: 'from an older generation' })
-        }
-      }
-      port.start && port.start()
-    })
-  `
-  return adaptWorker(new Worker(script, { eval: true }))
-}
-
-/** A worker that fails while its module loads, as a broken bundle would. */
-function brokenWorker(): RotaryAngleHostWorker {
-  return adaptWorker(new Worker('throw new Error("the angle worker module is missing")', { eval: true }))
 }
 
 /** A posted program with only the generation date normalised, so two runs compare. */
@@ -503,18 +273,25 @@ async function main(): Promise<void> {
     const project = rotaryOperationFixture('x', 'rotary_finish')
     const operation = project.operations[0]
     const expected = direct(project, operation)
-    let requests = 0
-    const app = createAppPath({ createAngleWorker: angleWorker, onWorkerRequest: () => { requests += 1 } })
+    /** Batches the first request's workers received and never answered. */
+    const held: HeldBatch[] = []
+    let holding = true
+    let created = 0
+    const app = createAppPath({
+      createAngleWorker: () => {
+        created += 1
+        return holding ? holdingAngleWorker(held, created) : angleWorker()
+      },
+    })
     try {
       await app.driver.ready
       await loadSnapshot(app, project, 1)
-      // Hold the first pool's ports, so its install is provably still pending
-      // when the second request arrives: that is "cancelled mid-batch", not a
-      // race with completion.
-      app.holdRequests()
+      // Request 1 gets workers that install for real and then hold their batch
+      // replies, so "cancelled mid-batch" means a dispatched batch with replies
+      // outstanding — the state holding the `rotaryWorker` requests never
+      // reached, because the install never completed and no batch was sent.
       // Sent without awaiting a promise: the cancelled request never answers,
-      // and an armed timeout would fire minutes later as an unhandled rejection
-      // in the middle of whatever the suite was doing then.
+      // and an armed timeout would fire later as an unhandled rejection.
       app.driver.send({
         kind: 'generate',
         identity: {
@@ -522,37 +299,43 @@ async function main(): Promise<void> {
         },
         rotary: { availableParallelism: 4 },
       })
-      await waitFor(() => requests > 0, 'the first pool to ask for an angle worker')
-      const firstRequests = requests
-      check('cancellation: the first pool is waiting on angle workers',
-        app.held.length > 0, 'the first generation never asked for an angle worker')
+      await waitFor(() => held.length >= 2, 'the first generation to dispatch its batches')
+      const firstJobs = held.reduce((total, batch) => total + batch.jobs.length, 0)
+      check('cancellation: the first generation is mid-batch, not mid-attach',
+        firstJobs > 0 && app.host.liveWorkers() >= 2,
+        `${held.length} held batch(es), ${firstJobs} job(s), ${app.host.liveWorkers()} worker(s)`)
 
-      // The second request arrives while the first is still waiting. It ends
-      // the first pool and asks for workers of its own.
-      const second = generate(app.driver, {
+      // The successor is a different request and a pool of its own, and it
+      // starts while the first request's batch is still unanswered.
+      holding = false
+      const successor = generate(app.driver, {
         documentKey: 1, snapshotId: 1, requestId: 2, operationId: operation.id,
       }, { parallelism: 4 })
-      await waitFor(() => requests > firstRequests, 'the second pool to ask for an angle worker')
-      app.releaseHeld()
-
-      const secondResult = await second
-      compareWithSerial(secondResult, expected, 'cancellation: the second request')
-      check('cancellation: the second request really ran the pool',
+      const secondResult = await successor
+      compareWithSerial(secondResult, expected, 'cancellation: the successor')
+      check('cancellation: the successor really ran the pool',
         secondResult.rotary?.mode === 'parallel' && (secondResult.rotary?.batches ?? 0) >= 1,
         JSON.stringify(secondResult.rotary))
-      check('cancellation: no angle worker is left running',
-        app.host.liveWorkers() === 0, `${app.host.liveWorkers()} angle worker(s) still live`)
 
-      // The first request was disposed before its workers ever attached, so
-      // nothing may post for it — and the second result is the only terminal
+      // Answer the cancelled request's batches *after* the successor finished,
+      // with the epoch and batch the first pool asked for and rows no real sample
+      // would hold. Nothing may consume them — not in this generation, and not
+      // in a later one.
+      for (const batch of held) releaseHeldBatch(batch)
+      await new Promise((settle) => setTimeout(settle, 100))
+
+      // The first request was disposed while its batch was in flight, so nothing
+      // may post for it — and the successor's result is the only terminal
       // message either request produced.
       const firstTerminals = app.terminal.filter(
         (message) => (message.kind === 'completed' || message.kind === 'failed') && message.identity.requestId === 1,
       )
       check('cancellation: no result arrives for the cancelled request',
         firstTerminals.length === 0, `${firstTerminals.length} terminal message(s) for the cancelled request`)
-      check('cancellation: exactly one terminal message was posted',
+      check('cancellation: the obsolete replies changed nothing',
         app.terminal.length === 1, `${app.terminal.length} terminal message(s)`)
+      check('cancellation: every angle worker is stopped, the cancelled request\'s included',
+        app.host.liveWorkers() === 0, `${app.host.liveWorkers()} angle worker(s) still live`)
     } finally {
       await app.close()
     }
@@ -633,6 +416,12 @@ async function main(): Promise<void> {
       // speed budget: the real path settles in well under a second.
       check('unnameable epoch: the refusal is immediate, not the startup backstop',
         elapsed < 15_000, `took ${elapsed} ms`)
+      // The slot was retired by the failure, which is exactly the path on which
+      // the host's worker used to be orphaned: this side closed its channel,
+      // removed the slot, and left the `Worker` running with nothing left able
+      // to name it (`terminate()` returns early, disposal walks the live map).
+      check('unnameable epoch: the failed slot releases its host worker',
+        app.host.liveWorkers() === 0, `${app.host.liveWorkers()} angle worker(s) still live`)
     } finally {
       await app.close()
     }

@@ -133,18 +133,38 @@ export function createRotaryAnglePortTransport(
     if (slot.timer !== null) clearTimeout(slot.timer)
   }
 
-  const shutdown = (slot: number, done: Slot, error: Error): void => {
-    if (done.closed) return
-    done.closed = true
-    clear(done)
-    if (done.failureHandler !== null) done.failureHandler(error)
-    else done.bufferedFailure = error
+  /**
+   * Retire one slot: close this end of its channel **and tell the creator to
+   * stop the worker**.
+   *
+   * Both halves are required on every path, which is why retirement lives here
+   * rather than in `terminate()` alone. A slot retired only on this side leaked
+   * the host's worker: `terminate()` returns at once for a slot that is already
+   * closed, and `dispose()` can only walk the live map, so a slot the failure
+   * paths had retired was unreachable from both and its worker lived as long as
+   * the generation worker did. `releaseWorker` is idempotent — releasing a slot
+   * whose host already stopped it is a no-op — so the failure reports that
+   * originate on the other side are safe to pass through here too.
+   */
+  const retire = (slot: number, entry: Slot): void => {
+    entry.closed = true
+    clear(entry)
+    if (slots.get(slot) === entry) slots.delete(slot)
     try {
-      done.port.close?.()
+      entry.port.close?.()
     } catch {
       // Closing a port that is already gone is not a failure of its own.
     }
-    if (slots.get(slot) === done) slots.delete(slot)
+    options.releaseWorker(slot)
+  }
+
+  const shutdown = (slot: number, done: Slot, error: Error): void => {
+    if (done.closed) return
+    // Retire before reporting: the failure handler may re-enter `terminate()`,
+    // which must not be the only caller that releases the worker.
+    retire(slot, done)
+    if (done.failureHandler !== null) done.failureHandler(error)
+    else done.bufferedFailure = error
   }
 
   const deliver = (slot: number, entry: Slot, reply: RotaryAngleWorkerReply): void => {
@@ -222,15 +242,7 @@ export function createRotaryAnglePortTransport(
       },
       terminate() {
         if (entry.closed) return
-        entry.closed = true
-        clear(entry)
-        if (slots.get(slot) === entry) slots.delete(slot)
-        try {
-          entry.port.close?.()
-        } catch {
-          // Already gone.
-        }
-        options.releaseWorker(slot)
+        retire(slot, entry)
       },
     }
   }
@@ -252,17 +264,7 @@ export function createRotaryAnglePortTransport(
       disposed = true
       // Only this transport's own slots are released: a wildcard here would
       // stop the workers of a pool that has already taken over.
-      for (const [slot, entry] of [...slots]) {
-        entry.closed = true
-        clear(entry)
-        try {
-          entry.port.close?.()
-        } catch {
-          // Already gone.
-        }
-        slots.delete(slot)
-        options.releaseWorker(slot)
-      }
+      for (const [slot, entry] of [...slots]) retire(slot, entry)
     },
     get slots() {
       return slots.size
