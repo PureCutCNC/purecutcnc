@@ -2531,16 +2531,19 @@ function roughFromTargets(
    *
    * Everything that makes a stay-down cut unsafe or unprovable keeps the raised
    * link: a `NaN` row sample (no model under the tool there, so the ring at that
-   * along position removes nothing and the link would cut uncut blank), more
-   * than one band of material to remove, a region (outside it the standing stock
-   * is the blank), a square blank (its corner-to-corner rule is a separate one),
-   * a changed angle (A0 to A360 is a commanded turn, not equal), a row the work
-   * budget refused, and a transition between rings that are not adjacent. The
-   * caller passes the previous ring's own along coordinate, so a ring that
-   * emitted nothing -- a skipped ring -- leaves `current` at an earlier along
-   * position and cannot link across the gap; a partial ring whose last run is
-   * the adjoining one is fine, exactly as the raised link already links partial
-   * runs at their shared angle.
+   * along position removes nothing and the link would cut uncut blank), a
+   * transition that the row cannot actually sample (see the inclusive scan and
+   * its span-coverage rule below), more than one band of material to remove, a
+   * region (outside it the standing stock is the blank), a square blank (its
+   * corner-to-corner rule is a separate one), a changed angle (A0 to A360 is a
+   * commanded turn, not equal), a row the work budget refused, and a transition
+   * between rings that are not adjacent. The caller passes the previous ring's
+   * own along coordinate, so a ring that emitted nothing -- a skipped ring --
+   * leaves `current` at an earlier along position and cannot link across the
+   * gap; a partial ring whose last run is the adjoining one is fine, exactly as
+   * the raised link already links partial runs at their shared angle. Split
+   * rings are rejected by the caller, which tracks both adjoining rings'
+   * eligibility: a run boundary is not a whole ring's end.
    */
   const linkAtLayer = (layer: number, layerRadius: number, fromAlong: number, from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
     if (square || region !== null) return null
@@ -2569,15 +2572,36 @@ function roughFromTargets(
       : 0
     const allowance = params.stepdown + scallop + params.requestedCellSize
     const steps: RotaryLinkStep[] = []
+    // #1117 review (P1): sample the transition **inclusively**. The dense row
+    // and the ring grid can be the same points -- at a stepover of the tool
+    // radius or less the row is spaced by the stepover and starts where the
+    // rings start -- and the old strict inequalities skipped every one of
+    // them. The candidate then degenerated to one straight cut with no leftover
+    // sample examined at all, so a model gap was crossed as if it were already
+    // cleared. A boundary sample is validated but not emitted: it is where the
+    // two ring cuts already are.
+    let interior = 0
     for (let i = 0; i < row.along.length; i++) {
       const x = row.along[i]
-      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
       const tip = row.tips[i]
       if (!Number.isFinite(tip)) return null
       const height = Math.max(tip, layerRadius)
       if (leftover[i] - height > allowance + 1e-9) return null
+      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
       steps.push({ to: point(x, height, from.a), kind: 'cut' })
+      interior++
     }
+    // Sufficient span coverage: the row's own sample interval is the widest
+    // stretch the surface can be read across. A transition longer than that
+    // must be bridged by an interior sample; if it has none -- because the row
+    // was filtered, not because the span is short -- the straight cut would run
+    // through unexamined material, so the candidate is refused and the caller
+    // keeps the raised link.
+    const sampleInterval = row.along.length > 1
+      ? row.along[1] - row.along[0]
+      : Number.POSITIVE_INFINITY
+    if (interior === 0 && toAlong - fromAlong > sampleInterval + 1e-9) return null
     steps.push({ to, kind: 'cut' })
     return steps
   }
@@ -2665,6 +2689,14 @@ function roughFromTargets(
         : null
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
+      // #1117 review (P2): the at-layer candidate joins two **adjoining rings**
+      // of this layer, so both must be whole. A split ring is a ring whose cut
+      // runs are separated by angular sectors this layer does not remove; its
+      // first/last run can share an angle with the neighbouring ring while the
+      // transition itself is not an end-to-end ring link. The raised link is
+      // the fallback the handoff requires there.
+      let previousRingSplit = false
+      let previousRingEmitted = false
       const layerLink = raisedLinkPlan(layer)
       for (let i = 0; i < along.length; i++, ring++) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
@@ -2678,19 +2710,27 @@ function roughFromTargets(
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
         const runs = ringRuns(samples)
+        const splitRing = runs.length > 1
         // #1117: the at-layer cut joins the preceding ring **of this layer** to
         // this one -- `along[i - 1]` is where the tool was left if that ring
         // emitted anything, so a skipped ring's wider gap never qualifies. A
         // partial run links when the emitted angle is exactly shared, which the
         // link itself checks; an A-changing corner transition keeps the raised
-        // or travel-height link.
-        const ringLink = i === 0
+        // or travel-height link. **Split** rings on either side keep the raised
+        // link: their runs are partial arcs, so the shared angle is a run
+        // boundary rather than the end of a whole ring, and the plan requires
+        // the raised fallback there. (A ring that emitted nothing is caught by
+        // the `fromAlong` check inside the candidate; `previousRingEmitted`
+        // makes that explicit.)
+        const ringLink = i === 0 || !previousRingEmitted || previousRingSplit || splitRing
           ? layerLink
           : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
             linkAtLayer(layer, layerRadius, along[i - 1], from, to) ?? layerLink(from, to)
         const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, ringLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
+        previousRingSplit = splitRing
+        previousRingEmitted = runs.length > 0
       }
     }
   } else {

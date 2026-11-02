@@ -634,7 +634,12 @@ console.log('Testing that a finish link resolves a ridge between two rings...')
 //      - the link row sampled only at the ring positions -> the ridge block: the
 //        link cuts through the ridge at the layer height instead of climbing it;
 //      - the model-gap refusal removed -> the last block: a link crosses the gap
-//        the ring there does not cut.
+//        the ring there does not cut;
+//      - the inclusive boundary scan removed (strict interior filter restored)
+//        -> the fine-step gap block: with the row and ring grids coincident a
+//        cutting link enters the span where the row has no model;
+//      - the split-ring eligibility removed -> the split-ring block: the twenty
+//        low links between the second layer's split rings return.
 // ---------------------------------------------------------------------------
 
 /** The first layer-boundary retract of an around rough: a rapid back along the bar. */
@@ -819,6 +824,93 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
     'the transition over the gap keeps the raised link')
   assert.ok(raised.every((link) => link.from.z - pivot >= 4 + 1 - 1e-6),
     'and the raised link still clears the last material the operation left')
+}
+
+{
+  // #1117 review (P1): a stepover at or below the tool radius makes the dense
+  // link row and the ring grid the same points. Every interior row sample then
+  // lands exactly on a ring position, the old strict `x > from && x < to`
+  // filter skipped all of them, and the candidate collapsed to one straight
+  // cut with no leftover sample examined at all. On the two-boss gap it cut 76
+  // links into the span where the row has no model (the raised-only path emits
+  // only raised links there). The inclusive scan validates the boundary
+  // samples, and a transition longer than one row interval with no interior
+  // sample is refused.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const lower = revolved(stock, [{ along: 0, radius: 4 }, { along: 6, radius: 4 }], 64)
+  const upper = revolved(stock, [{ along: 14, radius: 4 }, { along: 20, radius: 4 }], 64)
+  const offset = lower.positions.length / 3
+  const positions = new Float32Array(lower.positions.length + upper.positions.length)
+  positions.set(lower.positions, 0)
+  positions.set(upper.positions, lower.positions.length)
+  const index = new Uint32Array(lower.index.length + upper.index.length)
+  index.set(lower.index, 0)
+  index.set(upper.index.map((vertex) => vertex + offset), lower.index.length)
+  const model: RotaryModelMesh = { positions, index }
+  const params = {
+    stepover: 0.25, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-gap-fine', model, stock, FLAT, { ...params, stepdown: 2 }, {})
+  assert.deepEqual(result.warnings, [], 'the fine-step gap rough has no warning')
+  // Where the cutter's 2 mm footprint no longer reaches either boss, the link
+  // row has no model; a cutting link may not enter that span at all.
+  const gapFrom = 6 + FLAT.radius
+  const gapTo = 14 - FLAT.radius
+  const entersGap = (link: ToolpathMove): boolean =>
+    link.from.x < gapTo - 1e-9 && link.to.x > gapFrom + 1e-9
+  const links = result.moves.filter(isAlongLink)
+  assert.ok(links.length > 100,
+    `the fine-step rough still links both bosses at the layer (${links.length} links)`)
+  assert.equal(links.filter(entersGap).length, 0,
+    'no cutting link enters the no-model span between the bosses')
+  const raised = result.moves.filter(isAirLink)
+  assert.ok(raised.filter(entersGap).length >= 10,
+    `the transitions inside the gap keep the raised link (${raised.filter(entersGap).length})`)
+  // The fix is not a blanket fallback: the boundaries on either side of the gap
+  // still cut at the layer.
+  assert.ok(links.some((link) => link.to.x <= gapFrom + 1e-9 && link.to.x > gapFrom - 0.5),
+    'the last boundary before the gap still cuts at the layer')
+  assert.ok(links.some((link) => link.from.x >= gapTo - 1e-9 && link.from.x < gapTo + 0.5),
+    'the first boundary after the gap still cuts at the layer')
+}
+
+{
+  // #1117 review (P2): a split ring -- one whose cut runs are separated by
+  // angular sectors this layer does not remove -- must keep the raised link to
+  // its neighbour. Its first/last run can still share an angle with the next
+  // ring, and the old candidate accepted that shared angle and cut at the
+  // layer regardless. The round model here has an angular radius
+  // 7 - 2cos(2 theta), so layer 2 (radius 6) cuts two runs per ring and the
+  // transition between them was 20 low links. The caller now tracks both
+  // adjoining rings' eligibility, so only layer 1's whole rings stay down.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const segments = 128
+  const crossSection: (readonly [number, number])[] = []
+  for (let j = 0; j < segments; j++) {
+    const t = 2 * Math.PI * j / segments
+    const radius = 7 - 2 * Math.cos(2 * t)
+    crossSection.push([radius * Math.cos(t), radius * Math.sin(t)])
+  }
+  const model = prism(stock, crossSection, [0, 20])
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-split-rings', model, stock, FLAT, { ...params, stepdown: 2 }, {})
+  assert.deepEqual(result.warnings, [], 'the split-ring rough has no warning')
+  const pivot = barPivotZ(stock)
+  const links = result.moves.filter(isAlongLink)
+  assert.equal(links.length, 10,
+    'only the ten whole-ring boundaries of the first layer link at the layer')
+  for (const link of links) {
+    approx(link.from.z - pivot, link.to.z - pivot, 'a whole-ring link keeps one height', 1e-9)
+  }
+  const raised = result.moves.filter(isAirLink)
+  assert.equal(raised.length, 20,
+    'every split-ring boundary is a raised link instead of a low one')
+  assert.ok(raised.every((link) => link.to.z - pivot >= 6.5),
+    'the split-ring links rise above the second layer radius')
 }
 
 // ---------------------------------------------------------------------------
