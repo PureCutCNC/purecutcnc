@@ -51,6 +51,7 @@
  */
 
 import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
+import { rotaryCandidateScratchBytes } from './rotaryRaster'
 import type { RotaryAngleJob, RotaryAngleSample, RotaryBatchFactory, RotarySamplingPrep } from './rotarySampling'
 import { serialRotaryBatches } from './rotarySampling'
 import type {
@@ -199,6 +200,29 @@ export function planRotaryAnglePool(input: {
 }
 
 /**
+ * What one worker's charge is made of, in bytes.
+ *
+ * Every array named here is live in the worker at the same time, so the sum is
+ * the per-worker charge. Keeping the parts named is what lets the budget's
+ * arithmetic be tested against the arrays it charges instead of against a single
+ * opaque number (see `rotaryAnglePool.test.ts`).
+ */
+export interface RotaryAngleWorkerCharge {
+  /** The setup copy the worker is sent and keeps for its lifetime. */
+  readonly setup: number
+  /** The per-angle candidate subset: `2 * triangles` starts. */
+  readonly subset: number
+  /** Along mode's turned vertex buffer; 0 in around mode. */
+  readonly turned: number
+  /** The raster's clip-candidate index list (see `rotaryCandidateScratchBytes`). */
+  readonly candidates: number
+  /** Around mode's cached axial centre/bbox cell ranges, per triangle. */
+  readonly axialCells: number
+  /** The height-map set, capped at `MAX_HEIGHT_MAP_CELLS` per array. */
+  readonly maps: number
+}
+
+/**
  * The typed buffers one worker must be able to hold at once.
  *
  * The setup copy is what the design measures ("60 bytes per triangle" for the
@@ -223,35 +247,49 @@ export function planRotaryAnglePool(input: {
  * Walls are charged only where the sampler can pass them: `buildOptions` in
  * `runRotaryAngleJob` adds `wallTriangleStart` for around mode only, so an along
  * worker's map never allocates the wall arrays.
+ *
+ * The candidate list is the one part that is *bigger* than the mesh: the gather
+ * submits a triangle once per bucket that holds it, and both buckets an angle
+ * reads can hold the same triangle, so the raster's list can be twice the
+ * triangle count. Charging one entry per triangle was half the list (issue #1115
+ * slice p-e, review round 1).
  */
-export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): number {
+export function rotaryAngleWorkerCharge(setup: RotaryAngleSetupPayload): RotaryAngleWorkerCharge {
   const triangles = rotaryAngleTriangleCount(setup)
   const vertices = Math.floor((setup.mesh?.positions.length ?? 0) / 3)
-  let bytes = rotaryAngleSetupBytes(setup)
-  // The per-angle candidate subset holds `2 * triangles` starts.
-  bytes += triangles * 2 * 4
-  // Along mode turns every candidate into this buffer; around mode fuses it.
-  if (setup.mode === 'along') bytes += vertices * 3 * 4
-  // Raster clip-candidate scratch. The along path rasterises through the general
-  // kernel, which keeps a Float64 maximum, an Int32 cell and a four-Int32 box per
-  // candidate (32 bytes); around mode's fused kernel collects the candidate
-  // index alone and reads its box off the hit test, so it is charged the index
-  // (4 bytes). Charging the flat kernel's arrays to an around worker overstated
-  // it by 28 bytes a triangle -- 13.8 MB on the bust, one worker's worth of the
-  // 512 MiB budget at #1115 slice p-e.
-  bytes += triangles * (setup.mode === 'along' ? 32 : 4)
-  // Around mode also caches the axial centre/bbox cell ranges per triangle.
-  if (setup.mode === 'around') bytes += triangles * 16
   // One height map plus the peak-limit neighbourhood map the clip pass builds
-  // from it (#1050 slices B/C): both modes allocate that pair, per angle.
-  bytes += MAX_HEIGHT_MAP_CELLS * (4 + 4)
-  // Retained walls (#1095 slice D) add the per-cell wall coverage, the
-  // model-only map and the second peak-limit map the clip pass then compares a
-  // model triangle against.
-  if (setup.mode === 'around' && setup.wallTriangleStart !== undefined) {
-    bytes += MAX_HEIGHT_MAP_CELLS * (1 + 4 + 4)
+  // from it (#1050 slices B/C): both modes allocate that pair, per angle. Retained
+  // walls (#1095 slice D) add the per-cell wall coverage, the model-only map and
+  // the second peak-limit map the clip pass then compares a model triangle against.
+  const wallMaps = setup.mode === 'around' && setup.wallTriangleStart !== undefined
+    ? MAX_HEIGHT_MAP_CELLS * (1 + 4 + 4)
+    : 0
+  return {
+    setup: rotaryAngleSetupBytes(setup),
+    // The per-angle candidate subset holds `2 * triangles` starts.
+    subset: triangles * 2 * 4,
+    // Along mode turns every candidate into this buffer; around mode fuses it.
+    turned: setup.mode === 'along' ? vertices * 3 * 4 : 0,
+    // Raster clip-candidate scratch. The along path rasterises through the general
+    // kernel, which keeps a Float64 maximum, an Int32 cell and a four-Int32 box per
+    // candidate (32 bytes); around mode's fused kernel collects the candidate
+    // index alone and reads its box off the hit test, so it is charged the index
+    // -- at the duplicate-inclusive count the gather can submit. Charging the flat
+    // kernel's arrays to an around worker overstated it by 28 bytes a triangle
+    // (13.8 MB on the bust, one worker's worth of the 512 MiB budget), while
+    // charging it one index per mesh triangle understated it by the same 4 bytes a
+    // triangle on a mesh whose triangles reach both buckets.
+    candidates: setup.mode === 'along' ? triangles * 32 : rotaryCandidateScratchBytes(triangles),
+    // Around mode also caches the axial centre/bbox cell ranges per triangle.
+    axialCells: setup.mode === 'around' ? triangles * 16 : 0,
+    maps: MAX_HEIGHT_MAP_CELLS * (4 + 4) + wallMaps,
   }
-  return bytes
+}
+
+/** The per-worker charge: the sum of {@link rotaryAngleWorkerCharge}. */
+export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): number {
+  const charge = rotaryAngleWorkerCharge(setup)
+  return charge.setup + charge.subset + charge.turned + charge.candidates + charge.axialCells + charge.maps
 }
 
 /** One batch in flight. */

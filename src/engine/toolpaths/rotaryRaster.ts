@@ -153,6 +153,33 @@ function axisCellRange(
 let rotaryCandidateScratch: Int32Array | undefined
 
 /**
+ * The most clip-candidate scratch one raster call can allocate for a mesh of
+ * `meshTriangles` triangles, in bytes.
+ *
+ * The kernel collects one index per *submitted* triangle that covers no cell
+ * centre, and the sampler submits `always` plus **two** buckets: the strip's own
+ * direction and the one half a turn away. Those are two different bucket sets,
+ * not two disjoint triangle sets -- a triangle whose padded arc spans more than
+ * half the turn circle is listed in both -- so one triangle can be submitted,
+ * and collected, twice. The list therefore holds at most `2 * meshTriangles`
+ * entries, and that is what a pool worker's charge has to cover; charging one
+ * entry per mesh triangle left half the scratch unaccounted for (issue #1115
+ * slice p-e, review round 1).
+ *
+ * The scratch is allocated at exactly the submitted count, so within one worker
+ * -- which holds one mesh's setup, and so one largest submitted list -- the
+ * resident array never exceeds this bound. Growth headroom (the usual doubling)
+ * is deliberately absent: at the moment it grows it would hold up to twice the
+ * bytes the budget charged, which is how a budget stops being a measurement.
+ * Reuse across calls still costs nothing -- a later, smaller list reads the array
+ * already there.
+ */
+export function rotaryCandidateScratchBytes(meshTriangles: number): number {
+  const count = Math.max(0, Math.floor(meshTriangles))
+  return count * 2 * Int32Array.BYTES_PER_ELEMENT
+}
+
+/**
  * The height-map raster kernel with the rotary projection fused into its
  * triangle walk (issue #1045 slice T).
  *
@@ -259,8 +286,11 @@ export function buildRotaryHeightMap(
       const current = rotaryCandidateScratch
       if (current !== undefined && current.length >= triangleCount) candidates = current
       else {
-        const next = Math.max(triangleCount, current !== undefined ? current.length * 2 : 4096)
-        candidates = new Int32Array(next)
+        // Exactly the submitted count, never more: the pool charges this list at
+        // `rotaryCandidateScratchBytes`, and the doubling growth this used to do
+        // could hold twice the charged bytes on the call that grew it. One
+        // triangle is collected at most once per call, so the count suffices.
+        candidates = new Int32Array(triangleCount)
         rotaryCandidateScratch = candidates
       }
     }

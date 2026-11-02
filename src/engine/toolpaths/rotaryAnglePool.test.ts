@@ -47,14 +47,18 @@
  *   rejection for disposal to fire; a computation error stays an error;
  * - **the budget's arithmetic** — the per-worker charge must cover the *five*
  *   max-size arrays a retained-wall map set holds at once (the map, its coverage,
- *   the model-only map and the two peak-limit maps), and the eight-worker ceiling
- *   must survive a caller passing the machine's 32 cores.
+ *   the model-only map and the two peak-limit maps), the eight-worker ceiling
+ *   must survive a caller passing the machine's 32 cores, and the candidate
+ *   scratch must be charged at the size the gather can really hand the raster:
+ *   a triangle is submitted once per bucket that holds it, and both buckets an
+ *   angle reads can hold the same triangle, so the list is up to twice the mesh.
  *
  * The mutations this file exists to catch are: assemble in arrival order; omit
  * the retained-wall metadata from what the worker is sent; accept a stale epoch;
  * drop the serial fallback; let a throwing send escape without settling its
- * batch; budget the maps without their peak-limit maps; let `maxWorkers` lift
- * the ceiling; and let the budget over-allocate workers.
+ * batch; budget the maps without their peak-limit maps; budget the candidate
+ * scratch at one entry per mesh triangle; let `maxWorkers` lift the ceiling; and
+ * let the budget over-allocate workers.
  *
  * The p-a benchmark fixtures are 32 MB `.camj` files in the gitignored `work/`
  * and cost about 35 s of generation per operation, so the fixture parity run is
@@ -99,16 +103,19 @@ import { createRotaryAngleKernel } from './rotaryAngleKernel'
 import type { RotaryAngleKernel } from './rotaryAngleKernel'
 import {
   ROTARY_ANGLE_PROTOCOL_VERSION,
+  buildRotaryAngleSetup,
   isRotaryAngleWorkerReply,
 } from './rotaryAngleProtocol'
 import type { RotaryAngleSetupPayload, RotaryAngleWorkerReply, RotaryAngleWorkerRequest } from './rotaryAngleProtocol'
 import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
+import { rotaryCandidateScratchBytes } from './rotaryRaster'
 import {
   MAX_ROTARY_ANGLE_WORKERS,
   ROTARY_ANGLE_POOL_BUDGET_BYTES,
   createRotaryAnglePool,
   estimateRotaryAngleWorkerBytes,
   planRotaryAnglePool,
+  rotaryAngleWorkerCharge,
 } from './rotaryAnglePool'
 import type { RotaryAnglePool, RotaryAngleWorkerPort, RotaryAngleWorkerSource } from './rotaryAnglePool'
 
@@ -358,6 +365,69 @@ function prepFor(
     'marking retained walls charges the wall coverage, the model-only map and the second peak map')
   console.log(`worker plan: formula, budget and serial rules pinned (hex charge ${(estimate / 1048576).toFixed(2)} MB,`
     + ` with walls ${(withWalls / 1048576).toFixed(2)} MB)`)
+}
+
+// ── the charge covers the scratch the raster can really allocate ───────────
+{
+  // The gather submits a triangle once per bucket that holds it. The two buckets
+  // an angle reads are different bucket sets but not disjoint triangle sets: a
+  // triangle whose padded arc spans more than half the turn circle is listed in
+  // both, so the list handed to the raster -- and the clip-candidate scratch
+  // sized from it -- can be twice the mesh's triangle count. Charging one index
+  // per mesh triangle, as the p-e slice first did, covered half of it.
+  //
+  // This fixture makes that case exact rather than incidental: every triangle
+  // subtends 160 degrees of cross-section at radius 20 (no triangle contains the
+  // axis, or it would be in `always`, and none of its chords come inside the
+  // strip's reach), and the cones point at -X, so angle 0's two buckets --
+  // psi = pi/2 and psi + pi -- both hold every triangle.
+  const stock = roundStock(30, 40, 'x', { x: 0, y: 0 })
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const triangles = 5000
+  const radius = 20
+  const halfSpan = (Math.PI * 4) / 9
+  const positions: number[] = []
+  const index: number[] = []
+  for (let t = 0; t < triangles; t++) {
+    const along = 2 + (t % 100) * 0.2
+    for (let k = 0; k < 3; k++) {
+      const angle = Math.PI + (k - 1) * halfSpan
+      positions.push(along, centre + Math.cos(angle) * radius, pivot + Math.sin(angle) * radius)
+      index.push(index.length)
+    }
+  }
+  const mesh: RotaryModelMesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  const angles = [0]
+  const prep = prepFor(mesh, stock, [2, 4, 6, 8, 10, 12, 14, 16], 0.35, true)
+  const planValue = prep.planFor(angles)
+  // Measure the submitted list through the real gather: every entry the job
+  // writes is a triangle the raster may collect as a clip candidate.
+  const sentinel = 0xffffffff
+  const subset = prep.workspace.subset!
+  subset.fill(sentinel)
+  runRotaryAngleJob(prep, planValue, { index: 0, angle: 0 })
+  let submitted = 0
+  while (submitted < subset.length && subset[submitted] !== sentinel) submitted++
+  assert.equal(planValue.always.length, 0,
+    'no triangle may be in `always`, or the fixture does not exercise the two buckets')
+  assert.equal(submitted, 2 * triangles,
+    `the gather must submit every triangle once per bucket (${submitted} entries for ${triangles} triangles)`)
+
+  const setup = buildRotaryAngleSetup(prep, planValue)
+  const charge = rotaryAngleWorkerCharge(setup)
+  assert.ok(charge.candidates >= submitted * 4,
+    `the charge must cover the ${submitted * 4} bytes the submitted list can allocate (got ${charge.candidates})`)
+  assert.equal(charge.candidates, rotaryCandidateScratchBytes(triangles),
+    'the candidate charge is the raster\'s duplicate-inclusive bound')
+  assert.equal(
+    estimateRotaryAngleWorkerBytes(setup),
+    charge.setup + charge.subset + charge.turned + charge.candidates + charge.axialCells + charge.maps,
+    'the per-worker charge is the sum of the parts the budget is tested against',
+  )
+  console.log(`worker budget: ${triangles} triangles submit ${submitted} candidates`
+    + ` (${(charge.candidates / 1024).toFixed(1)} KB charged; one per triangle would be`
+    + ` ${(triangles * 4 / 1024).toFixed(1)} KB)`)
 }
 
 // ── the pool on real worker threads: identical rows, X and Y, both modes ───
