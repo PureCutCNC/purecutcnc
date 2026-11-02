@@ -74,6 +74,7 @@ import {
   normalizeProgramDate,
   parseProbeArgs,
   pathsAlias,
+  WARM_RUNS,
   ProbeError,
   readBaseline,
   selectOperations,
@@ -324,7 +325,10 @@ function operationReportFixture(
       operationDigest: sha256(stableStringify(operation)),
       toolDigest: sha256(stableStringify(tool)),
     },
-    runs: { coldMs: 30000, warmMs: [30000, 30000, 30000, 30000, 30000], medianMs: 30000, minMs: 30000, maxMs: 30000, digestStable: true },
+    runs: {
+      coldMs: 30000, warmMs: [30000, 30000, 30000, 30000, 30000],
+      medianMs: 30000, minMs: 30000, maxMs: 30000, digestStable: true, details: [],
+    },
     warnings: [],
     moves: { count: moves.length, digest: digestMoves(moves) },
     program: {
@@ -1029,6 +1033,93 @@ check('the CLI measures the asynchronous rotary driver with an identical program
   }
 })
 
+// ── the angle worker pool measures the same output ───────────
+
+check('the CLI measures the angle worker pool with identical moves and a phase split', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rotary-probe-pool-'))
+  const fixture = join(directory, 'square-rotary-pool.camj')
+  const serialOut = join(directory, 'serial.json')
+  const poolOut = join(directory, 'pool.json')
+  try {
+    const project = squareRotaryProject('around')
+    const ids = project.operations.map((operation) => operation.id)
+    writeFileSync(fixture, JSON.stringify(project))
+
+    const serial = measureControl(fixture, ids, serialOut, ['--async'])
+    assert.equal(serial.status, 0, `expected the serial async run to measure; stdout ${serial.stdout} stderr ${serial.stderr}`)
+    const pooled = measureControl(fixture, ids, poolOut, ['--workers', '2'])
+    assert.equal(pooled.status, 0, `expected the pooled run to measure; stdout ${pooled.stdout} stderr ${pooled.stderr}`)
+
+    const serialReport = JSON.parse(readFileSync(serialOut, 'utf8')) as ProbeReport
+    const poolReport = JSON.parse(readFileSync(poolOut, 'utf8')) as ProbeReport
+    assert.equal(poolReport.engine.entry, 'computeOperationToolpathAsync + angle worker pool',
+      'the report names the pool as the entry')
+    assert.deepEqual(
+      poolReport.operations.map((operation) => ({
+        id: operation.id,
+        moves: operation.moves,
+        program: operation.program.digest,
+        warnings: operation.warnings,
+      })),
+      serialReport.operations.map((operation) => ({
+        id: operation.id,
+        moves: operation.moves,
+        program: operation.program.digest,
+        warnings: operation.warnings,
+      })),
+      'the pool must produce the same moves, posted program and warnings as the serial runner',
+    )
+    for (const operation of poolReport.operations) {
+      assert.equal(operation.runs.details.length, WARM_RUNS + 1, `${operation.id}: one phase record per run`)
+      const detail = operation.runs.details[0]
+      assert.equal(detail.mode, 'parallel', `${operation.id}: the workers ran (${operation.runs.details[0].mode})`)
+      assert.equal(detail.workers, 2, `${operation.id}: two workers (got ${detail.workers})`)
+      assert.ok(detail.installMs > 0, `${operation.id}: the install was measured`)
+      assert.ok(detail.setupBytesPerWorker > 0, `${operation.id}: the setup crossed the wire`)
+      assert.ok(detail.batches > 0, `${operation.id}: the pool dispatched a batch`)
+      assert.ok(detail.rssPeakMiB > 0, `${operation.id}: peak RSS is recorded`)
+      assert.ok(detail.rssMiB > 0, `${operation.id}: current RSS is recorded`)
+      // Not vacuous: the phase split can never exceed the run it belongs to by
+      // much -- an install/await sum larger than the total would mean the two
+      // clocks measured different things.
+      const phaseSum = detail.installMs + detail.awaitMs
+      assert.ok(phaseSum <= detail.totalMs * 1.5 + 50,
+        `${operation.id}: install ${detail.installMs} + await ${detail.awaitMs} must fit the total ${detail.totalMs}`)
+    }
+    // The serial runner owns no worker phase, so its records say so.
+    for (const operation of serialReport.operations) {
+      const detail = operation.runs.details[0]
+      assert.equal(detail.mode, 'serial')
+      assert.equal(detail.workers, 0)
+      assert.equal(detail.batches, 0)
+      assert.ok(detail.rssPeakMiB > 0, 'the serial run still records its RSS')
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+check('the CLI refuses --workers against another checkout, and refuses a bad worker count', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rotary-probe-pool-refusal-'))
+  const fixture = join(directory, 'square-rotary-pool.camj')
+  try {
+    writeFileSync(fixture, JSON.stringify(squareRotaryProject('around')))
+    const otherRoot = join(directory, 'not-a-checkout')
+    const child = measureControl(fixture, ['op0021'], join(directory, 'out.json'),
+      ['--workers', '2', '--root', otherRoot])
+    assert.equal(child.status, 1, `expected a refusal; stdout ${child.stdout} stderr ${child.stderr}`)
+    assert.match(child.stderr, /--workers samples with this checkout's kernel/)
+    // A bad worker count is refused before anything is measured.
+    const bad = spawnSync(process.execPath, [
+      '--import', 'tsx', PROBE, '--project', fixture, '--operation', 'op0021', '--workers', 'many',
+    ], { encoding: 'utf8', timeout: 120_000 })
+    assert.equal(bad.status, 1)
+    assert.match(bad.stderr, /--workers needs a positive whole number of workers/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 // ── argument parsing ─────────────────────────────────────────
 
 check('arguments are parsed strictly', () => {
@@ -1060,6 +1151,29 @@ check('arguments are parsed strictly', () => {
   assert.throws(() => parseProbeArgs(['--project', 'fixture.camj'], defaults), /--operation/)
   assert.throws(() => parseProbeArgs(['--project'], defaults), /needs a value/)
   assert.throws(() => parseProbeArgs(['--project', 'f', '--operation', 'o', '--nope', 'x'], defaults), /unknown argument --nope/)
+
+  // #1115 slice p-d2: the angle worker pool is selected by --workers, which also
+  // selects the asynchronous entry it drives.
+  const pooled = parseProbeArgs(['--project', 'fixture.camj', '--operation', 'op0021', '--workers', '4'], defaults)
+  assert.equal(pooled.workers, 4)
+  assert.equal(pooled.rotaryAsync, true, '--workers measures the asynchronous driver')
+  assert.equal(pooled.poolBudgetMb, null, 'the pool keeps its 512 MiB budget unless told otherwise')
+  assert.equal(
+    parseProbeArgs(['--project', 'f', '--operation', 'o', '--pool-budget-mb', '1536'], defaults).poolBudgetMb,
+    1536,
+  )
+  assert.equal(parseProbeArgs(['--project', 'f', '--operation', 'o', '--async'], defaults).workers, null)
+  for (const bad of ['0', '-2', '2.5', 'eight']) {
+    assert.throws(
+      () => parseProbeArgs(['--project', 'f', '--operation', 'o', '--workers', bad], defaults),
+      /--workers needs a positive whole number of workers/,
+      `--workers ${bad} must be refused`,
+    )
+  }
+  assert.throws(
+    () => parseProbeArgs(['--project', 'f', '--operation', 'o', '--pool-budget-mb', '0'], defaults),
+    /--pool-budget-mb needs a positive number of MiB/,
+  )
 })
 
 // ── the CLI refuses it too, and leaves the fixture alone ─────

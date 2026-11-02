@@ -72,6 +72,17 @@
  * entry produced the numbers, and every baseline check is unchanged, so a run
  * on the async path either matches the stored baseline exactly or fails.
  *
+ * `--workers <n>` measures the same operations through the **angle worker pool**
+ * (#1115 slice p-d2): the asynchronous entry with a `RotaryBatchFactory` that
+ * samples each batch on `n` Node `worker_threads` workers, capped by the pool's
+ * own eight-worker ceiling, its cores-minus-two reservation and its 512 MiB
+ * typed-buffer budget (which the run reports, so a request for eight workers and
+ * the three that fit are told apart). Each run records the per-phase split --
+ * worker install, wall time awaiting replies, batches, plan revisions -- and the
+ * process's peak RSS, so what stays serial is measured rather than assumed.
+ * `--pool-budget-mb <n>` raises that budget for a benchmark that needs to see the
+ * uncapped ceiling.
+ *
  * `--pass-direction <around|along>` builds a pass-direction control in memory:
  * the selected operations are copied with `rotaryPassDirection` changed after
  * the fixture is loaded and never written back. The handoff forbids saving a
@@ -86,8 +97,8 @@
  *
  * Usage:
  *   npx tsx scripts/rotary-generation-probe.ts --project <file.camj> --operation <id> [--operation <id>…]
- *       [--pass-direction <around|along>] [--async] [--out <json>] [--root <checkout>]
- *       [--baseline <json>]
+ *       [--pass-direction <around|along>] [--async] [--workers <n>] [--pool-budget-mb <n>]
+ *       [--out <json>] [--root <checkout>] [--baseline <json>]
  *
  * The result JSON defaults to `work/rotary-generation-probe.json` in this
  * checkout. Nothing is ever written back to the fixture.
@@ -101,13 +112,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import type { PostProcessorInput, PostProcessorResult } from '../src/engine/gcode/types'
 import type { MachineDefinition } from '../src/engine/gcode/types'
+import { createRotaryAnglePool } from '../src/engine/toolpaths/rotaryAnglePool'
+import type { RotaryAnglePool } from '../src/engine/toolpaths/rotaryAnglePool'
+import type { RotaryBatchFactory } from '../src/engine/toolpaths/rotarySampling'
 import type { NormalizedTool, ToolpathResult } from '../src/engine/toolpaths/types'
+import { createNodeRotaryAngleWorkerSource } from '../src/app/toolpathGeneration/rotaryAngleNodeTransport'
 import type { Operation, Project, Tool } from '../src/types/project'
 
 /** One cold run plus this many warm forced regenerations, per operation. */
 export const WARM_RUNS = 5
 
 const PROBE_NAME = 'rotary-generation-probe'
+/** This checkout: what the script itself, and therefore the angle pool, comes from. */
+const PROBE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PROBE_VERSION = 1
 const ENGINE_ENTRY = 'computeOperationToolpath'
 /** The bundled definition the probe's baseline machine is built from. */
@@ -141,6 +158,10 @@ export interface ProbeArgs {
   passDirection: PassDirection | null
   /** Measure the asynchronous rotary driver instead of the synchronous one. */
   rotaryAsync: boolean
+  /** Sample each batch on this many angle workers; null leaves the pool unused. */
+  workers: number | null
+  /** Override the pool's typed-buffer budget, in MiB; null keeps 512 MiB. */
+  poolBudgetMb: number | null
 }
 
 export interface OperationIdentity {
@@ -172,6 +193,38 @@ export interface OperationIdentity {
   toolDigest: string
 }
 
+/**
+ * One generation run's phase split and memory (#1115 slice p-d2).
+ *
+ * The total is the generation call; `installMs` and `awaitMs` are the parts of
+ * it the pool owned. `total - install - await` is therefore the wall time the
+ * coordinator spent itself -- assembly, refinement decisions, emission and the
+ * batch-plan build -- which is the serial share Amdahl's estimate is about. It
+ * is a wall-time remainder, not a profile: a worker's own compute is inside
+ * `awaitMs`, and a serial runner reports both phases as 0.
+ */
+export interface RunDetail {
+  totalMs: number
+  /** Creating the workers and installing the setup in each; 0 without workers. */
+  installMs: number
+  /** Wall time spent awaiting worker replies, summed over the run's batches. */
+  awaitMs: number
+  batches: number
+  planRevisions: number
+  /** Replies dropped for a stale epoch, a stale batch or a retired pool. */
+  rejectedReplies: number
+  /** Workers actually used (below a requested count when the budget capped it). */
+  workers: number
+  mode: 'serial' | 'parallel'
+  fallback: 'none' | 'startup'
+  /** Typed buffers one worker's setup copy holds; 0 without workers. */
+  setupBytesPerWorker: number
+  /** `process.memoryUsage().rss` after the run, MiB. */
+  rssMiB: number
+  /** The process high-water mark (`process.resourceUsage().maxRSS`), MiB. */
+  rssPeakMiB: number
+}
+
 export interface OperationReport {
   id: string
   identity: OperationIdentity
@@ -184,6 +237,8 @@ export interface OperationReport {
     /** False when two runs of the same operation produced different moves:
      *  a timing baseline is meaningless over non-deterministic output. */
     digestStable: boolean
+    /** One entry per run, the cold run first (#1115 slice p-d2). */
+    details: RunDetail[]
   }
   warnings: Array<{ code: string; params?: Record<string, unknown> }>
   moves: { count: number; digest: string }
@@ -256,7 +311,7 @@ interface EngineTree {
   computeOperationToolpathAsync?(
     project: Project,
     operation: Operation,
-    options?: { trace?: boolean },
+    options?: { trace?: boolean; rotaryRunBatch?: RotaryBatchFactory },
   ): Promise<{ result: ToolpathResult } | null>
   normalizeToolForProject(tool: Tool, project: Project): NormalizedTool
   runPostProcessor(input: PostProcessorInput): PostProcessorResult
@@ -296,7 +351,7 @@ export async function loadEngineTree(root: string): Promise<EngineTree> {
     computeOperationToolpathAsync?(
       project: Project,
       operation: Operation,
-      options?: { trace?: boolean },
+      options?: { trace?: boolean; rotaryRunBatch?: RotaryBatchFactory },
     ): Promise<{ result: ToolpathResult } | null>
   }>('src/engine/toolpaths/generateOperation.ts')
   const geometry = await load<{ normalizeToolForProject(tool: Tool, project: Project): NormalizedTool }>(
@@ -376,6 +431,8 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
   let baseline: string | null = null
   let passDirection: PassDirection | null = null
   let rotaryAsync = false
+  let workers: number | null = null
+  let poolBudgetMb: number | null = null
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
@@ -408,6 +465,24 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
       case '--async':
         rotaryAsync = true
         break
+      case '--workers': {
+        const text = value()
+        const parsed = Number(text)
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          throw new ProbeError(`--workers needs a positive whole number of workers; got ${text}`)
+        }
+        workers = parsed
+        break
+      }
+      case '--pool-budget-mb': {
+        const text = value()
+        const parsed = Number(text)
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          throw new ProbeError(`--pool-budget-mb needs a positive number of MiB; got ${text}`)
+        }
+        poolBudgetMb = parsed
+        break
+      }
       case '--pass-direction': {
         const direction = value()
         if (!isPassDirection(direction)) {
@@ -432,7 +507,11 @@ export function parseProbeArgs(argv: readonly string[], defaults: ProbeDefaults)
     root: resolve(root),
     baseline: baseline === null ? null : resolve(baseline),
     passDirection,
-    rotaryAsync,
+    // `--workers` measures the asynchronous entry by definition: the pool is a
+    // batch runner for that driver, so the flag selects it too.
+    rotaryAsync: rotaryAsync || workers !== null,
+    workers,
+    poolBudgetMb,
   }
 }
 
@@ -811,25 +890,110 @@ function generationDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+/**
+ * Memory and phase readings after one generation run (#1115 slice p-d2).
+ *
+ * `maxRSS` is the **process** high-water mark, and under `worker_threads` the
+ * workers are threads of that process, so it covers their heaps too. It only
+ * ever rises, so a run's reading is at least every earlier run's; a benchmark
+ * that wants one configuration's peak runs it in its own process, which is what
+ * the p-d2 benchmark does.
+ */
+function runDetail(pools: readonly RotaryAnglePool[], totalMs: number): RunDetail {
+  const usage = process.resourceUsage()
+  const toMiB = (bytes: number): number => Math.round((bytes / 1048576) * 10) / 10
+  const detail: RunDetail = {
+    totalMs: roundMs(totalMs),
+    installMs: 0,
+    awaitMs: 0,
+    batches: 0,
+    planRevisions: 0,
+    rejectedReplies: 0,
+    workers: 0,
+    mode: 'serial',
+    fallback: 'none',
+    setupBytesPerWorker: 0,
+    rssMiB: toMiB(process.memoryUsage().rss),
+    rssPeakMiB: toMiB(usage.maxRSS * 1024),
+  }
+  let installMs = 0
+  let awaitMs = 0
+  let batches = 0
+  let planRevisions = 0
+  let rejectedReplies = 0
+  let workers = 0
+  let fallback: RunDetail['fallback'] = 'none'
+  for (const pool of pools) {
+    const stats = pool.stats()
+    installMs += stats.installMs
+    awaitMs += stats.awaitMs
+    batches += stats.batches
+    planRevisions += stats.planRevisions
+    rejectedReplies += stats.rejectedReplies
+    workers = Math.max(workers, stats.workers)
+    if (stats.fallback !== 'none') fallback = stats.fallback
+    detail.mode = stats.mode
+    detail.setupBytesPerWorker = Math.max(detail.setupBytesPerWorker, stats.setupBytes)
+  }
+  return {
+    ...detail,
+    installMs: Math.round(installMs * 10) / 10,
+    awaitMs: Math.round(awaitMs * 10) / 10,
+    batches,
+    planRevisions,
+    rejectedReplies,
+    workers,
+    fallback,
+    // Without a pool, the run is serial by construction: the in-process runner
+    // owns no phase of its own.
+    mode: pools.length > 0 ? detail.mode : 'serial',
+  }
+}
+
 async function operationReport(
   tree: EngineTree,
   project: Project,
   operation: Operation,
-  rotaryAsync: boolean,
+  args: Pick<ProbeArgs, 'rotaryAsync' | 'workers' | 'poolBudgetMb'>,
 ): Promise<OperationReport> {
   const tool = toolFor(tree, project, operation)
-  // `--async` measures the asynchronous rotary driver; every other run stays on
-  // the synchronous entry, which is the app's generation path.
-  const asyncEntry = rotaryAsync ? tree.computeOperationToolpathAsync : undefined
-  if (rotaryAsync && asyncEntry === undefined) {
+  // `--async` measures the asynchronous rotary driver and `--workers` its worker
+  // pool; every other run stays on the synchronous entry, which is the app's
+  // generation path.
+  const asyncEntry = args.rotaryAsync ? tree.computeOperationToolpathAsync : undefined
+  if (args.rotaryAsync && asyncEntry === undefined) {
     throw new ProbeError(
       `${tree.root} has no computeOperationToolpathAsync, so --async cannot measure it`,
     )
   }
+  // One pool per generation: the factory is called once per operation, so a
+  // generation's worker setup is inside its own measured time.
+  const pools: RotaryAnglePool[] = []
+  const source = args.workers === null ? null : createNodeRotaryAngleWorkerSource()
+  const poolOptions = {
+    ...(args.workers !== null ? { maxWorkers: args.workers } : {}),
+    ...(args.poolBudgetMb !== null ? { maxBufferBytes: args.poolBudgetMb * 1048576 } : {}),
+  }
+  const details: RunDetail[] = []
   const run = async (): Promise<ToolpathResult> => {
-    const envelope = asyncEntry === undefined
-      ? tree.computeOperationToolpath(project, operation)
-      : await asyncEntry(project, operation)
+    pools.length = 0
+    const started = performance.now()
+    let envelope: { result: ToolpathResult } | null
+    if (asyncEntry === undefined) {
+      envelope = tree.computeOperationToolpath(project, operation)
+    } else if (source !== null) {
+      const factory: RotaryBatchFactory = (prep) => {
+        const pool = createRotaryAnglePool(prep, source, poolOptions)
+        pools.push(pool)
+        return pool.batches
+      }
+      envelope = await asyncEntry(project, operation, { rotaryRunBatch: factory })
+    } else {
+      envelope = await asyncEntry(project, operation)
+    }
+    details.push(runDetail(pools, performance.now() - started))
+    for (const pool of pools) await pool.dispose()
+    pools.length = 0
     if (!envelope) {
       throw new ProbeError(`the engine returned no toolpath for operation ${operation.id}`)
     }
@@ -914,6 +1078,7 @@ async function operationReport(
       minMs: Math.min(...warmMs),
       maxMs: Math.max(...warmMs),
       digestStable: digests.size === 1,
+      details,
     },
     warnings: result.warnings.map((warning) => ({
       code: warning.code,
@@ -1162,6 +1327,18 @@ export async function measure(args: ProbeArgs): Promise<ProbeReport> {
   // fixture must not measure anything at all.
   assertOutputIsNotFixture(args.out, args.project)
 
+  // `--workers` samples with **this** checkout's kernel: the pool and the worker
+  // adapter are imported from here, while `--root` only chooses where the
+  // generation entry comes from. Measuring an older tree through this kernel
+  // would compare two samplers and call it a speed-up. Checked before anything is
+  // loaded, so a mistaken pairing costs no load.
+  if (args.workers !== null && resolve(args.root) !== resolve(PROBE_ROOT)) {
+    throw new ProbeError(
+      `--workers samples with this checkout's kernel (${PROBE_ROOT}), but --root names ${args.root};`
+      + ' measure one checkout at a time',
+    )
+  }
+
   const tree = await loadEngineTree(args.root)
 
   const bytes = readFileSync(args.project)
@@ -1191,7 +1368,7 @@ export async function measure(args: ProbeArgs): Promise<ProbeReport> {
 
   const operations: OperationReport[] = []
   for (const operation of measured) {
-    operations.push(await operationReport(tree, project, operation, args.rotaryAsync))
+    operations.push(await operationReport(tree, project, operation, args))
   }
 
   return {
@@ -1199,7 +1376,11 @@ export async function measure(args: ProbeArgs): Promise<ProbeReport> {
     version: PROBE_VERSION,
     generatedAt: new Date().toISOString(),
     engine: {
-      entry: args.rotaryAsync ? `${ENGINE_ENTRY}Async` : ENGINE_ENTRY,
+      entry: args.workers !== null
+        ? `${ENGINE_ENTRY}Async + angle worker pool`
+        : args.rotaryAsync
+          ? `${ENGINE_ENTRY}Async`
+          : ENGINE_ENTRY,
       root: tree.root,
       commit: tree.commit,
     },
@@ -1229,6 +1410,30 @@ export async function measure(args: ProbeArgs): Promise<ProbeReport> {
 function displayPath(path: string, base: string): string {
   const relativePath = relative(base, path)
   return relativePath === '' || relativePath.startsWith('..') ? path : relativePath
+}
+
+/** One line per run and operation: what the pool owned and what it did not. */
+function formatPhases(report: ProbeReport): string {
+  const lines: string[] = []
+  for (const operation of report.operations) {
+    operation.runs.details.forEach((detail, index) => {
+      const label = index === 0 ? 'cold' : `warm ${index}`
+      const pooled = detail.workers > 0
+      const serialShare = Math.max(0, detail.totalMs - detail.installMs - detail.awaitMs)
+      lines.push(
+        `${operation.id} ${label}: ${detail.totalMs.toFixed(1)} ms total`
+        + (pooled
+          ? ` | ${detail.workers} workers, ${detail.mode}${detail.fallback === 'none' ? '' : ` (${detail.fallback} fallback)`}`
+            + ` | install ${detail.installMs.toFixed(1)} ms | await ${detail.awaitMs.toFixed(1)} ms`
+            + ` | coordinator remainder ${serialShare.toFixed(1)} ms`
+            + ` | ${detail.batches} batches, ${detail.planRevisions} plan revisions`
+            + ` | ${(detail.setupBytesPerWorker / 1048576).toFixed(1)} MB/worker`
+          : ' | serial (in-process runner)')
+        + ` | rss ${detail.rssMiB.toFixed(0)} MiB, peak ${detail.rssPeakMiB.toFixed(0)} MiB`,
+      )
+    })
+  }
+  return lines.join('\n')
 }
 
 function formatTable(report: ProbeReport, base: string): string {
@@ -1281,8 +1486,8 @@ function formatTable(report: ProbeReport, base: string): string {
 }
 
 const USAGE = `Usage: npx tsx scripts/rotary-generation-probe.ts --project <file.camj> --operation <id> [--operation <id>…]
-       [--pass-direction <around|along>] [--async] [--out <json>] [--root <checkout>]
-       [--baseline <json>]
+       [--pass-direction <around|along>] [--async] [--workers <n>] [--pool-budget-mb <n>]
+       [--out <json>] [--root <checkout>] [--baseline <json>]
 
   --project   the .camj to read (never written)
   --operation operation id to measure; repeat for more than one
@@ -1293,6 +1498,14 @@ const USAGE = `Usage: npx tsx scripts/rotary-generation-probe.ts --project <file
   --async     measure the asynchronous rotary driver (computeOperationToolpathAsync)
               through its in-process serial batch runner; refused when the
               measured checkout has no such entry
+  --workers   measure the same driver through the angle worker pool with at most
+              <n> Node worker_threads workers (also capped by the pool's own
+              eight-worker ceiling, cores - 2, and its buffer budget); the report
+              records the workers actually used, the install/await split and the
+              process peak RSS, and it refuses --root with another checkout
+  --pool-budget-mb
+              raise the pool's typed-buffer budget from its 512 MiB default, for
+              a run that needs to see the uncapped worker ceiling
   --out       result JSON (default: work/rotary-generation-probe.json in this checkout);
               rejects the fixture's own path, including a symlink or hardlink to it
   --root      checkout whose engine is measured (default: this checkout)
@@ -1325,6 +1538,10 @@ async function main(argv: readonly string[]): Promise<void> {
   writeFileSync(args.out, `${JSON.stringify(report, null, 2)}\n`)
 
   console.log(formatTable(report, probeRoot))
+  if (report.operations.some((operation) => operation.runs.details.length > 0)) {
+    console.log('')
+    console.log(formatPhases(report))
+  }
   for (const operation of report.operations) {
     if (!operation.runs.digestStable) {
       console.error(
