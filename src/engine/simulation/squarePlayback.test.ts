@@ -22,8 +22,16 @@
  * app's own Square-to-round dialog, updates the rough's radial stock through the
  * operation, and plays the finish from the prior rough. On CI's 2-vCPU runner
  * that spec sits at the 60 s / 2 % margin, so the playback's per-frame cost is
- * guarded here as a ratio against invariant work, never a millisecond budget
- * (docs/PERF_ASSERTIONS.md).
+ * guarded here (docs/PERF_ASSERTIONS.md).
+ *
+ * The default guard is a **count of schedule derivations** (issue #1111): the
+ * wrapped kernel caches every source move's ramp sample schedule, and the count
+ * of real derivations is a property of the path, not of the machine, so it cannot
+ * fail because the build pool is busy. The CPU-time ratio against the flat kernel
+ * is still measured here for now; issue #1111 slice pg-b moves that behind an
+ * explicit environment flag and decides when it runs. A small explicit ramp is
+ * replayed across many frames as well, because the square job's passes may not
+ * exercise a non-empty ramp schedule.
  *
  * The subject is the real job: the sheet the app builds for the finish, the
  * prior-rough replay as its starting stock, and every frame the viewport's
@@ -68,7 +76,13 @@ import {
 import { cpuRatio } from '../../test/cpuRatio'
 import { PlaybackController, cloneSimulationGrid } from './playback'
 import type { PlaybackOptions, PlaybackToolInfo } from './playback'
-import type { ToolpathResult } from '../toolpaths/types'
+import {
+  setSweepScheduleObserver,
+  wrappedNeedsSweep,
+  wrappedSweepSampleFractions,
+} from './replay'
+import type { SweepScheduleDerivation } from './replay'
+import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import type { SimulationGrid } from './types'
 
 /** The dialog's write starts from a bare feature-mode selection. */
@@ -227,6 +241,84 @@ function removedFromVirgin(grid: SimulationGrid): number {
   return removed
 }
 
+/**
+ * Fails if one `(source move, cell size, cutter radius)` schedule was ever
+ * derived twice. That is the whole guard: the kernel may meet a combination many
+ * times (once per frame of a long move), but only the first may build it.
+ */
+function assertSingleDerivations(
+  derivations: readonly SweepScheduleDerivation[],
+  label: string,
+): void {
+  const combinations = new Map<ToolpathMove, Map<string, number>>()
+  for (const derivation of derivations) {
+    const key = `${derivation.cellSize}@${derivation.toolRadius}`
+    const forMove = combinations.get(derivation.move) ?? new Map<string, number>()
+    const count = (forMove.get(key) ?? 0) + 1
+    forMove.set(key, count)
+    combinations.set(derivation.move, forMove)
+    assert.equal(
+      count,
+      1,
+      `${label}: the schedule for one source move at cell size ${derivation.cellSize} and cutter `
+      + `radius ${derivation.toolRadius} was derived ${count} times — a repeated piece of the `
+      + 'same move must reuse the cached schedule',
+    )
+  }
+}
+
+interface RampFixture {
+  grid: SimulationGrid
+  move: ToolpathMove
+  tool: PlaybackToolInfo
+}
+
+/**
+ * A small explicit ramp (issue #1111): one source move that descends 6 mm over
+ * 10 mm, more than one cell of Z per cutter diameter at this cell size, so the
+ * wrapped kernel really builds a non-empty sample schedule. The square-to-round
+ * finish is mostly constant-Z passes, so it must not be assumed to exercise the
+ * schedule itself.
+ */
+function rampFixture(): RampFixture {
+  const frameRadius = 10
+  const period = 2 * Math.PI * frameRadius
+  const cellSize = 0.25
+  const alongCells = 80
+  const acrossCells = Math.round(period / cellSize)
+  const grid: SimulationGrid = {
+    cols: alongCells,
+    rows: acrossCells,
+    cellSize,
+    originX: 0,
+    originY: -period / 2,
+    stockBottomZ: 0,
+    stockTopZ: frameRadius,
+    wrap: { axis: 'y', period },
+    topZ: new Float32Array(alongCells * acrossCells).fill(frameRadius),
+  }
+  return {
+    grid,
+    // Slope 0.6: 0.6 × 2 × 3 mm = 3.6 mm of Z per cutter diameter > 0.25 mm cell.
+    move: { kind: 'cut', from: { x: 4, y: 0, z: 12 }, to: { x: 14, y: 0, z: 6 } },
+    tool: { toolType: 'flat_endmill', toolRadius: 3, vBitAngle: null },
+  }
+}
+
+/** Plays the whole ramp at a fixed frame budget; subdivision is off so every frame is a piece. */
+function playRamp(fixture: RampFixture): { grid: SimulationGrid; frames: number } {
+  const controller = new PlaybackController(fixture.grid, [fixture.move], fixture.tool, {
+    maxSegmentLength: 0,
+  })
+  let frames = 0
+  while (!controller.isFinished()) {
+    controller.advance(0.5)
+    controller.clearDirtyRegion()
+    frames += 1
+  }
+  return { grid: controller.liveGrid, frames }
+}
+
 interface PlaybackLane {
   /** Restores the starting stock and constructs the controller outside the measured region. */
   setup: () => void
@@ -292,11 +384,34 @@ function testSquarePlaybackTiming(): void {
   // reference cannot benefit from anything the wrapped kernel does.
   const flat = playbackLane(job, baseGrid, false)
 
+  // The default, load-independent guard (issue #1111): count real schedule
+  // derivations over one complete playback of the real job. The JIT warm-up is
+  // also the counted run, so the timing measurement below is unchanged.
+  const derivations: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => derivations.push(derivation))
   // Warm the JIT outside the measured region.
   wrapped.setup()
   wrapped.run()
+  setSweepScheduleObserver(null)
   flat.setup()
   flat.run()
+
+  assert(
+    derivations.length > 0,
+    'the wrapped playback must derive at least one schedule or the count guards nothing',
+  )
+  // The controller replays a long source move frame by frame, so a per-frame
+  // derivation would exceed the path's own move count at once.
+  assert(
+    derivations.length <= job.finishPath.moves.length,
+    `the wrapped playback derived ${derivations.length} schedules for a `
+    + `${job.finishPath.moves.length}-move path — every piece of one source move must reuse `
+    + 'the cached schedule',
+  )
+  assertSingleDerivations(derivations, 'square-to-round playback')
+  console.log(
+    `  schedule derivations: ${derivations.length} for ${job.finishPath.moves.length} source moves`,
+  )
 
   const { ratio, subjectMs, referenceMs } = cpuRatio(wrapped, flat)
   console.log(
@@ -323,6 +438,87 @@ function testSquarePlaybackTiming(): void {
   assert(flatCut > 0, 'fixture: the flat reference playback must remove material')
 
   console.log(`square-to-round playback timing: PASSED (${wrappedCut} cells removed)`)
+}
+
+/**
+ * The schedule cache itself, counted (issue #1111). A ramp is played across many
+ * frames of one source move: the first piece derives the schedule and every later
+ * piece must reuse it. Then cell size and cutter radius must each be part of the
+ * cache key, and collection must leave the grid untouched.
+ */
+function testRampScheduleGuard(): void {
+  console.log('Testing wrapped ramp schedule derivations...')
+  const played = rampFixture()
+  assert(
+    wrappedNeedsSweep(played.grid, played.move, played.tool.toolRadius),
+    'fixture: the ramp must need the swept schedule or nothing here is guarded',
+  )
+
+  const derivations: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => derivations.push(derivation))
+  const playback = playRamp(played)
+  setSweepScheduleObserver(null)
+
+  assert(playback.frames >= 8, `fixture: the ramp must span several frames (played ${playback.frames})`)
+  assert.equal(
+    derivations.length,
+    1,
+    `the ramp derived its schedule ${derivations.length} times across ${playback.frames} frames — `
+    + 'every piece of one source move must reuse the cached schedule',
+  )
+  const derived = derivations[0]
+  assert(derived.move === played.move, 'the derivation reports the source move it belongs to')
+  assert.equal(derived.cellSize, played.grid.cellSize, 'the derivation reports the grid cell size')
+  assert.equal(derived.toolRadius, played.tool.toolRadius, 'the derivation reports the cutter radius')
+  assert(derived.sampleCount > 1, 'the ramp schedule is non-empty')
+  const rampRemoved = removedAgainst(playback.grid, played.grid)
+  assert(rampRemoved > 0, 'the guarded ramp playback removes material')
+
+  // Cell size and cutter radius are cache-key dimensions: each change derives its
+  // own schedule instead of reusing a neighbouring one.
+  const sizing = rampFixture()
+  const resized: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => resized.push(derivation))
+  const fine = wrappedSweepSampleFractions(sizing.grid, sizing.move, sizing.tool.toolRadius)
+  const repeat = wrappedSweepSampleFractions(sizing.grid, sizing.move, sizing.tool.toolRadius)
+  assert.equal(resized.length, 1, 're-deriving the same combination is a cache hit')
+  assert.deepEqual(repeat, fine, 'a cache hit returns the same schedule')
+
+  const coarse = wrappedSweepSampleFractions(
+    { ...sizing.grid, cellSize: sizing.grid.cellSize * 2 },
+    sizing.move,
+    sizing.tool.toolRadius,
+  )
+  assert.equal(resized.length, 2, 'a different cell size must derive a new schedule')
+  assert(coarse.length < fine.length, 'a coarser grid samples the ramp less often')
+
+  // Too small to need the sweep: this derives an empty schedule. If the radius
+  // were dropped from the cache key it would be handed the fine ramp's fractions.
+  const blunt = wrappedSweepSampleFractions(sizing.grid, sizing.move, 0.2)
+  assert.equal(resized.length, 3, 'a different cutter radius must derive a new schedule')
+  assert.equal(blunt.length, 0, 'a cutter that needs no sweep derives an empty schedule')
+  setSweepScheduleObserver(null)
+
+  // Collection is passive: the same job played with it on and off leaves the grid
+  // byte-identical. The two runs use distinct source-move identities so each
+  // derives its own schedule rather than sharing a warmed cache entry.
+  const collected = rampFixture()
+  const plain = rampFixture()
+  assert.notEqual(collected.move, plain.move, 'fixture: the two runs must not share a cache entry')
+  setSweepScheduleObserver(() => { /* presence is all this run needs */ })
+  const collectedGrid = playRamp(collected).grid
+  setSweepScheduleObserver(null)
+  const plainGrid = playRamp(plain).grid
+  assert.equal(
+    Buffer.compare(Buffer.from(collectedGrid.topZ.buffer), Buffer.from(plainGrid.topZ.buffer)),
+    0,
+    'collecting schedule derivations must leave the simulation grid byte-identical',
+  )
+
+  console.log(
+    `ramp schedule derivations: PASSED (1 derivation across ${playback.frames} frames, `
+    + `${rampRemoved} cells removed)`,
+  )
 }
 
 /**
@@ -379,6 +575,10 @@ function testLibraryAddedPlayback(): void {
   console.log(`library ball-finish playback: PASSED (${removedAgainst(live, baseGrid)} cells removed)`)
 }
 
+// The deterministic guard runs first: its counts must be printed even when the
+// load-sensitive timing assertion (still on until issue #1111 slice pg-b puts it
+// behind an explicit flag) ends the run.
+testRampScheduleGuard()
 testSquarePlaybackTiming()
 testLibraryAddedPlayback()
 console.log('\nAll square playback cost tests PASSED.')

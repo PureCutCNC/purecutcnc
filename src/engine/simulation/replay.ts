@@ -400,6 +400,40 @@ interface SweepSchedule {
 const EMPTY_SCHEDULE: readonly number[] = []
 const sweepSchedules = new WeakMap<ToolpathMove, SweepSchedule[]>()
 
+/**
+ * One real ramp-schedule derivation: a cache miss that built the schedule of
+ * `move` for this grid cell size and cutter radius (issue #1111). The counts are
+ * a property of the path, not of the machine, so they gate the schedule cache
+ * without measuring time.
+ */
+export interface SweepScheduleDerivation {
+  /** The source move the schedule describes; its object identity is the cache key. */
+  move: ToolpathMove
+  cellSize: number
+  toolRadius: number
+  /** Absolute sample fractions in the derived schedule; 0 means it needs no sweep. */
+  sampleCount: number
+}
+
+export type SweepScheduleObserver = (derivation: SweepScheduleDerivation) => void
+
+let sweepScheduleObserver: SweepScheduleObserver | null = null
+
+/**
+ * Opt-in diagnostic seam around the schedule cache (issue #1111). It reports
+ * every real derivation — a cache miss that built a schedule — and nothing when
+ * the cache serves the schedule, so the number of derivations measures the work
+ * the cache saves independently of load. Off by default, and nothing in the app
+ * installs an observer.
+ *
+ * It only reads the cache's decision: it is called after the entry is stored and
+ * cannot change which schedule is returned, so collection leaves the simulation
+ * grid byte-identical. Pass `null` to stop collecting.
+ */
+export function setSweepScheduleObserver(observer: SweepScheduleObserver | null): void {
+  sweepScheduleObserver = observer
+}
+
 function sweepScheduleFor(
   grid: SimulationGrid,
   sweep: ToolpathMove,
@@ -422,6 +456,7 @@ function sweepScheduleFor(
     : EMPTY_SCHEDULE
   const entry = { cellSize, toolRadius, fractions }
   entries.push(entry)
+  sweepScheduleObserver?.({ move: sweep, cellSize, toolRadius, sampleCount: fractions.length })
   return entry
 }
 
