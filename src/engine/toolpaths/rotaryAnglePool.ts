@@ -35,10 +35,14 @@
  *    each job to the result that names *its* index, so completion order cannot
  *    reach the output -- which is the property the reverse-order test pins.
  * 3. **What a failure means.** A startup or resource failure (a worker that
- *    cannot be created or installed, or one that dies) discards the batch and
- *    reruns it serially, and every later batch stays serial: the operation still
- *    generates. A computation error is not retried -- it is a real error in the
- *    sampler, and hiding it behind a second run would hide it from the user.
+ *    cannot be created or installed, one that dies, or a send that throws -- a
+ *    closed `MessagePort` reports itself that way, not as a reply) discards the
+ *    batch and reruns it serially, and every later batch stays serial: the
+ *    operation still generates. A send failure has to settle whatever it left
+ *    waiting first, or a discarded batch stays pending and disposal rejects a
+ *    promise nobody holds. A computation error is not retried -- it is a real
+ *    error in the sampler, and hiding it behind a second run would hide it from
+ *    the user.
  *
  * The pool is transport-agnostic: a {@link RotaryAngleWorkerSource} creates the
  * ports, so the same pool drives Node `worker_threads` here (see
@@ -161,7 +165,11 @@ export function planRotaryAnglePool(input: {
   readonly maxWorkers?: number
   readonly maxBufferBytes?: number
 }): RotaryAngleWorkerPlan {
-  const maxWorkers = Math.max(1, Math.floor(input.maxWorkers ?? MAX_ROTARY_ANGLE_WORKERS))
+  // `maxWorkers` may *lower* the ceiling but never raise it: the design put the
+  // ceiling at eight because past it the serial share dominates, and a caller
+  // that passed the machine's 32 cores used to select 30 workers -- a count the
+  // byte budget then has to pay for, not one it chose.
+  const maxWorkers = Math.max(1, Math.min(MAX_ROTARY_ANGLE_WORKERS, Math.floor(input.maxWorkers ?? MAX_ROTARY_ANGLE_WORKERS)))
   const maxBufferBytes = Math.max(0, input.maxBufferBytes ?? ROTARY_ANGLE_POOL_BUDGET_BYTES)
   const perWorkerBytes = Math.max(0, input.perWorkerBytes)
   const parallelism = input.availableParallelism
@@ -197,10 +205,24 @@ export function planRotaryAnglePool(input: {
  * fused raster plus bucket data), and the rest is what the job derives from it
  * on a worker: the candidate subset, the along-mode turned vertex buffer, the
  * raster's per-triangle cell-range caches, the raster's clip-candidate scratch,
- * and one height map with its wall coverage and model-only arrays -- capped at
- * `MAX_HEIGHT_MAP_CELLS` by `chooseHeightMapCellSize`, so this is the largest
- * map a worker can be asked to build. Charging all of it before dispatch is what
- * makes "eight workers fit in 512 MiB" a measurement rather than a hope.
+ * and the height-map set -- capped at `MAX_HEIGHT_MAP_CELLS` by
+ * `chooseHeightMapCellSize`, so this is the largest map a worker can be asked to
+ * build. Charging all of it before dispatch is what makes "eight workers fit in
+ * 512 MiB" a measurement rather than a hope.
+ *
+ * The map set is more than the map. The clip pass builds a **peak-limit
+ * neighbourhood map** from the centre-sampled map (`buildRotaryHeightMap`'s
+ * `peakLimit`, and `buildHeightMap`'s) and, when the caller marked retained
+ * walls (#1095 slice D), a second one judged against the model-only surface:
+ * the wall coverage `Uint8Array`, the model-only `Float32Array` and
+ * `modelPeakLimit`. All five arrays are live at once, so a max-size map holds
+ * **17 bytes per cell** with walls (8 without), not the 9 the map, its coverage
+ * and the model-only map cost when the peak maps are forgotten -- 17,000,000
+ * bytes of maps against a 9,001,560-byte charge for a single worker's cap.
+ *
+ * Walls are charged only where the sampler can pass them: `buildOptions` in
+ * `runRotaryAngleJob` adds `wallTriangleStart` for around mode only, so an along
+ * worker's map never allocates the wall arrays.
  */
 export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): number {
   const triangles = rotaryAngleTriangleCount(setup)
@@ -214,8 +236,15 @@ export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): 
   // boxes) and, around mode only, the axial cell-range caches.
   bytes += triangles * 32
   if (setup.mode === 'around') bytes += triangles * 16
-  // One height map, plus wall coverage and the model-only map (#1095 slice D).
-  bytes += MAX_HEIGHT_MAP_CELLS * (4 + 1 + 4)
+  // One height map plus the peak-limit neighbourhood map the clip pass builds
+  // from it (#1050 slices B/C): both modes allocate that pair, per angle.
+  bytes += MAX_HEIGHT_MAP_CELLS * (4 + 4)
+  // Retained walls (#1095 slice D) add the per-cell wall coverage, the
+  // model-only map and the second peak-limit map the clip pass then compares a
+  // model triangle against.
+  if (setup.mode === 'around' && setup.wallTriangleStart !== undefined) {
+    bytes += MAX_HEIGHT_MAP_CELLS * (1 + 4 + 4)
+  }
   return bytes
 }
 
@@ -268,6 +297,27 @@ export function setupFailure(error: unknown): Error {
 /** Whether an error is a setup/resource failure (retried serially) or real. */
 export function isSetupFailure(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith(SETUP_FAILURE_PREFIX)
+}
+
+/** Mark something a resource failure without stacking the prefix twice. */
+function asSetupFailure(error: unknown): Error {
+  return isSetupFailure(error) ? error as Error : setupFailure(error)
+}
+
+/**
+ * Note that a promise's rejection will be handled, and hand it back.
+ *
+ * A batch or phase wait is *messaged first and awaited second*, so a send that
+ * throws can settle the promise before its caller reaches `await`. Awaiting the
+ * original still throws -- that is what the caller needs -- but an unobserved
+ * rejection is a process-level failure under Node, and this promise is only ever
+ * observed later (or by nobody, once the batch has been discarded and the jobs
+ * rerun serially). The attached handler is the difference between "the fallback
+ * ran" and "the fallback ran, then the process died of an unhandled rejection".
+ */
+function observed<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => {})
+  return promise
 }
 
 /**
@@ -503,13 +553,13 @@ export function createRotaryAnglePool(
     }
   }
 
-  const awaitInstall = (): Promise<void> => new Promise<void>((resolve, reject) => {
+  const awaitInstall = (): Promise<void> => observed(new Promise<void>((resolve, reject) => {
     phaseWait = { kind: 'install', revision: null, pending: new Set(ports.map((_, index) => index)), resolve, reject }
-  })
+  }))
 
-  const awaitPlan = (revision: number): Promise<void> => new Promise<void>((resolve, reject) => {
+  const awaitPlan = (revision: number): Promise<void> => observed(new Promise<void>((resolve, reject) => {
     phaseWait = { kind: 'plan', revision, pending: new Set(ports.map((_, index) => index)), resolve, reject }
-  })
+  }))
 
   /**
    * Create the workers for this batch and install the setup in each.
@@ -534,7 +584,11 @@ export function createRotaryAnglePool(
       }
       await wait
     } catch (error) {
-      throw setupFailure(error)
+      // A send that throws leaves the install unanswered. Settle the wait here
+      // (a no-op when the failure *was* the wait) so nothing is left pending,
+      // then report the resource failure the serial retry exists for.
+      rejectPhase(asSetupFailure(error))
+      throw asSetupFailure(error)
     } finally {
       installMs += performance.now() - started
     }
@@ -551,14 +605,17 @@ export function createRotaryAnglePool(
     planRevision += 1
     const revision = planRevision
     const wait = awaitPlan(revision)
-    for (let index = 0; index < ports.length; index += 1) {
-      const copy = copyRotaryAnglePlan(payload)
-      ports[index].post({ kind: 'plan', epoch, revision, plan: copy }, rotaryAnglePlanTransfer(copy))
-    }
     try {
+      for (let index = 0; index < ports.length; index += 1) {
+        const copy = copyRotaryAnglePlan(payload)
+        ports[index].post({ kind: 'plan', epoch, revision, plan: copy }, rotaryAnglePlanTransfer(copy))
+      }
       await wait
     } catch (error) {
-      throw setupFailure(error)
+      // Same as the install: a throwing send would otherwise escape with the
+      // plan wait still attached and no revision in force.
+      rejectPhase(asSetupFailure(error))
+      throw asSetupFailure(error)
     }
     sentPlan = next
     planRevisions += 1
@@ -571,7 +628,7 @@ export function createRotaryAnglePool(
     for (let index = 0; index < workerCount; index += 1) assignments.push([])
     jobs.forEach((job, position) => assignments[position % workerCount].push(job.index))
     const started = performance.now()
-    const promise = new Promise<readonly RotaryAngleSample[]>((resolve, reject) => {
+    const promise = observed(new Promise<readonly RotaryAngleSample[]>((resolve, reject) => {
       active = {
         id: batchId,
         jobs,
@@ -583,18 +640,28 @@ export function createRotaryAnglePool(
         resolve,
         reject,
       }
-    })
-    for (let index = 0; index < ports.length; index += 1) {
-      const indices = new Set(assignments[index])
-      const chunk = jobs.filter((job) => indices.has(job.index))
-      if (chunk.length === 0) continue
-      ports[index].post({
-        kind: 'batch',
-        epoch,
-        batchId,
-        revision: planRevision,
-        jobs: chunk,
-      }, [])
+    }))
+    try {
+      for (let index = 0; index < ports.length; index += 1) {
+        const indices = new Set(assignments[index])
+        const chunk = jobs.filter((job) => indices.has(job.index))
+        if (chunk.length === 0) continue
+        ports[index].post({
+          kind: 'batch',
+          epoch,
+          batchId,
+          revision: planRevision,
+          jobs: chunk,
+        }, [])
+      }
+    } catch (error) {
+      // The batch never reached every worker: a dead transport throws here
+      // rather than reporting a failure. Settle the batch so nothing is left
+      // pending for disposal to reject, and report a resource failure so the
+      // caller discards it and reruns the jobs serially -- exactly what a worker
+      // that died mid-batch gets.
+      rejectBatch(asSetupFailure(error))
+      throw asSetupFailure(error)
     }
     batches += 1
     try {

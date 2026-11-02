@@ -76,13 +76,15 @@ import {
   pathsAlias,
   WARM_RUNS,
   ProbeError,
+  measureGeneration,
   readBaseline,
   selectOperations,
   sha256,
   stableStringify,
   withPassDirection,
 } from './rotary-generation-probe'
-import type { OperationReport, ProbeReport } from './rotary-generation-probe'
+import type { OperationReport, ProbeReport, RunDetail } from './rotary-generation-probe'
+import type { RotaryAnglePool } from '../src/engine/toolpaths/rotaryAnglePool'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PROBE = join(HERE, 'rotary-generation-probe.ts')
@@ -91,6 +93,24 @@ let failures = 0
 function check(name: string, run: () => void): void {
   try {
     run()
+    console.log(`ok   ${name}`)
+  } catch (error) {
+    failures += 1
+    console.error(`FAIL ${name}`)
+    console.error(`     ${error instanceof Error ? error.message.split('\n').join('\n     ') : String(error)}`)
+  }
+}
+
+/**
+ * The asynchronous checks.
+ *
+ * The rest of this file spawns the probe synchronously, so `check` is enough for
+ * it; a pool lifecycle is a promise, and an un-awaited one would report success
+ * before it had settled.
+ */
+async function checkAsync(name: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run()
     console.log(`ok   ${name}`)
   } catch (error) {
     failures += 1
@@ -1214,6 +1234,58 @@ check('the CLI exits 1 on an unknown operation id or an output that is the fixtu
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+// ── a failed generation still disposes its pools ─────────────
+
+/** A pool as the probe's runner sees it: a phase record and a disposal. */
+function stubPool(name: string, disposed: string[], workers: number): RotaryAnglePool {
+  return {
+    batches: async () => [],
+    stats: () => ({
+      mode: 'parallel',
+      workers,
+      fallback: 'none',
+      setupBytes: 0,
+      installMs: 0,
+      batches: 1,
+      awaitMs: 0,
+      planRevisions: 0,
+      rejectedReplies: 0,
+    }),
+    dispose: async () => { disposed.push(name) },
+  }
+}
+
+await checkAsync('one measured run disposes every pool, even when generation fails', async () => {
+  const completed: string[] = []
+  const details: RunDetail[] = []
+  const result = await measureGeneration(async (pools) => {
+    pools.push(stubPool('rough', completed, 2))
+    return { operationId: 'op0021', moves: movesFixture(), warnings: [], bounds: null }
+  }, details)
+  assert.equal(result.moves.length, movesFixture().length)
+  assert.deepEqual(completed, ['rough'], 'a completed run disposes its pool')
+  assert.equal(details.length, 1, 'a completed run records its phase split before disposal')
+  assert.equal(details[0].workers, 2, 'the record is read while the pool still describes the run')
+
+  // A computation error is not retried -- the pool reports it -- and the probe
+  // must not leave the workers of the failed run alive. Under `worker_threads` a
+  // live worker keeps the whole process alive, which is how this failure became
+  // an exit **124** instead of an exit 1 while the slice was reviewed.
+  const failed: string[] = []
+  const failedDetails: RunDetail[] = []
+  await assert.rejects(
+    () => measureGeneration(async (pools) => {
+      pools.push(stubPool('rough', failed, 2))
+      pools.push(stubPool('finish', failed, 2))
+      throw new Error('the sampler refused this angle')
+    }, failedDetails),
+    /the sampler refused this angle/,
+    'a computation error still reaches the caller',
+  )
+  assert.deepEqual(failed, ['rough', 'finish'], 'every pool of a failed run is disposed, not abandoned')
+  assert.equal(failedDetails.length, 0, 'a failed run records no phase split')
 })
 
 if (failures > 0) {

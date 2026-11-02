@@ -950,6 +950,38 @@ function runDetail(pools: readonly RotaryAnglePool[], totalMs: number): RunDetai
   }
 }
 
+/**
+ * One measured generation run, with the pools its batch factory created.
+ *
+ * `generate` is the branchy part: the synchronous entry, the asynchronous entry,
+ * or the asynchronous entry plus a pool factory, which pushes every pool it
+ * builds into the array it is given.
+ *
+ * The disposal is in `finally` on purpose. Under `worker_threads` a live worker
+ * keeps the whole process alive, so a computation error inside generation --
+ * which the pool deliberately does not retry -- would otherwise leave the probe
+ * hanging until an external timeout killed it (measured as **exit 124** while
+ * this slice was reviewed, after two `MessagePort`s stayed active). A
+ * measurement failure has to be an exit with its error, not a hang.
+ */
+export async function measureGeneration(
+  generate: (pools: RotaryAnglePool[]) => Promise<ToolpathResult>,
+  details: RunDetail[],
+): Promise<ToolpathResult> {
+  const pools: RotaryAnglePool[] = []
+  const started = performance.now()
+  try {
+    const result = await generate(pools)
+    // Read the phase record before disposal, while the stats still describe the
+    // run rather than a pool that has stopped.
+    details.push(runDetail(pools, performance.now() - started))
+    return result
+  } finally {
+    for (const pool of pools) await pool.dispose()
+    pools.length = 0
+  }
+}
+
 async function operationReport(
   tree: EngineTree,
   project: Project,
@@ -968,16 +1000,13 @@ async function operationReport(
   }
   // One pool per generation: the factory is called once per operation, so a
   // generation's worker setup is inside its own measured time.
-  const pools: RotaryAnglePool[] = []
   const source = args.workers === null ? null : createNodeRotaryAngleWorkerSource()
   const poolOptions = {
     ...(args.workers !== null ? { maxWorkers: args.workers } : {}),
     ...(args.poolBudgetMb !== null ? { maxBufferBytes: args.poolBudgetMb * 1048576 } : {}),
   }
   const details: RunDetail[] = []
-  const run = async (): Promise<ToolpathResult> => {
-    pools.length = 0
-    const started = performance.now()
+  const run = (): Promise<ToolpathResult> => measureGeneration(async (pools) => {
     let envelope: { result: ToolpathResult } | null
     if (asyncEntry === undefined) {
       envelope = tree.computeOperationToolpath(project, operation)
@@ -991,14 +1020,11 @@ async function operationReport(
     } else {
       envelope = await asyncEntry(project, operation)
     }
-    details.push(runDetail(pools, performance.now() - started))
-    for (const pool of pools) await pool.dispose()
-    pools.length = 0
     if (!envelope) {
       throw new ProbeError(`the engine returned no toolpath for operation ${operation.id}`)
     }
     return envelope.result
-  }
+  }, details)
 
   // Cold: the first generation, whatever warm-up it carries. Nothing else is
   // timed — not the load, not the post — because the number #1115 promises is

@@ -41,13 +41,20 @@
  * - **thin peaks** — the 0.02 mm fin `thinFeatureHeightMap.test.ts` builds,
  *   sampled around the bar through the pool: the A0 row must still stand on the
  *   fin's 10 mm top, not on the base the cell centres miss;
- * - **failures** — a source that cannot start a worker, and a worker that refuses
- *   its install, both fall back to serial and produce the serial rows; a
- *   computation error stays an error.
+ * - **failures** — a source that cannot start a worker, a worker that refuses
+ *   its install, and a transport whose `post()` throws on a batch or a plan
+ *   revision all fall back to serial and produce the serial rows, leaving no
+ *   rejection for disposal to fire; a computation error stays an error;
+ * - **the budget's arithmetic** — the per-worker charge must cover the *five*
+ *   max-size arrays a retained-wall map set holds at once (the map, its coverage,
+ *   the model-only map and the two peak-limit maps), and the eight-worker ceiling
+ *   must survive a caller passing the machine's 32 cores.
  *
  * The mutations this file exists to catch are: assemble in arrival order; omit
  * the retained-wall metadata from what the worker is sent; accept a stale epoch;
- * drop the serial fallback; and let the budget over-allocate workers.
+ * drop the serial fallback; let a throwing send escape without settling its
+ * batch; budget the maps without their peak-limit maps; let `maxWorkers` lift
+ * the ceiling; and let the budget over-allocate workers.
  *
  * The p-a benchmark fixtures are 32 MB `.camj` files in the gitignored `work/`
  * and cost about 35 s of generation per operation, so the fixture parity run is
@@ -95,6 +102,7 @@ import {
   isRotaryAngleWorkerReply,
 } from './rotaryAngleProtocol'
 import type { RotaryAngleSetupPayload, RotaryAngleWorkerReply, RotaryAngleWorkerRequest } from './rotaryAngleProtocol'
+import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
 import {
   MAX_ROTARY_ANGLE_WORKERS,
   ROTARY_ANGLE_POOL_BUDGET_BYTES,
@@ -294,6 +302,17 @@ function prepFor(
     'a caller may raise the budget to reach the design ceiling',
   )
   assert.equal(plan({ angleCount: 720, availableParallelism: 20, perWorkerBytes: 1024, maxWorkers: 2 }).workers, 2)
+  // The design's eight-worker ceiling is not a caller option: `maxWorkers` may
+  // lower the count, never raise it. A 32-core machine that passes 32 used to
+  // select 30 workers (32 - 2), a count the byte budget then has to pay for.
+  const lifted = plan({ angleCount: 720, availableParallelism: 32, perWorkerBytes: 1024, maxWorkers: 32 })
+  assert.equal(lifted.workers, MAX_ROTARY_ANGLE_WORKERS,
+    `maxWorkers must not lift the design ceiling (32 cores asked for 32, got ${lifted.workers})`)
+  assert.equal(
+    plan({ angleCount: 720, availableParallelism: 32, perWorkerBytes: 1024, maxWorkers: 1_000_000 }).workers,
+    MAX_ROTARY_ANGLE_WORKERS,
+    'no override reaches past eight workers',
+  )
   // One worker always has to fit: a budget that fits none is not a split.
   assert.equal(plan({ angleCount: 720, availableParallelism: 20, perWorkerBytes: ROTARY_ANGLE_POOL_BUDGET_BYTES * 2 }).workers, 1)
 
@@ -317,8 +336,28 @@ function prepFor(
   const estimate = estimateRotaryAngleWorkerBytes(setup)
   // The charge includes a full height map, so it can never be smaller than the
   // cap the sampler allows: a budget built only from the setup bytes would.
-  assert.ok(estimate > 9_000_000, `the estimate must charge a height map (got ${estimate})`)
-  console.log(`worker plan: formula, budget and serial rules pinned (hex charge ${(estimate / 1048576).toFixed(2)} MB)`)
+  assert.ok(estimate >= MAX_HEIGHT_MAP_CELLS * (4 + 4), `the estimate must charge a height map (got ${estimate})`)
+
+  // What one worker's maps actually hold, measured rather than assumed: the map,
+  // its wall coverage, the model-only map, and the **two peak-limit maps** the
+  // clip pass builds from them (#1050 slices B/C). `chooseHeightMapCellSize` caps
+  // each at `MAX_HEIGHT_MAP_CELLS`, so with retained walls one worker holds five
+  // max-size arrays at once -- 17,000,000 bytes -- not the 9,001,560 the three
+  // named arrays cost when the peak maps are forgotten.
+  const cells = MAX_HEIGHT_MAP_CELLS
+  const mapBytes = new Float32Array(cells).byteLength
+    + new Uint8Array(cells).byteLength
+    + new Float32Array(cells).byteLength
+    + new Float32Array(cells).byteLength
+    + new Float32Array(cells).byteLength
+  assert.equal(mapBytes, 17_000_000, 'the retained-wall map set is five max-size arrays')
+  const withWalls = estimateRotaryAngleWorkerBytes({ ...setup, wallTriangleStart: 0 })
+  assert.ok(withWalls >= mapBytes,
+    `the charge must cover the ${mapBytes} bytes of maps a retained-wall worker holds at once (got ${withWalls})`)
+  assert.equal(withWalls - estimate, MAX_HEIGHT_MAP_CELLS * (1 + 4 + 4),
+    'marking retained walls charges the wall coverage, the model-only map and the second peak map')
+  console.log(`worker plan: formula, budget and serial rules pinned (hex charge ${(estimate / 1048576).toFixed(2)} MB,`
+    + ` with walls ${(withWalls / 1048576).toFixed(2)} MB)`)
 }
 
 // ── the pool on real worker threads: identical rows, X and Y, both modes ───
@@ -377,6 +416,10 @@ type FakeBehaviour =
   | 'stale-batch'
   | 'compute-error'
   | 'install-error'
+  /** `post()` throws on a batch, like a `MessagePort` whose worker has gone. */
+  | 'send-error'
+  /** `post()` throws on a plan revision. */
+  | 'plan-send-error'
 
 function poisonedSamples(jobs: readonly RotaryAngleJob[], along: readonly number[]): RotaryAngleSample[] {
   return jobs.map((job) => ({
@@ -409,6 +452,15 @@ class FakePort implements RotaryAngleWorkerPort {
 
   post(message: RotaryAngleWorkerRequest): void {
     if (this.terminated) return
+    // A dead transport does not answer: `postMessage` on a closed `MessagePort`
+    // (or a worker that has exited) throws. Modelling it as a reply would test a
+    // failure the pool can never see.
+    if (this.behaviour === 'send-error' && message.kind === 'batch') {
+      throw new Error(`worker ${this.index} is gone`)
+    }
+    if (this.behaviour === 'plan-send-error' && message.kind === 'plan') {
+      throw new Error(`worker ${this.index} is gone`)
+    }
     // Asynchronously, like a thread: the pool must not depend on a reply landing
     // inside its own post call. The reverse behaviour answers the last worker
     // first, so the pool's completion order is the opposite of its job order.
@@ -503,7 +555,12 @@ class FakePort implements RotaryAngleWorkerPort {
 }
 
 /** A source whose workers are the real kernel with a scripted reply order. */
-function fakeSource(behaviour: FakeBehaviour, workers: number, along: readonly number[] = ALONG): {
+function fakeSource(
+  behaviour: FakeBehaviour,
+  workers: number,
+  along: readonly number[] = ALONG,
+  parallelism = 8,
+): {
   source: RotaryAngleWorkerSource
   ports: FakePort[]
 } {
@@ -511,7 +568,7 @@ function fakeSource(behaviour: FakeBehaviour, workers: number, along: readonly n
   return {
     ports,
     source: {
-      availableParallelism: 8,
+      availableParallelism: parallelism,
       create(index: number) {
         const port = new FakePort(index, behaviour, workers, along)
         ports.push(port)
@@ -604,6 +661,92 @@ function fakeSource(behaviour: FakeBehaviour, workers: number, along: readonly n
     await assert.rejects(() => pool.batches(jobs), /disposed/, 'a disposed pool refuses new batches')
     console.log('pool failures: disposing mid-batch settles the batch instead of hanging')
   }
+}
+
+// ── a send that throws is a resource failure, not an error ─────────────────
+
+{
+  const stock = STOCKS[2].stock
+  const mesh = prism(stock, HEX_SECTION, [10, 30])
+  const jobs = jobsFor(ANGLES)
+  const prep = prepFor(mesh, stock, ALONG, 0.2, true)
+  const serial = await serialRotaryBatches(prep)(jobs)
+  // A closed `MessagePort` reports itself by throwing from `post`, never with a
+  // reply. If that escapes, the batch is rejected instead of rerun serially, and
+  // the promise nobody awaited is left for disposal to reject as an unhandled
+  // one -- which is a process-level failure under Node.
+  const unhandled: unknown[] = []
+  const collect = (reason: unknown): void => { unhandled.push(reason) }
+  process.on('unhandledRejection', collect)
+  try {
+    const fake = fakeSource('send-error', 2)
+    const pool = createRotaryAnglePool(prep, fake.source, { maxWorkers: 2 })
+    assertSamplesEqual(await pool.batches(jobs), serial, 'a batch send that throws still produces the serial rows')
+    const stats = pool.stats()
+    assert.equal(stats.mode, 'serial', 'a throwing send moves the operation to serial')
+    assert.equal(stats.fallback, 'startup', 'a throwing send is a resource failure')
+    assert.equal(stats.workers, 0, 'the dead transport is not left installed')
+    assert.equal(pool.stats().batches, 0, 'no batch reached the workers')
+    // The serial mode is sticky, as for any other startup failure.
+    assertSamplesEqual(await pool.batches(jobs), serial, 'the next batch stays serial')
+    await pool.dispose()
+    // The batch is settled, so disposal has nothing left to reject.
+    await new Promise((settle) => setTimeout(settle, 10))
+    assert.deepEqual(unhandled, [], 'a failed send must not leave a rejection for disposal to fire')
+    console.log('pool failures: a batch send that throws falls back to serial and settles its batch')
+  } finally {
+    process.off('unhandledRejection', collect)
+  }
+
+  // The plan revision is sent the same way, so a dead transport fails it the
+  // same way: the batch that needs the grown reach is discarded and rerun.
+  {
+    const planFor = prep.planFor.bind(prep)
+    let asked = 0
+    // A plan that grows on the second batch: `planFor` answers with a new object,
+    // which is the pool's signal that the reach changed.
+    const growing: RotarySamplingPrep = {
+      ...prep,
+      planFor(angles) {
+        asked += 1
+        const plan = planFor(angles)
+        return asked === 1 ? plan : { ...plan }
+      },
+    }
+    const fake = fakeSource('plan-send-error', 2)
+    const pool = createRotaryAnglePool(growing, fake.source, { maxWorkers: 2 })
+    assertSamplesEqual(await pool.batches(jobs), serial, 'the first batch still runs on the workers')
+    assert.equal(pool.stats().mode, 'parallel', 'the first batch was pooled')
+    assertSamplesEqual(await pool.batches(jobs), serial, 'a plan send that throws still produces the serial rows')
+    const stats = pool.stats()
+    assert.equal(stats.mode, 'serial', 'a throwing plan send moves the operation to serial')
+    assert.equal(stats.fallback, 'startup', 'a throwing plan send is a resource failure')
+    assert.equal(stats.planRevisions, 0, 'the revision never reached a worker')
+    await pool.dispose()
+    console.log('pool failures: a plan send that throws falls back to serial')
+  }
+}
+
+// ── the eight-worker ceiling holds for the pool, not only the formula ──────
+
+{
+  const stock = STOCKS[2].stock
+  const mesh = prism(stock, HEX_SECTION, [10, 30])
+  const jobs = jobsFor(ANGLES)
+  const prep = prepFor(mesh, stock, ALONG, 0.2, true)
+  const serial = await serialRotaryBatches(prep)(jobs)
+  // 32 cores and `maxWorkers: 32`: the reproduction selected 30 workers (32 - 2).
+  // The pool may not create more than the design's eight, whatever the caller
+  // passes and however many cores the machine has.
+  const fake = fakeSource('in-order', 32, ALONG, 32)
+  const pool = createRotaryAnglePool(prep, fake.source, { maxWorkers: 32 })
+  const pooled = await pool.batches(jobs)
+  assert.equal(fake.ports.length, MAX_ROTARY_ANGLE_WORKERS,
+    `the pool may create at most ${MAX_ROTARY_ANGLE_WORKERS} workers (created ${fake.ports.length})`)
+  assert.equal(pool.stats().workers, MAX_ROTARY_ANGLE_WORKERS, 'and reports what it created')
+  assertSamplesEqual(pooled, serial, 'the clamped pool still produces the serial rows')
+  await pool.dispose()
+  console.log(`worker ceiling: 32 cores with maxWorkers: 32 still create ${fake.ports.length} workers`)
 }
 
 // ── startup failures fall back to serial and stay there ────────────────────
