@@ -21,6 +21,7 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { translate } from '../i18n/store'
 import { SUPPORTED_IMPORT_EXTENSIONS } from '../import/types'
 import type { PlatformApi, OpenProjectResult } from './api'
+import { fileNameOf, rememberFolderOf, rememberedFolder, saveDefaultPath } from './dialogFolder'
 
 // ---------------------------------------------------------------------------
 // Desktop (Tauri) implementation
@@ -31,11 +32,13 @@ export const desktopPlatform: PlatformApi = {
 
   async openProjectFile(): Promise<OpenProjectResult | null> {
     const path = await open({
+      defaultPath: rememberedFolder('project') ?? undefined,
       filters: [{ name: 'PureCutCNC project', extensions: ['camj'] }],
       multiple: false,
     })
     if (!path) return null
     const content = await readTextFile(path)
+    rememberFolderOf('project', path)
     return { content, path }
   },
 
@@ -49,13 +52,14 @@ export const desktopPlatform: PlatformApi = {
     if (!targetPath) {
       const base = suggestedName.replace(/\.camj$/, '')
       targetPath = await save({
-        defaultPath: `${base}.camj`,
+        defaultPath: saveDefaultPath('project', `${base}.camj`),
         filters: [{ name: 'PureCutCNC project', extensions: ['camj'] }],
       })
     }
 
     if (!targetPath) return null
     await writeTextFile(targetPath, content)
+    rememberFolderOf('project', targetPath)
     return targetPath
   },
 
@@ -70,13 +74,14 @@ export const desktopPlatform: PlatformApi = {
     if (!targetPath) {
       const base = suggestedName.replace(new RegExp(`\\.${extension}$`), '')
       targetPath = await save({
-        defaultPath: `${base}.${extension}`,
+        defaultPath: saveDefaultPath('file', `${base}.${extension}`),
         filters: [{ name: `${extension.toUpperCase()} file`, extensions: [extension] }],
       })
     }
 
     if (!targetPath) return null
     await writeTextFile(targetPath, content)
+    rememberFolderOf('file', targetPath)
     return targetPath
   },
 
@@ -92,32 +97,37 @@ export const desktopPlatform: PlatformApi = {
     if (!targetPath) {
       const base = suggestedName.replace(new RegExp(`\\.${extension}$`), '')
       targetPath = await save({
-        defaultPath: `${base}.${extension}`,
+        defaultPath: saveDefaultPath('file', `${base}.${extension}`),
         filters: [{ name: `${extension.toUpperCase()} file`, extensions: [extension] }],
       })
     }
 
     if (!targetPath) return null
     await writeFile(targetPath, content)
+    rememberFolderOf('file', targetPath)
     return targetPath
   },
 
   async pickJsonFile(): Promise<string | null> {
     const path = await open({
+      defaultPath: rememberedFolder('file') ?? undefined,
       filters: [{ name: 'JSON', extensions: ['json'] }],
       multiple: false,
     })
     if (!path) return null
+    rememberFolderOf('file', path)
     return readTextFile(path)
   },
 
   async pickImportFile(): Promise<File | null> {
     const path = await open({
+      defaultPath: rememberedFolder('file') ?? undefined,
       filters: [{ name: 'PureCutCNC import', extensions: [...SUPPORTED_IMPORT_EXTENSIONS] }],
       multiple: false,
     })
     if (!path) return null
-    const name = path.split('/').pop() ?? path
+    rememberFolderOf('file', path)
+    const name = fileNameOf(path)
     const bytes = await readFile(path)
     const buffer = new ArrayBuffer(bytes.byteLength)
     new Uint8Array(buffer).set(bytes)
