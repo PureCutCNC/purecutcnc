@@ -251,6 +251,15 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setActiveControl({ kind: 'segment', index })
     },
+    /**
+     * What the last rotary generation reported about its angle pool (#1115
+     * p-d3). `batches > 0` with more than one worker is the evidence that the
+     * pool really sampled in a real browser.
+     */
+    getRotaryPoolStats: async () => {
+      const { readRotaryPoolTelemetry } = await import('./app/toolpathGeneration/rotaryPoolTelemetry')
+      return readRotaryPoolTelemetry()
+    },
     /** Picks a trim/extend subject so the mid-pick Escape rung can be tested. */
     setPendingSketchSubject: async (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
       const { useProjectStore } = await _pcTestStore()
@@ -295,6 +304,10 @@ declare global {
       getPendingAddShape: () => Promise<string | null>
       getFeatureCount: () => Promise<number>
       selectFeatures: (ids: string[]) => Promise<void>
+      getRotaryPoolStats: () => Promise<{
+        last: { mode: string; workers: number; batches: number; fallback: string } | null
+        generations: number
+      }>
       startJoinFeatures: (ids: string[]) => Promise<void>
       startRotateFeature: (featureId: string) => Promise<void>
       getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }>

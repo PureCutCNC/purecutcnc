@@ -897,6 +897,11 @@ test('a stock axis change on a populated Around setup does not transpose the mod
 test('square to round generates inside the band and removes material', async ({ app, ui }, testInfo) => {
   test.setTimeout(180_000)
   const { page } = app
+  // The angle pool's workers are created on the main thread and terminated with
+  // each operation, so their URLs have to be collected as they appear (#1115
+  // p-d3). Nothing else in the page observes them.
+  const angleWorkerUrls: string[] = []
+  page.on('worker', (worker) => { angleWorkerUrls.push(worker.url()) })
   await seedSquareBlankProject(page)
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
@@ -908,6 +913,25 @@ test('square to round generates inside the band and removes material', async ({ 
   await ui.rotarySolid.createButton(page).click()
   await expect(ui.rotarySolid.dialog(page)).toBeHidden()
   await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+
+  // #1115 p-d3: the rotary operations really sampled on the angle pool. The
+  // hook carries the coordinator's own report, and the URL list proves the main
+  // thread created module workers for it rather than the run quietly going
+  // serial.
+  const rotaryPool = await page.evaluate(async () => {
+    const hook = (window as unknown as {
+      __pcTest?: { getRotaryPoolStats?: () => Promise<{
+        last: { mode: string; workers: number; batches: number; fallback: string } | null
+        generations: number
+      }> }
+    }).__pcTest
+    return hook?.getRotaryPoolStats ? await hook.getRotaryPoolStats() : null
+  })
+  expect(rotaryPool?.generations ?? 0).toBeGreaterThan(0)
+  expect(rotaryPool?.last?.mode).toBe('parallel')
+  expect(rotaryPool?.last?.workers ?? 0).toBeGreaterThan(1)
+  expect(rotaryPool?.last?.batches ?? 0).toBeGreaterThan(0)
+  expect(angleWorkerUrls.filter((url) => url.includes('rotaryAngle.worker')).length).toBeGreaterThan(1)
 
   const project = await getProject(page) as unknown as Project
   expect((project.stock as { shape?: string }).shape).toBe('square')

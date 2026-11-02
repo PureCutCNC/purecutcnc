@@ -11,12 +11,18 @@
  * So this checks the built output instead, and deliberately does not rely on
  * any DEV-only hook:
  *
- *  1. `dist/` contains exactly one `toolpath.worker-*.js` chunk;
+ *  1. `dist/` contains exactly one `toolpath.worker-*.js` chunk and one
+ *     `rotaryAngle.worker-*.js` chunk (#1115 p-d3);
  *  2. the app boots from a **nested** static path with no console errors,
  *     which is what `base: './'` exists for and what a packaged desktop build
  *     and static hosting both do;
- *  3. a module worker constructed from that chunk completes the protocol
- *     handshake — the worker really starts, in the real bundle.
+ *  3. a module worker constructed from each chunk completes its own handshake —
+ *     the workers really start, in the real bundle;
+ *  4. the angle worker accepts the transferred `MessagePort` the coordinator
+ *     gives it and answers the protocol on it. That is the shape the packaged
+ *     app depends on: the same chunk URL resolution, and no main-thread proxy.
+ *     It is not Tauri itself; the nested path stands in for the asset protocol
+ *     because both resolve the chunk relative to the app's base.
  *
  * Usage: npm run check:worker-production   (requires `vite build` to have run)
  */
@@ -82,7 +88,13 @@ async function main(): Promise<void> {
     workerChunks.length === 1,
     `expected 1, found ${workerChunks.length}`,
   )
-  if (workerChunks.length !== 1) {
+  const angleChunks = assets.filter((name) => /^rotaryAngle\.worker-.*\.js$/.test(name))
+  check(
+    `the build emits exactly one angle worker chunk (${angleChunks.join(', ') || 'none'})`,
+    angleChunks.length === 1,
+    `expected 1, found ${angleChunks.length}`,
+  )
+  if (workerChunks.length !== 1 || angleChunks.length !== 1) {
     console.log(`\n${passed} passed, ${failed} failed`)
     process.exit(1)
   }
@@ -185,6 +197,63 @@ async function main(): Promise<void> {
       `the production worker chunk starts and completes its handshake (${handshake.detail})`,
       handshake.ok,
       handshake.detail,
+    )
+
+    // The angle worker (#1115 p-d3): ready handshake, then the coordinator's
+    // port. The install is deliberately sent with a wrong protocol version:
+    // the point is that the worker loaded, accepted the port and answered the
+    // protocol on it — not that any geometry sampled.
+    const angleHandshake = await page.evaluate(async (workerFile: string) => {
+      // No named function expressions here: this script runs through `tsx`,
+      // whose esbuild transform injects `__name(...)` helpers that do not exist
+      // in the page, and Playwright serialises the function source verbatim.
+      return await new Promise<{ ok: boolean; detail: string }>((settle) => {
+        let worker: Worker
+        try {
+          worker = new Worker(new URL(`./assets/${workerFile}`, location.href), { type: 'module' })
+        } catch (error) {
+          settle({ ok: false, detail: `construction threw: ${String(error)}` })
+          return
+        }
+        const timer = setTimeout(() => settle({ ok: false, detail: 'no reply within 20s' }), 20_000)
+        worker.onerror = (event) => {
+          clearTimeout(timer)
+          worker.terminate()
+          settle({ ok: false, detail: `worker error: ${(event as ErrorEvent).message ?? 'unknown'}` })
+        }
+        worker.onmessage = (event: MessageEvent<unknown>) => {
+          const data = event.data as { kind?: string; protocolVersion?: number }
+          if (!data || data.kind !== 'ready') return
+          const channel = new MessageChannel()
+          channel.port1.onmessage = (message: MessageEvent<unknown>) => {
+            const reply = message.data as { kind?: string; phase?: string; message?: string }
+            clearTimeout(timer)
+            worker.terminate()
+            if (reply.kind !== 'error' || reply.phase !== 'install') {
+              settle({ ok: false, detail: `unexpected reply: ${JSON.stringify(reply).slice(0, 160)}` })
+              return
+            }
+            settle({
+              ok: true,
+              detail: `protocol v${String(data.protocolVersion)} refused an install: ${String(reply.message).slice(0, 80)}`,
+            })
+          }
+          channel.port1.start()
+          worker.postMessage({ kind: 'attach', port: channel.port2 }, [channel.port2])
+          channel.port1.postMessage({
+            kind: 'install',
+            protocolVersion: -1,
+            epoch: 1,
+            setup: { mode: 'around', requestedCellSize: 0.1, along: [], plan: {}, tool: {}, stock: {} },
+          })
+        }
+      })
+    }, angleChunks[0])
+
+    check(
+      `the production angle worker chunk starts and answers on its coordinator port (${angleHandshake.detail})`,
+      angleHandshake.ok,
+      angleHandshake.detail,
     )
   } finally {
     await browser.close()

@@ -68,6 +68,7 @@ const ALLOWED_EXCEPTIONS = new Map<string, string>([
   ['app/toolpathGeneration/protocol.ts', 'type-only at runtime; its helpers are pure predicates'],
   ['app/toolpathGeneration/types.ts', 'types only'],
   ['app/toolpathGeneration/moveTransport.ts', 'pure move packing, shared by both ends of the wire; no DOM, no framework'],
+  ['app/toolpathGeneration/rotaryAnglePortTransport.ts', 'the coordinator half of the angle-pool channel (#1115 p-d3): ports and protocol predicates only — it is what connects this worker to the pool'],
 ])
 
 /** Bare package specifiers a worker must never pull in. */
