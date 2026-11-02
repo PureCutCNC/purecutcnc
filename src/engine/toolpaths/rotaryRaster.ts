@@ -180,6 +180,23 @@ export function rotaryCandidateScratchBytes(meshTriangles: number): number {
 }
 
 /**
+ * The capacity, in bytes, of the clip-candidate scratch currently held for
+ * reuse: 0 before the first call that collects a candidate.
+ *
+ * This is the array {@link rotaryCandidateScratchBytes} bounds and the pool's
+ * `candidates` charge pays for, and it is deliberately readable because the
+ * allocation policy is the part a budget cannot assume: the allocator used to
+ * round a first allocation up to 4096 entries and double a growing one, so an
+ * 8-byte list could hold 16 KB -- resident in every worker, and invisible to a
+ * test that only counts the *submitted* candidates or re-derives the charge
+ * (issue #1115 slice p-e, review round 2). The tests compare this against both
+ * the submitted count and the bound; nothing in generation calls it.
+ */
+export function rotaryCandidateScratchCapacityBytes(): number {
+  return rotaryCandidateScratch?.byteLength ?? 0
+}
+
+/**
  * The height-map raster kernel with the rotary projection fused into its
  * triangle walk (issue #1045 slice T).
  *
