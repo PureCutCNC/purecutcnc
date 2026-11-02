@@ -999,9 +999,12 @@ test('square to round generates inside the band and removes material', async ({ 
   // p-d3). Nothing else in the page observes them.
   const angleWorkerUrls: string[] = []
   page.on('worker', (worker) => { angleWorkerUrls.push(worker.url()) })
-  // Eight cores is a machine the required policy pools on: `min(angles, 8, 8 - 2)`
-  // is more than one worker, so this test asserts the pool and not the runner.
-  await pinHardwareConcurrency(page, 8)
+  // Four cores is a machine the required policy pools on: `min(angles, 8, 4 - 2)`
+  // is two workers, so this test asserts the pool and not the runner. Eight
+  // started six workers that, on CI's 2-core runner, loaded the engine through
+  // the dev server past the pool's 10 s startup limit and fell back to serial
+  // (issue #1148).
+  await pinHardwareConcurrency(page, 4)
   await seedSquareBlankProject(page)
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
 
