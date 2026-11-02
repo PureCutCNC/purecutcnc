@@ -120,5 +120,13 @@ export const shellEn = {
   'platform.confirmDiscard': 'You have unsaved changes. Discard them and continue?',
   'platform.readProjectFailed': 'Failed to read project file.',
   'platform.openProjectFailed': 'Failed to open project file.',
+  'shell.commandPalette.title': 'Command palette',
+  'shell.commandPalette.placeholder': 'Search commands…',
+  'shell.commandPalette.noResults': 'No matching commands',
+  'shell.commandPalette.hint': 'Type to search · ↑↓ to navigate · Enter to run · Esc to close',
+  'shell.commandPalette.group.file': 'File',
+  'shell.commandPalette.group.sketch': 'Sketch',
+  'shell.commandPalette.group.create': 'Create',
+  'shell.commandPalette.group.view': 'View',
   'platform.readFileError': 'Failed to read "{name}". The file may be too large or inaccessible.',
 } as const satisfies Record<string, string>

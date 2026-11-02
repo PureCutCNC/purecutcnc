@@ -120,5 +120,13 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'platform.confirmDiscard': 'Sie haben nicht gespeicherte Änderungen. Verwerfen und fortfahren?',
   'platform.readProjectFailed': 'Projektdatei konnte nicht gelesen werden.',
   'platform.openProjectFailed': 'Projektdatei konnte nicht geöffnet werden.',
+  'shell.commandPalette.title': 'Befehlspalette',
+  'shell.commandPalette.placeholder': 'Befehle suchen…',
+  'shell.commandPalette.noResults': 'Keine passenden Befehle',
+  'shell.commandPalette.hint': 'Tippen zum Suchen · ↑↓ zum Navigieren · Enter zum Ausführen · Esc zum Schließen',
+  'shell.commandPalette.group.file': 'Datei',
+  'shell.commandPalette.group.sketch': 'Skizze',
+  'shell.commandPalette.group.create': 'Erstellen',
+  'shell.commandPalette.group.view': 'Ansicht',
   'platform.readFileError': '„{name}" konnte nicht gelesen werden. Die Datei ist möglicherweise zu groß oder nicht zugänglich.',
 }
