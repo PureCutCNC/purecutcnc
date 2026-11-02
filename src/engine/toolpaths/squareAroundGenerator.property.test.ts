@@ -57,15 +57,36 @@
  * revolution. The square-blank pair is the case the rough's cutter-body window
  * exists for: the blank's own raised envelope at a neighbouring angle is not in
  * the model sampler, and at a face-angle link it stands more than the 1 mm
- * clearance above the link's ray. Every
- * rough link is checked: a cut link removes nothing, and the in-air rapid's
- * body must clear the reference's standing material. Every finish link is
+ * clearance above the link's ray. Every finish link is
  * replayed too; after a rough its removal is bounded by that rough's stepdown
  * (a surface link removes the between-ring terrace, so the rough's air
  * allowance does not apply), while a finish-only link is covered by the
  * advisory. The final-surface check reads the prism's own boundary radius, so a
  * finish link that cuts 0.2 mm below it fails on these cases too. A split ring
  * still retracts through the old travel path.
+ *
+ * #1117 makes the rough's ring-to-ring link stay down at the layer and cut. This
+ * file proves that independently on the same reference. A **cutting** link (one
+ * angle, along the bar) is an at-layer link, and it
+ * - removes at most **one rough stepdown** from the material the earlier layers
+ *   left -- never the terrace above it, and never a second layer's band;
+ * - keeps its whole commanded span at or above the model's own surface, sampled
+ *   at the reference's along resolution so a chord cannot sag through it, and
+ *   the reference's material under its own ray stays at or above the model;
+ * - leaves every cell its body can reach outside the cut band at the blank, so a
+ *   link that swings into a retained end is named;
+ * - never cuts outside the operation's region: the gap between two region bands
+ *   is uncut blank, and a stay-down link across it is the gouge this refuses.
+ * A link that cannot qualify keeps the #1093 raised form, whose constant-height
+ * traverse is a compact **rapid** the whole cutter body must clear standing
+ * material above -- it removes nothing. Every corner turn is checked too: a cut
+ * that sweeps A at one along position either cuts material at its own ray (a
+ * ring arc at this layer) or turns at the blank's corner envelope plus the
+ * clearance, and a "low" turn across the face fails. Eight always-present small
+ * around roughs carry the proof across round/square, ball/flat, **both stock
+ * axes and both units**, with and without a region; the run asserts that each of
+ * those dimensions produced at least one qualifying link, so the proof cannot
+ * pass by only covering the cases that happened to be drawn.
  *
  * The reference is written without the generator's helpers (no
  * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
@@ -178,6 +199,7 @@ import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
 import { defaultTool, getStockBounds, roundStock } from '../../types/project'
+import { convertLength, type Units } from '../../utils/units'
 import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
 import { rotaryFinishWithoutRough } from './rotaryOperation'
@@ -202,22 +224,64 @@ function regionList(region: CaseRegionSpec): readonly CaseRegion[] {
   return Array.isArray(region) ? region as readonly CaseRegion[] : [region as CaseRegion]
 }
 
-/** The region as a periodic mask: one sheet turn each way, like the generator's. */
+/**
+ * The region as a periodic mask: one sheet turn each way, like the generator's.
+ *
+ * It answers a **segment** as well as a point (#1096 review, #1117): a cutting
+ * ring link is one straight cut, and a mask built from include rectangles
+ * contains it exactly when its whole along span is covered. Point membership
+ * alone is not enough -- an excluded strip narrower than the generator's
+ * sampling falls between two tested points -- so a production mask (which comes
+ * from `buildRegionMask` and has this test) can refuse a link the point-only
+ * form cannot, and the proof has to be run against that same shape. The along
+ * intervals the rectangles cover are clipped and merged, so the answer does not
+ * depend on where the samples land.
+ */
 function regionMask(stock: BarStock, region: CaseRegionSpec): RotaryRegionMask {
   const circumference = Math.PI * stock.thickness
   const regions = regionList(region)
+  const at = (point: { x: number; y: number }): { along: number; across: number } => (stock.axis === 'x'
+    ? { along: point.x, across: point.y }
+    : { along: point.y, across: point.x })
+  const coversAcross = (across: number, rect: CaseRegion): boolean => {
+    for (let turn = -1; turn <= 1; turn++) {
+      const shifted = across + turn * circumference
+      if (shifted >= rect.acrossFrom && shifted <= rect.acrossTo) return true
+    }
+    return false
+  }
   return {
     containsPoint(point: { x: number; y: number }): boolean {
-      const along = stock.axis === 'x' ? point.x : point.y
-      const across = stock.axis === 'x' ? point.y : point.x
-      return regions.some((rect) => {
-        if (along < rect.alongFrom || along > rect.alongTo) return false
-        for (let turn = -1; turn <= 1; turn++) {
-          const shifted = across + turn * circumference
-          if (shifted >= rect.acrossFrom && shifted <= rect.acrossTo) return true
-        }
-        return false
-      })
+      const { along, across } = at(point)
+      return regions.some((rect) => along >= rect.alongFrom && along <= rect.alongTo
+        && coversAcross(across, rect))
+    },
+    containsSegment(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+      const start = at(from)
+      const end = at(to)
+      // A ring link runs along the bar at one angle; a segment that does not is
+      // judged at its endpoints and midpoint rather than by interval algebra.
+      if (Math.abs(start.across - end.across) > 1e-9) {
+        const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+        return (this.containsPoint(from) && this.containsPoint(to) && this.containsPoint(mid))
+      }
+      const across = start.across
+      const low = Math.min(start.along, end.along)
+      const high = Math.max(start.along, end.along)
+      const intervals: Array<{ from: number; to: number }> = []
+      for (const rect of regions) {
+        if (!coversAcross(across, rect)) continue
+        const clippedFrom = Math.max(low, rect.alongFrom)
+        const clippedTo = Math.min(high, rect.alongTo)
+        if (clippedTo >= clippedFrom) intervals.push({ from: clippedFrom, to: clippedTo })
+      }
+      intervals.sort((a, b) => a.from - b.from)
+      let reach = low
+      for (const interval of intervals) {
+        if (interval.from > reach + 1e-9) return false
+        reach = Math.max(reach, interval.to)
+      }
+      return reach >= high - 1e-9
     },
   }
 }
@@ -236,10 +300,16 @@ function revolved(
   const pivot = barPivotZ(stock)
   const positions: number[] = []
   const index: number[] = []
+  // The ring's cross-section is the same in both frames; only which coordinate
+  // carries the along position changes (#1117: the proof covers both axes).
+  const push = (along: number, across: number, up: number): void => {
+    if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+    else positions.push(centre + across, along, pivot + up)
+  }
   for (const ring of profile) {
     for (let j = 0; j < segments; j++) {
       const t = 2 * Math.PI * j / segments
-      positions.push(ring.along, centre + ring.radius * Math.cos(t), pivot + ring.radius * Math.sin(t))
+      push(ring.along, ring.radius * Math.cos(t), ring.radius * Math.sin(t))
     }
   }
   for (let ring = 0; ring + 1 < profile.length; ring++) {
@@ -463,6 +533,20 @@ function blankRadius(stock: BarStock, angleDeg: number): number {
   if (stock.shape === 'round') return stock.thickness / 2
   const radians = angleDeg * Math.PI / 180
   return stock.thickness / 2 / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+}
+
+/**
+ * The along-the-bar span of the blank in the stock's own axis (#1117): the
+ * reference is a frame, so a case drawn along Y must not be windowed with the
+ * X bounds. Without this an axis-Y case would replay inside a window that does
+ * not cover its moves, and every assertion would silently skip the clipped
+ * rows.
+ */
+function alongBounds(stock: BarStock): { min: number; max: number } {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x'
+    ? { min: bounds.minX, max: bounds.maxX }
+    : { min: bounds.minY, max: bounds.maxY }
 }
 
 /**
@@ -1089,7 +1173,7 @@ const MAX_REPLAY_CELLS = 400_000
  * along stage's exact-geometry radial bound of about a millimetre) and an order
  * of magnitude tighter than the 0.49 mm gouge this suite was built to catch.
  */
-const COALESCE_TOLERANCE = 0.05
+const COALESCE_TOLERANCE_MM = 0.05
 const MAX_ANGLE_BINS = 2_048
 
 type ProgramKind = 'rough' | 'finish' | 'both' | 'mixed'
@@ -1160,21 +1244,33 @@ interface Case {
    * makes disjoint bands with untouched stock between them.
    */
   region?: CaseRegionSpec
+  /**
+   * #1117: the project units every dimension above is drawn in. The generator
+   * converts its own millimetre constants through the tool's units, so an inch
+   * case is the same motion with every length divided by 25.4. Omitted means
+   * `mm`, which is every case that predates this slice.
+   */
+  units?: Units
 }
 
-function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number): NormalizedTool {
-  const row = { ...defaultTool('mm', 1), units: 'mm' as const, type, diameter }
+function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number, units: Units = 'mm'): NormalizedTool {
+  const row = { ...defaultTool('mm', 1), units, type, diameter }
   return {
-    id: 'tool', name: 'tool', sourceUnits: 'mm' as const, units: 'mm' as const,
+    id: 'tool', name: 'tool', sourceUnits: units, units,
     type, diameter, radius: diameter / 2, vBitAngle: null,
     flutes: row.flutes, material: row.material, defaultRpm: 0, defaultFeed: 0,
     defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
   }
 }
 
-/** The generator's nominal angular arc step for an around pass, in mm. */
-function aroundArcStep(cornerRadius: number, sampleSpacing: number): number {
-  return Math.min(sampleSpacing, Math.sqrt(8 * cornerRadius * 0.005))
+/**
+ * The generator's nominal angular arc step for an around pass, in project units
+ * (#1117: the proof runs in inches too, and the generator converts its 0.005 mm
+ * sagitta through the tool's units, so a replay that assumed millimetres would
+ * compare against the wrong grid).
+ */
+function aroundArcStep(cornerRadius: number, sampleSpacing: number, units: Units = 'mm'): number {
+  return Math.min(sampleSpacing, Math.sqrt(8 * cornerRadius * convertLength(0.005, 'mm', units)))
 }
 
 /**
@@ -1197,7 +1293,7 @@ function generatorCells(entry: Case): { along: number; arc: number } {
       arc = Math.min(arc, entry.stepover)
     } else {
       along = Math.min(along, entry.stepover)
-      arc = Math.min(arc, aroundArcStep(corner, entry.roughSpacing))
+      arc = Math.min(arc, aroundArcStep(corner, entry.roughSpacing, entry.units ?? 'mm'))
     }
   }
   if (finishRan) {
@@ -1206,7 +1302,7 @@ function generatorCells(entry: Case): { along: number; arc: number } {
       arc = Math.min(arc, entry.stepover)
     } else {
       along = Math.min(along, entry.stepover)
-      arc = Math.min(arc, aroundArcStep(corner, entry.finishSpacing))
+      arc = Math.min(arc, aroundArcStep(corner, entry.finishSpacing, entry.units ?? 'mm'))
     }
   }
   return { along, arc }
@@ -1231,11 +1327,11 @@ function referenceBudget(entry: Case): {
   const fineArc = Math.min(cells.arc, entry.requestedCellSize)
   const alongBin = fineAlong / 4
   const angleBins = Math.max(24, Math.ceil((2 * Math.PI * corner) / (fineArc / 4)))
-  const bounds = getStockBounds(entry.stock)
-  const band = (bounds.maxX - bounds.minX) + 2 * (entry.diameter / 2 + 1)
+  const limits = alongBounds(entry.stock)
+  const band = (limits.max - limits.min) + 2 * (entry.diameter / 2 + 1)
   const alongBins = Math.ceil(band / alongBin)
   return {
-    alongStart: bounds.minX,
+    alongStart: limits.min,
     alongBins,
     alongBin,
     angleBins,
@@ -1992,6 +2088,134 @@ function drawGapRegionCase(seed: number, square: boolean): Case {
   }
 }
 
+/**
+ * #1117 slice C's coverage matrix: one small around rough whose ring links stay
+ * down at the layer, drawn to fill the dimensions the existing seeded set cannot
+ * reach -- both **stock axes** and both **units** -- and to guarantee a masked
+ * case with qualifying links too.
+ *
+ * The geometry is chosen so links qualify at both layers: a round bar's stock
+ * above a layer is exactly `max(blank, previous radius)`, and a square blank's
+ * first layer still cuts corner arcs at a radius above its face's touch radius
+ * (side 14, stepdown 2 -> 7.9 against a 7 mm face). The bar is short, the model
+ * a cylinder, and the sampling fine enough that the generator's link row has a
+ * sample inside every transition, so the candidate is not refused for lack of
+ * span coverage. An inch case is the same motion in inches (`convertLength`
+ * carries every length and the generator's own mm constants), which is what
+ * proves the one-band and model bounds are not silently mm-only.
+ *
+ * Two masked cases are drawn. `full` is one band spanning the sheet's whole
+ * circumference: a full ring then stays one run, so the ring is not split and the
+ * link is eligible, and the whole along span of each link is inside the mask.
+ * `strip` is that band broken by a 0.02 mm excluded strip between two
+ * neighbouring rings -- the #1096 review's repro, which must be refused on the
+ * whole span. The two-band gap cases above are the ones that must keep their
+ * raised link across a wide gap.
+ */
+interface LinkCaseSpec {
+  shape: 'round' | 'square'
+  cutter: 'flat_endmill' | 'ball_endmill'
+  axis: 'x' | 'y'
+  units: Units
+  /**
+   * A masked case. `full` is one band spanning the sheet's whole circumference
+   * (a ring stays one run, so links stay eligible); `strip` is that band split
+   * by a 0.02 mm excluded strip between two neighbouring rings, which is the
+   * case a stay-down link must refuse -- the whole span is tested, not only the
+   * dense row's samples (#1096 review, plan decision 3).
+   */
+  region?: 'full' | 'strip'
+}
+
+function drawLinkCase(spec: LinkCaseSpec): Case {
+  const units = spec.units
+  const mm = (value: number): number => convertLength(value, 'mm', units)
+  const side = mm(14)
+  const length = mm(22)
+  const stock = spec.shape === 'round'
+    ? roundStock(side, length, spec.axis, { x: 0, y: 0 })
+    : squareStock(side, length, spec.axis, { x: 0, y: 0 })
+  const limits = alongBounds(stock)
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const diameter = mm(4.5)
+  const modelRadius = spec.shape === 'round' ? mm(3.6) : mm(5)
+  const ends = mm(3)
+  const alongStart = limits.min + ends
+  const alongEnd = limits.max - ends
+  const stepover = mm(2)
+  const roughSpacing = mm(1.2)
+  const requestedCellSize = mm(0.55)
+  const stepdown = mm(2)
+  const regionFrom = alongStart + mm(2)
+  const regionTo = alongEnd - mm(2)
+  // A strip case splits the band between the first two rings: the rings sit at
+  // `alongStart + radius + k * stepover`, so their midpoint is a span no dense
+  // row sample need fall inside.
+  const stripCentre = alongStart + diameter / 2 + stepover / 2
+  return {
+    label: `#1117 ${spec.cutter === 'ball_endmill' ? 'ball' : 'flat'} D${diameter.toFixed(3)} `
+      + `${spec.shape} ${side.toFixed(3)}x${length.toFixed(3)} cyl around rough `
+      + `axis ${spec.axis} ${units}${spec.region === undefined ? '' : ` region ${spec.region}`}`,
+    stock,
+    profile: [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }],
+    type: spec.cutter,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing: Math.max(roughSpacing / 2, mm(0.4)),
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    units,
+    // The replay estimate is deliberately conservative for a square's many short
+    // corner arcs and for a ring's full A sweep; these cases are small enough to
+    // replay refitted rather than coarsened. Coarsening would draw no qualifying
+    // link at all, and for the strip case it would also move the ring grid away
+    // from the strip the mask excludes.
+    maxReplayCells: spec.region === 'strip' ? 20_000_000 : 2_000_000,
+    ...(spec.region === undefined
+      ? {}
+      : {
+        region: (spec.region === 'strip'
+          ? [
+            { alongFrom: alongStart, alongTo: stripCentre - mm(0.01) },
+            { alongFrom: stripCentre + mm(0.01), alongTo: alongEnd },
+          ]
+          : [{ alongFrom: regionFrom, alongTo: regionTo }]
+        ).map((band) => ({
+          ...band,
+          acrossFrom: centre - circumference / 2,
+          acrossTo: centre + circumference / 2,
+        })),
+      }),
+  }
+}
+
+/**
+ * The matrix the link proof must cover (#1117): round and square, ball and
+ * flat, axis X and Y, millimetres and inches, and a masked case. Every entry is
+ * an around rough so the emitted links are the operation's own.
+ */
+const LINK_MATRIX: readonly LinkCaseSpec[] = [
+  { shape: 'round', cutter: 'flat_endmill', axis: 'y', units: 'inch' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'y', units: 'mm' },
+  { shape: 'square', cutter: 'flat_endmill', axis: 'y', units: 'inch' },
+  { shape: 'square', cutter: 'ball_endmill', axis: 'y', units: 'mm' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'x', units: 'inch' },
+  { shape: 'square', cutter: 'flat_endmill', axis: 'x', units: 'inch' },
+  { shape: 'round', cutter: 'flat_endmill', axis: 'y', units: 'inch', region: 'full' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'x', units: 'inch', region: 'strip' },
+]
+
 /** The reference grid limit for one case. Default-parameter cases keep the full
  *  resolution; a coarsened non-compact case may run on a smaller grid, which
  *  coarsens the generator's requested cells too (the 4x relationship holds). */
@@ -2016,7 +2240,7 @@ interface Program {
 }
 
 function generate(entry: Case): Program {
-  const tool = normalizedTool(entry.type, entry.diameter)
+  const tool = normalizedTool(entry.type, entry.diameter, entry.units ?? 'mm')
   const stock = entry.stock
   const model = entry.mesh ?? revolved(stock, entry.profile)
   const common = {
@@ -2142,7 +2366,8 @@ function estimateReplayCells(program: Program, entry: Case): number {
   const travel = pivot + barMaxRadius(entry.stock) + 1
   let total = 0
   let controller = 0
-  for (const move of coalesceCommandedMoves([...program.roughMoves, ...program.finishMoves], COALESCE_TOLERANCE)) {
+  for (const move of coalesceCommandedMoves([...program.roughMoves, ...program.finishMoves],
+    convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm'))) {
     const hasAngle = move.from.a !== undefined || move.to.a !== undefined
     const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
     const toAngle = hasAngle ? (move.to.a ?? fromAngle) : fromAngle
@@ -2532,7 +2757,8 @@ function assertStageDescent(
     // `360 / n` degrees, so the corner is resolved by the same 0.005 mm sagitta
     // rule the generator uses. Sampling only emitted vertices would miss the
     // corner on a ring that merged into one full-turn move.
-    const intervals = Math.max(1, Math.ceil(2 * Math.PI * corner / aroundArcStep(corner, sampleSpacing)))
+    const intervals = Math.max(1, Math.ceil(2 * Math.PI * corner
+      / aroundArcStep(corner, sampleSpacing, entry.units ?? 'mm')))
     for (let k = 0; k <= intervals; k++) collectAngle(360 * k / intervals)
   }
   const alongSamples = [...alongGrid.values()].sort((a, b) => a - b)
@@ -2803,6 +3029,272 @@ let rapidLinkChecks = 0
 let roundRapidLinkChecks = 0
 let worstRapidLinkMargin = Number.POSITIVE_INFINITY
 let worstRapidLinkLabel = ''
+// #1117: the rough's at-layer cutting link, proved independently. The counters
+// are split by the dimensions the slice must cover, so a run that stops
+// producing a qualifying link on one of them fails instead of passing with a
+// hole in the proof.
+const atLayerLinkCounts = {
+  total: 0, round: 0, square: 0, ball: 0, flat: 0, axisX: 0, axisY: 0, mm: 0, inch: 0, region: 0,
+}
+let worstAtLayerLinkMargin = Number.POSITIVE_INFINITY
+let worstAtLayerLinkMarginLabel = ''
+let worstLinkModelSlack = Number.POSITIVE_INFINITY
+let worstLinkModelSlackLabel = ''
+let worstLinkMaterialSlack = Number.POSITIVE_INFINITY
+let worstLinkMaterialSlackLabel = ''
+let linkEndCells = 0
+// #1117: a low A-changing rough cut turns through material at its own ray; one
+// that cannot show that is only allowed at the blank's corner envelope.
+let lowTurnChecks = 0
+let cornerTurnChecks = 0
+/** The closest a low turn came to its allowed sampler lift, in project units. */
+let worstTurnMargin = Number.POSITIVE_INFINITY
+let worstTurnLabel = ''
+
+/**
+ * The independent model radius a rough link must protect, at one along position
+ * and angle, or `null` where this case's model has no surface there.
+ *
+ * A revolved case's profile gives the radius at any along between its ends; the
+ * non-revolved prism cases give their boundary radius at an angle and only exist
+ * inside their own along span. Read here rather than through the generator, so
+ * the model bound is the model's own geometry.
+ */
+function linkModelRadiusAt(entry: Case, along: number, angleDeg: number): number | null {
+  if (entry.mesh) {
+    const span = entry.meshAlong
+    if (span && (along < span.from - 1e-9 || along > span.to + 1e-9)) return null
+    return entry.meshRadiusAt ? entry.meshRadiusAt(angleDeg) : null
+  }
+  return modelSurfaceAt(entry.profile, along)
+}
+
+/** Everything the at-layer link and corner-turn proofs read for one case. */
+interface LinkProofContext {
+  readonly entry: Case
+  readonly reference: Reference
+  readonly stock: BarStock
+  readonly pivot: number
+  readonly cutterRadius: number
+  readonly ball: boolean
+  readonly alongOf: (point: ToolpathMove['from']) => number
+  readonly alongLimits: { min: number; max: number }
+  readonly regionMask?: RotaryRegionMask
+  readonly regionPoint: (along: number, angleDeg: number) => { x: number; y: number }
+  readonly budget: ReturnType<typeof referenceBudget>
+  readonly linkAllowance: number
+  /** The blank's corner envelope plus the clearance: the travel height in tip radius. */
+  readonly travelTip: number
+}
+
+/**
+ * #1117 slice C: prove one **at-layer rough link** against the reference.
+ *
+ * The move is a cut at one exact angle that changes the along position -- after
+ * #1117 that is the rough's stay-down ring-to-ring link, and the raised fallback
+ * is a compact rapid instead. Four independent bounds:
+ *
+ * 1. **Layer-bounded removal.** The material the earlier layers left may stand
+ *    over the link by at most this layer's own `stepdown` plus the reference's
+ *    discretisation allowance. A link clamped one band too low removes two
+ *    stepdowns there; a link cutting across material no layer removed (the gap
+ *    between two region bands, a skipped ring) removes the whole column. This is
+ *    the assertion that replaces the obsolete "a rough feed link removes
+ *    nothing": an at-layer link *is* a cut, and one band is what it may take.
+ * 2. **The model is protected.** The commanded span is sampled at the reference's
+ *    along resolution and its interpolated tip must stay at or above the
+ *    independent model surface (`max(model, layer)` is convex in along, so the
+ *    commanded chord cannot sag below it), and the reference's material under the
+ *    link's own ray must stay at or above the model. A link that dives to a low
+ *    model between rings fails the first; one that cuts a gouge fails the second.
+ * 3. **The retained ends are protected.** Every cell the cutter body can reach
+ *    inside the link's axial footprint and outside the cut band keeps the blank.
+ *    The global retained-end assertion already says so; this attributes it to the
+ *    link that did it.
+ * 4. **The region is protected.** The link is one straight cut at one angle, so a
+ *    region decides on its whole span: every interior sample must be inside the
+ *    mask. A link that steps over an excluded strip or crosses the gap between
+ *    two bands cuts uncut blank, and the reference's own material there is the
+ *    blank -- which is what makes it unsafe, not merely out of region.
+ */
+function proveAtLayerLink(
+  context: LinkProofContext,
+  move: ToolpathMove,
+  fromAngle: number,
+): void {
+  const { entry, reference, stock, pivot, cutterRadius, budget, alongOf } = context
+  const fromAlong = alongOf(move.from)
+  const toAlong = alongOf(move.to)
+  const span = toAlong - fromAlong
+  const counts = atLayerLinkCounts
+  counts.total++
+  if (stock.shape === 'round') counts.round++
+  else counts.square++
+  if (context.ball) counts.ball++
+  else counts.flat++
+  if (stock.axis === 'x') counts.axisX++
+  else counts.axisY++
+  if ((entry.units ?? 'mm') === 'mm') counts.mm++
+  else counts.inch++
+  if (entry.region !== undefined) counts.region++
+
+  const bound = entry.stepdown + context.linkAllowance
+  const margin = bound - moveSurfaceWorst
+  if (margin < worstAtLayerLinkMargin) {
+    worstAtLayerLinkMargin = margin
+    worstAtLayerLinkMarginLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`
+  }
+  assert.ok(moveSurfaceWorst <= bound,
+    `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+    + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} removes ${moveSurfaceWorst.toFixed(4)} mm of the `
+    + `material the earlier layers left, over the ${bound.toFixed(4)} mm one-stepdown bound `
+    + `(cell along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+    + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)})`)
+
+  // The region: the link is one straight cut at one angle, so a mask that can
+  // answer a whole **segment** must say yes. Point sampling at the reference's
+  // along resolution is not enough on its own -- an excluded strip narrower than
+  // one sample falls between two of them, which is exactly the gap a stay-down
+  // link must not step over -- so both views are asserted.
+  if (context.regionMask !== undefined) {
+    const segment = context.regionMask.containsSegment?.(
+      context.regionPoint(fromAlong, fromAngle),
+      context.regionPoint(toAlong, fromAngle),
+    )
+    assert.ok(segment !== false,
+      `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
+      + `operation's region; its whole span must be inside`)
+  }
+
+  const corner = barMaxRadius(stock)
+  const modelAllowance = entry.requestedCellSize + budget.alongBin + 1e-6
+  const underLimit = corner * budget.angleDeg * Math.PI / 180 + budget.alongBin + 1e-6
+  const samples = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin))
+  const wrapped = ((fromAngle % 360) + 360) % 360
+  const rayCell = Math.floor(wrapped / reference.angleDeg) % reference.angleBins
+  for (let s = 0; s <= samples; s++) {
+    const fraction = s / samples
+    const along = fromAlong + span * fraction
+    const tip = (move.from.z - pivot) + (move.to.z - move.from.z) * fraction
+    const model = linkModelRadiusAt(entry, along, fromAngle)
+    if (model !== null) {
+      const slack = tip - model
+      if (slack < worstLinkModelSlack) {
+        worstLinkModelSlack = slack
+        worstLinkModelSlackLabel = `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`
+      }
+      assert.ok(slack >= -modelAllowance,
+        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} commands tip `
+        + `${tip.toFixed(4)} at along ${along.toFixed(2)}, ${(-slack).toFixed(4)} mm below the model `
+        + `${model.toFixed(4)} (allowed ${modelAllowance.toFixed(4)})`)
+    }
+    if (context.regionMask !== undefined) {
+      assert.ok(context.regionMask.containsPoint(context.regionPoint(along, fromAngle)),
+        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} cuts across untouched `
+        + `stock at along ${along.toFixed(2)}, outside the operation's region`)
+    }
+    // The reference's own material under the link's ray: no cut may leave it
+    // below the model, because nothing later in this operation repairs a gouge.
+    const i = Math.floor((along - reference.alongStart) / reference.alongBin)
+    if (i < 0 || i >= reference.alongBins) continue
+    const material = reference.material[i * reference.angleBins + rayCell]
+    const materialModel = linkModelRadiusAt(
+      entry,
+      reference.alongStart + (i + 0.5) * reference.alongBin,
+      (rayCell + 0.5) * reference.angleDeg,
+    )
+    if (materialModel === null) continue
+    const materialSlack = material - materialModel
+    if (materialSlack < worstLinkMaterialSlack) {
+      worstLinkMaterialSlack = materialSlack
+      worstLinkMaterialSlackLabel = `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`
+    }
+    assert.ok(materialSlack >= -underLimit,
+      `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} leaves `
+      + `${(-materialSlack).toFixed(4)} mm less than the model under its own ray at along `
+      + `${along.toFixed(2)} (material ${material.toFixed(4)}, model ${materialModel.toFixed(4)}; `
+      + `allowed ${underLimit.toFixed(4)})`)
+  }
+
+  // The retained ends: this link's own body footprint, outside the cut band.
+  const low = Math.min(fromAlong, toAlong) - cutterRadius
+  const high = Math.max(fromAlong, toAlong) + cutterRadius
+  const first = Math.max(0, Math.floor((low - reference.alongStart) / reference.alongBin))
+  const last = Math.min(reference.alongBins - 1, Math.floor((high - reference.alongStart) / reference.alongBin))
+  for (let i = first; i <= last; i++) {
+    const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
+    if (cellAlong < context.alongLimits.min || cellAlong > context.alongLimits.max) continue
+    if (cellAlong >= entry.alongStart - 1e-9 && cellAlong <= entry.alongEnd + 1e-9) continue
+    for (let k = 0; k < reference.angleBins; k++) {
+      const index = i * reference.angleBins + k
+      const blank = blankRadius(stock, (k + 0.5) * reference.angleDeg)
+      const drop = retainedRemoval(reference, index, blank)
+      linkEndCells++
+      assert.ok(drop <= 1e-6,
+        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} lowered a retained end by `
+        + `${drop.toFixed(4)} mm at along ${cellAlong.toFixed(2)} A${((k + 0.5) * reference.angleDeg).toFixed(2)}`)
+    }
+  }
+}
+
+/**
+ * #1117 slice C: prove one **A-changing rough cut** at a single along position.
+ *
+ * Two shapes are sound. A **low** turn is a ring arc at this layer: it cuts
+ * material at its own ray, so at every swept angle the raw blank's touch radius
+ * (the reference's own `rawStockSurface`, not the generator's gate) is at or
+ * above the cut height. A **high** turn is the corner-envelope traverse: it sits
+ * at the blank's largest radius plus the clearance, above every cell, and removes
+ * nothing. The mutation this catches is anything between them -- a corner turn
+ * lowered to the arc height or the layer radius, which swings the cutter through
+ * the blank's face at a height the blank does not reach.
+ */
+function proveRoughTurn(context: LinkProofContext, move: ToolpathMove): void {
+  const { entry, stock, pivot, cutterRadius } = context
+  if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) return
+  const low = Math.min(move.from.z, move.to.z) - pivot
+  const height = Math.max(move.from.z, move.to.z) - pivot
+  const label = `${entry.label} A${move.from.a.toFixed(2)}->${move.to.a.toFixed(2)}`
+  if (low >= context.travelTip - 1e-6) {
+    // The corner-envelope turn: above the blank's largest radius, so it removes
+    // nothing. Kept as its own coverage count -- a run with no such turn would
+    // not be exercising the rule this proof exists for.
+    cornerTurnChecks++
+    return
+  }
+  // Within one cutter radius of a band face the sampler's retained-stub floor may
+  // lift a ring above the blank's own touch radius -- it keeps the cutter's side
+  // off the stub (#1016) -- so the blank-touch rule cannot judge a turn there.
+  // The mid-bar turns carry this rule; the stub floors carry their own proof.
+  const along = context.alongOf(move.from)
+  const fromFace = Math.min(Math.abs(along - entry.alongStart), Math.abs(along - entry.alongEnd))
+  if (fromFace <= cutterRadius + context.budget.alongBin) return
+  lowTurnChecks++
+  // The sampler's documented conservative cell lift is what may put a ring above
+  // the blank's own touch radius; anything more is a turn through air.
+  const allowance = entry.requestedCellSize + context.budget.alongBin + 1e-6
+  const delta = move.to.a - move.from.a
+  const steps = Math.max(2, Math.ceil(Math.abs(delta) / 2))
+  for (let s = 0; s <= steps; s++) {
+    const angle = move.from.a + delta * s / steps
+    const touch = rawStockSurface(stock, angle, cutterRadius, context.ball)
+    const margin = allowance - (height - touch)
+    if (margin < worstTurnMargin) {
+      worstTurnMargin = margin
+      worstTurnLabel = `${label} at A${angle.toFixed(2)}`
+    }
+    const slack = touch - height
+    assert.ok(slack >= -allowance,
+      `${entry.label}: a low A-changing rough cut at A${move.from.a.toFixed(2)}->`
+      + `${move.to.a.toFixed(2)} turns through A${angle.toFixed(2)} at ${height.toFixed(4)} where the `
+      + `blank stands at only ${touch.toFixed(4)} (allowed ${allowance.toFixed(4)}, and a turn above `
+      + `the blank must be at the corner envelope ${context.travelTip.toFixed(4)})`)
+  }
+}
+
 
 // `SQUARE_CASES` is a profiling aid only: the committed run uses all 300 seeded
 // cases, and the assertions below still require the full set.
@@ -2853,6 +3345,11 @@ const CASES = [
   fitEntry(drawGapRegionCase(1, false)),
   fitEntry(drawGapRegionCase(2, true)),
   fitEntry(drawGapRegionCase(3, true)),
+  // #1117 slice C: the link proof's own coverage matrix, always present whatever
+  // the profiling count. Small around roughs that qualify at both layers, over
+  // both stock axes, both units, both blank shapes, both cutters and a masked
+  // case.
+  ...LINK_MATRIX.map((spec) => fitEntry(drawLinkCase(spec))),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -2925,12 +3422,12 @@ for (const { entry, program } of CASES) {
     else defaultFree++
   }
   const stock = entry.stock
-  const tool = normalizedTool(entry.type, entry.diameter)
+  const tool = normalizedTool(entry.type, entry.diameter, entry.units ?? 'mm')
   const cutterRadius = tool.radius
   const ball = entry.type === 'ball_endmill'
   const pivot = barPivotZ(stock)
   const corner = barMaxRadius(stock)
-  const clearance = 1
+  const clearance = convertLength(1, 'mm', entry.units ?? 'mm')
   const travelZ = pivot + corner + clearance
 
   const roughRan = entry.programKind !== 'finish'
@@ -2979,9 +3476,12 @@ for (const { entry, program } of CASES) {
   assert.ok((2 * Math.PI * corner / budget.angleBins) <= Math.min(cells.arc, entry.requestedCellSize) / 4 * (1 + 1e-9),
     `${entry.label}: the reference's angle bin is 4x finer than ${cells.arc} and ${entry.requestedCellSize}`)
 
-  const alongOf = (point: ToolpathMove['from']): number => point.x
+  // The stock's own axis decides which coordinate is the along position (#1117:
+  // the proof runs on both axes).
+  const alongOf = (point: ToolpathMove['from']): number =>
+    stock.axis === 'x' ? point.x : point.y
   const allMoves = [...program.roughMoves, ...program.finishMoves]
-  const bounds = getStockBounds(stock)
+  const alongLimits = alongBounds(stock)
   let minCutAlong = Number.POSITIVE_INFINITY
   let maxCutAlong = Number.NEGATIVE_INFINITY
   for (const move of allMoves) {
@@ -2989,8 +3489,8 @@ for (const { entry, program } of CASES) {
     minCutAlong = Math.min(minCutAlong, alongOf(move.from), alongOf(move.to))
     maxCutAlong = Math.max(maxCutAlong, alongOf(move.from), alongOf(move.to))
   }
-  const windowLow = Math.max(bounds.minX, minCutAlong - cutterRadius - 1)
-  const windowHigh = Math.min(bounds.maxX, maxCutAlong + cutterRadius + 1)
+  const windowLow = Math.max(alongLimits.min, minCutAlong - cutterRadius - 1)
+  const windowHigh = Math.min(alongLimits.max, maxCutAlong + cutterRadius + 1)
   const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
 
   // #1093: a rough link is sized from the material its own earlier layers left
@@ -2998,6 +3498,30 @@ for (const { entry, program } of CASES) {
   // discretisation is the only removal it may report. Defined before the region
   // block because a rapid crossing a region gap is judged with the same bound.
   const linkBiteAllowance = budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+
+  // #1117 slice C: the link proof's own frame. The region mask and the sheet
+  // point it needs are this file's, not the generator's, and the travel height
+  // is derived from the blank plus the 1 mm clearance the generator converts.
+  const centreAcross = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const travelTip = barMaxRadius(stock) + convertLength(1, 'mm', entry.units ?? 'mm')
+  const linkProof: LinkProofContext = {
+    entry,
+    reference,
+    stock,
+    pivot,
+    cutterRadius,
+    ball,
+    alongOf,
+    alongLimits,
+    ...(entry.region === undefined ? {} : { regionMask: regionMask(stock, entry.region) }),
+    regionPoint: (along: number, angleDeg: number): { x: number; y: number } => (stock.axis === 'x'
+      ? { x: along, y: centreAcross + angleDeg * circumference / 360 }
+      : { x: centreAcross + angleDeg * circumference / 360, y: along }),
+    budget,
+    linkAllowance: linkBiteAllowance,
+    travelTip,
+  }
 
   // #1096: a region the operation is limited to. The mask is this file's own,
   // built from the sheet's unwrapped coordinates, and the checks below are on
@@ -3007,8 +3531,7 @@ for (const { entry, program } of CASES) {
   // the travel height -- whose envelope is above a square blank's corners.
   if (entry.region) {
     const mask = regionMask(stock, entry.region)
-    const centre = barCentre(stock)
-    const circumference = Math.PI * stock.thickness
+    const centre = centreAcross
     const angleOf = (across: number): number => (across - centre) * 360 / circumference
     // Distance outside the region in mm: along directly, angle as an arc
     // length. The mask is periodic, and a set of bands is a union, so the
@@ -3113,12 +3636,12 @@ for (const { entry, program } of CASES) {
   const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
   const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
   if (roughRan) stageSpecs.push({
-    moves: coalesceCommandedMoves(program.roughMoves, COALESCE_TOLERANCE),
+    moves: coalesceCommandedMoves(program.roughMoves, convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm')),
     finish: false,
     direction: entry.roughKind,
   })
   if (finishRan) stageSpecs.push({
-    moves: coalesceCommandedMoves(program.finishMoves, COALESCE_TOLERANCE),
+    moves: coalesceCommandedMoves(program.finishMoves, convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm')),
     finish: true,
     direction: entry.finishKind,
   })
@@ -3172,6 +3695,13 @@ for (const { entry, program } of CASES) {
       const toAngle = hasAngle ? (move.to.a ?? fromAngle) : fromAngle
       const turns = toAngle !== fromAngle
       const lowZ = Math.min(move.from.z, move.to.z)
+      // #1117 slice C: every A-changing *cut* of an around rough stage is judged
+      // here, whether it is a ring arc at the layer or a turn at the corner
+      // envelope. It is outside the `lowZ` gate below because the corner-envelope
+      // turn is above the travel height and would otherwise never be looked at.
+      if (!stage.finish && stage.direction === 'around' && move.kind === 'cut') {
+        proveRoughTurn(linkProof, move)
+      }
       if (move.kind === 'rapid') {
         checkedRapids++
         if (turns) {
@@ -3250,17 +3780,14 @@ for (const { entry, program } of CASES) {
                 + `stepover ${entry.stepover} cell ${entry.requestedCellSize})`)
             }
           } else {
-            // A rough link that stays a cut is either the old travel-height
-            // motion or, since #1117, a link that stays at the current layer and
-            // cuts: that one removes at most this layer's own band, one
-            // stepdown, on top of the reference's discretisation allowance. The
-            // rapid is checked above; a link the generator refused stays a rapid.
+            // #1117: a rough link that stays a cut is the at-layer link. It is
+            // proved independently against this reference -- one layer's band of
+            // removal, the model, the retained ends and the region. The obsolete
+            // "a rough feed link removes nothing" rule this replaces was written
+            // when every stay-down rough link was the old raised plan's rise and
+            // drop; since #1117 the traverse itself is a cut.
             roughLinkChecks++
-            assert.ok(moveSurfaceWorst <= entry.stepdown + linkBiteAllowance,
-              `${entry.label}: a rough link at A${fromAngle.toFixed(2)} along `
-              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
-              + `${moveSurfaceWorst.toFixed(4)} mm of the material the earlier layers left `
-              + `(allowed ${(entry.stepdown + linkBiteAllowance).toFixed(4)}, one rough stepdown)`)
+            proveAtLayerLink(linkProof, move, fromAngle)
           }
         }
         if (stage.direction === 'around') {
@@ -3460,7 +3987,7 @@ for (const { entry, program } of CASES) {
   for (let i = 0; i < reference.alongBins; i++) {
     const along = reference.alongStart + (i + 0.5) * reference.alongBin
     if (along >= entry.alongStart - 1e-9 && along <= entry.alongEnd + 1e-9) continue
-    if (along < bounds.minX || along > bounds.maxX) continue
+    if (along < alongLimits.min || along > alongLimits.max) continue
     for (let k = 0; k < reference.angleBins; k++) {
       const angle = (k + 0.5) * reference.angleDeg
       const blank = blankRadius(stock, angle)
@@ -3607,7 +4134,7 @@ for (const { entry, program } of CASES) {
     : slope * alongStep
   const angleArc = entry.finishKind === 'along'
     ? entry.stepover
-    : aroundArcStep(corner, entry.finishSpacing)
+    : aroundArcStep(corner, entry.finishSpacing, entry.units ?? 'mm')
   const angularScallop = ball ? (angleArc * angleArc) / (8 * cutterRadius) : 0
   // The generator's conservative cell lift (`angleLifts`, capped at
   // `requestedCellSize` in `sampleRotaryModel`) is part of the surface it
@@ -3754,6 +4281,23 @@ console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPl
 console.log(`  #1093 rough links: ${rapidLinkChecks} replayed as in-air rapids `
   + `(${roundRapidLinkChecks} on round bars; ${roughLinkChecks} cut links), `
   + `worst body clearance ${worstRapidLinkMargin.toFixed(4)} mm (${worstRapidLinkLabel || 'none'})`)
+// #1117 slice C: the at-layer cutting links proved against the reference, by the
+// dimensions the slice must cover, and the corner-turn rule that keeps a low
+// turn from swinging through the blank's face.
+console.log(`  #1117 at-layer rough links: ${atLayerLinkCounts.total} proved `
+  + `(${atLayerLinkCounts.round} round / ${atLayerLinkCounts.square} square; `
+  + `${atLayerLinkCounts.ball} ball / ${atLayerLinkCounts.flat} flat; `
+  + `axis x ${atLayerLinkCounts.axisX} / y ${atLayerLinkCounts.axisY}; `
+  + `${atLayerLinkCounts.mm} mm / ${atLayerLinkCounts.inch} inch; `
+  + `${atLayerLinkCounts.region} in a region), `
+  + `closest to the one-stepdown bound at ${worstAtLayerLinkMargin.toFixed(4)} mm margin `
+  + `(${worstAtLayerLinkMarginLabel || 'none'}); `
+  + `closest model tip ${worstLinkModelSlack.toFixed(4)} mm (${worstLinkModelSlackLabel || 'none'}); `
+  + `closest material-under-the-ray ${worstLinkMaterialSlack.toFixed(4)} mm `
+  + `(${worstLinkMaterialSlackLabel || 'none'}); ${linkEndCells} retained-end cells kept`)
+console.log(`  #1117 corner turns: ${lowTurnChecks} low cutting turns (closest to the allowed `
+  + `sampler lift at ${worstTurnMargin.toFixed(4)} mm margin, ${worstTurnLabel || 'none'}), `
+  + `${cornerTurnChecks} at the corner envelope`)
 console.log(`  #1093 finish links: ${finishLinkChecks} replayed `
   + `(${finishAfterRoughLinkChecks} after a rough), worst removal ${worstFinishLinkBite.toFixed(4)} mm `
   + `(${worstFinishLinkBiteLabel || 'none'}); after a rough ${worstFinishAfterRoughLinkBite.toFixed(4)} mm `
@@ -3772,6 +4316,29 @@ assert.ok(rapidLinkChecks > 0, `the rough in-air links are replayed against the 
 assert.ok(regionCrossingRapids > 0,
   `a rapid crossing outside the region is checked against the uncut blank (${regionCrossingRapids})`)
 assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (${roundRapidLinkChecks})`)
+// #1117 slice C: the link proof must actually cover every dimension it claims.
+// A run that stops emitting a qualifying link on one of them -- because the
+// generator fell back to raised links, or because a case was dropped -- fails
+// here instead of passing with a hole where that dimension's proof should be.
+assert.ok(atLayerLinkCounts.total > 0,
+  `the at-layer rough links are proved against the reference (${atLayerLinkCounts.total})`)
+assert.ok(atLayerLinkCounts.round > 0, `an at-layer link on a round bar (${atLayerLinkCounts.round})`)
+assert.ok(atLayerLinkCounts.square > 0, `an at-layer link on a square blank (${atLayerLinkCounts.square})`)
+assert.ok(atLayerLinkCounts.ball > 0, `an at-layer link with a ball cutter (${atLayerLinkCounts.ball})`)
+assert.ok(atLayerLinkCounts.flat > 0, `an at-layer link with a flat cutter (${atLayerLinkCounts.flat})`)
+assert.ok(atLayerLinkCounts.axisX > 0, `an at-layer link on an X-axis bar (${atLayerLinkCounts.axisX})`)
+assert.ok(atLayerLinkCounts.axisY > 0, `an at-layer link on a Y-axis bar (${atLayerLinkCounts.axisY})`)
+assert.ok(atLayerLinkCounts.mm > 0, `an at-layer link in millimetres (${atLayerLinkCounts.mm})`)
+assert.ok(atLayerLinkCounts.inch > 0, `an at-layer link in inches (${atLayerLinkCounts.inch})`)
+assert.ok(atLayerLinkCounts.region > 0,
+  `an at-layer link inside a region (${atLayerLinkCounts.region})`)
+assert.ok(linkEndCells > 0,
+  `the at-layer link's retained-end proof checked cells (${linkEndCells})`)
+// The corner-turn rule needs both shapes exercised: an arc at the layer (low)
+// and a turn at the corner envelope (high). A run that emits neither is not
+// proving the rule the low-corner-turn mutation violates.
+assert.ok(lowTurnChecks > 0, `a low cutting corner turn is proved (${lowTurnChecks})`)
+assert.ok(cornerTurnChecks > 0, `a corner-envelope turn is proved (${cornerTurnChecks})`)
 assert.ok(finishLinkChecks > 0, `the finish links are replayed against the reference (${finishLinkChecks})`)
 assert.ok(finishAfterRoughLinkChecks > 0,
   `a finish link after a rough is replayed against the reference (${finishAfterRoughLinkChecks})`)
