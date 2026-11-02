@@ -19,6 +19,11 @@
  * timeout is a hang guard, not a performance assertion: removing the budget
  * must fail even when generation cannot return to an in-process assertion.
  *
+ * The hang guard is 120 s (issue #1111): 10 s timed out inside the build's
+ * 10-job pool while the same child takes 2.5 s alone, so a busy machine failed
+ * the gate. It only has to catch a hang; the budget check is what refuses the
+ * job.
+ *
  * These are **rough** bounds. A finish emits only its model-following passes
  * (2026-10-22 decision), so it has no layer count, no emission budget and no
  * stepdown to validate; the finish side of this file is gone with the clearing
@@ -84,7 +89,7 @@ if (process.env.ROTARY_WORK_BUDGET_CHILD) {
 } else {
   {
     const child = spawnSync(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url)], {
-      env: { ...process.env, ROTARY_WORK_BUDGET_CHILD: 'rough' }, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, ROTARY_WORK_BUDGET_CHILD: 'rough' }, encoding: 'utf8', timeout: 120_000,
       maxBuffer: 100_000,
     })
     assert.equal(child.error, undefined, `rough: generation must refuse excessive work, never hang (${child.error?.message})`)

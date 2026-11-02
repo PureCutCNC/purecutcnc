@@ -8,7 +8,9 @@
 merges for everyone. Three issues have now been spent here (#383, #386, #508).
 Each of the first two fixed the *units* and left the *shape* of the assertion
 alone, and each decayed within weeks. The rule below is the third answer; read
-the whole of it before writing a timing assertion.
+the whole of it before writing a timing assertion. #1111 is a fourth variant —
+an assertion that measured machine load rather than the kernel, moved out of the
+default build instead of re-tuned (see "Opt-in timing" below).
 
 ## No absolute millisecond budget survives
 
@@ -69,6 +71,44 @@ ratio only 3.19x → 4.07x, inside the baseline's own spread. Use a size ratio
 only when the property under test genuinely *is* the shape of the cost curve —
 `bestNonFittingCpuMs` in `src/engine/toolpaths/arcReconstruction.test.ts` is the
 correct use of it, and needs no change.
+
+## Opt-in timing when the ratio cannot separate
+
+A ratio is only a gate if it separates baseline from regression. The
+square-to-round playback in `src/engine/simulation/squarePlayback.test.ts`
+measures the wrapped replay against the same moves through the flat kernel on the
+same starting stock, and on the machine it was written on that ratio separated
+(3.87–4.35 baseline against 5.91–5.92 on the pre-correction branch). Its
+reference alone was measured swinging 2.7–15.9 ms across runs, so
+with the build's test pool loaded the ratio reached 5.25x, 7.00x, 5.01x, 5.27x
+and 6.7x on branches that passed alone, and it failed `npm run build` four times
+during 0.6.0 (issue #1111). It was measuring machine load.
+
+Re-measured for #1111 slice pg-b (2026-11-02, Linux/node 22, five serial
+invocations each) the separation is gone: baseline 4.98–5.17 against 4.99–5.28
+with the rebuild restored, i.e. the baseline itself straddles the 5x limit. The
+rebuild is cheap on that fixture (70 non-empty schedules across 92,282 per-piece
+cache hits; only a move whose Z changes by more than a cell has a schedule at
+all), so the numbers are dominated by the difference between the wrapped and flat
+kernels, which is what the ratio measures rather than the cache. The threshold
+was left at 5 rather than re-tuned to fit one machine — that is the reading a
+second measurement would have to reproduce before it meant anything.
+
+That test's default guard is therefore **counted work** — schedules derived per
+source move / cell size / cutter radius, which is a property of the path and
+cannot move with load — and the CPU-time ratio is opt-in:
+
+```bash
+PURECUT_SQUARE_PLAYBACK_PERF=1 npx tsx src/engine/simulation/squarePlayback.test.ts
+```
+
+Without the flag the test runs every correctness and counted-work assertion,
+prints one line saying the ratio was skipped, and never calls `cpuRatio`. With
+it, the same ratio and its 5x limit run as before. This is not a general
+exemption: an assertion that can only be measured by time does not belong in the
+default build, and the flag exists only where a deterministic substitute already
+covers the property. It also does not change `src/test/cpuRatio.ts` or any other
+performance test.
 
 ## Record your numbers and verify by mutation
 

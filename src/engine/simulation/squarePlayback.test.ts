@@ -27,11 +27,14 @@
  * The default guard is a **count of schedule derivations** (issue #1111): the
  * wrapped kernel caches every source move's ramp sample schedule, and the count
  * of real derivations is a property of the path, not of the machine, so it cannot
- * fail because the build pool is busy. The CPU-time ratio against the flat kernel
- * is still measured here for now; issue #1111 slice pg-b moves that behind an
- * explicit environment flag and decides when it runs. A small explicit ramp is
- * replayed across many frames as well, because the square job's passes may not
- * exercise a non-empty ramp schedule.
+ * fail because the build pool is busy. A small explicit ramp is replayed across
+ * many frames as well, because the square job's passes may not exercise a
+ * non-empty ramp schedule.
+ *
+ * The CPU-time ratio against the flat kernel is **opt-in** (issue #1111 slice
+ * pg-b): it tracked machine load as well as the kernel and failed `npm run build`
+ * four times during 0.6.0, so it runs only with `PURECUT_SQUARE_PLAYBACK_PERF=1`
+ * set. The correctness and counted-work assertions always run.
  *
  * The subject is the real job: the sheet the app builds for the finish, the
  * prior-rough replay as its starting stock, and every frame the viewport's
@@ -52,7 +55,19 @@
  * Limit 5 sits between the fixed cost and the old one; the geometric midpoint
  * of 4.33 and 5.92 is 5.06.
  *
+ * Re-measured for issue #1111 slice pg-b (2026-11-02, Linux/node 22, five serial
+ * invocations each, fixture construction outside the timed region): baseline
+ * ratio 4.98–5.17 (subject 8.6–9.1 ms, reference 1.7–1.8 ms) and 4.99–5.28 with
+ * a per-frame schedule rebuild restored (8.3–9.3 ms vs 1.6–1.8 ms). The limit
+ * does not separate those two on that machine — the baseline itself straddles 5
+ * — because the schedule rebuild is nearly free on this fixture: one invocation
+ * rebuilds 70 non-empty schedules across 92,282 per-piece cache hits, and only a
+ * move whose Z changes by more than a cell has a schedule at all. The ratio is
+ * therefore a recorded constant-factor signal, not a gate; that is why it is
+ * opt-in.
+ *
  * Run with: npx tsx src/engine/simulation/squarePlayback.test.ts
+ * Opt-in timing: PURECUT_SQUARE_PLAYBACK_PERF=1 npx tsx src/engine/simulation/squarePlayback.test.ts
  */
 
 import assert from 'node:assert/strict'
@@ -84,6 +99,16 @@ import {
 import type { SweepScheduleDerivation } from './replay'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import type { SimulationGrid } from './types'
+
+/**
+ * The CPU-time ratio is opt-in (issue #1111 slice pg-b). It never runs as part of
+ * `npm run build`: the reference time alone swung 2.7–15.9 ms across runs during
+ * 0.6.0, so the ratio tracked machine load and failed four builds (5.25x, 7.00x,
+ * 5.01x, 5.27x, 6.7x on a busy pool) while the same branch passed alone. The
+ * counted-work guard below is the load-independent default; this flag restores
+ * the broader constant-factor signal for someone explicitly looking for it.
+ */
+const PERF_ENABLED = process.env.PURECUT_SQUARE_PLAYBACK_PERF === '1'
 
 /** The dialog's write starts from a bare feature-mode selection. */
 const EMPTY_SELECTION: SelectionState = {
@@ -413,20 +438,27 @@ function testSquarePlaybackTiming(): void {
     `  schedule derivations: ${derivations.length} for ${job.finishPath.moves.length} source moves`,
   )
 
-  const { ratio, subjectMs, referenceMs } = cpuRatio(wrapped, flat)
-  console.log(
-    `  square-to-round playback: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
-    + `${referenceMs.toFixed(1)} ms CPU (ratio ${ratio.toFixed(2)})`,
-  )
-  assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
-  assert(
-    ratio < 5,
-    `square-to-round playback cost ${ratio.toFixed(2)}x the flat-kernel reference `
-    + `(limit 5x; ${subjectMs.toFixed(1)} ms vs ${referenceMs.toFixed(1)} ms CPU) — check that `
-    + 'the wrapped kernel keeps the horizontal interval test inline, caches the ramp '
-    + 'sample schedule per source move instead of deriving it per frame, and never '
-    + 'evaluates the batch ceiling an axial constant-Z flat cut cannot need',
-  )
+  if (PERF_ENABLED) {
+    const { ratio, subjectMs, referenceMs } = cpuRatio(wrapped, flat)
+    console.log(
+      `  square-to-round playback: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
+      + `${referenceMs.toFixed(1)} ms CPU (ratio ${ratio.toFixed(2)})`,
+    )
+    assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
+    assert(
+      ratio < 5,
+      `square-to-round playback cost ${ratio.toFixed(2)}x the flat-kernel reference `
+      + `(limit 5x; ${subjectMs.toFixed(1)} ms vs ${referenceMs.toFixed(1)} ms CPU) — check that `
+      + 'the wrapped kernel keeps the horizontal interval test inline, caches the ramp '
+      + 'sample schedule per source move instead of deriving it per frame, and never '
+      + 'evaluates the batch ceiling an axial constant-Z flat cut cannot need',
+    )
+  } else {
+    console.log(
+      '  CPU-time ratio skipped (load-sensitive, issue #1111): set '
+      + 'PURECUT_SQUARE_PLAYBACK_PERF=1 to run it',
+    )
+  }
 
   // The lanes must actually cut, or the ratio compares nothing.
   const wrappedGrid = wrapped.liveGrid()
@@ -576,8 +608,8 @@ function testLibraryAddedPlayback(): void {
 }
 
 // The deterministic guard runs first: its counts must be printed even when the
-// load-sensitive timing assertion (still on until issue #1111 slice pg-b puts it
-// behind an explicit flag) ends the run.
+// opt-in, load-sensitive timing assertion (PURECUT_SQUARE_PLAYBACK_PERF=1,
+// issue #1111) ends the run.
 testRampScheduleGuard()
 testSquarePlaybackTiming()
 testLibraryAddedPlayback()
