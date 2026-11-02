@@ -22,8 +22,19 @@
  * app's own Square-to-round dialog, updates the rough's radial stock through the
  * operation, and plays the finish from the prior rough. On CI's 2-vCPU runner
  * that spec sits at the 60 s / 2 % margin, so the playback's per-frame cost is
- * guarded here as a ratio against invariant work, never a millisecond budget
- * (docs/PERF_ASSERTIONS.md).
+ * guarded here (docs/PERF_ASSERTIONS.md).
+ *
+ * The default guard is a **count of schedule derivations** (issue #1111): the
+ * wrapped kernel caches every source move's ramp sample schedule, and the count
+ * of real derivations is a property of the path, not of the machine, so it cannot
+ * fail because the build pool is busy. A small explicit ramp is replayed across
+ * many frames as well, because the square job's passes may not exercise a
+ * non-empty ramp schedule.
+ *
+ * The CPU-time ratio against the flat kernel is **opt-in** (issue #1111 slice
+ * pg-b): it tracked machine load as well as the kernel and failed `npm run build`
+ * four times during 0.6.0, so it runs only with `PURECUT_SQUARE_PLAYBACK_PERF=1`
+ * set. The correctness and counted-work assertions always run.
  *
  * The subject is the real job: the sheet the app builds for the finish, the
  * prior-rough replay as its starting stock, and every frame the viewport's
@@ -41,10 +52,21 @@
  * 3): 4.31–4.35 after correction 3, 3.87–3.99 on `integration/0.6.0`, and
  * 5.91–5.92 on the pre-correction branch (every frame called the 17-argument
  * interval helper and rewrote five per-image scratch arrays for every cell).
- * Limit 5 sits between the fixed cost and the old one; the geometric midpoint
- * of 4.33 and 5.92 is 5.06.
+ *
+ * The ratio is **reported, never asserted** (issue #1111 review P2). Five serial
+ * opt-in invocations on 2026-11-02 (Linux/node 22, fixture construction outside
+ * the timed region) put the baseline at 4.89–5.09 (subject 8.6–9.2 ms,
+ * reference 1.7–1.8 ms) and 4.94–5.55 with the per-frame schedule rebuild
+ * restored (8.8–10.2 ms vs 1.8 ms). The ranges overlap — the baseline alone
+ * crossed 5 on a healthy run, and the reviewer measured 5.15x unmodified — so no
+ * threshold on this fixture separates the regression from machine noise. The
+ * rebuild only repeats a schedule build and its allocation per piece, which is
+ * small next to the cell loop, so the spread is dominated by the wrapped-versus-
+ * flat difference rather than by the cache. `testOptInTimingContract` below
+ * keeps the number from turning back into a gate.
  *
  * Run with: npx tsx src/engine/simulation/squarePlayback.test.ts
+ * Opt-in timing: PURECUT_SQUARE_PLAYBACK_PERF=1 npx tsx src/engine/simulation/squarePlayback.test.ts
  */
 
 import assert from 'node:assert/strict'
@@ -68,8 +90,25 @@ import {
 import { cpuRatio } from '../../test/cpuRatio'
 import { PlaybackController, cloneSimulationGrid } from './playback'
 import type { PlaybackOptions, PlaybackToolInfo } from './playback'
-import type { ToolpathResult } from '../toolpaths/types'
+import {
+  setSweepScheduleObserver,
+  wrappedNeedsSweep,
+  wrappedSweepSampleFractions,
+} from './replay'
+import type { SweepScheduleDerivation } from './replay'
+import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import type { SimulationGrid } from './types'
+
+/**
+ * The CPU-time ratio is opt-in (issue #1111 slice pg-b). It never runs as part of
+ * `npm run build`: the reference time alone swung 2.7–15.9 ms across runs during
+ * 0.6.0, so the ratio tracked machine load and failed four builds (5.25x, 7.00x,
+ * 5.01x, 5.27x, 6.7x on a busy pool) while the same branch passed alone. The
+ * counted-work guard below is the load-independent default; this flag prints
+ * the broader constant-factor signal, without a pass/fail threshold, for someone
+ * explicitly looking for it.
+ */
+const PERF_ENABLED = process.env.PURECUT_SQUARE_PLAYBACK_PERF === '1'
 
 /** The dialog's write starts from a bare feature-mode selection. */
 const EMPTY_SELECTION: SelectionState = {
@@ -227,6 +266,84 @@ function removedFromVirgin(grid: SimulationGrid): number {
   return removed
 }
 
+/**
+ * Fails if one `(source move, cell size, cutter radius)` schedule was ever
+ * derived twice. That is the whole guard: the kernel may meet a combination many
+ * times (once per frame of a long move), but only the first may build it.
+ */
+function assertSingleDerivations(
+  derivations: readonly SweepScheduleDerivation[],
+  label: string,
+): void {
+  const combinations = new Map<ToolpathMove, Map<string, number>>()
+  for (const derivation of derivations) {
+    const key = `${derivation.cellSize}@${derivation.toolRadius}`
+    const forMove = combinations.get(derivation.move) ?? new Map<string, number>()
+    const count = (forMove.get(key) ?? 0) + 1
+    forMove.set(key, count)
+    combinations.set(derivation.move, forMove)
+    assert.equal(
+      count,
+      1,
+      `${label}: the schedule for one source move at cell size ${derivation.cellSize} and cutter `
+      + `radius ${derivation.toolRadius} was derived ${count} times — a repeated piece of the `
+      + 'same move must reuse the cached schedule',
+    )
+  }
+}
+
+interface RampFixture {
+  grid: SimulationGrid
+  move: ToolpathMove
+  tool: PlaybackToolInfo
+}
+
+/**
+ * A small explicit ramp (issue #1111): one source move that descends 6 mm over
+ * 10 mm, more than one cell of Z per cutter diameter at this cell size, so the
+ * wrapped kernel really builds a non-empty sample schedule. The square-to-round
+ * finish is mostly constant-Z passes, so it must not be assumed to exercise the
+ * schedule itself.
+ */
+function rampFixture(): RampFixture {
+  const frameRadius = 10
+  const period = 2 * Math.PI * frameRadius
+  const cellSize = 0.25
+  const alongCells = 80
+  const acrossCells = Math.round(period / cellSize)
+  const grid: SimulationGrid = {
+    cols: alongCells,
+    rows: acrossCells,
+    cellSize,
+    originX: 0,
+    originY: -period / 2,
+    stockBottomZ: 0,
+    stockTopZ: frameRadius,
+    wrap: { axis: 'y', period },
+    topZ: new Float32Array(alongCells * acrossCells).fill(frameRadius),
+  }
+  return {
+    grid,
+    // Slope 0.6: 0.6 × 2 × 3 mm = 3.6 mm of Z per cutter diameter > 0.25 mm cell.
+    move: { kind: 'cut', from: { x: 4, y: 0, z: 12 }, to: { x: 14, y: 0, z: 6 } },
+    tool: { toolType: 'flat_endmill', toolRadius: 3, vBitAngle: null },
+  }
+}
+
+/** Plays the whole ramp at a fixed frame budget; subdivision is off so every frame is a piece. */
+function playRamp(fixture: RampFixture): { grid: SimulationGrid; frames: number } {
+  const controller = new PlaybackController(fixture.grid, [fixture.move], fixture.tool, {
+    maxSegmentLength: 0,
+  })
+  let frames = 0
+  while (!controller.isFinished()) {
+    controller.advance(0.5)
+    controller.clearDirtyRegion()
+    frames += 1
+  }
+  return { grid: controller.liveGrid, frames }
+}
+
 interface PlaybackLane {
   /** Restores the starting stock and constructs the controller outside the measured region. */
   setup: () => void
@@ -292,26 +409,51 @@ function testSquarePlaybackTiming(): void {
   // reference cannot benefit from anything the wrapped kernel does.
   const flat = playbackLane(job, baseGrid, false)
 
+  // The default, load-independent guard (issue #1111): count real schedule
+  // derivations over one complete playback of the real job. The JIT warm-up is
+  // also the counted run, so the timing measurement below is unchanged.
+  const derivations: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => derivations.push(derivation))
   // Warm the JIT outside the measured region.
   wrapped.setup()
   wrapped.run()
+  setSweepScheduleObserver(null)
   flat.setup()
   flat.run()
 
-  const { ratio, subjectMs, referenceMs } = cpuRatio(wrapped, flat)
-  console.log(
-    `  square-to-round playback: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
-    + `${referenceMs.toFixed(1)} ms CPU (ratio ${ratio.toFixed(2)})`,
-  )
-  assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
   assert(
-    ratio < 5,
-    `square-to-round playback cost ${ratio.toFixed(2)}x the flat-kernel reference `
-    + `(limit 5x; ${subjectMs.toFixed(1)} ms vs ${referenceMs.toFixed(1)} ms CPU) — check that `
-    + 'the wrapped kernel keeps the horizontal interval test inline, caches the ramp '
-    + 'sample schedule per source move instead of deriving it per frame, and never '
-    + 'evaluates the batch ceiling an axial constant-Z flat cut cannot need',
+    derivations.length > 0,
+    'the wrapped playback must derive at least one schedule or the count guards nothing',
   )
+  // The controller replays a long source move frame by frame, so a per-frame
+  // derivation would exceed the path's own move count at once.
+  assert(
+    derivations.length <= job.finishPath.moves.length,
+    `the wrapped playback derived ${derivations.length} schedules for a `
+    + `${job.finishPath.moves.length}-move path — every piece of one source move must reuse `
+    + 'the cached schedule',
+  )
+  assertSingleDerivations(derivations, 'square-to-round playback')
+  console.log(
+    `  schedule derivations: ${derivations.length} for ${job.finishPath.moves.length} source moves`,
+  )
+
+  if (PERF_ENABLED) {
+    const { ratio, subjectMs, referenceMs } = cpuRatio(wrapped, flat)
+    console.log(
+      `  square-to-round playback: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
+      + `${referenceMs.toFixed(1)} ms CPU (ratio ${ratio.toFixed(2)})`,
+    )
+    // No pass/fail threshold (issue #1111 review P2): the baseline and the
+    // schedule-rebuild regression overlap on this fixture, so a constant here
+    // fails healthy branches. Keep the measurement, drop the verdict.
+    assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
+  } else {
+    console.log(
+      '  CPU-time ratio skipped (load-sensitive, issue #1111): set '
+      + 'PURECUT_SQUARE_PLAYBACK_PERF=1 to run it',
+    )
+  }
 
   // The lanes must actually cut, or the ratio compares nothing.
   const wrappedGrid = wrapped.liveGrid()
@@ -323,6 +465,87 @@ function testSquarePlaybackTiming(): void {
   assert(flatCut > 0, 'fixture: the flat reference playback must remove material')
 
   console.log(`square-to-round playback timing: PASSED (${wrappedCut} cells removed)`)
+}
+
+/**
+ * The schedule cache itself, counted (issue #1111). A ramp is played across many
+ * frames of one source move: the first piece derives the schedule and every later
+ * piece must reuse it. Then cell size and cutter radius must each be part of the
+ * cache key, and collection must leave the grid untouched.
+ */
+function testRampScheduleGuard(): void {
+  console.log('Testing wrapped ramp schedule derivations...')
+  const played = rampFixture()
+  assert(
+    wrappedNeedsSweep(played.grid, played.move, played.tool.toolRadius),
+    'fixture: the ramp must need the swept schedule or nothing here is guarded',
+  )
+
+  const derivations: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => derivations.push(derivation))
+  const playback = playRamp(played)
+  setSweepScheduleObserver(null)
+
+  assert(playback.frames >= 8, `fixture: the ramp must span several frames (played ${playback.frames})`)
+  assert.equal(
+    derivations.length,
+    1,
+    `the ramp derived its schedule ${derivations.length} times across ${playback.frames} frames — `
+    + 'every piece of one source move must reuse the cached schedule',
+  )
+  const derived = derivations[0]
+  assert(derived.move === played.move, 'the derivation reports the source move it belongs to')
+  assert.equal(derived.cellSize, played.grid.cellSize, 'the derivation reports the grid cell size')
+  assert.equal(derived.toolRadius, played.tool.toolRadius, 'the derivation reports the cutter radius')
+  assert(derived.sampleCount > 1, 'the ramp schedule is non-empty')
+  const rampRemoved = removedAgainst(playback.grid, played.grid)
+  assert(rampRemoved > 0, 'the guarded ramp playback removes material')
+
+  // Cell size and cutter radius are cache-key dimensions: each change derives its
+  // own schedule instead of reusing a neighbouring one.
+  const sizing = rampFixture()
+  const resized: SweepScheduleDerivation[] = []
+  setSweepScheduleObserver((derivation) => resized.push(derivation))
+  const fine = wrappedSweepSampleFractions(sizing.grid, sizing.move, sizing.tool.toolRadius)
+  const repeat = wrappedSweepSampleFractions(sizing.grid, sizing.move, sizing.tool.toolRadius)
+  assert.equal(resized.length, 1, 're-deriving the same combination is a cache hit')
+  assert.deepEqual(repeat, fine, 'a cache hit returns the same schedule')
+
+  const coarse = wrappedSweepSampleFractions(
+    { ...sizing.grid, cellSize: sizing.grid.cellSize * 2 },
+    sizing.move,
+    sizing.tool.toolRadius,
+  )
+  assert.equal(resized.length, 2, 'a different cell size must derive a new schedule')
+  assert(coarse.length < fine.length, 'a coarser grid samples the ramp less often')
+
+  // Too small to need the sweep: this derives an empty schedule. If the radius
+  // were dropped from the cache key it would be handed the fine ramp's fractions.
+  const blunt = wrappedSweepSampleFractions(sizing.grid, sizing.move, 0.2)
+  assert.equal(resized.length, 3, 'a different cutter radius must derive a new schedule')
+  assert.equal(blunt.length, 0, 'a cutter that needs no sweep derives an empty schedule')
+  setSweepScheduleObserver(null)
+
+  // Collection is passive: the same job played with it on and off leaves the grid
+  // byte-identical. The two runs use distinct source-move identities so each
+  // derives its own schedule rather than sharing a warmed cache entry.
+  const collected = rampFixture()
+  const plain = rampFixture()
+  assert.notEqual(collected.move, plain.move, 'fixture: the two runs must not share a cache entry')
+  setSweepScheduleObserver(() => { /* presence is all this run needs */ })
+  const collectedGrid = playRamp(collected).grid
+  setSweepScheduleObserver(null)
+  const plainGrid = playRamp(plain).grid
+  assert.equal(
+    Buffer.compare(Buffer.from(collectedGrid.topZ.buffer), Buffer.from(plainGrid.topZ.buffer)),
+    0,
+    'collecting schedule derivations must leave the simulation grid byte-identical',
+  )
+
+  console.log(
+    `ramp schedule derivations: PASSED (1 derivation across ${playback.frames} frames, `
+    + `${rampRemoved} cells removed)`,
+  )
 }
 
 /**
@@ -379,6 +602,57 @@ function testLibraryAddedPlayback(): void {
   console.log(`library ball-finish playback: PASSED (${removedAgainst(live, baseGrid)} cells removed)`)
 }
 
+/**
+ * Opt-in timing reports; it does not gate (issue #1111 review P2).
+ *
+ * The ratio is a constant-factor signal whose spread does not separate the
+ * schedule-cache regression from machine noise on this fixture, so a pass/fail
+ * threshold on it fails healthy branches — baseline runs reached 5.09x and 5.15x
+ * with no regression present. The flag keeps the measurement; this guard keeps
+ * the measurement from turning back into an assertion, and keeps the
+ * documentation from promising a limit the numbers do not support. It reads this
+ * file's own source, so deleting the report fails it too.
+ */
+function testOptInTimingContract(): void {
+  console.log('Testing the opt-in timing contract...')
+  const source = readFileSync(new URL(import.meta.url), 'utf8')
+  const doc = readFileSync(new URL('../../../docs/PERF_ASSERTIONS.md', import.meta.url), 'utf8')
+
+  // The measurement itself stays: the flag, and all three reported numbers.
+  assert(
+    source.includes('PURECUT_SQUARE_PLAYBACK_PERF'),
+    'the opt-in flag must stay — this guard verified a threshold, not the measurement',
+  )
+  for (const field of ['subjectMs', 'referenceMs', 'ratio']) {
+    assert(
+      source.includes(`${field}.toFixed(`),
+      `the opt-in run must keep reporting ${field}; removing it deletes the measurement`,
+    )
+  }
+
+  // Nothing compares the ratio with a constant, in the test or in the document
+  // that describes it — so the docs cannot promise a limit the test dropped.
+  for (const [name, text] of [['the test', source], ['docs/PERF_ASSERTIONS.md', doc]] as const) {
+    const comparison = /\bratio\s*(?:<=|>=|<|>)\s*[\d.]/.exec(text)
+    assert.equal(
+      comparison,
+      null,
+      `${name} compares the playback ratio with a constant (${comparison?.[0]}); the measured `
+      + 'baseline and regression overlap, so there is no supported pass/fail threshold',
+    )
+  }
+  assert(
+    doc.replace(/\s+/g, ' ').includes('enforces no pass/fail threshold'),
+    'docs/PERF_ASSERTIONS.md must say the opt-in run reports the ratio instead of gating on it',
+  )
+  console.log('  opt-in timing reports the ratio and enforces no threshold: PASSED')
+}
+
+// The deterministic guard runs first: its counts must be printed even when the
+// opt-in, load-sensitive timing run (PURECUT_SQUARE_PLAYBACK_PERF=1, issue
+// #1111) stops on its zero-reference check.
+testRampScheduleGuard()
 testSquarePlaybackTiming()
 testLibraryAddedPlayback()
+testOptInTimingContract()
 console.log('\nAll square playback cost tests PASSED.')
