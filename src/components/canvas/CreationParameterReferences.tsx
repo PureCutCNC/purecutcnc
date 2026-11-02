@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { PendingAddTool } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
+import type { CannedShapeEditorRequest } from '../../cannedShapes/generators/editorRequest'
 
 type PendingNgon = Extract<PendingAddTool, { shape: 'ngon' }>
 type PendingRectCorner = Extract<PendingAddTool, { shape: 'roundrect' | 'chamferrect' }>
@@ -38,7 +39,7 @@ interface CreationParameterFieldProps {
   reference: ReactNode
 }
 
-function stopPanelKey(event: KeyboardEvent<HTMLInputElement>): void {
+function stopPanelKey(event: ReactKeyboardEvent<HTMLInputElement>): void {
   event.stopPropagation()
 }
 
@@ -213,4 +214,44 @@ export function RectCornerParameterPanel({ pendingAdd, setPendingRectCorner }: R
       </CreationParameterField>
     </div>
   )
+}
+
+/**
+ * The reference diagram shared by a canned shape's creation and edit panels.
+ */
+export function CannedShapeEditReference({
+  request,
+  values,
+}: {
+  request: CannedShapeEditorRequest
+  values: Record<string, string>
+}) {
+  const { t } = useI18n()
+  switch (request.kind) {
+    case 'ellipse':
+      return (
+        <CreationReferenceFrame label={t('canvas.param.ref.ellipse')}>
+          <path className="gear-reference__outline" d="M9 17A20 11 0 0 1 49 17A20 11 0 0 1 9 17Z" />
+          <path className="gear-reference__guide" d="M9 17H49M29 6v22" />
+          <path className="gear-reference__accent" d="M29 17H49" />
+          <circle className="gear-reference__accent-fill" cx="29" cy="17" r="1.5" />
+        </CreationReferenceFrame>
+      )
+    case 'slot':
+      return (
+        <CreationReferenceFrame label={t('canvas.param.ref.slot')}>
+          <path className="gear-reference__outline" d="M15 10H43A7 7 0 0 1 43 24H15A7 7 0 0 1 15 10Z" />
+          <path className="gear-reference__guide" d="M15 17H43" />
+          <path className="gear-reference__accent" d="M15 10v14M43 10v14" />
+        </CreationReferenceFrame>
+      )
+    case 'ngon':
+      return <NgonSidesReference sides={Number(values.sides) || 3} />
+    case 'roundrect':
+      return <RectCornerReference kind="roundrect" />
+    case 'chamferrect':
+      return <RectCornerReference kind="chamferrect" />
+    default:
+      return null
+  }
 }

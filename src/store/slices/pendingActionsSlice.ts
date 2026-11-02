@@ -23,6 +23,7 @@ import { selectionQualifiesAsCutCutter, selectionQualifiesForImmediateJoin } fro
 import type { ProjectStore } from '../types'
 import { resolveFeatureInstance, resolveFeatureInstances, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 import { isCannedFeature } from '../../cannedShapes'
+import { cannedShapeTransformRefusal } from '../helpers/cannedShapeActions'
 
 export type PendingActionsSlice = Pick<
   ProjectStore,
@@ -153,6 +154,13 @@ export function createPendingActionsSlice(
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'resize')) {
+          return {}
+        }
 
         return {
           pendingAdd: null,
@@ -184,6 +192,13 @@ export function createPendingActionsSlice(
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'rotate')) {
+          return {}
+        }
 
         return {
           pendingAdd: null,
@@ -213,6 +228,13 @@ export function createPendingActionsSlice(
           .map((id) => featureById(s.project, id))
           .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+          return {}
+        }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'mirror')) {
           return {}
         }
 

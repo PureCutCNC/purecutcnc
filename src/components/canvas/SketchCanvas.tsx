@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { drawAroundChuck } from './aroundChuck'
 import { PlasmaStartPointPicker } from './PlasmaStartPointPicker'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SketchToolpathControls } from './SketchToolpathControls'
@@ -45,10 +46,14 @@ import {
 } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useDimensionEditWorkflow } from './useDimensionEditWorkflow'
+import { useCannedRadiusDrag } from './useCannedRadiusDrag'
+import { subscribeCannedEditDraft } from './cannedEditDraft'
+import { ELLIPSE_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { ellipseRadiusCentre, ellipseRadiusHandles } from '../../cannedShapes/ellipseHandles'
 import { ConstraintEditPanel } from './ConstraintEditPanel'
 import { DrivingDimensionPanel } from './DrivingDimensionPanel'
-import { NgonParameterPanel, RectCornerParameterPanel } from './CreationParameterReferences'
-import { GearParameterPanel } from './GearParameterPanel'
+import { CanvasCreationPanel } from './CanvasCreationPanel'
+import { CannedShapeEditPanel } from './CannedShapeEditPanel'
 import { useDrivingDimensionWorkflow } from './useDrivingDimensionWorkflow'
 import { useConstraintWorkflow } from './useConstraintWorkflow'
 import { useFilletWorkflow } from './useFilletWorkflow'
@@ -88,6 +93,7 @@ import {
   drawPreviewProfile,
   translateProfile,
 } from './previewPrimitives'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
 import {
   canvasToWorld,
   computeFitViewState,
@@ -123,6 +129,7 @@ import {
   drawBackdropImage, drawAroundModelBands,
   drawClampClearanceOutlines,
   drawClampFootprint,
+  drawEllipseRadiusHandles,
   drawGrid,
   drawOriginMarker,
   drawSketchControls,
@@ -167,13 +174,23 @@ import {
 } from '../../platform/featureClipboard'
 import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMirror } from '../../store/helpers/activeFace'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { drawOtherFace } from './faceOverlay'
+import { drawOtherFace, drawRotarySolidSideViews } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { projectMovePreviewPoint, rotaryCopyStepDelta } from '../../store/helpers/rotaryMove'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 
 export type { SketchCanvasHandle }
+
+/**
+ * Whether this build publishes the canvas' own test seams — the live view
+ * state, the move preview point and what the feature pass drew of the Edit-
+ * ellipse handles — for the browser specs. Dev-only, tree-shaken from
+ * production builds; a module constant so the draw pass does not repeat the
+ * check on every frame.
+ */
+const CANVAS_TEST_SEAMS = import.meta.env.DEV
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
   {
@@ -234,6 +251,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   }
 
   function stopNodeDrag() {
+    // A radius-handle release ends only the gesture: the dragged radius is
+    // already the Edit panel's field text, and that panel owns the history
+    // transaction Save commits or Cancel discards (issue #1112 rt7-g).
+    if (cannedRadius.dragRef.current) {
+      cannedRadius.finish()
+      isDraggingNodeRef.current = false
+      dragStartWorldRef.current = null
+      return
+    }
     if (!isDraggingNodeRef.current && selection.activeControl === null) return
     isDraggingNodeRef.current = false
     dragStartWorldRef.current = null
@@ -433,6 +459,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingClipboardPlacementRef.current = pendingClipboardPlacement
   if (!dimensionDeleteArmed) deleteHoverDimIdRef.current = null
 
+  // A canned ellipse's radius handles belong to its open Edit panel — the only
+  // place they are drawn — and the drag writes that panel's fields (issue #1112
+  // rt7-g).
+  const cannedRadius = useCannedRadiusDrag({
+    projectRef,
+    canvasRef,
+    viewStateRef,
+    scheduleDraw,
+  })
+
   const dimEdit = useDimensionEditWorkflow({
     projectRef,
     canvasRef,
@@ -622,7 +658,38 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
   const setPendingMovePreviewPointRef = useStableEvent((nextPoint: PendingPreviewPoint | null) => {
-    pendingMovePreviewPointRef.current = nextPoint
+    // Every way a move preview point arrives — the pointer drag, a typed
+    // distance, a resnap after typing — publishes through here, so the canned
+    // rotary projection is applied once, at the one place that cannot be
+    // skipped. The preview the canvas draws is then the target the commit
+    // stores (issue #1112 rt6-d review).
+    const pendingMove = pendingMoveRef.current
+    const projected = nextPoint && pendingMove && pendingMove.session === nextPoint.session
+      ? {
+          point: projectMovePreviewPoint(
+            projectRef.current,
+            pendingMove,
+            pendingMove.fromPoint ?? null,
+            nextPoint.point,
+          ),
+          session: nextPoint.session,
+        }
+      : nextPoint
+    pendingMovePreviewPointRef.current = projected
+    // Publish the point the move preview is drawn at, for the browser specs
+    // (issue #1112 rt6-d): a spec asserts what the drag and a typed distance
+    // show instead of the store it has not written yet. Dev-only, like the
+    // canvas' own view-state seam.
+    const element = canvasRef.current
+    if (import.meta.env.DEV && element) {
+      if (projected) {
+        element.dataset.movePreviewX = String(projected.point.x)
+        element.dataset.movePreviewY = String(projected.point.y)
+      } else {
+        delete element.dataset.movePreviewX
+        delete element.dataset.movePreviewY
+      }
+    }
     scheduleDraw()
   })
 
@@ -874,6 +941,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     scheduleDraw()
   }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, pendingFeatureDistribution, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, toolpathLevel, operationHighlightKind, canvasPalette, showOtherSide])
 
+  // The Edit-ellipse panel's fields place the radius handles, so opening or
+  // closing that panel and every field change (typed or dragged) redraws the
+  // canvas without a project write (issue #1112 rt7-g).
+  useEffect(() => subscribeCannedEditDraft(scheduleDraw), [scheduleDraw])
+
   useEffect(() => {
     sketchEditPreviewRef.current = null
     pendingSketchExtensionRef.current = null
@@ -1016,20 +1088,38 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     // The imported models inside the bar, as reference under everything else
     // on the sheet (issue #1015 slice K). Only the sheet has them.
-    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }))
+    if (sheet) drawAroundModelBands(ctx, sheet, vt, (name) => t('canvas.around.modelBand', { name }), selection)
 
     // The other face's features, as reference under everything editable (#945).
     const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
+    // A Turn or Polygon is a solid about the bar, so a flat face draws its
+    // side view — dashed and read-only, but still selectable (#1112 rt2-d).
+    const sideViewIds = drawRotarySolidSideViews(ctx, project, features, vt, selection, operationHighlightIds)
     if (project.origin.visible) drawOriginMarker(ctx, sheet ? sheet.origin : activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
+    // What this pass drew of the Edit-ellipse handles, published for the
+    // browser specs below: a selection-with-no-editor must draw none of them,
+    // and a handle must be seen rather than inferred from the drag.
+    let radiusHandlesDrawn = 0
+    let draftedEllipseParams: { rx: number; ry: number } | null = null
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
+      if (!feature.visible || (sheet && feature.kind === 'stl') || ghostIds.has(feature.id) || sideViewIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
       const editing = selection.mode === 'sketch_edit' && feature.id === selection.selectedFeatureId
       const groupSelected = selection.groupFolderId !== null && selected
+
+      // While the Edit-ellipse panel is open its fields place the outline and
+      // the two handles: a dragged radius is held out of the project until Save
+      // (issue #1112 rt7-g review), so the canvas — not a store write — is what
+      // shows it. The handles read the same parameters.
+      const radiusDrag = cannedRadius.dragRef.current
+      const handleParams = cannedRadius.handleParams(feature)
+      const drawableFeature = handleParams
+        ? { ...feature, canned: { kind: ELLIPSE_CANNED_KIND, params: handleParams } }
+        : feature
 
       const batchLine = feature.operation === 'line'
         && !operationHighlightIds
@@ -1040,25 +1130,48 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (batchLine) {
         batchedLineFeatures.push(feature)
       } else {
-        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
+        drawFeature(ctx, drawableFeature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness, sheet)
+      }
+
+      // The two radius handles, drawn only while the Edit-ellipse panel for this
+      // row is open, the way a circle's radius handle is (issue #1112 rt7-g).
+      if (handleParams) {
+        const handles = ellipseRadiusHandles(handleParams, feature.transform)
+        const centre = ellipseRadiusCentre(feature.transform)
+        const activeAxis = radiusDrag?.featureId === feature.id
+          ? radiusDrag.axis
+          : cannedRadius.hoveredAxisRef.current
+        drawEllipseRadiusHandles(ctx, centre, handles, vt, activeAxis, canvasPalette)
+        const activeHandle = handles.find((handle) => handle.axis === activeAxis)
+        if (activeHandle) {
+          drawRadiusMeasurement(ctx, centre, activeHandle.world, vt, project.meta.units)
+        }
+        radiusHandlesDrawn += handles.length
+        draftedEllipseParams = handleParams
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
       // could act on and veil the rest, so "what would this operate on?" is visible.
+      // The ring follows the same display outlines as the feature itself: on the
+      // Around sheet a canned thread is drawn as folded stripes, so the armed
+      // highlight must ring those rather than its stored placement frame, which
+      // would run off the sheet (issue #1112 L2).
       if (operationHighlightIds) {
-        traceProfilePath(ctx, feature.sketch.profile, vt)
-        ctx.save()
-        if (operationHighlightIds.has(feature.id)) {
-          ctx.lineWidth = 3
-          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
-          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
-          ctx.shadowBlur = 8
-          ctx.stroke()
-        } else if (feature.sketch.profile.closed) {
-          ctx.fillStyle = canvasPalette.veil
-          ctx.fill()
+        for (const profile of featureDisplayProfiles(feature, sheet)) {
+          traceProfilePath(ctx, profile, vt)
+          ctx.save()
+          if (operationHighlightIds.has(feature.id)) {
+            ctx.lineWidth = 3
+            ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+            ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
+            ctx.shadowBlur = 8
+            ctx.stroke()
+          } else if (profile.closed) {
+            ctx.fillStyle = canvasPalette.veil
+            ctx.fill()
+          }
+          ctx.restore()
         }
-        ctx.restore()
       }
 
       const stlTopViewUrl = feature.kind === 'stl' ? feature.stl?.topViewDataUrl : null
@@ -1114,7 +1227,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.restore()
       }
     }
-    drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
+    // Publish what this pass drew for the browser specs (issue #1112 rt7-g
+    // review): the radius handles are an in-canvas drawing, so a spec asserts
+    // the dots and the previewed outline instead of inferring them from a drag
+    // that may still have written nothing. Dev-only, like the view-state seam.
+    if (CANVAS_TEST_SEAMS) {
+      canvas.dataset.radiusHandles = String(radiusHandlesDrawn)
+      if (draftedEllipseParams) {
+        canvas.dataset.ellipseDraft = `${draftedEllipseParams.rx},${draftedEllipseParams.ry}`
+      } else {
+        delete canvas.dataset.ellipseDraft
+      }
+    }
+    drawLineFeatureBatch(ctx, batchedLineFeatures, vt, sheet)
     if (project.meta.showFeatureInfo) {
       for (const feature of batchedLineFeatures) {
         drawFeatureInfo(ctx, feature, vt, project.meta.units, project.stock.thickness)
@@ -1176,7 +1301,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Reset label rects before rebuilding
     constraintLabelRectsRef.current = []
     for (const feature of features) {
-      if (!feature.visible || ghostIds.has(feature.id)) continue
+      if (!feature.visible || ghostIds.has(feature.id) || sideViewIds.has(feature.id)) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid
@@ -1240,6 +1365,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     for (const clamp of sheet ? sheet.clampBands : project.clamps) {
       if (!clamp.visible) continue
       const selected = selection.selectedClampIds.includes(clamp.id)
+      if (sheet && drawAroundChuck(ctx, clamp, sheet, vt, selected, collidingClampIdSet.has(clamp.id))) continue
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (!sheet && selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)
@@ -1440,7 +1566,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         : null
 
     if (pendingMove) {
-      const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
+      // A typed distance stores its own preview while `toPoint` still holds the
+      // point the click ended on, so the live preview is the target while a
+      // distance edit is open — and it is already the committed target for a
+      // canned rotary move. Without an open edit the confirmed `toPoint` stays
+      // the place to draw, so a stray pointer move (the copy-count prompt)
+      // cannot drag the outline with it (issue #1112 rt6-d review).
+      const moveEdit = operationDimEditRef.current
+      const distanceEditActive = !!moveEdit && (moveEdit.kind === 'move' || moveEdit.kind === 'copy')
+      const targetPoint = distanceEditActive
+        ? currentMovePreviewPoint ?? pendingMove.toPoint
+        : pendingMove.toPoint ?? currentMovePreviewPoint
       const guideColor = lockModeGuideColor(lockModeRef.current)
 
       if (pendingMove.entityType === 'backdrop') {
@@ -1491,11 +1627,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           if (pendingMove.mode === 'copy' && pendingMove.toPoint) {
             const parsedCount = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
             for (let index = 2; index <= parsedCount; index += 1) {
+              // Copy `index` is placed by the same clamp every copy uses, from
+              // where the one before it landed: a canned rotary band cannot
+              // travel past the bar's end just because the drag was repeated
+              // (issue #1112 rt7-f review). A non-rotary copy gets the plain
+              // multiple back, exactly as before.
+              const placement = rotaryCopyStepDelta(
+                project,
+                pendingMove.entityIds,
+                targetPoint.x - pendingMove.fromPoint.x,
+                targetPoint.y - pendingMove.fromPoint.y,
+                index,
+              )
               for (const feature of features) {
                 const repeatedPreview = translateProfile(
                   feature.sketch.profile,
-                  (targetPoint.x - pendingMove.fromPoint.x) * index,
-                  (targetPoint.y - pendingMove.fromPoint.y) * index,
+                  placement.dx,
+                  placement.dy,
                 )
                 drawPreviewProfile(ctx, repeatedPreview, vt, `Copy ${index}`)
               }
@@ -1511,8 +1659,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (clamps.length === 0) {
           return
         }
-
-        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
@@ -1559,8 +1705,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         if (tabs.length === 0) {
           return
         }
-
-        const targetPoint = pendingMove.toPoint ?? currentMovePreviewPoint
 
         if (pendingMove.fromPoint && targetPoint) {
           drawMoveGuide(ctx, pendingMove.fromPoint, targetPoint, vt, guideColor)
@@ -2352,6 +2496,15 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         scheduleDraw()
         return
       }
+      // A canned-shape edit and a rotary create session borrow `pendingAdd` only
+      // to open their side panel; the canvas is not placing anything, so there
+      // is no preview point (issue #1112 rt2-b).
+      if (pendingAdd.shape === 'canned-edit'
+        || pendingAdd.shape === 'rotary-solid'
+        || pendingAdd.shape === 'rotary-pattern') {
+        setPendingPreviewPointRef(null)
+        return
+      }
       setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
       return
     }
@@ -2811,6 +2964,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     snap,
     contextMenu,
     dimEdit,
+    cannedRadius,
     isGestureActiveRef,
     hitEditableControl,
     editableFeature,
@@ -3225,422 +3379,29 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           </div>
         </CanvasWorkflowPanel>
       )}
-      {creation.creationPanelShape && pendingAdd && (
-        <CanvasWorkflowPanel
-          title={
-            creation.creationPanelShape === 'rect' ? t('canvas.shape.rectangle')
-            : creation.creationPanelShape === 'circle' ? t('canvas.shape.circle')
-            : creation.creationPanelShape === 'ellipse' ? t('canvas.shape.ellipse')
-            : creation.creationPanelShape === 'tab' ? t('canvas.shape.tab')
-            : creation.creationPanelShape === 'clamp' ? t('canvas.shape.clamp')
-            : creation.creationPanelShape === 'polygon' ? t('canvas.shape.polygon')
-            : creation.creationPanelShape === 'spline' ? t('canvas.shape.spline')
-            : creation.creationPanelShape === 'slot' ? t('canvas.shape.slot')
-            : creation.creationPanelShape === 'ngon' ? t('canvas.shape.regularPolygon')
-            : creation.creationPanelShape === 'gear' ? t('canvas.shape.gear')
-            : creation.creationPanelShape === 'roundrect' ? t('canvas.shape.roundedRectangle')
-            : creation.creationPanelShape === 'chamferrect' ? t('canvas.shape.chamferedRectangle')
-            : t('canvas.shape.composite')
-          }
-          step={
-            creation.creationDimEditActive ? t('canvas.creation.step.enterDimensions')
-            : creation.creationPanelShape === 'composite'
-              ? (pendingAdd.shape === 'composite' && pendingAdd.start
-                ? (pendingAdd.currentMode === 'arc' && pendingAdd.pendingArcEnd
-                  ? t('canvas.creation.step.clickArcCurvature')
-                  : t('canvas.creation.step.addPoints', { mode: pendingAdd.currentMode }))
-                : t('canvas.creation.step.clickFirstPoint'))
-            : (creation.creationPanelShape === 'polygon' || creation.creationPanelShape === 'spline')
-              ? (creation.creationPanelHasPoints
-                ? ('points' in pendingAdd && pendingAdd.points.length < 2
-                  ? t('canvas.creation.step.addOneMore')
-                  : t('canvas.creation.step.addPointsOrClose'))
-                : t('canvas.creation.step.clickFirstPoint'))
-            : creation.creationPanelShape === 'slot'
-              ? (pendingAdd.shape === 'slot' && pendingAdd.points.length >= 2
-                ? t('canvas.creation.step.slotSetWidth')
-                : pendingAdd.shape === 'slot' && pendingAdd.points.length === 1
-                  ? t('canvas.creation.step.slotSecondEnd')
-                  : t('canvas.creation.step.slotFirstEnd'))
-            : creation.creationPanelShape === 'gear'
-              ? (pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null ? t('canvas.creation.step.gearParams') : pendingAdd.shape === 'gear' && pendingAdd.anchor ? t('canvas.creation.step.gearSetRadius') : t('canvas.creation.step.clickCenterPoint'))
-            : creation.creationPanelHasAnchor
-              ? (creation.creationPanelShape === 'circle'
-                ? t('canvas.creation.step.setRadiusOrDimensions')
-                : creation.creationPanelShape === 'ellipse'
-                  ? t('canvas.creation.step.setRadiiOrDimensions')
-                  : creation.creationPanelShape === 'ngon'
-                    ? t('canvas.creation.step.setRadius')
-                    : t('canvas.creation.step.setCornerOrDimensions'))
-              : (creation.creationPanelShape === 'circle' || creation.creationPanelShape === 'ellipse' || creation.creationPanelShape === 'ngon')
-                ? t('canvas.creation.step.clickCenterPoint')
-                : t('canvas.creation.step.clickFirstCorner')
-          }
-          position={creation.creationWorkflowPanel.position}
-          panelRef={creation.creationWorkflowPanel.panelRef}
-          handleProps={creation.creationWorkflowPanel.handleProps}
-          pageLevel
-          actionRowProps={creation.creationWorkflowPanel.actionRowProps}
-          className="canvas-workflow-panel--creation"
-          moveLabel={t('canvas.creation.moveLabel')}
-          actions={(
-            <>
-              {creation.creationDimEditActive && (
-                <CanvasWorkflowConfirm label={t('canvas.common.confirm')} onClick={creation.commitCreationDimensionEdit} />
-              )}
-              {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creation.creationDimEditActive && (
-                <CanvasWorkflowConfirm label={t('canvas.common.finish')} onClick={creation.finishOpenPathFromPanel} />
-              )}
-              {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creation.creationDimEditActive && (
-                <CanvasWorkflowConfirm label={t('canvas.common.finish')} onClick={creation.finishOpenCompositeFromPanel} />
-              )}
-              {pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null && !creation.creationDimEditActive && (
-                <CanvasWorkflowAction variant="confirm" icon="check" label={t('canvas.creation.confirmGear')} onClick={creation.completeGearFromPanel} />
-              )}
-              {creation.creationCanDimEdit && !creation.creationDimEditActive && (
-                <CanvasWorkflowAction
-                  shortcut={CANVAS_SHORTCUT.dimensions}
-                  label={pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? t('canvas.creation.widthButton') : (pendingAdd.shape === 'ngon' || pendingAdd.shape === 'gear') ? t('canvas.creation.radiusButton') : t('canvas.creation.dimensionsButton')}
-                  onClick={creation.triggerDimensionFromCreationPanel}
-                />
-              )}
-              {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
-                <CanvasWorkflowAction
-                  icon="undo"
-                  // Backspace only undoes a point for the multi-point shapes; other
-                  // shapes have the button but no key, so they get no hint.
-                  shortcut={pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite' ? CANVAS_SHORTCUT.undo : undefined}
-                  label={t('canvas.common.undo')}
-                  onClick={creation.undoFromCreationPanel}
-                />
-              )}
-              <CanvasWorkflowCancel label={t('canvas.common.cancel')} onClick={creation.cancelCreationFromPanel} />
-            </>
-          )}
-        >
-          {pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed && !creation.creationDimEditActive && (
-            <div className="canvas-workflow-panel__meta canvas-workflow-panel__mode-row">
-              <button
-                type="button"
-                className={`tablet-cmd-btn ${pendingAdd.currentMode === 'line' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => creation.setCompositeModeFromPanel('line')}
-              >{withShortcut(t('canvas.composite.mode.line'), CANVAS_SHORTCUT.compositeLine)}</button>
-              <button
-                type="button"
-                className={`tablet-cmd-btn ${pendingAdd.currentMode === 'arc' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => creation.setCompositeModeFromPanel('arc')}
-              >{withShortcut(t('canvas.composite.mode.arc'), CANVAS_SHORTCUT.compositeArc)}</button>
-              <button
-                type="button"
-                className={`tablet-cmd-btn ${pendingAdd.currentMode === 'spline' ? 'tablet-cmd-btn--active' : ''}`}
-                onClick={() => creation.setCompositeModeFromPanel('spline')}
-              >{withShortcut(t('canvas.composite.mode.spline'), CANVAS_SHORTCUT.compositeSpline)}</button>
-            </div>
-          )}
-          {creation.creationDimEditActive && dimEdit.dimensionEdit && (
-            <div className="canvas-workflow-panel__meta">
-              {dimEdit.dimensionEdit.shape === 'circle' ? (
-                <label className="canvas-workflow-panel__field">
-                  <span>{t('canvas.field.radius')}</span>
-                  <input
-                    ref={dimEdit.radiusInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.radius}
-                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        creation.commitCreationDimensionEdit()
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        creation.cancelCreationDimensionEdit()
-                      }
-                    }}
-                    autoFocus
-                  />
-                </label>
-              ) : (dimEdit.dimensionEdit.shape === 'composite' && dimEdit.dimensionEdit.arcStart && dimEdit.dimensionEdit.arcEnd) ? (
-                <label className="canvas-workflow-panel__field">
-                  <span>{t('canvas.field.radius')}</span>
-                  <input
-                    ref={dimEdit.radiusInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.radius}
-                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        creation.commitCreationDimensionEdit()
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        creation.cancelCreationDimensionEdit()
-                      }
-                    }}
-                    autoFocus
-                  />
-                </label>
-              ) : (dimEdit.dimensionEdit.shape === 'polygon' || dimEdit.dimensionEdit.shape === 'spline' || dimEdit.dimensionEdit.shape === 'composite') ? (
-                <>
-                  <label className="canvas-workflow-panel__field">
-                    <span>{t('canvas.field.length')}</span>
-                    <input
-                      ref={dimEdit.widthInputRef}
-                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                      type="text"
-                      inputMode="decimal"
-                      value={dimEdit.dimensionEdit.length}
-                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation()
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          creation.commitCreationDimensionEdit()
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault()
-                          creation.cancelCreationDimensionEdit()
-                        } else if (e.key === 'Tab') {
-                          e.preventDefault()
-                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
-                        }
-                      }}
-                      autoFocus
-                    />
-                  </label>
-                  <label className="canvas-workflow-panel__field">
-                    <span>{t('canvas.field.angle')}</span>
-                    <input
-                      ref={dimEdit.heightInputRef}
-                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                      type="text"
-                      inputMode="decimal"
-                      value={dimEdit.dimensionEdit.angle}
-                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation()
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          creation.commitCreationDimensionEdit()
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault()
-                          creation.cancelCreationDimensionEdit()
-                        } else if (e.key === 'Tab') {
-                          e.preventDefault()
-                          if (pendingAdd?.shape === 'composite' && pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd) {
-                            dimEdit.radiusInputRef.current?.focus({ preventScroll: true })
-                          } else {
-                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
-                          }
-                        }
-                      }}
-                    />
-                  </label>
-                  {pendingAdd?.shape === 'composite' && pendingAdd.currentMode === 'arc' && !pendingAdd.pendingArcEnd && (
-                    <label className="canvas-workflow-panel__field">
-                      <span>{t('canvas.field.radius')}</span>
-                      <input
-                        ref={dimEdit.radiusInputRef}
-                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={dimEdit.dimensionEdit.radius}
-                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onKeyDown={(e) => {
-                          e.stopPropagation()
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            creation.commitCreationDimensionEdit()
-                          } else if (e.key === 'Escape') {
-                            e.preventDefault()
-                            creation.cancelCreationDimensionEdit()
-                          } else if (e.key === 'Tab') {
-                            e.preventDefault()
-                            dimEdit.widthInputRef.current?.focus({ preventScroll: true })
-                          }
-                        }}
-                      />
-                    </label>
-                  )}
-                </>
-              ) : dimEdit.dimensionEdit.shape === 'slot' ? (
-                dimEdit.dimensionEdit.arcEnd ? (
-                  <label className="canvas-workflow-panel__field">
-                    <span>{t('canvas.field.width')}</span>
-                    <input
-                      ref={dimEdit.widthInputRef}
-                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                      type="text"
-                      inputMode="decimal"
-                      value={dimEdit.dimensionEdit.width}
-                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation()
-                        if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                        else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                      }}
-                      autoFocus
-                    />
-                  </label>
-                ) : (
-                  <>
-                    <label className="canvas-workflow-panel__field">
-                      <span>{t('canvas.field.length')}</span>
-                      <input
-                        ref={dimEdit.widthInputRef}
-                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={dimEdit.dimensionEdit.length}
-                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, length: e.target.value } : null)}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onKeyDown={(e) => {
-                          e.stopPropagation()
-                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.heightInputRef.current?.focus({ preventScroll: true }) }
-                        }}
-                        autoFocus
-                      />
-                    </label>
-                    <label className="canvas-workflow-panel__field">
-                      <span>{t('canvas.field.angleDeg')}</span>
-                      <input
-                        ref={dimEdit.heightInputRef}
-                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={dimEdit.dimensionEdit.angle}
-                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, angle: e.target.value } : null)}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onKeyDown={(e) => {
-                          e.stopPropagation()
-                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                          else if (e.key === 'Tab') { e.preventDefault(); dimEdit.radiusInputRef.current?.focus({ preventScroll: true }) }
-                        }}
-                      />
-                    </label>
-                    <label className="canvas-workflow-panel__field">
-                      <span>{t('canvas.field.width')}</span>
-                      <input
-                        ref={dimEdit.radiusInputRef}
-                        className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={dimEdit.dimensionEdit.radius}
-                        onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onKeyDown={(e) => {
-                          e.stopPropagation()
-                          if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                          else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                          else if (e.key === 'Tab') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                        }}
-                      />
-                    </label>
-                  </>
-                )
-              ) : (dimEdit.dimensionEdit.shape === 'ngon' || dimEdit.dimensionEdit.shape === 'gear') ? (
-                <label className="canvas-workflow-panel__field">
-                  <span>{t('canvas.field.radius')}</span>
-                  <input
-                    ref={dimEdit.radiusInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.radius}
-                    onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, radius: e.target.value } : null)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') { e.preventDefault(); creation.commitCreationDimensionEdit() }
-                      else if (e.key === 'Escape') { e.preventDefault(); creation.cancelCreationDimensionEdit() }
-                    }}
-                    autoFocus
-                  />
-                </label>
-              ) : (
-                <>
-                  <label className="canvas-workflow-panel__field">
-                    <span>{t('canvas.field.width')}</span>
-                    <input
-                      ref={dimEdit.widthInputRef}
-                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                      type="text"
-                      inputMode="decimal"
-                      value={dimEdit.dimensionEdit.width}
-                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, width: e.target.value } : null)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation()
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          creation.commitCreationDimensionEdit()
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault()
-                          creation.cancelCreationDimensionEdit()
-                        } else if (e.key === 'Tab') {
-                          e.preventDefault()
-                          dimEdit.heightInputRef.current?.focus({ preventScroll: true })
-                        }
-                      }}
-                      autoFocus
-                    />
-                  </label>
-                  <label className="canvas-workflow-panel__field">
-                    <span>{t('canvas.field.height')}</span>
-                    <input
-                      ref={dimEdit.heightInputRef}
-                      className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                      type="text"
-                      inputMode="decimal"
-                      value={dimEdit.dimensionEdit.height}
-                      onChange={(e) => dimEdit.setDimensionEdit((prev) => prev ? { ...prev, height: e.target.value } : null)}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation()
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          creation.commitCreationDimensionEdit()
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault()
-                          creation.cancelCreationDimensionEdit()
-                        } else if (e.key === 'Tab') {
-                          e.preventDefault()
-                          dimEdit.widthInputRef.current?.focus({ preventScroll: true })
-                        }
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-            </div>
-          )}
-          {pendingAdd.shape === 'gear' && !creation.creationDimEditActive && (<GearParameterPanel pendingAdd={pendingAdd} units={project.meta.units} setPendingGearParams={setPendingGearParams} />)}
-          {pendingAdd.shape === 'ngon' && !creation.creationDimEditActive && (
-            <NgonParameterPanel pendingAdd={pendingAdd} setPendingNgonSides={setPendingNgonSides} />
-          )}
-          {(pendingAdd.shape === 'roundrect' || pendingAdd.shape === 'chamferrect') && !creation.creationDimEditActive && (
-            <RectCornerParameterPanel pendingAdd={pendingAdd} setPendingRectCorner={setPendingRectCorner} />
-          )}
-          {pendingDraftHasSelfIntersection ? (
-            <div className="sketch-banner-warning">{t('canvas.warning.selfIntersect')}</div>
-          ) : null}
-          {pendingDraftExceedsStock ? (
-            <div className="sketch-banner-warning">{t('canvas.warning.exceedsStock')}</div>
-          ) : null}
-        </CanvasWorkflowPanel>
+      <CanvasCreationPanel
+        creation={creation}
+        pendingAdd={pendingAdd}
+        project={project}
+        creationTarget={creationTarget}
+        dimEdit={dimEdit}
+        pendingDraftHasSelfIntersection={pendingDraftHasSelfIntersection}
+        pendingDraftExceedsStock={pendingDraftExceedsStock}
+        setPendingGearParams={setPendingGearParams}
+        setPendingNgonSides={setPendingNgonSides}
+        setPendingRectCorner={setPendingRectCorner}
+        containerRef={containerRef}
+        canvasRef={canvasRef}
+        clearTransientCanvasState={clearTransientCanvasState}
+      />
+      {pendingAdd?.shape === 'canned-edit' && (
+        <CannedShapeEditPanel
+          key={pendingAdd.session}
+          pending={pendingAdd}
+          containerRef={containerRef}
+          canvasRef={canvasRef}
+          clearTransientCanvasState={clearTransientCanvasState}
+        />
       )}
       {creation.placementPanelActive && (
         <CanvasWorkflowPanel

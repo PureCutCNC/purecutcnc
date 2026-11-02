@@ -138,6 +138,10 @@ test('blocks applying an unreadable theme and recovers via the safety action', a
   // The always-readable recovery action restores the saved colors.
   await ui.themeEditor.restoreButton(app.page).click()
   await expect(ui.themeEditor.blockers(app.page)).toHaveCount(0)
+  // Back to the saved theme, so there is nothing to apply yet (issue #1112 F4);
+  // one valid edit after the recovery is what makes it applicable again.
+  await expect(ui.themeEditor.applyButton(app.page)).toBeDisabled()
+  await ui.themeEditor.nameInput(app.page).fill('Dark copy (recovered)')
   await expect(ui.themeEditor.applyButton(app.page)).toBeEnabled()
   await expect(ui.themeEditor.contrastOk(app.page)).toBeVisible()
   await expect.poll(() => inlineToken(app.page, '--text')).toBe('')

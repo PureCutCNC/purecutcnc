@@ -198,17 +198,13 @@
   background: var(--line);
 }
 
-/* Tablet shells carry the control in the sketch's face row: full tap targets,
- * and the row grows to hold them. */
+/* A tablet shell carries the control in its top command bar, right after the
+ * Sketch / 3D / Sim switch (issue #1112 rt5-a, item 37), so it is the same
+ * 44px tap target as the bar's own buttons. */
 [data-shell-mode='tablet'] .face-switch,
 [data-shell-mode='tablet-compact'] .face-switch {
   padding: 0;
-  --face-switch-height: calc(var(--touch-target, 44px) + 4px);
-}
-
-[data-shell-mode='tablet'] .centre-view--face-banner,
-[data-shell-mode='tablet-compact'] .centre-view--face-banner {
-  --face-banner-height: 56px;
+  --face-switch-height: var(--touch-target, 44px);
 }
 
 [data-shell-mode='tablet'] .face-switch .face-switch__trigger,
@@ -217,48 +213,34 @@
   min-height: var(--touch-target, 44px);
 }
 
+/* In that bar the control is icon-only, as the bar's other buttons are: the
+ * target is exactly 44 × 44, and the face's name lives in the aria-label and
+ * title instead of on screen. The bar is the narrowest place the control has
+ * ever had, and the label is the part that gives way — the control itself
+ * never does, and the menu behind it is the same one (issue #1112 rt5-a). */
+[data-shell-mode='tablet'] .top-command-bar .face-switch,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch {
+  flex: 0 0 auto;
+}
+
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__trigger,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__trigger {
+  width: var(--touch-target, 44px);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__trigger-label,
+[data-shell-mode='tablet'] .top-command-bar .face-switch .face-switch__chevron,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__trigger-label,
+[data-shell-mode='tablet-compact'] .top-command-bar .face-switch .face-switch__chevron {
+  display: none;
+}
+
 [data-shell-mode='tablet'] .face-switch__menu-item,
 [data-shell-mode='tablet-compact'] .face-switch__menu-item {
   min-height: var(--touch-target, 44px);
-}
-
-/* ── Sketch face row: the face switch on a tablet shell ──
- * A fixed-height row above the canvas, present only on a tablet shell, where
- * the workspace has no header to hold the switch, so switching face never
- * resizes the canvas. Plain block layout with a calc() height: no flex or grid
- * percentages for WebKit to disagree on. */
-
-.centre-view--face-banner {
-  --face-banner-height: 44px;
-}
-
-.centre-view--face-banner > .sketch-canvas-container {
-  height: calc(100% - var(--face-banner-height));
-}
-
-/* The first-run overlay covers the canvas, not the row above it: on a tablet
- * shell the row carries the face switch and must stay reachable. */
-.centre-view--face-banner > .empty-state-overlay {
-  top: var(--face-banner-height);
-}
-
-/* The row carries the switch and nothing else (issue #1102 slice E 8): the
- * flip and the Around explanation are the control's own label and tooltips,
- * and its menu is portalled so this row's overflow cannot clip it. */
-.face-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: var(--face-banner-height, 44px);
-  padding: 0 10px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-subtle);
-  font-size: 12.5px;
-}
-
-.face-banner svg {
-  flex-shrink: 0;
 }
 
 /* ── Face chips: TOP / BOTTOM / THRU and the layer state ── */
@@ -517,19 +499,46 @@
   font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 }
 
-/* A shape shared with linked copies on the other face (issue #945). */
-.change-face__linked,
-.properties-linked-face-note {
+/* A shape shared with linked copies on the other face (issue #945). The bar
+ * belongs to this dialog and stays here alone. */
+.change-face__linked {
   margin: 8px 0 0;
   padding: 6px 8px;
   border-left: 2px solid var(--face-bottom);
   color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* A Properties note is plain secondary text: one sentence the panel adds under
+ * a field, not a callout. It used to borrow the change-face dialog's orange
+ * bar, on every note — the shape summary, the text summary, the missing source,
+ * the unknown shape and the linked-copy count. Frank read that colour as an
+ * "AI slop" callout and asked for text (issue #1112 rt7-h). */
+.properties-note {
+  margin: 8px 0 0;
+  color: var(--text-dim);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.change-face__linked {
-  font-size: 13px;
+/* The neutral tag above a canned shape's Shape summary: its sketch is generated
+ * from parameters rather than drawn. Same metrics as the authoring-face chip,
+ * in the panel's own colours, so it reads as a label and never as a warning
+ * (issue #1112 rt7-h). */
+.properties-canned-label {
+  justify-self: start;
+  margin: 8px 0 0;
+  padding: 0 6px;
+  height: 16px;
+  line-height: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
 /* CAM setup grouping and property dialogs (#946). */
@@ -550,16 +559,56 @@
 .cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
 .cam-setup-group--around.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--role-region) 12%, transparent); }
 .cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
-.cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
-/* This class is shared: the cross-face picker is a `details`/`summary` now,
- * while RotaryTargetPicker is still a `fieldset`/`legend`, so both keep the
- * same dim caption. */
-.cam-cross-face-picker > summary,
-.cam-cross-face-picker legend { font-size: 12px; color: var(--text-dim); }
-.cam-cross-face-picker > summary { cursor: pointer; }
-.cam-cross-face-picker .properties-check { flex-wrap: wrap; padding: 4px 0; }
+/* The operation's Cuts list (issue #1112 I). A chip is the target's icon, its
+ * name and a remove ×; a long list folds its chips by the tree's folders. The
+ * name takes the chip's spare width, so a long one ellipsizes instead of
+ * pushing the × out (issue #1112 rt3-a, item 25).
+ *
+ * Chips wrap instead of taking a row each (issue #1112 rt6-b, item 40). The
+ * label owns a full row above them: in the properties split a label column
+ * (74-88px) leaves too little width for more than one chip per line, which is
+ * the whole point of the change. */
+.properties-field.cam-cuts,
+.cam-operation-properties .properties-field.cam-cuts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px 8px;
+}
+.cam-operation-properties .properties-field.cam-cuts > .cam-cuts__list { grid-column: 1; }
+/* The list's padding reserves the part of a remove × that overhangs its chip:
+ * 7px above and below on desktop (6px to the right), 9px and 10px on a tablet.
+ * Without it the first and last lines' boxes reached into the label row above
+ * and the next field below, and a chip that fills its line pushed the × under
+ * the panel's clip. The 20px gap does the same between one block and the next:
+ * two chips' overhangs add up to 14px (18px on a tablet), which the 6px gap
+ * the blocks used to have did not cover (issue #1112 rt6-b fix1 F1). */
+.cam-cuts__list { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; min-width: 0; padding: 8px 8px 8px 0; }
+.cam-cuts__list > .properties-hint { max-width: 100%; }
+.cam-cuts__group { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 8px; min-width: 0; max-width: 100%; }
+/* A folder's summary sits directly above its chips, so a folder's group
+ * reserves the overhang at its top edge just as the list does at its own. */
+.cam-cuts__folder > .cam-cuts__group { padding-top: 8px; }
+.cam-cuts__chip { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; min-height: 24px; padding: 0 2px 0 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-input); }
+.cam-cuts__chip:hover { background: var(--accent-soft); border-color: var(--line-strong); }
+.cam-cuts__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-dim); }
+/* Two classes: `.properties-field span` (0,1,1) would otherwise leave the
+ * target's name in the label's dim colour. */
+.cam-cuts__chip .cam-cuts__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.cam-cuts__filter { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; color: var(--text-dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+/* The × keeps the platform's hit target (40px, 44px on a tablet) while the chip
+ * stays one line tall: negative margins shrink its layout footprint to a chip
+ * line (40 - 2 × 8 = 24px), so the box overhangs the chip's edge instead of
+ * making it a row again. The wrapping row-gap is then what keeps two chips'
+ * touch areas apart — one chip's × must never be reachable from its neighbour's
+ * corner, or a finger removes the wrong cut. `expectTouchTargets` measures the
+ * button's own box, so the box, not the icon, is what carries the target size. */
+.cam-cuts__remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 40px; height: 40px; padding: 0; margin: -8px -9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.cam-cuts__remove:hover:not(:disabled) { background: var(--surface-input); color: var(--text); }
+.cam-cuts__remove:disabled { opacity: 0.4; cursor: default; }
+.cam-cuts__folder { min-width: 0; max-width: 100%; }
+.cam-cuts__folder-summary { cursor: pointer; font-size: 12px; color: var(--text-dim); }
 .setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
 .cam-setup-reach { font-size: 12px; }
+.cam-setup-reach__intro { margin: 0 0 6px; color: var(--text-dim); }
 .cam-setup-reach__target { margin: 6px 0; padding: 6px; border: 1px dashed var(--line-strong); border-radius: 6px; }
 .cam-setup-reach__target p { margin: 4px 0; }
 .cam-setup-reach__cross-face { margin-left: 4px; color: var(--role-region-text); }
@@ -585,9 +634,27 @@
 [data-shell-mode='tablet'] .cam-setup-group button,
 [data-shell-mode='tablet-compact'] .cam-setup-group button,
 [data-shell-mode='tablet'] .dialog--setup button,
-[data-shell-mode='tablet-compact'] .dialog--setup button,
-[data-shell-mode='tablet'] .cam-cross-face-picker .properties-check,
-[data-shell-mode='tablet-compact'] .cam-cross-face-picker .properties-check { min-height: 44px; }
+[data-shell-mode='tablet-compact'] .dialog--setup button { width: 44px; height: 44px; }
+
+/* A tablet's Cuts chip: the × keeps the 44 × 44 touch target while the chip
+ * stays one line tall — negative margins shrink the button's footprint to 24px
+ * (44 - 2 × 10), so the chip is 26px including its own borders. Two wrapped
+ * lines then need 18px between their touch boxes; the 22px row gap leaves 4px
+ * of slack. The × also overhangs 10px to the right of its chip, so two chips on
+ * one line are 12px apart (an 8px gap put the neighbour's body over the × box's
+ * right edge, where `elementFromPoint` no longer found the button), and the
+ * list reserves 12px on its right so a full-width chip's × is not clipped. The
+ * 26px gap between blocks and the 10px above a folder's chips cover the
+ * vertical overhang the same way (see the desktop rules above; issue #1112
+ * rt6-b fix1 F1/F2). */
+[data-shell-mode='tablet'] .cam-cuts__remove,
+[data-shell-mode='tablet-compact'] .cam-cuts__remove { width: 44px; height: 44px; margin: -10px -13px; }
+[data-shell-mode='tablet'] .cam-cuts__list,
+[data-shell-mode='tablet-compact'] .cam-cuts__list { padding: 10px 12px 10px 0; gap: 26px; }
+[data-shell-mode='tablet'] .cam-cuts__group,
+[data-shell-mode='tablet-compact'] .cam-cuts__group { gap: 22px 12px; }
+[data-shell-mode='tablet'] .cam-cuts__folder > .cam-cuts__group,
+[data-shell-mode='tablet-compact'] .cam-cuts__folder > .cam-cuts__group { padding-top: 10px; }
 
 .cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
 .dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }
@@ -606,10 +673,11 @@
 .cam-operation-tree .cam-operation-name { width: 100%; }
 
 /* An operation of a setup the workspace is not on (issue #1102): listed like a
-   feature-tree ghost — dimmed by `.tree-row--ghost` above — and with no hover
-   or selection of its own. It keeps its eye: showing its toolpath still works. */
-.cam-operation-tree .tree-row--ghost,
-.cam-operation-tree .tree-row--ghost:hover {
-  cursor: default;
-  background: transparent;
+   feature-tree ghost — dimmed by `.tree-row--ghost` above — and, since the face
+   control became the simulation's only setup choice (issue #1112 F3),
+   selectable: the click turns the workspace over to its face. It keeps its eye,
+   and still has no reorder or edit controls; its hover and selection follow the
+   ordinary CAM row so it reads as the button it is. */
+.cam-operation-tree .tree-row--ghost {
+  cursor: pointer;
 }

@@ -15,11 +15,13 @@
  */
 
 /**
- * Browser-side probe for the simulation's setup picker (issue #947, review of
- * PR #992). Imported by `setupPreview.smoke.spec.ts` through the dev server,
- * it renders the real `useSimulationModel` with a toolpath request the test
- * holds open, so a setup switch can be observed while its acquisition is
- * still in flight — which a static render, with no effects, cannot show.
+ * Browser-side probe for a workspace-face change while simulation paths are
+ * still being acquired (issue #947, review of PR #992; the simulation follows
+ * the face since issue #1112 F3). Imported by `setupPreview.smoke.spec.ts`
+ * through the dev server, it renders the real `useSimulationModel` with a
+ * toolpath request the test holds open, so a face switch can be observed
+ * while its acquisition is still in flight — which a static render, with no
+ * effects, cannot show.
  */
 
 import { createElement } from 'react'
@@ -45,11 +47,12 @@ function cutCells(grid: SimulationGrid, thickness: number): number {
 }
 
 /**
- * Select `selectedId` (a Bottom operation with an earlier Bottom operation),
- * then: acquire, pick `otherSetupId`, pick the selected operation's setup
- * back while its acquisition is held, and finally release it.
+ * Select `selectedId` (a Bottom operation with an earlier Bottom operation) on
+ * its own face, then: acquire, switch the workspace face to `otherSetupId`,
+ * switch back while its acquisition is held, and finally release it. Each
+ * switch is a new project object, exactly as the face control's own write is.
  */
-export async function runPickerTransitionProbe(
+export async function runFaceTransitionProbe(
   project: Project,
   selectedId: string,
   otherSetupId: string,
@@ -65,6 +68,11 @@ export async function runPickerTransitionProbe(
     return envelope.result
   }
   const selected = operation(selectedId)
+  // Selecting an operation puts the workspace on its face (`revealOperationFace`),
+  // so that is where this run starts.
+  const selectedSetupId = selected.setupId ?? project.setups[0]?.id
+  if (!selectedSetupId) throw new Error('probe: the project has no setup')
+  const atSetup = (setupId: string): Project => ({ ...project, activeSetupId: setupId })
   const selectedToolpath = generate(selectedId)
   const held: Array<{ id: string; resolve: (toolpath: ToolpathResult) => void }> = []
   const requestToolpath = (id: string) => new Promise<ToolpathResult | null>((resolve) => { held.push({ id, resolve }) })
@@ -73,9 +81,9 @@ export async function runPickerTransitionProbe(
   }
 
   let latest: ReturnType<typeof useSimulationModel> | null = null
-  function Probe() {
+  function Probe({ activeProject }: { activeProject: Project }) {
     latest = useSimulationModel({
-      project, centerTab: 'simulation', simulationMode: 'selected', simulationDetailCells: 120,
+      project: activeProject, centerTab: 'simulation', simulationMode: 'selected', simulationDetailCells: 120,
       selectedOperation: selected, selectedToolpath, requestToolpath,
     })
     return null
@@ -89,7 +97,7 @@ export async function runPickerTransitionProbe(
     const model = current()
     const playback = model.simulationPlaybackInput
     return {
-      setup: model.simulationSetupPicker.selectedId,
+      setup: model.simulationSetup.id,
       pending: model.simulationInputPending,
       playback: playback !== null,
       baseCutCells: playback ? cutCells(playback.getBaseGrid(), project.stock.thickness) : null,
@@ -97,19 +105,22 @@ export async function runPickerTransitionProbe(
   }
 
   const root = createRoot(document.createElement('div'))
-  root.render(createElement(Probe))
+  root.render(createElement(Probe, { activeProject: atSetup(selectedSetupId) }))
+  const switchTo = async (setupId: string) => {
+    root.render(createElement(Probe, { activeProject: atSetup(setupId) }))
+    await settle()
+  }
   try {
     await settle()
     const initial = snapshot()
     release()
     await settle()
     const acquired = snapshot()
-    const selectedSetup = acquired.setup
-    current().simulationSetupPicker.onChange(otherSetupId)
-    await settle()
+    await switchTo(otherSetupId)
     const other = snapshot()
-    current().simulationSetupPicker.onChange(selectedSetup)
-    await settle()
+    // Back on the selected operation's face with its earlier operation still
+    // being produced: the acquisition starts over, so it is not ready.
+    await switchTo(selectedSetupId)
     const backHeld = snapshot()
     release()
     await settle()

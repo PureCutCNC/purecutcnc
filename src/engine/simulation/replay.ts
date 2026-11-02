@@ -1091,7 +1091,24 @@ export function simulateOperationHeightfield(
   }
 
   const tool = normalizeToolForProject(toolRecord, project)
-  const replay = replayItemIntoGrid(grid, {
+  const replay = replayItemIntoGrid(grid, replayItemFor(operation, toolRecord, tool, toolpath))
+  warnings.push(...replay.warnings)
+
+  return {
+    grid,
+    stats: computeStats(grid, replay.processedMoveCount),
+    warnings,
+  }
+}
+
+/** The replay item one operation's selected cut describes. */
+function replayItemFor(
+  operation: Operation,
+  toolRecord: NonNullable<ReturnType<typeof findOperationTool>>,
+  tool: ReturnType<typeof normalizeToolForProject>,
+  toolpath: ToolpathResult,
+): SimulationReplayItem {
+  return {
     operationId: operation.id,
     operationName: operation.name,
     toolRef: toolRecord.id,
@@ -1099,12 +1116,114 @@ export function simulateOperationHeightfield(
     toolRadius: tool.radius,
     vBitAngle: tool.vBitAngle,
     toolpath,
-  })
-  warnings.push(...replay.warnings)
+  }
+}
 
+/**
+ * How the async simulation entry points keep a heavy build off the render and
+ * playback paths (issue #1112 review P1). `yieldToPaint` defaults to a
+ * macrotask, which lets the browser paint between slices; `sliceMs` is the
+ * synchronous budget between yields.
+ */
+export interface SimulationChunkOptions {
+  signal?: AbortSignal
+  yieldToPaint?: () => Promise<void>
+  sliceMs?: number
+}
+
+const DEFAULT_SLICE_MS = 16
+
+function yieldMacrotask(): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, 0) })
+}
+
+interface ChunkedReplay {
+  processedMoveCount: number
+  warnings: ToolpathWarning[]
+}
+
+/**
+ * Replay items in synchronous slices, yielding to the event loop between them.
+ * Returns null as soon as `signal` aborts — including between the last move and
+ * the caller's use of the result — so a superseded selection never pays for the
+ * rest of a build or installs a partial grid.
+ */
+async function replayItemsIntoGridChunked(
+  grid: SimulationGrid,
+  items: SimulationReplayItem[],
+  options: SimulationChunkOptions,
+): Promise<ChunkedReplay | null> {
+  const yieldToPaint = options.yieldToPaint ?? yieldMacrotask
+  const sliceMs = options.sliceMs ?? DEFAULT_SLICE_MS
+  const warnings: ToolpathWarning[] = []
+  let processedMoveCount = 0
+  let sliceStart = Date.now()
+
+  // The first yield is what lets the tab and its loading state commit before a
+  // single move is replayed.
+  await yieldToPaint()
+  if (options.signal?.aborted) return null
+
+  for (const item of items) {
+    for (const move of item.toolpath.moves) {
+      if (!moveIsMaterialRemoving(move)) {
+        continue
+      }
+      if (options.signal?.aborted) return null
+      applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
+      processedMoveCount += 1
+      if (Date.now() - sliceStart >= sliceMs) {
+        await yieldToPaint()
+        if (options.signal?.aborted) return null
+        sliceStart = Date.now()
+      }
+    }
+  }
+
+  return { processedMoveCount, warnings }
+}
+
+/** The selected operation's cut, built in yielding slices instead of one render. */
+export async function simulateOperationHeightfieldChunked(
+  project: Project,
+  operation: Operation,
+  toolpath: ToolpathResult,
+  options: SimulationBuildOptions = {},
+  chunk: SimulationChunkOptions = {},
+): Promise<SimulationResult | null> {
+  const grid = createSimulationGrid(project, options)
+  const toolRecord = findOperationTool(project, operation)
+  if (!toolRecord) {
+    return { grid, stats: computeStats(grid, 0), warnings: [{ code: 'replayNoTool' }] }
+  }
+
+  const tool = normalizeToolForProject(toolRecord, project)
+  const replay = await replayItemsIntoGridChunked(
+    grid,
+    [replayItemFor(operation, toolRecord, tool, toolpath)],
+    chunk,
+  )
+  if (replay === null) return null
   return {
     grid,
     stats: computeStats(grid, replay.processedMoveCount),
-    warnings,
+    warnings: replay.warnings,
+  }
+}
+
+/** The visible replay of several items, built in yielding slices. */
+export async function simulateReplayItemsHeightfieldChunked(
+  project: Project,
+  items: SimulationReplayItem[],
+  options: SimulationBuildOptions = {},
+  chunk: SimulationChunkOptions = {},
+): Promise<SimulationResult | null> {
+  const grid = createSimulationGrid(project, options)
+  const replay = await replayItemsIntoGridChunked(grid, items, chunk)
+  if (replay === null) return null
+  return {
+    grid,
+    stats: computeStats(grid, replay.processedMoveCount),
+    warnings: replay.warnings,
   }
 }

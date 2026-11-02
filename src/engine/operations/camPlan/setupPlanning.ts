@@ -22,20 +22,62 @@ import { operationFace, isThroughFeature } from '../../setupTargets'
 import type { ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { mirrorProfile } from '../../../store/helpers/transform'
 import { setupFace, setupFrame } from '../../setupOrientation'
+import { aroundFrame, unrolledProject } from '../../aroundFrame'
+import { isBarStock } from '../../../types/barStock'
 import { projectInSetupFrame } from '../../setupFrameProject'
 import type { RestRegionDraft } from '../../toolpaths/restRegions'
 
-/** Keep setup identity for face gates; only geometry is turned into cutting space. */
+/** Operations assigned to the active setup, by id or by the setup's own list. */
+function activeSetupOperations(project: Project): Project['operations'] {
+  const setup = activeSetup(project)
+  return project.operations.filter((operation) =>
+    operation.setupId === setup.id || setup.operationIds.includes(operation.id),
+  )
+}
+
+/**
+ * A model row (imported or canned) is not sheet geometry: it lives in the bar
+ * and is machined by a rotary pass, so the unrolled sheet must not transform
+ * it. Kept in stock space on the Around analysis project.
+ */
+function isModelRow(project: Project, feature: Project['features'][number]): boolean {
+  const definition = project.featureDefinitions[feature.definitionId]
+  return definition?.kind === 'stl' && definition.operation === 'model'
+}
+
+/**
+ * The project as the active setup's cutting space reads it. Bottom turns the
+ * stock; Around unrolls the bar into its sheet. Top is unchanged.
+ *
+ * Around keeps the models in stock space beside the unrolled sheet features:
+ * a rotary operation reads the model's mesh, which the sheet's own z shift
+ * would corrupt, while the sheet drawings, Thread and Flutes read the
+ * unrolled coordinates the generators use.
+ */
 export function camPlanSetupProject(project: Project): Project {
   const setup = activeSetup(project)
-  if (setupFace(setup) !== 'bottom') return project
+  const face = setupFace(setup)
+  if (face === 'bottom') {
+    return {
+      ...projectInSetupFrame(project, setupFrame(setup.orientation, project.stock)),
+      setups: project.setups,
+      // Resolvers must not treat work assigned to the other side as machined here.
+      operations: activeSetupOperations(project),
+    }
+  }
+  if (face !== 'around' || !isBarStock(project.stock) || setup.orientation.axis !== project.stock.axis) {
+    return project
+  }
+  const unrolled = unrolledProject(project, aroundFrame(project.stock))
   return {
-    ...projectInSetupFrame(project, setupFrame(setup.orientation, project.stock)),
+    ...unrolled,
+    features: [
+      ...unrolled.features.filter((feature) => !isModelRow(project, feature)),
+      ...project.features.filter((feature) => isModelRow(project, feature)),
+    ],
     setups: project.setups,
-    // Resolvers must not treat work assigned to the other side as machined here.
-    operations: project.operations.filter((operation) =>
-      operation.setupId === setup.id || setup.operationIds.includes(operation.id),
-    ),
+    // A rotary operation already on the project must suppress its proposal too.
+    operations: activeSetupOperations(project),
   }
 }
 

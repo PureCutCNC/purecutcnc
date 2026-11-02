@@ -16,7 +16,9 @@
 
 import { activeSetup } from '../../../store/helpers/activeFace'
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import { defaultTool, getStockBounds, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
+import { defaultTool, getStockBounds, isRoundStock, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type SetupFace, type Tab, type ToolType } from '../../../types/project'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock } from '../../../types/barStock'
+import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../../cannedShapes/generators/kinds'
 import { getFeatureGeometryBounds } from '../../../text'
 import { loadSTLTransformedGeometry } from '../../csg'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
@@ -24,14 +26,14 @@ import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '..
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
 import { featuresOverlap } from '../../../store/helpers/clipping'
-import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
+import { cannedPatternCarveDepth, defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
 import { translate } from '../../../i18n/store'
 import { projectInSetupFrame } from '../../setupFrameProject'
 import { camPlanSetupProject, camPlanRegionsInStockFrame, throughFeaturesCoveredByTop } from './setupPlanning'
 import { setupFace, setupFrame } from '../../setupOrientation'
-import { operationFace, judgeTargetFromFace, withoutUnreachableSubtracts } from '../../setupTargets'
+import { operationFace, judgeTargetFromFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../../setupTargets'
 import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
@@ -58,6 +60,10 @@ export function camPlanProjectFingerprint(project: Project): string {
     features: project.features.map((feature) => [feature.id, feature.definitionId, feature.transform, feature.z_top, feature.z_bottom, feature.authoringFace]),
     // Planned operations join the active setup, so the plan is for that setup (issue #946).
     setup: [project.activeSetupId, activeSetup(project)?.orientation],
+    // The Around sheet is measured from the bar, so a stock edit changes it.
+    ...(setupFace(activeSetup(project)) === 'around'
+      ? { aroundStock: [project.stock.shape, project.stock.thickness, project.stock.profile, (project.stock as { axis?: 'x' | 'y' }).axis] }
+      : {}),
     definitions: Object.values(project.featureDefinitions).map((definition) => [definition.id, definition.operation, definition.kind, definition.stl]),
     modelAssets: Object.entries(project.modelAssets ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     tools: project.tools.map((tool) => [tool.id, tool.type, tool.units, tool.diameter, tool.maxCutDepth]),
@@ -135,7 +141,10 @@ function planToolById(tools: CamPlanTool[], id: string | null): CamPlanTool | nu
 
 interface PlanBuilder {
   project: Project
+  /** The project as stored, in stock coordinates: the setup gate reads this. */
+  stockProject: Project
   analysisProject: Project
+  face: SetupFace
   tools: CamPlanTool[]
   operations: CamPlanOperationDraft[]
   reusedToolIds: Set<string>
@@ -143,6 +152,8 @@ interface PlanBuilder {
   existing: Set<string>
   coveredByTop: Set<string>
   unresolvedModels: Map<string, string>
+  /** Features this face may not machine, with the localized reason. */
+  blocked: Map<string, string>
   sequence: number
 }
 
@@ -164,6 +175,8 @@ interface PlannerToolConstraints {
   requiredCutDepth?: number
   maximumToolDiameter?: number | null
   toolLimitSource?: 'feature-span' | 'model-footprint'
+  /** Restrict the choice beyond `preferredToolTypes(kind)` (Thread/Flutes want a V-bit). */
+  preferredToolTypes?: readonly ToolType[]
 }
 
 function restAnalysisOperation(operation: Operation): Operation {
@@ -172,6 +185,31 @@ function restAnalysisOperation(operation: Operation): Operation {
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
   }
+}
+
+/**
+ * The reason generation would refuse this draft in the setup it is planned
+ * for, translated for the plan's blocking-error panel. Around sheet work can
+ * reach the bar's centreline, which generation refuses (`aroundCentreline`);
+ * the plan proposes that same work through the same rule, so the row is
+ * blocked here instead of being offered and then generating nothing.
+ */
+function setupBlockError(builder: PlanBuilder, operation: Operation): string | null {
+  if (builder.face !== 'around') return null
+  // A face entered but not yet saved carries a provisional setup that is not
+  // in the stored list. The gate resolves setups by id, so hand it the same
+  // synthesized setup the plan is running against.
+  const stored = builder.stockProject
+  const setupId = operation.setupId
+  const project = !setupId || stored.setups.some((entry) => entry.id === setupId)
+    ? stored
+    : { ...stored, setups: [...stored.setups, activeSetup(stored)] }
+  const block = setupGenerationBlock(project, operation)
+  if (!block || block.reason !== 'aroundCentreline') return null
+  return translate('warnings.aroundCentreline', {
+    operation: operation.name,
+    feature: block.features.map((feature) => feature.featureName).join(', '),
+  })
 }
 
 function addPlannedOperation(
@@ -204,11 +242,15 @@ function addPlannedOperation(
     requiredDepth,
     builder.reusedToolIds,
     constraints?.maximumToolDiameter,
+    constraints?.preferredToolTypes,
   )
   const selected = forcedTool ?? ranked.tools[0] ?? null
+  const wantsVBit = constraints?.preferredToolTypes?.length === 1 && constraints.preferredToolTypes[0] === 'v_bit'
   const missingToolError = kind === 'rough_surface' || kind === 'finish_surface'
     ? 'No compatible surface tool satisfies this model\'s footprint and reach. Choose or add one, or exclude the model.'
-    : 'Choose or add a tool that fits this operation before creating it.'
+    : wantsVBit
+      ? translate('cam.plan.vBitRequired')
+      : 'Choose or add a tool that fits this operation before creating it.'
   const key = `cam-plan-op:${builder.sequence + 1}`
   builder.sequence += 1
   const wasReused = selected ? builder.reusedToolIds.has(selected.id) : false
@@ -224,11 +266,12 @@ function addPlannedOperation(
     },
   )
   operation.id = key
-  if (setupFace(activeSetup(builder.project)) === 'bottom') operation.setupId = builder.project.activeSetupId
+  if (builder.face !== 'top') operation.setupId = builder.project.activeSetupId
   operation.target = target
   applyRoughStockToLeave(builder.project, operation)
   if (selected) builder.reusedToolIds.add(selected.id)
 
+  const setupError = setupBlockError(builder, operation)
   const draft: CamPlanOperationDraft = {
     key,
     enabled: true,
@@ -243,14 +286,15 @@ function addPlannedOperation(
     toolOptions: ranked.tools.map((candidate) => candidate.id),
     maximumToolDiameter: ranked.maximumDiameter,
     toolLimitSource: constraints?.toolLimitSource,
+    preferredToolTypes: constraints?.preferredToolTypes,
     requiredCutDepth: requiredDepth,
     coveredFeatureIds: featureIds,
     dependencies,
-    hardError: !selected
+    hardError: setupError ?? (!selected
       ? missingToolError
       : (!isOperationTargetValid(builder.project, kind, target)
         ? 'The proposed target is not valid for this operation.'
-        : activeSetupIsAround(builder.project) ? TURNED_SETUP_ERROR : null),
+        : null)),
     staleReason: null,
     userOverrides: [],
   }
@@ -333,7 +377,7 @@ function addRoughFinishPair(
 
 interface ImportedModelCandidate {
   feature: ResolvedSketchFeature
-  constraints: Required<PlannerToolConstraints>
+  constraints: Required<Omit<PlannerToolConstraints, 'preferredToolTypes'>>
 }
 
 function importedModelCandidate(
@@ -418,6 +462,246 @@ function addImportedModelSurfacePair(builder: PlanBuilder, candidate: ImportedMo
     undefined,
     constraints,
   )
+}
+
+/** An imported or canned 3D model: machined by a rotary pass on Around. */
+function isModelFeature(feature: ResolvedSketchFeature): boolean {
+  return feature.kind === 'stl' && feature.operation === 'model'
+}
+
+/** A canned Thread or Flutes row: an occupied Engrave target, not sheet work to pocket. */
+function isCannedPatternFeature(project: Project, feature: ResolvedSketchFeature): boolean {
+  const kind = project.featureDefinitions[feature.definitionId]?.canned?.kind
+  return kind === THREAD_CANNED_KIND || kind === FLUTES_CANNED_KIND
+}
+
+/**
+ * What CAM Plan may propose on a face. Top and Bottom keep the existing
+ * target gate. Around has no single operation kind: models are rotary
+ * targets, while the sheet features are Engrave/pocket targets, so the
+ * candidates are the sheet rows plus every model (decision 3, #1112).
+ */
+function featuresForFace(project: Project, face: SetupFace): ResolvedSketchFeature[] {
+  const resolved = resolveFeatureInstances(project)
+  if (face !== 'around') {
+    return resolved.filter((feature) => judgeTargetFromFace(project, feature, face).status !== 'rejected')
+  }
+  return resolved.filter((feature) => (feature.authoringFace ?? 'top') === 'around' || isModelFeature(feature))
+}
+
+interface RotaryModelCandidate {
+  feature: ResolvedSketchFeature
+  requiredCutDepth: number
+}
+
+/** Squared distance from a 2D point to a segment. */
+function pointSegmentDistanceSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSquared = dx * dx + dy * dy
+  const t = lengthSquared > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared)) : 0
+  const ex = px - (ax + t * dx)
+  const ey = py - (ay + t * dy)
+  return ex * ex + ey * ey
+}
+
+/**
+ * Squared distance from a 2D point to a filled triangle: zero when the point
+ * is inside it, otherwise the nearest edge. This is the reach the old
+ * vertex-only measure missed — a hex's flat lies inside its side triangles,
+ * nowhere near a vertex.
+ */
+function pointTriangleDistanceSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+): number {
+  const d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+  const d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx)
+  const d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx)
+  const hasNegative = d1 < 0 || d2 < 0 || d3 < 0
+  const hasPositive = d1 > 0 || d2 > 0 || d3 > 0
+  if (!(hasNegative && hasPositive)) return 0
+  return Math.min(
+    pointSegmentDistanceSquared(px, py, ax, ay, bx, by),
+    pointSegmentDistanceSquared(px, py, bx, by, cx, cy),
+    pointSegmentDistanceSquared(px, py, cx, cy, ax, ay),
+  )
+}
+
+/**
+ * How deep a rotary pass reaches from the bar's surface for a model: the
+ * bar's largest radius down to the model's closest **surface** point to the
+ * turning axis. A full-diameter model needs no reach; a hexagonal head leaves
+ * the flats above the corners to remove.
+ *
+ * Vertices alone under-read that: a 15 mm across-flats hex on a Ø20 bar has
+ * its corners at 8.66 mm but its flats at 7.5 mm, so measuring the vertices
+ * reported a 1.34 mm reach for work that is really 2.5 mm deep. The measure
+ * is therefore over the indexed triangles, including their interiors.
+ *
+ * A triangle whose plane is perpendicular to the turning axis is an **end
+ * face**. The bar presents such a face to the cutter axially, not radially,
+ * and its points near the axis are shadowed by the side surface at the same
+ * angle — counting them would make every closed model demand the full bar
+ * radius. Side faces are the outer surface the cutter follows as the bar
+ * turns, so only those take part in the reach; the vertex fallback keeps a
+ * degenerate (flat) mesh answerable.
+ *
+ * This is the planner's tool filter only; the generators read the mesh itself.
+ */
+function rotaryModelCandidate(
+  project: Project,
+  feature: ResolvedSketchFeature,
+): { candidate: RotaryModelCandidate | null; reason: string | null } {
+  if (!isBarStock(project.stock)) {
+    return { candidate: null, reason: translate('cam.plan.aroundNeedsBar') }
+  }
+  const transformed = loadSTLTransformedGeometry(feature, project)
+  if (!transformed) {
+    return { candidate: null, reason: 'The imported mesh is unavailable, corrupt, or has no usable height.' }
+  }
+  const { positions, index } = transformed
+  if (positions.length < 9 || positions.length % 3 !== 0 || index.length < 3 || index.length % 3 !== 0) {
+    return { candidate: null, reason: 'The imported mesh has no usable triangles.' }
+  }
+
+  const axis = project.stock.axis
+  const acrossOffset = axis === 'x' ? 1 : 0
+  const centre = barCentre(project.stock)
+  const pivot = barPivotZ(project.stock)
+  let minVertexRadiusSquared = Infinity
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const x = positions[offset]!
+    const y = positions[offset + 1]!
+    const z = positions[offset + 2]!
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return { candidate: null, reason: 'The transformed imported mesh contains invalid coordinates.' }
+    }
+    const across = axis === 'x' ? y : x
+    const radiusSquared = (across - centre) ** 2 + (z - pivot) ** 2
+    minVertexRadiusSquared = Math.min(minVertexRadiusSquared, radiusSquared)
+  }
+
+  let minSurfaceRadiusSquared = Infinity
+  for (let offset = 0; offset < index.length; offset += 3) {
+    const a = index[offset]! * 3
+    const b = index[offset + 1]! * 3
+    const c = index[offset + 2]! * 3
+    if (a + 2 >= positions.length || b + 2 >= positions.length || c + 2 >= positions.length) {
+      return { candidate: null, reason: 'The transformed imported mesh has an invalid triangle index.' }
+    }
+    const ax = positions[a + acrossOffset]!
+    const ay = positions[a + 2]!
+    const bx = positions[b + acrossOffset]!
+    const by = positions[b + 2]!
+    const cx = positions[c + acrossOffset]!
+    const cy = positions[c + 2]!
+
+    // The plane's normal, to tell an axial end face from a side face. Only the
+    // axis component is needed; the other two are computed for its magnitude.
+    const abx = positions[b]! - positions[a]!
+    const aby = positions[b + 1]! - positions[a + 1]!
+    const abz = positions[b + 2]! - positions[a + 2]!
+    const acx = positions[c]! - positions[a]!
+    const acy = positions[c + 1]! - positions[a + 1]!
+    const acz = positions[c + 2]! - positions[a + 2]!
+    const nx = aby * acz - abz * acy
+    const ny = abz * acx - abx * acz
+    const nz = abx * acy - aby * acx
+    const normalLength = Math.sqrt(nx * nx + ny * ny + nz * nz)
+    const axialComponent = axis === 'x' ? nx : ny
+    if (!(normalLength > 0) || Math.abs(axialComponent) >= normalLength * (1 - 1e-6)) continue
+
+    minSurfaceRadiusSquared = Math.min(
+      minSurfaceRadiusSquared,
+      pointTriangleDistanceSquared(centre, pivot, ax, ay, bx, by, cx, cy),
+    )
+  }
+
+  const minRadiusSquared = Number.isFinite(minSurfaceRadiusSquared)
+    ? minSurfaceRadiusSquared
+    : minVertexRadiusSquared
+  const minRadius = Math.sqrt(minRadiusSquared)
+  const surface = barMaxRadius(project.stock)
+  if (!Number.isFinite(minRadius) || minRadius > surface + Z_EPSILON) {
+    return { candidate: null, reason: 'The transformed imported mesh does not overlap the bar.' }
+  }
+  return {
+    candidate: { feature, requiredCutDepth: Math.max(0, surface - minRadius) },
+    reason: null,
+  }
+}
+
+/** Rough then finish one model, the pair the old rotary command created. */
+function addRotaryModelPair(builder: PlanBuilder, candidate: RotaryModelCandidate): void {
+  const { feature, requiredCutDepth } = candidate
+  const constraints: PlannerToolConstraints = { requiredCutDepth }
+  const rough = addPlannedOperation(
+    builder,
+    'rotary_rough',
+    'rough',
+    [feature],
+    translate('cam.plan.aroundRotaryRough'),
+    [],
+    undefined,
+    constraints,
+  )
+  const finishTool = rough ? planToolById(builder.tools, rough.operation.toolRef) ?? undefined : undefined
+  addPlannedOperation(
+    builder,
+    'rotary_finish',
+    'finish',
+    [feature],
+    translate('cam.plan.aroundRotaryFinish'),
+    rough ? [rough.key] : [],
+    finishTool,
+    constraints,
+  )
+}
+
+/**
+ * One Engrave per distinct canned pattern depth. A Follow line has a single
+ * `carveDepth`, and the store's rule fills it from the deepest target; putting
+ * a 0.4 mm thread and a 1.2 mm flute in one Engrave would cut the thread
+ * 1.2 mm deep. Patterns that share a depth still group into one operation.
+ */
+function addAroundPatternOperation(builder: PlanBuilder, features: ResolvedSketchFeature[]): void {
+  const groups = new Map<string, ResolvedSketchFeature[]>()
+  for (const feature of features) {
+    const depth = cannedPatternCarveDepth(builder.project, {
+      source: 'features',
+      featureIds: [feature.id],
+    })
+    // A pattern whose stored parameters are unreadable keeps the old 1 mm
+    // fallback, grouped by its span rather than by a depth it does not have.
+    const key = depth === null ? `span:${depthKey(builder.project, feature)}` : `depth:${depth.toFixed(7)}`
+    groups.set(key, [...(groups.get(key) ?? []), feature])
+  }
+  for (const group of groups.values()) {
+    addPlannedOperation(
+      builder,
+      'follow_line',
+      'rough',
+      group,
+      translate('cam.plan.aroundPatternLine'),
+      [],
+      undefined,
+      { preferredToolTypes: ['v_bit'] },
+    )
+  }
 }
 
 function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {
@@ -673,6 +957,10 @@ function coverageFor(
     if (unresolvedDetail) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'unresolved', detail: unresolvedDetail }]
     }
+    const blockedDetail = builder.blocked.get(feature.id)
+    if (blockedDetail) {
+      return [{ featureId: feature.id, featureName: feature.name, status: 'unsupported', detail: blockedDetail }]
+    }
     if (builder.coveredByTop.has(feature.id)) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'existing', detail: translate('cam.plan.coveredByTopSetup', { face: translate('cam.setup.top') }) }]
     }
@@ -701,23 +989,14 @@ function coverageFor(
   })
 }
 
-// Around planning remains out of scope.
-const TURNED_SETUP_ERROR = 'CAM Plan proposes operations for the Top setup only. Switch the workspace to Top, or add this operation by hand.'
-
-
-function activeSetupIsAround(project: Project): boolean {
-  const setup = activeSetup(project)
-  return setup?.kind === 'around'
-}
-
 export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEntry[]): CamPlanDraft {
   // Planned operations join the active setup, so only what that setup may
   // target is planned (issue #946): features drawn on its face, and
-  // through-features. With a single Top setup that is every feature.
+  // through-features. With a single Top setup that is every feature. Around
+  // adds its models, which no non-rotary kind may target (decision 3, #1112).
   const setup = activeSetup(stockProject)
   const face = setupFace(setup)
-  const selected = resolveFeatureInstances(stockProject)
-    .filter((feature) => judgeTargetFromFace(stockProject, feature, face).status !== 'rejected')
+  const selected = featuresForFace(stockProject, face)
   const coveredByTop = throughFeaturesCoveredByTop(stockProject, selected)
   const project = camPlanSetupProject(stockProject)
   const selectedIds = new Set(selected.map((feature) => feature.id))
@@ -739,7 +1018,9 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
   }, face)
   const builder: PlanBuilder = {
     project,
+    stockProject,
     analysisProject,
+    face,
     tools,
     operations: [],
     reusedToolIds: new Set(),
@@ -747,103 +1028,144 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
     existing: new Set(),
     coveredByTop,
     unresolvedModels: new Map(),
+    blocked: new Map(),
     sequence: 0,
   }
 
-  const closedAddBoundaries = features.filter((feature) =>
-    (feature.operation === 'add' || feature.operation === 'model')
-    && feature.kind !== 'stl'
-    && feature.sketch.profile.closed,
-  )
-  const closedAdds = closedAddBoundaries
-  const outerClosedAdds = closedAdds.filter((feature) =>
-    !closedAddBoundaries.some((candidate) => candidate.id !== feature.id && boundsContain(candidate, feature)),
-  )
-  const loweredOuterAdds = outerClosedAdds.filter((feature) =>
-    resolveDimensionRef(project, feature.z_top) < project.stock.thickness - Z_EPSILON,
-  )
-  for (const group of groupByDepth(project, loweredOuterAdds)) {
-    addRoughFinishPair(builder, 'surface_clean', group, 'This retained surface sits below the stock top and needs cleanup.')
+  // Around's sheet coordinates describe a round bar; a square blank can only
+  // turn a model. Keep the work visible and say why rather than silently
+  // dropping it (decision 5, #1112).
+  const aroundSheetPlanning = face !== 'around' || isRoundStock(stockProject.stock)
+  if (!aroundSheetPlanning) {
+    for (const feature of features) {
+      if (isModelFeature(feature)) continue
+      builder.blocked.set(
+        feature.id,
+        translate(isCannedPatternFeature(project, feature)
+          ? 'cam.plan.aroundNeedsRoundBar'
+          : 'cam.plan.aroundSheetNeedsRoundBar'),
+      )
+    }
   }
 
-  const subtracts = features.filter((feature) =>
-    feature.operation === 'subtract'
-    && feature.sketch.profile.closed,
-  )
-  const ordinarySubtracts: ResolvedSketchFeature[] = []
-  for (const group of groupDrillingCandidates(project, subtracts.filter((candidate) => candidate.kind === 'circle'))) {
-    const target: OperationTarget = { source: 'features', featureIds: group.map((feature) => feature.id) }
-    const requiredDepth = Math.max(...group.map((feature) => featureDepth(project, feature)))
-    const drillability = chooseDrillingTool(project, target, tools, requiredDepth, builder.reusedToolIds)
-    if (!drillability) {
-      ordinarySubtracts.push(...group)
-      continue
+  // Models are the one thing a rotary operation cuts. Plan them before the
+  // sheet work so a bolt's head and shank are roughed and finished first.
+  if (face === 'around') {
+    for (const feature of features.filter(isModelFeature)) {
+      const result = rotaryModelCandidate(stockProject, feature)
+      if (!result.candidate) {
+        builder.unresolvedModels.set(feature.id, result.reason ?? 'The imported model cannot be planned safely.')
+        continue
+      }
+      addRotaryModelPair(builder, result.candidate)
     }
-    const drill = addPlannedOperation(
-      builder,
-      'drilling',
-      'rough',
-      group,
-      drillability.drillType === 'simple'
-        ? 'The matching circular subtracts share an available drill.'
-        : 'The matching circular subtracts can be helical-bored with a smaller flat end mill.',
-      [],
-      drillability.tool,
+  }
+
+  if (aroundSheetPlanning) {
+    const closedAddBoundaries = features.filter((feature) =>
+      (feature.operation === 'add' || feature.operation === 'model')
+      && feature.kind !== 'stl'
+      && feature.sketch.profile.closed,
     )
-    if (drill) {
-      drill.operation.drillType = drillability.drillType
-      drill.toolOptions = drillability.options.map((candidate) => candidate.id)
-    }
-  }
-  ordinarySubtracts.push(...subtracts.filter((candidate) => candidate.kind !== 'circle'))
-
-  const blind = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) > Z_EPSILON)
-  const through = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON)
-  const remainingBlind = [...blind]
-  for (let group = nextBlindPocketToolGroup(builder, remainingBlind); group; group = nextBlindPocketToolGroup(builder, remainingBlind)) {
-    addRoughFinishPair(
-      builder,
-      'pocket',
-      group.features,
-      'This closed subtract stops above the stock bottom, so it is a blind pocket.',
-      group.tool ?? undefined,
+    const closedAdds = closedAddBoundaries
+    const outerClosedAdds = closedAdds.filter((feature) =>
+      !closedAddBoundaries.some((candidate) => candidate.id !== feature.id && boundsContain(candidate, feature)),
     )
-  }
-  for (const group of groupByDepth(project, through)) {
-    addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')
-  }
-
-  for (const feature of features.filter((candidate) => candidate.operation === 'model' && candidate.kind === 'stl')) {
-    const result = importedModelCandidate(project, feature)
-    if (!result.candidate) {
-      builder.unresolvedModels.set(feature.id, result.reason ?? 'The imported model cannot be planned safely.')
-      continue
+    const loweredOuterAdds = outerClosedAdds.filter((feature) =>
+      resolveDimensionRef(project, feature.z_top) < project.stock.thickness - Z_EPSILON,
+    )
+    for (const group of groupByDepth(project, loweredOuterAdds)) {
+      addRoughFinishPair(builder, 'surface_clean', group, 'This retained surface sits below the stock top and needs cleanup.')
     }
-    addImportedModelSurfacePair(builder, result.candidate)
+
+    const subtracts = features.filter((feature) =>
+      feature.operation === 'subtract'
+      && feature.sketch.profile.closed,
+    )
+    const ordinarySubtracts: ResolvedSketchFeature[] = []
+    for (const group of groupDrillingCandidates(project, subtracts.filter((candidate) => candidate.kind === 'circle'))) {
+      const target: OperationTarget = { source: 'features', featureIds: group.map((feature) => feature.id) }
+      const requiredDepth = Math.max(...group.map((feature) => featureDepth(project, feature)))
+      const drillability = chooseDrillingTool(project, target, tools, requiredDepth, builder.reusedToolIds)
+      if (!drillability) {
+        ordinarySubtracts.push(...group)
+        continue
+      }
+      const drill = addPlannedOperation(
+        builder,
+        'drilling',
+        'rough',
+        group,
+        drillability.drillType === 'simple'
+          ? 'The matching circular subtracts share an available drill.'
+          : 'The matching circular subtracts can be helical-bored with a smaller flat end mill.',
+        [],
+        drillability.tool,
+      )
+      if (drill) {
+        drill.operation.drillType = drillability.drillType
+        drill.toolOptions = drillability.options.map((candidate) => candidate.id)
+      }
+    }
+    ordinarySubtracts.push(...subtracts.filter((candidate) => candidate.kind !== 'circle'))
+
+    const blind = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) > Z_EPSILON)
+    const through = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON)
+    const remainingBlind = [...blind]
+    for (let group = nextBlindPocketToolGroup(builder, remainingBlind); group; group = nextBlindPocketToolGroup(builder, remainingBlind)) {
+      addRoughFinishPair(
+        builder,
+        'pocket',
+        group.features,
+        'This closed subtract stops above the stock bottom, so it is a blind pocket.',
+        group.tool ?? undefined,
+      )
+    }
+    for (const group of groupByDepth(project, through)) {
+      addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')
+    }
+
+    // A rotary project's models are never sheet features. Top/Bottom keeps the
+    // transformed-surface path (issue #765); Around turns the model instead.
+    if (face !== 'around') {
+      for (const feature of features.filter((candidate) => candidate.operation === 'model' && candidate.kind === 'stl')) {
+        const result = importedModelCandidate(project, feature)
+        if (!result.candidate) {
+          builder.unresolvedModels.set(feature.id, result.reason ?? 'The imported model cannot be planned safely.')
+          continue
+        }
+        addImportedModelSurfacePair(builder, result.candidate)
+      }
+    }
+
+    const outerAdds = outerClosedAdds.filter((feature) =>
+      resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON
+    )
+    const outsideOperations: CamPlanOperationDraft[] = []
+    const remainingOuterAdds = [...outerAdds]
+    for (let group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds); group; group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds)) {
+      outsideOperations.push(...addRoughFinishPair(
+        builder,
+        'edge_route_outside',
+        group.features,
+        'This is an outer retained perimeter, so it is routed from the surrounding stock.',
+        group.tool ?? undefined,
+      ))
+    }
+
+    const outsideKeys = new Set(outsideOperations.map((draft) => draft.key))
+    const internalKeys = builder.operations.filter((draft) => !outsideKeys.has(draft.key)).map((draft) => draft.key)
+    for (const draft of outsideOperations) {
+      if (draft.dependencies.length === 0) draft.dependencies = [...internalKeys]
+    }
+
+    // Canned Thread/Flutes are planned as Engraves at their own depth.
+    addAroundPatternOperation(builder, features.filter((feature) => isCannedPatternFeature(project, feature)))
   }
 
-  const outerAdds = outerClosedAdds.filter((feature) =>
-    resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON
-  )
-  const outsideOperations: CamPlanOperationDraft[] = []
-  const remainingOuterAdds = [...outerAdds]
-  for (let group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds); group; group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds)) {
-    outsideOperations.push(...addRoughFinishPair(
-      builder,
-      'edge_route_outside',
-      group.features,
-      'This is an outer retained perimeter, so it is routed from the surrounding stock.',
-      group.tool ?? undefined,
-    ))
-  }
-
-  const outsideKeys = new Set(outsideOperations.map((draft) => draft.key))
-  const internalKeys = builder.operations.filter((draft) => !outsideKeys.has(draft.key)).map((draft) => draft.key)
-  for (const draft of outsideOperations) {
-    if (draft.dependencies.length === 0) draft.dependencies = [...internalKeys]
-  }
-
-  const sharedTabs = buildSharedTabs(builder)
+  // Tabs are a flat-stock hold-down; the unrolled sheet deliberately has none
+  // (`unrolledProject` clears them), so an Around plan must not create them.
+  const sharedTabs = face === 'around' ? [] : buildSharedTabs(builder)
   // Recognition and residuals use cutting space; persisted masks/tabs use
   // stock space. A half-turn is its own inverse. Operations carry only IDs.
   if (face === 'bottom') {

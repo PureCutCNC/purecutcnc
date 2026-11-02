@@ -28,6 +28,7 @@ import type {
 import { sampleProfilePoints } from '../../types/project'
 import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import { convertToolUnits } from '../../utils/units'
+import { DEFAULT_CLIPPER_SCALE } from '../clipperScale'
 import type {
   ClipperPath,
   FlattenedPath,
@@ -36,7 +37,10 @@ import type {
   ResolvedToolpathOperation,
 } from './types'
 
-export const DEFAULT_CLIPPER_SCALE = 10_000
+// Re-exported for the many callers that already read it from this module; the
+// value lives in `clipperScale.ts` so a Clipper-only analysis can avoid this
+// module's store/Three.js-reaching import graph.
+export { DEFAULT_CLIPPER_SCALE } from '../clipperScale'
 
 // Default curve-flattening parameters used when sampling profiles into
 // polylines for Clipper. These are exported (rather than left as inline

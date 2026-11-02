@@ -22,11 +22,13 @@
  * the same part over — so fresh stock is this simulation's approximation, not
  * the shop floor: what another setup removed is simply not shown. The
  * simulation panel says so wherever more than one setup exists. This module
- * is the whole of that decision. It is pure: it reads the project, the
- * generated stock-space toolpaths and the selected setup, and returns what
- * the existing heightfield engine consumes — a project in the setup-local
- * frame, that setup's operations in cut order, and those operations' paths
- * turned out of canonical stock space once.
+ * is the whole of that decision. It reads the project, the generated
+ * stock-space toolpaths and the selected setup, and returns what the existing
+ * heightfield engine consumes — a project in the setup-local frame, that
+ * setup's operations in cut order, and those operations' paths turned out of
+ * canonical stock space once. (The one state it keeps is the turned copies of
+ * those paths, so re-opening the panel does not turn them again; see
+ * {@link turnedPath}.)
  *
  * Nothing here generates, acquires or invents motion. A path the caller did
  * not hand in stays missing, exactly as a missing path is the consumer's
@@ -59,6 +61,57 @@ import type { AroundFrame } from '../engine/aroundFrame'
 import { validateFlatRoundBar, validateSquareBar } from '../engine/simulation/grid'
 import type { FlatRoundBarDescriptor, SquareBarDescriptor } from '../engine/simulation/types'
 import { activeSetup } from '../store/helpers/activeFace'
+
+/** How many turned copies of one path are kept, i.e. how many frames it was simulated in. */
+const TURNED_PATHS_PER_RESULT = 2
+
+/**
+ * A path already turned onto an Around setup's sheet (issue #1112 rt2-h).
+ *
+ * `buildSimulationSetupInput` runs inside the render that responds to the
+ * Simulation tab, and turning a path is a fresh object per move: on Frank's
+ * `turn-shape-test-01` the fold of one 24k-move path cost 11-13 ms of blocking
+ * work every time the panel opened, and the finish opened twice (once while the
+ * prior operations were still being acquired). Unwrapping and folding are a
+ * pure function of the path and the frame's values, and nothing writes to a
+ * `ToolpathResult` afterwards, so the turned path can be kept and used again
+ * for as long as the generated result it came from exists.
+ *
+ * Keyed on the generated result — never on an operation id — so a regenerated
+ * path (a new object, even for an unchanged project) can never read an older
+ * turn. A `WeakMap` therefore also keeps the cache's own lifetime tied to the
+ * result it serves.
+ */
+const turnedPaths = new WeakMap<ToolpathResult, { frame: AroundFrame; result: ToolpathResult }[]>()
+
+/** The same sheet: every value the turn depends on matches. */
+function sameSheet(a: AroundFrame, b: AroundFrame): boolean {
+  return a === b
+    || (a.axis === b.axis
+      && a.centre === b.centre
+      && a.radius === b.radius
+      && a.zero === b.zero
+      && a.sheetStart === b.sheetStart
+      && a.circumference === b.circumference)
+}
+
+/** `foldToolpath(unwrapToolpath(...))`, reused while the same path is simulated on the same sheet. */
+function turnedPath(path: ToolpathResult, frame: AroundFrame): ToolpathResult {
+  let entries = turnedPaths.get(path)
+  if (entries) {
+    for (const entry of entries) {
+      if (sameSheet(entry.frame, frame)) return entry.result
+    }
+  }
+  const result = foldToolpath(unwrapToolpath(path, frame), frame)
+  if (!entries) {
+    entries = []
+    turnedPaths.set(path, entries)
+  }
+  entries.unshift({ frame, result })
+  if (entries.length > TURNED_PATHS_PER_RESULT) entries.pop()
+  return result
+}
 
 /**
  * Real bar display data alongside the unchanged unrolled replay project. A
@@ -228,7 +281,7 @@ export function buildSimulationSetupInput(
     if (!toolpath) continue
     localToolpaths.set(
       operation.id,
-      around ? foldToolpath(unwrapToolpath(toolpath, around), around) : toolpathInSetupFrame(toolpath, frame),
+      around ? turnedPath(toolpath, around) : toolpathInSetupFrame(toolpath, frame),
     )
   }
 
@@ -322,31 +375,3 @@ export function setupOperations(project: Project, setup: MachiningSetup): Operat
   })
 }
 
-/**
- * Which setup the simulation shows. An explicit pick wins while that setup
- * still exists; otherwise the simulation follows the selected operation's
- * setup, so selecting a Bottom operation simulates Bottom, and with nothing
- * selected it follows the face the workspace is on. An operation naming a
- * missing setup is left to the paths that refuse it; here it simply does not
- * steer the choice.
- */
-export function resolveSimulationSetup(
-  project: Project,
-  chosenSetupId: string | null,
-  selectedOperation: Pick<Operation, 'id'> | null,
-): MachiningSetup {
-  const setups = simulationSetups(project)
-  const chosen = chosenSetupId === null ? undefined : setups.find((entry) => entry.id === chosenSetupId)
-  if (chosen) return chosen
-  if (selectedOperation) {
-    const owner = setups.find((entry) => {
-      try {
-        return setupOperations(project, entry).some((operation) => operation.id === selectedOperation.id)
-      } catch {
-        return false
-      }
-    })
-    if (owner) return owner
-  }
-  return activeSetup(project)
-}

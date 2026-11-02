@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
 import { operationOnActiveSetup } from './components/cam/setupSections'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
@@ -49,6 +49,7 @@ import { useFeatureTreeActions } from './app/useFeatureTreeActions'
 import { useSnapSettings } from './app/useSnapSettings'
 import { useZoomWindow } from './app/useZoomWindow'
 import { useEmptyStateEngagement } from './app/useEmptyStateEngagement'
+import { useOperationSelection } from './app/useOperationSelection'
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 
@@ -64,9 +65,10 @@ function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
   const tabletShell = isTabletMode(useShellMode())
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+  // The selection and its one write: selecting an operation of another face
+  // turns the workspace over to that face (issue #1112 F3).
+  const { selectedOperationId, selectOperation } = useOperationSelection()
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
-  const [isSimulationPending, startSimulationTransition] = useTransition()
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   // Non-null opens the Export G-code dialog; operationIds narrows the
   // pre-checked set to specific operations (per-operation export, issue #274).
@@ -131,6 +133,7 @@ function App() {
     menuTab,
     menuClamp,
     menuQuickOperations,
+    menuFeatureTargetableFromFace,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
     addToFolderSubmenu,
@@ -177,24 +180,17 @@ function App() {
   const selectedClampId = selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null
 
   const handleCenterTabChange = useCallback((tab: 'sketch' | 'preview3d' | 'simulation') => {
-    if (tab === 'simulation') {
-      startSimulationTransition(() => setCenterTab(tab))
-      return
-    }
+    // The tab update is deliberately urgent: the simulation hook commits the
+    // panel with a loading state and builds its heightfield afterwards, so a
+    // transition here would only keep the panel aria-hidden for no benefit
+    // (issue #1112 review P1).
     setCenterTab(tab)
-  }, [startSimulationTransition])
+  }, [])
 
-  // Selecting a different operation while the simulation tab is active drives
-  // the heavy simulationResult/playbackInput recompute. Wrapping in a
-  // transition shows the existing isComputing spinner; in other views the
-  // selection is cheap so we don't pay the transition overhead.
-  const handleSelectedOperationIdChange = useCallback((id: string | null) => {
-    if (centerTab === 'simulation') {
-      startSimulationTransition(() => setSelectedOperationId(id))
-      return
-    }
-    setSelectedOperationId(id)
-  }, [centerTab, startSimulationTransition])
+  // Selecting another operation while the simulation panel is open is the
+  // hook's input changing; it drops the old build and shows the overlay until
+  // the new one lands. The selection itself stays cheap in every view.
+  const handleSelectedOperationIdChange = selectOperation
 
   const featureActions = useFeatureTreeActions({
     setCenterTab,
@@ -253,7 +249,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationInputPending, simulationPlaybackInput, simulationSetup, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -450,15 +446,15 @@ function App() {
             simulation={simulationResult}
             isActive={centerTab === 'simulation'}
             detailCells={simulationDetailCells}
-            onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
-            isComputing={isSimulationPending}
+            onDetailCellsChange={setSimulationDetailCells}
+            isComputing={simulationInputPending}
             mode={simulationMode}
-            onModeChange={(mode) => startSimulationTransition(() => setSimulationMode(mode))}
+            onModeChange={setSimulationMode}
             operationCount={simulationOperationCount}
             clamps={simulationClamps}
             bar={simulationBar}
             flatRoundBar={simulationFlatRoundBar}
-            setupPicker={simulationSetupPicker}
+            setup={simulationSetup}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin} units={project.meta.units} stock={simulationStock}
@@ -591,6 +587,7 @@ function App() {
         menuHasLockedSelection={menuHasLockedSelection}
         menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
+        menuFeatureTargetableFromFace={menuFeatureTargetableFromFace}
         quickOpsSubmenu={quickOpsSubmenu}
         menuFeatureFolders={menuFeatureFolders}
         menuAddToOperationCandidates={menuAddToOperationCandidates}

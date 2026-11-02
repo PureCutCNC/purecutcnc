@@ -35,9 +35,30 @@ import {
 } from './hitTest'
 import type { ViewTransform } from './viewTransform'
 import { registerTestCannedShapes, testOpenLineCanned, testPlateCanned } from '../../test/cannedShapeFixture'
+import { defineCannedShape, registerCannedShapeGenerator } from '../../cannedShapes'
+import type { CannedShapeParams } from '../../types/project'
+import type { AroundWrapWindow } from './aroundDisplayWrap'
 import type { FeatureLike } from './hitTest'
 
 registerTestCannedShapes()
+
+// A straight canned line long enough to wrap several times around a 100-unit
+// circumference: the folded-stripe probe below needs a stripe that only exists
+// after folding.
+type FoldLineParams = CannedShapeParams & { length: number; across: number }
+const foldLineShape = defineCannedShape<FoldLineParams>({
+  kind: 'test-fold-line',
+  labelKey: 'canned.test.openLine.name',
+  generate: (params) => [{
+    profile: {
+      start: { x: 0, y: 0 },
+      segments: [{ type: 'line', to: { x: params.length, y: params.across } }],
+      closed: false,
+    },
+  }],
+  summary: () => ({ key: 'canned.test.openLine.summary' }),
+})
+registerCannedShapeGenerator(foldLineShape)
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAIL: ${message}`)
@@ -382,6 +403,32 @@ function makeProject(
   assert(plateOutline.kind === 'direct' && plateOutline.featureId === 'plate', 'the generated outer outline is clickable')
 
   console.log('   ✓ generated outlines, not the frame, define the hit area')
+}
+
+{
+  console.log('13. Folded canned stripes on the Around sheet...')
+
+  // The straight line runs 20 circumferences across a 100-unit sheet, so only
+  // its first turn is inside the sheet before folding. The probe sits on the
+  // second turn's *drawn* stripe at across 50, where the unfolded line is at
+  // across 150.
+  const sheet: AroundWrapWindow = { axis: 'x', sheetStart: 0, circumference: 100 }
+  const folded: FeatureLike = {
+    id: 'folded-thread',
+    visible: true,
+    sketch: { profile: rectProfile(0, 0, 200, 2000) },
+    canned: { kind: 'test-fold-line', params: { length: 200, across: 2000 } },
+    operation: 'line',
+  }
+  const probe = { x: 15, y: 50 }
+  assert(findHitFeatureId(probe, [folded], vt, sheet) === 'folded-thread',
+    'a folded stripe selects the canned shape where it is drawn')
+  assert(findHitFeatureId(probe, [folded], vt) === null,
+    'without the sheet the stripe is not where the unfolded line lies')
+  assert(resolveFeatureSelectionHit(probe, [folded], vt, sheet).kind === 'direct',
+    'the selection resolution folds the same way as hover')
+
+  console.log('   ✓ folded stripes are hit where they are drawn')
 }
 
 console.log('\nall hitTest.test.ts assertions passed')

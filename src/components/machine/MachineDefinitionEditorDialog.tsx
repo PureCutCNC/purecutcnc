@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom'
 import { resolveOutputDialect, rotaryWord } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { DisclosureSection } from '../common/DisclosureSection'
+import { formHasChanges } from '../common/formDraft'
 import {
   toFormData,
   mergeFormData,
@@ -168,7 +169,16 @@ function renderVar(name: string, desc: string, context?: string) {
   )
 }
 
-  const canSave = mergedDef !== null && !jsonError
+  // The definition this dialog opened on, in the shape the Advanced editor
+  // holds: the JSON round trip is the one Save itself parses, so an untouched
+  // definition cannot differ by a key the round trip does not carry. Save
+  // writes nothing in that case, so it is disabled rather than silently
+  // re-selecting the machine (issue #1112 F4).
+  const savedDefinition = useMemo(
+    () => validateDef(JSON.parse(JSON.stringify(definition))).ok ?? definition,
+    [definition],
+  )
+  const canSave = mergedDef !== null && !jsonError && formHasChanges(savedDefinition, mergedDef)
 
   // A ShopBot machine's program is written by the emitter, not from this
   // definition's command words and templates (issue #953). Showing those

@@ -23,7 +23,7 @@ import {
   profilePathLength,
   type FeatureDistributionSpec,
 } from '../../sketch/featureDistribution'
-import { aroundSketchAuthoringRefused, faceAngles, faceOffsets } from '../helpers/activeFace'
+import { aroundSheetAuthoringRefused, faceAngles, faceOffsets, featureOperation } from '../helpers/activeFace'
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
@@ -204,7 +204,7 @@ export function createFeatureDistributionSlice(
         // modes alike, before the source placement moves, the pending request
         // clears, or any history/selection write. Top and STL distribution is
         // unaffected (issue #1016 C2-U1G).
-        if (created.some((feature) => aroundSketchAuthoringRefused(s.project, feature.authoringFace ?? 'top'))) {
+        if (created.some((feature) => aroundSheetAuthoringRefused(s.project, feature.authoringFace ?? 'top', featureOperation(s.project, feature)))) {
           return {}
         }
         const definitions = extractClonedDefinitions(created)

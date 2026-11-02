@@ -39,6 +39,8 @@ import type {
   STLFeatureData,
 } from '../types/project'
 import { generateCannedShapeMesh } from './index'
+import { getCannedShapeGenerator } from './registry'
+import type { CannedModelZAnchor } from './types'
 
 /** `Project.modelAssets` key for one definition's generated mesh. */
 export function cannedShapeModelAssetId(definitionId: string): string {
@@ -53,6 +55,8 @@ export interface RebuiltCannedShapeModel {
   meshHeight: number
   /** The uniform scale kept from the definition, applied to the mesh on load. */
   scale: number
+  /** Where the regenerated height grows from: an instance's bottom or centre. */
+  zAnchor: CannedModelZAnchor
 }
 
 /**
@@ -107,6 +111,7 @@ export function rebuildCannedShapeModel(
     asset,
     meshHeight: oriented.bounds.maxZ - oriented.bounds.minZ,
     scale,
+    zAnchor: getCannedShapeGenerator(definition.canned.kind)?.modelZAnchor ?? 'bottom',
   }
 }
 
@@ -123,12 +128,10 @@ function numericDimension(
 }
 
 /**
- * The instance Z top that makes the regenerated mesh fill its placed span with
- * no Z stretch: the mesh's own height, at the user's uniform scale, measured up
- * from the instance's existing bottom. Consumers (`loadSTLTransformedGeometry`,
- * the 3D preview, simulation, bounds and toolpaths) all read the instance span,
- * so this is the one place a regenerated dimension reaches them — including
- * every linked copy, which keeps its own bottom and gets the same height.
+ * The instance Z top that makes a freshly created bottom-anchored model fill
+ * its draft span with no Z stretch: the mesh's own height, at the user's
+ * uniform scale, measured up from the draft's bottom. Creation has no earlier
+ * placement to preserve, so the bottom stays where the draft put it.
  */
 export function cannedModelZTop(
   project: Pick<Project, 'dimensions'>,
@@ -139,9 +142,35 @@ export function cannedModelZTop(
 }
 
 /**
- * Apply regenerated mesh heights to every instance of the rebuilt definitions.
- * A linked copy shares the definition but not its placement, so each row keeps
- * its own `z_bottom` and gets the new height above it.
+ * The span one instance takes after its definition's mesh is regenerated.
+ *
+ * A model's placement belongs to the instance, so linked copies keep their own
+ * placement while the shared definition changes. A bottom-anchored model keeps
+ * `z_bottom` and grows upward. A centred model (Turn, Polygon) keeps the centre
+ * of its existing span, so a diameter change keeps it on the bar's pivot rather
+ * than hanging from its old bottom; the user's `stl.scale` is already folded
+ * into `meshHeight`.
+ */
+export function cannedModelSpan(
+  project: Pick<Project, 'dimensions'>,
+  zBottom: DimensionRef,
+  zTop: DimensionRef,
+  rebuilt: Pick<RebuiltCannedShapeModel, 'meshHeight' | 'scale' | 'zAnchor'>,
+): { zBottom: number; zTop: number } {
+  const height = rebuilt.meshHeight * rebuilt.scale
+  const bottom = numericDimension(project, zBottom)
+  if (rebuilt.zAnchor !== 'center') {
+    return { zBottom: bottom, zTop: bottom + height }
+  }
+  const centre = (bottom + numericDimension(project, zTop)) / 2
+  return { zBottom: centre - height / 2, zTop: centre + height / 2 }
+}
+
+/**
+ * Apply regenerated mesh dimensions to every instance of the rebuilt
+ * definitions. A linked copy shares the definition but not its placement, so
+ * each row keeps its own anchor (bottom or centre) and gets the new height
+ * there.
  */
 export function applyCannedShapeModelSpans(
   project: Pick<Project, 'dimensions'>,
@@ -153,10 +182,15 @@ export function applyCannedShapeModelSpans(
   const next = features.map((instance) => {
     const rebuilt = models.get(instance.definitionId)
     if (!rebuilt) return instance
-    const zTop = cannedModelZTop(project, instance.z_bottom, rebuilt)
-    if (Math.abs(numericDimension(project, instance.z_top) - zTop) < 1e-9) return instance
+    const span = cannedModelSpan(project, instance.z_bottom, instance.z_top, rebuilt)
+    if (
+      Math.abs(numericDimension(project, instance.z_bottom) - span.zBottom) < 1e-9
+      && Math.abs(numericDimension(project, instance.z_top) - span.zTop) < 1e-9
+    ) {
+      return instance
+    }
     changed = true
-    return { ...instance, z_top: zTop }
+    return { ...instance, z_bottom: span.zBottom, z_top: span.zTop }
   })
   return changed ? next : features
 }

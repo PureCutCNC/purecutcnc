@@ -326,6 +326,52 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
     await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
   })
 
+  // The reported failure of issue #1112 item 35: a custom machine (a Grbl copy
+  // with its own rotary axis) selected in a rotary project could not export,
+  // while the dialog named a machine. The machine here is the project's own
+  // embedded snapshot — `builtin: false`, its own id — so this is exactly the
+  // state a saved `.camj` file is in.
+  test('a custom rotary machine in a rotary project exports, and the dialog names it', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
+    await ui.face.switchTo(page, 'Around')
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    // The header names the project's own machine, not a bundled one.
+    await expect(ui.exportDialog.machineName(page)).toHaveText('E2E Around Rotary X')
+    // Nothing refuses the export, the preview is real G-code, and Save is
+    // offered — the three things the report said were missing.
+    await expect(ui.exportDialog.errors(page)).toHaveCount(0)
+    await expect(ui.exportPreview.body(page)).toContainText(/A-?\d/)
+    await expect(ui.exportDialog.exportButton(page)).toBeEnabled()
+  })
+
+  // The other half of the same report: the pane used to say "Select a machine
+  // in project settings" for every state without a program, so a project whose
+  // machine *is* selected — the header names it — told the operator to select
+  // one. The export checklist opens with its operations ticked; deselecting them
+  // is a no-preview state that names itself, and the machine is still resolved
+  // throughout (issue #1112, item 35).
+  test('a resolved machine with nothing ticked names the selection, not a missing machine', async ({ app, ui }) => {
+    const { page } = app
+    await seedProject(page, JSON.stringify(aroundProject({ machine: 'rotary-x' })))
+    await ui.face.switchTo(page, 'Around')
+    await drawRect(page, ...fixtureRect('mm'))
+    await addAroundPocket(page, ui)
+
+    await ui.operations.headerExportButton(page).click()
+    await expect(ui.exportDialog.root(page)).toBeVisible()
+    await expect(ui.exportDialog.machineName(page)).toHaveText('E2E Around Rotary X')
+    await ui.exportDialog.selectionToggle(page).click()
+
+    await expect(ui.exportPreview.body(page)).toContainText('no operation is ticked for export')
+    await expect(ui.exportPreview.body(page)).not.toContainText('Select a machine in project settings')
+    await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+  })
+
   test('a plain router on a rotary project blocks the export in the dialog', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'plain' })))
@@ -335,9 +381,13 @@ test.describe('the export boundary still refuses a rotary job (#1034)', () => {
 
     await ui.operations.headerExportButton(page).click()
     await expect(ui.exportDialog.root(page)).toBeVisible()
+    // The machine is the right family and short one axis, so the refusal names
+    // the missing rotary axis rather than calling the choice of machine wrong
+    // (issue #1112, item 35).
     await expect(
-      ui.exportDialog.errors(page).filter({ hasText: 'does not match this rotary project' }),
-    ).toContainText('E2E Around Router')
+      // The operation's own line repeats the reason, so pick the machine's line.
+      ui.exportDialog.errors(page).filter({ hasText: /^The selected machine/ }),
+    ).toContainText('"E2E Around Router" has no rotary axis')
     await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
   })
 
@@ -364,8 +414,9 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   // ── The switch, the banner and the empty Around layer ──
   await ui.face.switchTo(page, 'Around')
   await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
-  // The explanation is the Around entry's tooltip; desktop has no banner row (issue #1102).
-  await expect(ui.face.banner(page)).toHaveCount(0)
+  // The explanation is the Around entry's tooltip, and the control lives at the
+  // right end of the centre panel's tab bar (issue #1112 F3).
+  await expect(ui.face.tabBarControl(page)).toHaveCount(1)
   // A flat face and Around share no plane: the other-side entry is gone.
   await ui.face.current(page).click()
   await expect(ui.face.item(page, 'Around')).toHaveAttribute('title', /^The bar turns in the rotary\./)
@@ -409,8 +460,9 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
   await expect(ui.setupCam.section(page, 'around')).toContainText('No operations')
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
-  // An Around setup gets no cross-face target picker.
-  await expect(ui.setupCam.addMenu(page).locator('.cam-cross-face-picker')).toHaveCount(0)
+  // An Around setup gets no cross-face target checklist, and the Add menu
+  // carries no per-operation Cuts list (that lives on the operation).
+  await expect(ui.setupCam.addMenu(page).locator('[data-operation-cuts]')).toHaveCount(0)
   const pocketRow = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
@@ -465,12 +517,16 @@ test('Around on a rotary bar: banner, tree layer, Z properties, CAM, export and 
 test.describe('Around on a tablet with no rotary machine (#1034)', () => {
   test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
 
-  test('the around switch is usable by focus, the menus name the project type, and undo is one step', async ({ app, ui }) => {
+  test('the around switch is usable by focus, the Around menu is wrapped work only, and undo is one step', async ({ app, ui }) => {
     const { page } = app
     await seedProject(page, JSON.stringify(aroundProject({ machine: 'none' })))
 
-    // The tablet shell carries the control in the face row, still enabled.
+    // The tablet shell carries the control in its top command bar, beside the
+    // Sketch / 3D / Sim switch, still enabled (issue #1112 rt5-a item 37; the
+    // workspace header row it used to sit on is gone).
     const control = ui.face.current(page)
+    await expect(ui.face.topBarControl(page)).toBeVisible()
+    await expect(page.locator('.centre-workspace > .panel-tabs-header')).toHaveCount(0)
     await expect(control).toBeVisible()
 
     // Keyboard: focus the control, open the menu and walk to the Around entry.
@@ -493,18 +549,98 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
     await page.keyboard.press('ControlOrMeta+z')
     expect((await getProject(page) as unknown as SavedProject).features).toHaveLength(0)
 
-    // The corrected Add menu: the plasma row names the project type, not a machine.
+    // The corrected Add menu: Around shows only what Around can do, so the
+    // flat plasma cut is not offered there at all (issue #1112 K, decision 5).
+    // It stays on the flat faces, blocked by the project type (#960/#1034).
     await drawRect(page, 20, ZERO + 8, 40, ZERO + 12)
     const redrawn = await getProject(page) as unknown as SavedProject
     await selectFeatures(page, [redrawn.features[0].id])
     await ui.operations.openPanelButton(page).click()
     await ui.setupCam.add(page).click()
     await expect(ui.setupCam.addMenu(page)).toBeVisible()
-    await ui.operations.addMenuUnavailableToggle(page).click()
-    const plasmaRow = ui.operations.addMenuUnavailableRows(page).filter({ hasText: 'Plasma through-cut' })
-    await expect(plasmaRow).toHaveCount(1)
-    await expect(plasmaRow.locator('.cam-operation-hint__text')).toHaveText(
-      'Needs a plasma project. The type is chosen when the project is created.',
-    )
+    const aroundMenu = ui.setupCam.addMenu(page)
+    await expect(aroundMenu.locator('.cam-operation-item').filter({ hasText: 'Plasma through-cut' })).toHaveCount(0)
+    // The wrapped rows Around can do are still there.
+    await expect(
+      aroundMenu.locator('.cam-operation-item').filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) }),
+    ).toHaveCount(1)
   })
+})
+
+test('kept Around sheet work warns on its tree row and operation after the bar turns square (#1112 K)', async ({ app, ui }) => {
+  const { page } = app
+  await seedProject(page, JSON.stringify(aroundProject()))
+  await ui.face.switchTo(page, 'Around')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+
+  // Draw the sheet cut and add its pocket through the real menu.
+  await drawRect(page, ...fixtureRect('mm'))
+  const drawn = await getProject(page) as unknown as SavedProject
+  const featureId = drawn.features[0].id
+  expect(drawn.features[0].authoringFace).toBe('around')
+  await selectFeatures(page, [featureId])
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  await ui.setupCam.addMenu(page)
+    .locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+    .getByRole('button', { name: 'Rough', exact: true })
+    .click()
+  const pocketOp = ui.operations.rowByName(page, 'Pocket Rough')
+  await expect(pocketOp).toBeVisible()
+
+  // While the stock is a round bar both still cut: nothing is flagged.
+  await expect(featureRow(page, featureId).locator('[data-uncut-work]')).toHaveCount(0)
+  await expect(pocketOp.locator('[data-uncut-work]')).toHaveCount(0)
+
+  // Turn the bar into a square blank: the wrapped sheet work is kept, and both
+  // the feature row and the operation say why they can no longer cut. Neither
+  // is dropped or hidden.
+  await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().setStockShape('square')
+  })
+  const featureWarning = featureRow(page, featureId).locator('[data-uncut-work]')
+  await expect(featureWarning).toBeVisible()
+  await expect(featureWarning).toHaveAttribute(
+    'title',
+    /^Kept, but it cannot be cut: a square blank cannot machine around sheet work/,
+  )
+  const operationWarning = pocketOp.locator('[data-uncut-work]')
+  await expect(operationWarning).toBeVisible()
+  await expect(operationWarning).toHaveAttribute(
+    'title',
+    /^Kept, but it cannot be cut: a square blank only machines a rotary rough or finish/,
+  )
+
+  // The stock-blocked rows are in the menu itself, disabled with the reason:
+  // "Not available on a square bar yet" must not live behind an expand step
+  // (review of K). That is decision 17's wording — turning the blank works, it
+  // is the sheet work that is missing, so "Needs a round bar" was wrong here.
+  await ui.setupCam.add(page).click()
+  await expect(ui.setupCam.addMenu(page)).toBeVisible()
+  const squarePocketRow = ui.setupCam.addMenu(page)
+    .locator('.cam-operation-item')
+    .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
+  await expect(squarePocketRow).toBeVisible()
+  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Not available on a square bar yet')
+  await expect(squarePocketRow.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(ui.setupCam.addMenu(page)).toBeHidden()
+
+  // The selected operation's panel repeats the reason in a sentence.
+  if (!(await pocketOp.evaluate((element) => element.classList.contains('tree-row--selected')))) {
+    await pocketOp.click()
+  }
+  await expect(pocketOp).toHaveClass(/tree-row--selected/)
+  await expect(page.locator('.cam-operation-properties [data-uncut-work]')).toContainText(
+    'Kept, but it cannot be cut: a square blank only machines a rotary rough or finish against a model.',
+  )
+
+  // A ghost operation keeps its warning: switching to Top hides the row's
+  // editing, not the reason it cannot cut (review of K).
+  await ui.face.switchTo(page, 'Top')
+  const ghostPocket = ui.operations.rowByName(page, 'Pocket Rough')
+  await expect(ghostPocket).toHaveAttribute('data-ghost', 'true')
+  await expect(ghostPocket.locator('[data-uncut-work]')).toBeVisible()
 })

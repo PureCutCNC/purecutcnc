@@ -45,6 +45,7 @@ import {
   LIGHTING_GLSL,
   ROUND_BAR_SILHOUETTE_GLSL,
   SLOPE_GRADIENT_GLSL,
+  SQUARE_BLANK_SILHOUETTE_GLSL,
   STEP_GLSL,
   SURFACE_NORMAL_GLSL,
 } from './heightfieldShader'
@@ -95,7 +96,7 @@ export const ROUND_BAR_WALL_JOIN_GLSL = /* glsl */ `
   }
 `
 
-const wallVertexShader = (flatRoundBar: boolean): string => /* glsl */ `
+const wallVertexShader = (flatRoundBar: boolean, squareBlank: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform float uStockBottomZ;
   // The lowest Y a heightfield wall may reach. The stock bottom for every
@@ -115,7 +116,9 @@ ${flatRoundBar ? `  // Flat round-bar join (issue #1049): the lower half the wal
   uniform float uBarAxis;
   uniform int uCols;
   uniform int uRows;
-` : ''}
+` : ''}${squareBlank ? `  // The square blank's side, for the silhouette its own cross-section draws.
+  uniform float uBlankSide;
+` : ''}${squareBlank ? SQUARE_BLANK_SILHOUETTE_GLSL : ''}
   ${AROUND_FRAME_GLSL}
 #ifdef AROUND_WRAP
   out float vAcross;
@@ -242,7 +245,12 @@ ${flatRoundBar ? `    // A flat round bar lights in world space like the lower h
       vSlope = 0.0;
     }
     pos = aroundClampSheet(pos);
-    vAcross = uAroundX ? pos.z : pos.x;
+${squareBlank ? `    // A square blank's section is widest at its cell centres, so a wall can
+    // straddle the blank's true surface: clamp it back onto the square the
+    // heightfield stands for, and the fin under the uncut ends is gone
+    // (issue #1112 rt3-b).
+    pos.y = squareBlankSilhouetteRadius(uBlankSide, 6.283185307179586 * ((uAroundX ? pos.z : pos.x) - uAroundZero) / uAroundPeriod, pos.y);
+` : ''}    vAcross = uAroundX ? pos.z : pos.x;
     vNormal = normalize(mat3(modelMatrix) * aroundSurfaceNormal(direction * edgePerp, vAcross));
     pos = aroundPosition(pos);
 #endif
@@ -461,8 +469,12 @@ export function createInstancedWallMaterial(
   frame?: AroundFrame,
   wallFloorZ?: number,
   flatRoundBar?: FlatRoundBarDescriptor,
+  squareBlankSide?: number,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
+  // The wrapped bar view of a square blank is the only scene that can draw a
+  // wall outside the blank; everything else compiles the shader it always has.
+  const blankSide = frame === undefined ? undefined : squareBlankSide
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
@@ -479,8 +491,9 @@ export function createInstancedWallMaterial(
             uBarAxis: { value: flatRoundBar.axis === 'x' ? 0 : 1 },
           }
         : {}),
+      ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
     },
-    vertexShader: aroundShader(wallVertexShader(roundBar), frame),
+    vertexShader: aroundShader(wallVertexShader(roundBar, blankSide !== undefined), frame),
     fragmentShader: aroundShader(wallFragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
@@ -516,6 +529,12 @@ export function createFloorMaterial(
  * floor quad and its walls land on that surface instead of the equator plane
  * (issue #1049 follow-up). A block, square blank or Around grid passes no
  * descriptor and builds exactly the same three meshes it always has.
+ *
+ * `squareBlankSide` (issue #1112 rt3-b) only changes the two wall shaders, and
+ * only in the wrapped view: each wall is clamped onto the blank's own
+ * cross-section, so the bar view cannot draw a wall outside the square it
+ * represents. No mesh is added or removed, and a block or a round bar passes
+ * nothing.
  */
 export function createInstancedBoundaryGroup(
   heightfieldTexture: THREE.DataTexture,
@@ -524,6 +543,7 @@ export function createInstancedBoundaryGroup(
   frame?: AroundFrame,
   wallFloorZ?: number,
   flatRoundBar?: FlatRoundBarDescriptor,
+  squareBlankSide?: number,
 ): THREE.Group {
   const roundBar = flatRoundBar !== undefined
   const group = new THREE.Group()
@@ -532,7 +552,7 @@ export function createInstancedBoundaryGroup(
   // Vertical edges: (cols+1) per row × rows instances.
   const verticalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols + 1, grid.rows),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ, flatRoundBar),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ, flatRoundBar, squareBlankSide),
   )
   verticalWalls.frustumCulled = false
   group.add(verticalWalls)
@@ -540,7 +560,7 @@ export function createInstancedBoundaryGroup(
   // Horizontal edges: cols per row boundary × (rows+1) instances.
   const horizontalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols, grid.rows + 1),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ, flatRoundBar),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ, flatRoundBar, squareBlankSide),
   )
   horizontalWalls.frustumCulled = false
   group.add(horizontalWalls)

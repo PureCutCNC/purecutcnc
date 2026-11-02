@@ -324,6 +324,13 @@ export type TextLayout =
       /** Walk the guide backwards. The path analogue of `direction` above. */
       reversed: boolean
       orientation: TextBaselineOrientation
+      /**
+       * The feature the path was copied from, when it is still known. The path
+       * itself stays baked (deleting or editing the source cannot break the
+       * run); this only lets Properties offer "Refresh" to copy it again
+       * (issue #1112 slice E). Absent on runs wrapped before the field existed.
+       */
+      sourceFeatureId?: string
     }
 
 export interface TextFeatureData {
@@ -1010,10 +1017,26 @@ export function isTrochoidalPocket(operation: Operation): boolean {
 
 export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw' | 'chuck' | 'tailstock'
 
+/** Optional 3.3 chuck data. Missing means legacy equipment; never inferred on load. */
+export interface ChuckData {
+  size?: string
+  /** Physical equipment capacity in millimetres, independent of project units. */
+  clampingRangeMm?: { min: number; max: number }
+  jawCount?: 3 | 4 | 6
+  /**
+   * The operator described this chuck by hand — a size pick, a jaw count, a
+   * typed capacity or a dragged body. A stock size or shape change then leaves
+   * its equipment alone, while an untouched default follows the bar (#1112 R2
+   * item 23). Missing is the default/legacy reading: additive, no format bump.
+   */
+  manual?: boolean
+}
+
 export interface Clamp {
   id: string
   name: string
   type: ClampType
+  chuck?: ChuckData
   x: number
   y: number
   w: number
@@ -2061,7 +2084,7 @@ export function profileHasSelfIntersection(profile: SketchProfile): boolean {
   return false
 }
 
-export function getStockBounds(stock: Stock): Bounds2D {
+export function getStockBounds(stock: Pick<Stock, 'profile'>): Bounds2D {
   return getProfileBounds(stock.profile)
 }
 

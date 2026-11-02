@@ -15,21 +15,45 @@
  */
 
 import { defaultTool, newProject, rectProfile, roundStock } from '../types/project'
-import type { OperationKind, Project, SketchFeature } from '../types/project'
+import type { OperationKind, Project, ProjectMeta, SketchFeature } from '../types/project'
 import { computeMeshBounds, serializeImportedMesh } from '../engine/importedMesh'
 import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
+import { convertLength } from '../utils/units'
 import { projectWithFeatures } from './projectFixtures'
 
-/** A small closed asymmetric prism placed inside a bar, plus a 2D Around feature. */
-export function rotaryOperationFixture(axis: 'x' | 'y' = 'x', kind: OperationKind = 'rotary_finish'): Project {
-  const base = newProject('Rotary operation fixture', 'mm')
+/**
+ * A small closed asymmetric prism placed inside a bar, plus a 2D Around feature.
+ *
+ * `units` is the project's own unit system, and it scales **every** length in
+ * the fixture — stock, prism, sketch profile, Z bounds, chuck and tool — rather
+ * than relabelling a millimetre project. The default is millimetres. The inch
+ * form exists for issue #1112 item 35, whose reported project is an inch rotary
+ * project, so the export that reads this fixture takes the reported project's
+ * unit path (G20, four decimal places) rather than the millimetre one.
+ */
+export function rotaryOperationFixture(
+  axis: 'x' | 'y' = 'x',
+  kind: OperationKind = 'rotary_finish',
+  units: ProjectMeta['units'] = 'mm',
+): Project {
+  // Every dimension below is a millimetre value in the original fixture; `len`
+  // converts it into the project's units, so mm is exactly the old fixture.
+  const len = (millimetres: number) => convertLength(millimetres, 'mm', units)
+  const base = newProject('Rotary operation fixture', units)
   base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
-  base.meta.maxTravelZ = 25
+  base.meta.maxTravelZ = len(25)
   // A rotary project: the Around face, its setup and the rotary operations
   // exist only in one (issue #1028).
   base.meta.projectType = 'rotary'
-  base.stock = roundStock(12, 30, axis)
-  base.tools = [{ ...defaultTool('mm', 1), id: 't1', type: 'ball_endmill', diameter: 2, defaultStepover: 0.8, defaultStepdown: 1 }]
+  base.stock = roundStock(len(12), len(30), axis)
+  base.tools = [{
+    ...defaultTool(units, 1),
+    id: 't1',
+    type: 'ball_endmill',
+    diameter: len(2),
+    defaultStepover: len(0.8),
+    defaultStepdown: len(1),
+  }]
   const positions = new Float32Array([
     3, -2, 4, 27, -2, 4, 27, 2, 4, 3, 2, 4,
     3, -2, 8, 27, -2, 9, 27, 2, 9, 3, 2, 8,
@@ -38,22 +62,37 @@ export function rotaryOperationFixture(axis: 'x' | 'y' = 'x', kind: OperationKin
   for (let i = 0; i < positions.length; i += 3) {
     positions[i + 1] += 6
     if (axis === 'y') [positions[i], positions[i + 1]] = [positions[i + 1], positions[i]]
+    positions[i] = len(positions[i])
+    positions[i + 1] = len(positions[i + 1])
+    positions[i + 2] = len(positions[i + 2])
   }
   const index = new Uint32Array([0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7])
   base.modelAssets = { asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl') }
-  const profile = axis === 'x' ? rectProfile(3, 4, 24, 4) : rectProfile(4, 3, 4, 24)
+  const profile = axis === 'x'
+    ? rectProfile(len(3), len(4), len(24), len(4))
+    : rectProfile(len(4), len(3), len(4), len(24))
   const model: SketchFeature = {
     id: 'model', name: 'Model', kind: 'stl', operation: 'model', authoringFace: 'top', folderId: null,
     sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
-    z_top: 9, z_bottom: 4, visible: true, locked: false,
+    z_top: len(9), z_bottom: len(4), visible: true, locked: false,
   }
-  const around: SketchFeature = { ...model, id: 'sketch', name: 'Sketch', kind: 'rect', operation: 'subtract', stl: null, authoringFace: 'around', z_top: 12, z_bottom: 10 }
+  const around: SketchFeature = { ...model, id: 'sketch', name: 'Sketch', kind: 'rect', operation: 'subtract', stl: null, authoringFace: 'around', z_top: len(12), z_bottom: len(10) }
   const project = projectWithFeatures(base, [model, around])
   project.setups.push({ ...project.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 } })
   project.activeSetupId = 'around'
-  project.clamps = [{ id: 'chuck', name: 'Chuck', type: 'chuck', x: 0, y: 0, w: axis === 'x' ? 2 : 12, h: axis === 'x' ? 12 : 2, height: 14, visible: true }]
-  project.operations = [{ ...defaultOperationForTarget(project, kind, 'rough', { source: 'features', featureIds: ['model'] }, 0), setupId: 'around', stockToLeaveRadial: 0.4 }]
+  project.clamps = [{
+    id: 'chuck', name: 'Chuck', type: 'chuck', x: 0, y: 0,
+    w: axis === 'x' ? len(2) : len(12),
+    h: axis === 'x' ? len(12) : len(2),
+    height: len(14),
+    visible: true,
+  }]
+  project.operations = [{
+    ...defaultOperationForTarget(project, kind, 'rough', { source: 'features', featureIds: ['model'] }, 0),
+    setupId: 'around',
+    stockToLeaveRadial: len(0.4),
+  }]
   return project
 }
 

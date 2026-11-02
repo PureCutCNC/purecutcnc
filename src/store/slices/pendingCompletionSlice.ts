@@ -33,6 +33,7 @@ import type { ProjectStore } from '../types'
 import { transformProfile } from '../../geometry/profile'
 import { translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
+import { moveCannedRotaryFeatures, rotaryCopyStepDelta, rotaryMoveTranslateDelta } from '../helpers/rotaryMove'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -58,7 +59,7 @@ import {
   restoreResolvedFeatureMetadata,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
-import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import { isCannedFeature } from '../../cannedShapes'
 
 export interface PendingCompletionSliceDependencies {
@@ -102,10 +103,12 @@ function instanceFromReferencedDraft(feature: ReferencedSketchFeature): FeatureI
  * their source's {@link SketchFeature.authoringFace}, and copies spread their
  * source row (`copyFeatures.ts`), so the resulting faces are what the policy
  * judges — not the current workspace face. All of these insert directly rather
- * than through `addFeature`. An unset face means Top and is never refused.
+ * than through `addFeature`. An unset face means Top and is never refused, and
+ * a derived region or construction row never cuts the sheet, so it is admitted
+ * there (issue #1112 decision 17).
  */
 function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
-  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
 }
 
 /**
@@ -118,7 +121,7 @@ function derivedAroundAuthoringRefused(project: Project, features: readonly Sket
 function pendingJoinWouldAuthorRefusedAround(project: Project, entityIds: string[]): boolean {
   const features = resolveFeatureInstances(project, entityIds)
     .filter((feature) => feature.sketch.profile.closed)
-  return features.length >= 2 && aroundSketchAuthoringRefused(project, features[0].authoringFace)
+  return features.length >= 2 && aroundSheetAuthoringRefused(project, features[0].authoringFace, featureOperation(project, features[0]))
 }
 
 export function createPendingCompletionSlice(
@@ -134,8 +137,8 @@ export function createPendingCompletionSlice(
         }
 
         const { entityIds, entityType, fromPoint, mode } = s.pendingMove
-        const dx = toPoint.x - fromPoint.x
-        const dy = toPoint.y - fromPoint.y
+        let dx = toPoint.x - fromPoint.x
+        let dy = toPoint.y - fromPoint.y
 
         if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
           return { pendingMove: null }
@@ -175,6 +178,47 @@ export function createPendingCompletionSlice(
         }
 
         if (entityType === 'feature') {
+          // A canned rotary feature (Turn, Polygon, Thread, Flutes) moves its
+          // *band* along the bar, not a free 2D offset (issue #1112 rt6-d item
+          // 42). The projection lives in `rotaryMove.ts`, which the canvas
+          // preview calls too, so what is drawn during the drag is what is
+          // stored: the start the edit panel shows, the regenerated model and
+          // every Thread/Flutes following a Turn. `null` means "not this kind of
+          // move", and the generic translate below runs unchanged.
+          if (mode === 'move') {
+            const rotaryMove = moveCannedRotaryFeatures(s.project, entityIds, fromPoint, toPoint)
+            if (rotaryMove) {
+              if (projectsEqual(rotaryMove, s.project)) {
+                return { pendingMove: null }
+              }
+              return {
+                project: { ...rotaryMove, meta: { ...rotaryMove.meta, modified: new Date().toISOString() } },
+                pendingMove: null,
+                history: {
+                  past: [...s.history.past, cloneProject(s.project)].slice(-100),
+                  future: [],
+                  transactionStart: null,
+                },
+              }
+            }
+          }
+
+          // A copy of a canned rotary feature is placed like a move of one
+          // (issue #1112 rt7-f): Frank's copy slid off the bar's axis while a
+          // move of the same shape stayed on it. The copy is still a new row
+          // and the source band still stays where it is — what changes is only
+          // *where* the row lands: the same projected, clamped displacement the
+          // preview drew, so a copy travels along the bar, keeps within its
+          // ends, and every kind's copy stays a band on the axis. A
+          // non-rotary selection gets its own displacement back unchanged. For
+          // a move this is also the fallback when the shared band cannot be
+          // written (a linked copy outside the selection, or a start the
+          // kind's own generator refuses — the reviews of rt6-d), so what the
+          // outline was dragged to is still what is stored.
+          const projected = rotaryMoveTranslateDelta(s.project, entityIds, dx, dy)
+          dx = projected.dx
+          dy = projected.dy
+
           const sourceFeatures = entityIds
             .map((featureId) => featureById(s.project, featureId))
             .filter((feature): feature is ResolvedSketchFeature => feature !== null)
@@ -194,6 +238,10 @@ export function createPendingCompletionSlice(
                   normalizedCopyCount,
                   s.project.featureDefinitions,
                   effectiveCopyMode,
+                  // Each copy is placed from where the one before it landed, so
+                  // the bar's clamp applies to every placement rather than to
+                  // the first one only (issue #1112 rt7-f review).
+                  (step) => rotaryCopyStepDelta(s.project, entityIds, dx, dy, step),
                 )
               : []
 

@@ -93,6 +93,8 @@ const noop = (): void => {}
 
 const actions: FeatureTreeActions = {
   editSketch: noop,
+  editCannedShape: noop,
+  expandCannedFeature: noop,
   constraint: noop,
   copyFeature: noop,
   makeUnique: noop,
@@ -186,6 +188,7 @@ function menuProps(
     menuHasLockedSelection: false,
     menuFeatureHasLinkedInstances: false,
     menuQuickOperations: [],
+    menuFeatureTargetableFromFace: false,
     quickOpsSubmenu: null,
     menuFeatureFolders: [],
     menuAddToOperationCandidates: [],
@@ -304,7 +307,6 @@ async function testCannedRefusalIsVisibleOnDesktopAndTablet(): Promise<void> {
   const { project, menuFeature } = cannedProject()
   const refusal = enMessages['sketch.canned.actionRefused']
   const cases: Array<[string, string]> = [
-    [enMessages['featureTree.contextMenu.editSketch'], enMessages['sketch.canned.editSketchRefused']],
     [enMessages['featureTree.contextMenu.addConstraint'], refusal],
     [enMessages['featureTree.contextMenu.offset'], refusal],
     [enMessages['featureTree.contextMenu.join'], refusal],
@@ -326,6 +328,13 @@ async function testCannedRefusalIsVisibleOnDesktopAndTablet(): Promise<void> {
       )
       assert(button.getAttribute('title') === reason, `${shell}: ${label} keeps the desktop title`)
     }
+    // A generated shape's one edit entry is its own editor: Edit sketch is not
+    // offered at all, so there is no second, disabled edit to read
+    // (issue #1112 rt7-i).
+    assert(
+      !buttons.some((candidate) => (candidate.textContent ?? '').startsWith(enMessages['featureTree.contextMenu.editSketch'])),
+      `${shell}: a canned shape shows no Edit sketch entry`,
+    )
     assert(
       html.includes('feature-context-menu__item-reason'),
       `${shell}: the reason line uses the shared menu-item presentation`,

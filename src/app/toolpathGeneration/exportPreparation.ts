@@ -284,11 +284,17 @@ export async function prepareExport(
   // #1028). Every program of it carries the refusal as an **error** warning, so
   // the dialog names the machine and disables Save through the same
   // `exportHasError` path any other refusing code takes — the postprocessor
-  // and the emitters stay untouched.
+  // and the emitters stay untouched. The two mismatch reasons get their own
+  // code: a router on a rotary project is the right family of machine missing
+  // its rotary axis, and saying so is the difference between a message the
+  // operator can act on and one that reads as "wrong machine" (issue #1112,
+  // item 35).
   const mismatch = projectMachineMismatch(token.project)
-  const mismatchWarning: ToolpathWarning | null = mismatch
-    ? { code: 'exportMachineTypeMismatch', params: { machine: mismatch.machineName, expected: mismatch.expected } }
-    : null
+  const mismatchWarning: ToolpathWarning | null = mismatch === null
+    ? null
+    : mismatch.reason === 'missing-rotary'
+      ? { code: 'exportMachineMissingRotaryAxis', params: { machine: mismatch.machineName } }
+      : { code: 'exportMachineTypeMismatch', params: { machine: mismatch.machineName, expected: mismatch.expected } }
 
   // One program per setup. The postprocessor sees the captured project, not
   // the live one: origin, units, names, tools and setups have to come from the

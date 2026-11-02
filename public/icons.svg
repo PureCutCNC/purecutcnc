@@ -323,11 +323,20 @@
     <path d="M 15.82842712474619 8 A 2.82842712474619 2.82842712474619 0 1 0 10.17157287525381 8 A 2.82842712474619 2.82842712474619 0 1 0 15.82842712474619 8 Z" />
     <path d="M 6 8 L 4 13 L 10 13 L 6 8 Z" />
   </symbol>
+  <symbol id="hex" viewBox="0 0 24 24">
+    <path d="M 1.5 12 H 22.5" stroke-dasharray="2.6 1.7 0.5 1.7" />
+    <path d="M 11.52 12 L 9.21 16 L 4.59 16 L 2.28 12 L 4.59 8 L 9.21 8 Z M 9.21 8 L 21 8 L 21 16 L 9.21 16" />
+  </symbol>
   <symbol id="import" viewBox="0 0 24 24">
     <path d="M 4 18 L 4 20 C 4 21.104569499661586, 4.8954305003384135 22, 6 22 L 18 22 C 19.104569499661586 22, 20 21.104569499661586, 20 20 L 20 8 L 14 2 L 6 2 C 4.8954305003384135 2, 4 2.8954305003384126, 4 4 L 4 12" />
     <path d="M 14 2 L 14 8 L 20 8" />
     <path d="M 2 15 L 12 15" />
     <path d="M 9 12 L 12 15 L 9 18" />
+  </symbol>
+  <symbol id="info" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M 12 11 L 12 16.5" />
+    <path d="M 12 7.4 L 12 7.45" />
   </symbol>
   <symbol id="language" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="9"/>
@@ -609,6 +618,10 @@
     <path d="M 3 12 L 12 12" />
     <path d="M 14 10 L 18 14" />
     <path d="M 18 10 L 14 14" />
+  </symbol>
+  <symbol id="turn" viewBox="0 0 24 24">
+    <path d="M 1.5 12 H 22.5" stroke-dasharray="2.6 1.7 0.5 1.7" />
+    <path d="M 2 7 L 9 7 C 11 7 12 9.5 14 9.5 L 21 9.5 L 21 14.5 L 14 14.5 C 12 14.5 11 17 9 17 L 2 17 Z" />
   </symbol>
   <symbol id="undo" viewBox="0 0 24 24">
     <path d="M 3 7 L 3 13 L 9 13" />

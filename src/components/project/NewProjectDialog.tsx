@@ -24,16 +24,21 @@ import { getStockBounds, newProject } from '../../types/project'
 import type { Project, ProjectType } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { setupOnlyTemplate } from './newProjectTemplate'
 import { decodeProjectFormat } from '../../store/helpers/projectFormat'
 import { rescueMachinesToLibrary } from '../../machine/store'
-import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
 import {
   blankTemplateProject,
   defaultBlankStockDraft,
   type BlankStockDraft,
   type BlockStockDraft,
 } from './newProjectStock'
+import {
+  isBlankTemplateKind,
+  newProjectType,
+  setupOnlyTemplate,
+  templateChosenProject,
+  type TemplateKind,
+} from './newProjectTemplate'
 import { machineCandidates } from '../../machine/registry'
 import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { PROJECT_TYPES, projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
@@ -41,8 +46,6 @@ import { projectTypeKeyNav, projectTypeMetaKey } from './newProjectProjectType'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
-
-type TemplateKind = 'blank_metric' | 'blank_imperial' | 'current' | 'file'
 
 interface NewProjectDialogProps {
   onClose: () => void
@@ -139,18 +142,31 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project).project, [project])
   const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate).project : null), [fileTemplate])
 
-  const isBlankTemplate = templateKind === 'blank_metric' || templateKind === 'blank_imperial'
+  const blankTemplate = isBlankTemplateKind(templateKind)
+
+  /**
+   * The type the dialog will create (issue #1112, item 24): the template's own
+   * for the current project and a template file, the tiles' choice for a
+   * blank template. A template brings its type, so the tiles are shown locked
+   * on it rather than offering a choice that would be discarded.
+   */
+  const chosenType = newProjectType(
+    templateKind,
+    projectTypeChoice,
+    templateKind === 'current' ? currentProjectTemplate : fileProjectTemplate,
+  )
   // The blank template's stock fields follow the type (issue #1046): rotary
   // asks for the bar it machines, milling and plasma keep width × height ×
   // thickness.
-  const usesBarStock = isBlankTemplate && projectTypeChoice === 'rotary'
+  const usesBarStock = blankTemplate && chosenType === 'rotary'
 
   /**
    * The project the dialog will create. A blank template's stock is built as
    * the shape its type machines (issue #1046) and the chosen type then sets
    * the stored type and, when the template's machine does not suit it, the
    * first matching machine from the picker's candidate list (issue #1028). A
-   * current or file template keeps today's behaviour.
+   * current or file template keeps its own type, stock, chuck and machine
+   * (issue #1112, item 24).
    */
   const chosenTemplate = useMemo<Project | null>(() => {
     switch (templateKind) {
@@ -164,18 +180,10 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
           barDraft,
         )
       case 'current':
-        return projectWithProjectType(
-          currentProjectTemplate,
-          projectTypeChoice,
-          machineCandidates(machineLibrary, getActiveMachineDefinition(currentProjectTemplate)),
-        )
+        return templateChosenProject('current', currentProjectTemplate, projectTypeChoice, machineLibrary)
       case 'file':
         if (!fileProjectTemplate) return null
-        return projectWithProjectType(
-          fileProjectTemplate,
-          projectTypeChoice,
-          machineCandidates(machineLibrary, getActiveMachineDefinition(fileProjectTemplate)),
-        )
+        return templateChosenProject('file', fileProjectTemplate, projectTypeChoice, machineLibrary)
     }
   }, [
     barDraft,
@@ -256,9 +264,13 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   /**
    * Arrow keys move the project type choice across the three tiles and take
    * focus with them, wrapping at both ends (issue #1102, proposal 16). Tab
-   * enters the group once, on the checked tile.
+   * enters the group once, on the checked tile. A template brings its own type
+   * (issue #1112, item 24), so the group is locked and the keys do nothing.
    */
   function handleProjectTypeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!blankTemplate) {
+      return
+    }
     const next = projectTypeKeyNav(projectTypeChoice, event.key)
     if (next === projectTypeChoice) {
       return
@@ -324,7 +336,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                 onKeyDown={handleProjectTypeKeyDown}
               >
                 {PROJECT_TYPES.map((type, index) => {
-                  const selected = projectTypeChoice === type
+                  const selected = chosenType === type
                   const label = t(projectTypeLabelKey(type))
                   return (
                     <button
@@ -337,6 +349,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                       aria-label={label}
                       aria-describedby={`new-project-type-${type}-meta`}
                       tabIndex={selected ? 0 : -1}
+                      disabled={!blankTemplate}
                       onClick={() => setProjectTypeChoice(type)}
                     >
                       <span className="project-template-card__title">{label}</span>
@@ -345,6 +358,9 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                   )
                 })}
               </div>
+              {blankTemplate ? null : (
+                <div className="new-project-type-note">{td('dialogs.newProject.projectTypeLocked')}</div>
+              )}
             </div>
 
             <div className="dialog-section-group">
@@ -419,9 +435,9 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                     <span>{td('dialogs.newProject.previewUnits')}</span>
                     <strong>{templateSummary.units}</strong>
                   </div>
-                  <div className={`project-template-preview__row ${isBlankTemplate ? 'project-template-preview__row--stock' : ''}`}>
+                  <div className={`project-template-preview__row ${blankTemplate ? 'project-template-preview__row--stock' : ''}`}>
                     <span>{td('dialogs.newProject.previewStock')}</span>
-                    {isBlankTemplate ? (
+                    {blankTemplate ? (
                       <div className={`new-project-stock-dimensions${usesBarStock ? ' new-project-stock-dimensions--bar' : ''}`}>
                         {usesBarStock ? (
                           <>
@@ -501,7 +517,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                       <strong>{templateSummary.stock}</strong>
                     )}
                   </div>
-                  {isBlankTemplate && !chosenTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
+                  {blankTemplate && !chosenTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
                   <div className="project-template-preview__row">
                     <span>{td('dialogs.newProject.previewFeatures')}</span>
                     <strong>{templateSummary.features}</strong>

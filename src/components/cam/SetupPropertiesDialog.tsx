@@ -19,8 +19,10 @@ import type { MachiningSetup, Project } from '../../types/project'
 import { setupFace } from '../../engine/setupOrientation'
 import { useProjectStore } from '../../store/projectStore'
 import { activeSetup } from '../../store/helpers/activeFace'
+import { formHasChanges } from '../common/formDraft'
 import { operationsDeletedWithSetup } from './setupSections'
 import { setupDialogSections } from './setupDialogSections'
+import { setupFormValues } from './setupFormValues'
 import { SetupDialogShell } from './SetupDialogShell'
 import { SetupRegistrationEditor } from './SetupRegistrationEditor'
 import { useI18n } from '../../i18n/i18nContext'
@@ -40,10 +42,18 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   const sections = setupDialogSections(face)
   const current = project.setups.find((entry) => entry.id === setup.id) ?? (activeSetup(project)?.id === setup.id ? activeSetup(project) : null)
   // A dialog cannot save over an intervening undo/edit to the setup.
-  const unchanged = current && JSON.stringify(current) === JSON.stringify(setup)
+  const storeUnchanged = Boolean(current) && JSON.stringify(current) === JSON.stringify(setup)
+  // Compare the draft with the saved setup through the values Save would write
+  // (issue #1112 F4): a field this face does not store cannot enable it, and a
+  // name typed back with different whitespace is not a change.
+  const draft: MachiningSetup = { ...setup, name, notes, orientation: { ...setup.orientation, axis }, registration }
+  const changed = formHasChanges(setupFormValues(setup, face), setupFormValues(draft, face))
+  const canSave = storeUnchanged && changed && name.trim() !== ''
   const removed = operationsDeletedWithSetup(project, setup.id)
   function save() {
-    if (!unchanged) return
+    // Save does nothing when the form still holds the values it opened on, so
+    // it is disabled rather than silently writing an empty undo step.
+    if (!canSave) return
     // An Around setup is not a flip: it has no face buttons, flip axis or
     // registration, so only its name and notes are written (issue #395).
     const next = face === 'around'
@@ -54,10 +64,10 @@ export function SetupPropertiesDialog({ setup: initialSetup, onClose }: { setup:
   return <SetupDialogShell title={t('cam.setup.propertiesFor', { name: setup.name })} onClose={close} footer={<>
     {deleting ? null : <button className="btn-secondary setup-dialog__delete" type="button" disabled={project.setups.length < 2 || !project.setups.some((entry) => entry.id === setup.id)} onClick={() => { setDeleteSnapshot(project); setDeleting(true) }}>{t('cam.setup.delete')}</button>}
     <button className="btn-secondary" type="button" onClick={close}>{t('dialogs.common.cancel')}</button>
-    {deleting ? <button className="btn-primary" type="button" disabled={!unchanged || deleteSnapshot !== project} onClick={() => { if (deleteSnapshot === project && deleteSetup(setup.id)) close() }}>{t('cam.setup.confirmDelete')}</button>
-      : <button className="btn-primary" type="button" disabled={!name.trim() || !unchanged} onClick={save}>{t('cam.setup.save')}</button>}
+    {deleting ? <button className="btn-primary" type="button" disabled={!storeUnchanged || deleteSnapshot !== project} onClick={() => { if (deleteSnapshot === project && deleteSetup(setup.id)) close() }}>{t('cam.setup.confirmDelete')}</button>
+      : <button className="btn-primary" type="button" disabled={!canSave} onClick={save}>{t('cam.setup.save')}</button>}
   </>}>
-    {!unchanged ? <p role="alert">{t('cam.setup.changed')}</p> : null}
+    {!storeUnchanged ? <p role="alert">{t('cam.setup.changed')}</p> : null}
     {deleting ? <><p>{t('cam.setup.deleteWarning', { name: setup.name })}</p><ul>{removed.map((operation) => <li key={operation.id}>{operation.name}</li>)}</ul><p>{t('cam.setup.deleteCount', { count: removed.length })}</p></> : <>
       <label className="properties-field"><span>{t('cam.operation.name')}</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
       {sections.faceUp ? <div className="properties-field"><span>{t('cam.setup.faceUp')}</span><span className={`face-chip face-chip--${face}`}>{t(face === 'bottom' ? 'cam.setup.bottom' : 'cam.setup.top')}</span></div> : null}

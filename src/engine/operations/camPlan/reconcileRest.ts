@@ -334,6 +334,7 @@ export function reconcileCamPlanDownstream(project: Project, plan: CamPlanDraft,
       draft.requiredCutDepth ?? requiredCutDepth(camPlanSetupProject(project), draft.operation),
       reusedToolIds,
       draft.maximumToolDiameter,
+      draft.preferredToolTypes,
     )
     const suggested = forcedTool ?? ranked?.tools[0] ?? null
     const wasReused = suggested ? reusedToolIds.has(suggested.id) : false

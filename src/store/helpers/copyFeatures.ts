@@ -139,6 +139,17 @@ export function buildCopiedFeatures(
   count: number,
   projectDefinitions: Record<string, FeatureDefinition>,
   copyMode: 'reference' | 'independent',
+  /**
+   * Where copy number `step` (1-based) is placed, instead of the plain
+   * `dx * step` / `dy * step`.
+   *
+   * A canned rotary band is clamped to the bar, so the distance each further
+   * copy may travel shrinks as the previous one reaches the bar's end:
+   * multiplying the first copy's clamped displacement escapes the clamp
+   * (issue #1112 rt7-f review). The caller owns that rule; this builder owns the
+   * copy contract.
+   */
+  stepDelta?: (step: number) => { dx: number; dy: number },
 ): Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> {
   const created: Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> = []
   const projectLike = newProject()
@@ -147,12 +158,13 @@ export function buildCopiedFeatures(
   const definitions = projectDefinitions
 
   for (let step = 1; step <= count; step += 1) {
+    const placement = stepDelta ? stepDelta(step) : { dx: dx * step, dy: dy * step }
     for (const sourceFeature of orderedSources) {
       const nextId = nextUniqueGeneratedId(
         projectLike,
         'f',
       )
-      const newTransform = multiplyMatrix(moveDelta(dx * step, dy * step), sourceFeature.transform)
+      const newTransform = multiplyMatrix(moveDelta(placement.dx, placement.dy), sourceFeature.transform)
 
       if (effectiveCopyMode === 'reference') {
         // Reference copy: same definitionId, no new definition. Materialize a
@@ -170,11 +182,11 @@ export function buildCopiedFeatures(
           definitionId,
           name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
           folderId: sourceFeature.folderId,
-          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
+          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, placement.dx, placement.dy)),
           sketch: {
             ...sourceFeature.sketch,
             origin: ['text', 'stl'].includes(sourceFeature.kind)
-              ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+              ? { x: sourceFeature.sketch.origin.x + placement.dx, y: sourceFeature.sketch.origin.y + placement.dy }
               : sourceFeature.sketch.origin,
             profile: resolvedProfile,
           },
@@ -209,11 +221,11 @@ export function buildCopiedFeatures(
           definitionId: clonedDefinitionId,
           name: duplicateFeatureName(sourceFeature.name, [...existingFeatures, ...created], count, step),
           folderId: sourceFeature.folderId,
-          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, dx * step, dy * step)),
+          stl: transformStlFeatureData(sourceFeature.stl, (point) => translatePoint(point, placement.dx, placement.dy)),
           sketch: {
             ...sourceFeature.sketch,
             origin: ['text', 'stl'].includes(sourceFeature.kind)
-              ? { x: sourceFeature.sketch.origin.x + dx * step, y: sourceFeature.sketch.origin.y + dy * step }
+              ? { x: sourceFeature.sketch.origin.x + placement.dx, y: sourceFeature.sketch.origin.y + placement.dy }
               : sourceFeature.sketch.origin,
             profile: resolvedProfile,
           },

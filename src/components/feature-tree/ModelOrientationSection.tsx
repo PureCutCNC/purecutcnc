@@ -18,6 +18,13 @@
  * Post-import 3D orientation controls for an imported STL/OBJ model
  * (issue #241) — the answer to "my model came in lying on its side".
  *
+ * Offered only for a model whose mesh came from outside. A **generated** canned
+ * model (a Turn, a Polygon) gets no section at all (issue #1112 rt7-e): its
+ * solid is built from its parameters on the bar's pivot, so rotating it about
+ * X, Y or Z could only tip it off the bar axis, and turning it about the bar is
+ * the Polygon editor's Rotation field. Properties decides that; this component
+ * stays the imported-model controls it always was.
+ *
  * Numeric entry plus 90° quick-rotate rather than a drag gizmo: the real need
  * is quarter-turns, the app is precision-oriented, and the 3D viewport is a
  * preview with no manipulator infrastructure. Numeric entry is also tablet-safe

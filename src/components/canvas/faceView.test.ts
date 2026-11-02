@@ -79,8 +79,10 @@ function makeFeature(id: string, face: SetupFace, profile = rectProfile(10, 10, 
     folderId: null,
     sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     operation: 'subtract',
-    z_top: 10,
-    z_bottom: 0,
+    // Blind: the ghost cases here are features that cannot be a target from
+    // the other face now that a through subtract can (issue #1112 I).
+    z_top: 0.5,
+    z_bottom: 0.1,
     authoringFace: face,
     visible: true,
     locked: false,

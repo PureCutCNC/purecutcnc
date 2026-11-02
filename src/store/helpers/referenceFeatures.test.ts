@@ -21,8 +21,10 @@ import { editableProjectFeatures } from './activeFace'
 import { referenceProjectFeatures } from './referenceFeatures'
 
 function row(id: string, face: SetupFace, operation: SketchFeature['operation']): SketchFeature {
+  // Blind, so these stay other-face features now that a through subtract is a
+  // real target on both flat faces (issue #1112 I).
   return { id, name: id, kind: 'rect', operation, authoringFace: face, visible: true, locked: false,
-    z_top: 2, z_bottom: 0, folderId: null,
+    z_top: 2, z_bottom: 1, folderId: null,
     sketch: { profile: rectProfile(13, 21, 7, 4), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] } }
 }
 

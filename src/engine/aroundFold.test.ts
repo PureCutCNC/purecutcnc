@@ -101,4 +101,113 @@ for (const axis of ['x', 'y'] as const) {
     }
   }
 }
+// The pre-#1112-rt2-e fold, kept as the reference the current implementation
+// must reproduce exactly (issue #1112 rt2-e). The optimization that removed the
+// per-piece closure allocates nothing extra and changes no arithmetic, so every
+// value — including the unreduced angle and the seam-snapped across coordinate —
+// has to be identical. If this comparison is ever loosened to a tolerance, the
+// guard is gone: fold feeds the simulation's seam copies and export's angles, and
+// both must not drift.
+function referenceFold<T extends ToolpathResult>(result: T, frame: AroundFrame): T {
+  const axis = frame.axis === 'x' ? 'y' : 'x'
+  const start = frame.sheetStart
+  const zero = frame.zero
+  const period = frame.circumference
+  const end = start + period
+  const boundsOf = (moves: readonly ToolpathMove[]): ToolpathResult['bounds'] => {
+    if (!moves.length) return null
+    const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity }
+    for (const move of moves) for (const p of [move.from, move.to]) {
+      bounds.minX = Math.min(bounds.minX, p.x)
+      bounds.maxX = Math.max(bounds.maxX, p.x)
+      bounds.minY = Math.min(bounds.minY, p.y)
+      bounds.maxY = Math.max(bounds.maxY, p.y)
+      bounds.minZ = Math.min(bounds.minZ, p.z)
+      bounds.maxZ = Math.max(bounds.maxZ, p.z)
+    }
+    return bounds
+  }
+  const angle = (across: number): number => 360 * (across - zero) / period
+  if (result.moves.every((move) => [move.from, move.to].every((p) => p[axis] >= start && p[axis] <= end))) {
+    const moves = result.moves.map((move) => ({
+      ...move,
+      from: { ...move.from, a: angle(move.from[axis]) },
+      to: { ...move.to, a: angle(move.to[axis]) },
+    }))
+    return { ...result, moves, bounds: boundsOf(moves) }
+  }
+  const moves: ToolpathMove[] = []
+  const collisions = new Set(result.collidingMoveIndices)
+  const collidingMoveIndices: number[] = []
+  result.moves.forEach((move, index) => {
+    const from = move.from[axis]
+    const to = move.to[axis]
+    const fractions = [0, 1]
+    if (from !== to) {
+      const low = Math.min(from, to)
+      const high = Math.max(from, to)
+      for (let turn = Math.floor((low - start) / period) + 1; start + turn * period < high; turn++) {
+        const fraction = (start + turn * period - from) / (to - from)
+        if (fraction > 1e-12 && fraction < 1 - 1e-12) fractions.push(fraction)
+      }
+    }
+    fractions.sort((a, b) => a - b)
+    for (let i = 1; i < fractions.length; i++) {
+      const t0 = fractions[i - 1]
+      const t1 = fractions[i]
+      const middle = from + (to - from) * (t0 + t1) / 2
+      const shift = Math.floor((middle - start) / period) * period
+      const at = (t: number): { x: number; y: number; z: number; a: number; [key: string]: number } => {
+        const across = move.from[axis] + (move.to[axis] - move.from[axis]) * t
+        const p = {
+          ...move.from,
+          x: move.from.x + (move.to.x - move.from.x) * t,
+          y: move.from.y + (move.to.y - move.from.y) * t,
+          z: move.from.z + (move.to.z - move.from.z) * t,
+          a: angle(across),
+        } as { x: number; y: number; z: number; a: number; [key: string]: number }
+        p[axis] = across - shift
+        if (Math.abs(p[axis] - start) < period * 1e-12) p[axis] = start
+        if (Math.abs(p[axis] - end) < period * 1e-12) p[axis] = end
+        return p
+      }
+      const piece = { ...move, from: at(t0), to: at(t1) }
+      if (collisions.has(index)) collidingMoveIndices.push(moves.length)
+      moves.push(piece)
+    }
+  })
+  return {
+    ...result, moves, bounds: boundsOf(moves),
+    ...(result.collidingMoveIndices ? { collidingMoveIndices } : {}),
+  }
+}
+
+for (const axis of ['x', 'y'] as const) {
+  const frame: AroundFrame = { axis, centre: 17, radius: 10, zero: 13, sheetStart: -7, circumference: 40 }
+  // A many-move sheet path that crosses seams in both directions, ramps in Z and
+  // carries motion metadata, plus the seam endpoint cases the equality must hold
+  // for. 400 moves makes the sweep representative without a timing test.
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < 400; i += 1) {
+    const offsetFrom = -60 + i * 0.4
+    const offsetTo = offsetFrom + (i % 3 === 0 ? -1.3 : 0.55)
+    const along = 3 + i * 0.05
+    const point = (alongAt: number, offset: number, z: number): { x: number; y: number; z: number } => axis === 'x'
+      ? { x: alongAt, y: frame.sheetStart + offset, z }
+      : { x: frame.sheetStart + offset, y: alongAt, z }
+    moves.push({
+      kind: i % 7 === 0 ? 'rapid' : 'cut',
+      feedScale: i % 5 === 0 ? 0.6 : undefined,
+      from: point(along, offsetFrom, 9 - (i % 11) * 0.1),
+      to: point(along + 0.3, offsetTo, 8.5 + (i % 13) * 0.1),
+    })
+  }
+  const colliding = moves.map((_, index) => index).filter((index) => index % 37 === 0)
+  const source = path(moves, colliding)
+  assert.deepEqual(foldToolpath(source, frame), referenceFold(source, frame), `${axis}: the fold reproduces its pre-optimization result exactly`)
+  // The all-inside fast path too, so both branches of the fold are held.
+  const inside = path(moves.filter((_, index) => index < 20).map((move) => ({ ...move, from: { x: 5, y: 6, z: move.from.z }, to: { x: 6, y: 7, z: move.to.z } })))
+  assert.deepEqual(foldToolpath(inside, frame), referenceFold(inside, frame), `${axis}: the inside-sheet path reproduces its pre-optimization result exactly`)
+}
+
 console.log('aroundFold tests passed')

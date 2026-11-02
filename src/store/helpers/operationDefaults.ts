@@ -22,7 +22,12 @@ import { defaultRetractOffset, defaultTool, isRotaryOperationKind } from '../../
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
+import type { ResolvedProject } from './resolveFeatures'
+import { toolInUnits } from '../../engine/operations/toolSelection'
 import { samePlasmaParameters } from '../../toolPolicy'
+import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { normalizeFlutesCannedParams } from '../../cannedShapes/generators/flutes'
+import { normalizeThreadCannedParams } from '../../cannedShapes/generators/thread'
 import type {
   FeatureOperation,
   Operation,
@@ -106,7 +111,15 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function isOperationTargetValid(authoritativeProject: Project, kind: OperationKind, target: OperationTarget): boolean {
-  const project = resolveProject(authoritativeProject)
+  return isOperationTargetValidResolved(resolveProject(authoritativeProject), kind, target)
+}
+
+/**
+ * The target rule against an already-resolved project. Callers that ask the
+ * same question for several targets of one project — the Cuts list's remove ×
+ * is one per row — resolve the features once instead of once per row.
+ */
+export function isOperationTargetValidResolved(project: ResolvedProject, kind: OperationKind, target: OperationTarget): boolean {
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target (issue #199). One guard covers every kind below.
   if (target.source === 'features' && target.featureIds.some((featureId) => {
@@ -291,6 +304,59 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     && regionFeatures.every((feature) => feature.sketch.profile.closed)
 }
 
+/**
+ * The depth a Follow line on canned Thread/Flutes must cut: the feature's own
+ * stored depth (decision 3, #1112). The old one-shot command wrote it straight
+ * onto the operation (`carveDepth: input.depth`); a Follow line added later
+ * through Add, Use current selection, Add to operation or CAM Plan has no
+ * dialog to inherit from, so it reads the same parameter instead of today's
+ * 1 mm default.
+ *
+ * The rule applies only when **every** target is a canned Thread or Flutes.
+ * A target set with any other feature keeps the operation's depth as it is,
+ * because such a target has no pattern depth to name.
+ *
+ * Several canned patterns may carry different depths while the operation has
+ * only one cutting depth. Take the deepest: the shallower value would leave
+ * the deeper thread/flute uncut, and one `carveDepth` cannot satisfy both.
+ */
+export function cannedPatternCarveDepth(project: Project, target: OperationTarget): number | null {
+  if (target.source !== 'features' || target.featureIds.length === 0) return null
+  let deepest: number | null = null
+  for (const featureId of target.featureIds) {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    const canned = feature ? project.featureDefinitions[feature.definitionId]?.canned : null
+    let depth: number
+    if (canned?.kind === THREAD_CANNED_KIND) {
+      const params = normalizeThreadCannedParams(canned.params)
+      if (!params) return null
+      depth = params.depth
+    } else if (canned?.kind === FLUTES_CANNED_KIND) {
+      const params = normalizeFlutesCannedParams(canned.params)
+      if (!params) return null
+      depth = params.depth
+    } else {
+      return null
+    }
+    deepest = deepest === null ? depth : Math.max(deepest, depth)
+  }
+  return deepest
+}
+
+/**
+ * Apply the canned-pattern depth rule to a Follow line whose target set just
+ * changed. Kept beside the rule itself so every target-setting path —
+ * `updateOperation` and new-operation creation — reads the same rule, not a
+ * per-UI handler. A non-Follow-line operation, or a target set with any other
+ * feature, is returned unchanged.
+ */
+export function withCannedPatternTargetDepth(project: Project, operation: Operation): Operation {
+  if (operation.kind !== 'follow_line') return operation
+  const depth = cannedPatternCarveDepth(project, operation.target)
+  if (depth === null) return operation
+  return { ...operation, carveDepth: depth, maxCarveDepth: depth }
+}
+
 export function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
   const baseName = kind === 'plasma_profile' || kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
     || kind === 'finish_surface_cleanup' || isRotaryOperationKind(kind)
@@ -320,11 +386,18 @@ export function defaultOperationForTarget(
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
   if (isRotaryOperationKind(kind)) pass = kind === 'rotary_rough' ? 'rough' : 'finish'
-  const firstTool = project.tools.find((candidate) => kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma')
+  // The fallback cutter is in the project's units too (issue #1132): an
+  // automatic pick never crosses the unit systems, so a project holding only
+  // other-unit tools falls back to `defaultTool` instead of them.
+  const firstTool = project.tools.find((candidate) =>
+    toolInUnits(candidate, project.meta.units)
+    && (kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma'),
+  )
   const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
   const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
 
   const isVCarve = kind === 'v_carve' || kind === 'v_carve_medial'
+  const cannedCarveDepth = kind === 'follow_line' ? cannedPatternCarveDepth(project, target) : null
   const isRoughEdge = pass === 'rough' && (kind === 'edge_route_inside' || kind === 'edge_route_outside')
   const isEdge = kind === 'edge_route_inside' || kind === 'edge_route_outside'
   const vCarveMaxDepth = tool.maxCutDepth > 0
@@ -391,8 +464,8 @@ export function defaultOperationForTarget(
     stockToLeaveAxial: 0,
     finishWalls: true,
     finishFloor: true,
-    carveDepth: convertLength(1, 'mm', project.meta.units),
-    maxCarveDepth: isVCarve ? vCarveMaxDepth : convertLength(1, 'mm', project.meta.units),
+    carveDepth: cannedCarveDepth ?? convertLength(1, 'mm', project.meta.units),
+    maxCarveDepth: isVCarve ? vCarveMaxDepth : (cannedCarveDepth ?? convertLength(1, 'mm', project.meta.units)),
     cutDirection: 'conventional',
     machiningOrder: 'feature_first',
     // Rounded before it is stored (#893): the field shows the stored value as

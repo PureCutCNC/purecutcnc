@@ -1,0 +1,547 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * The operation a new canned outline shape defaults to, per face and stock
+ * (issue #1112 R2 item 14, completed by rt3-d item 33).
+ *
+ * Frank: "a gear created on the Around face came out as Add" (item 14), and
+ * then "a gear added as the first feature on a square bar's Top face came out
+ * as Add" (item 33). Both are one rule: on a bar — round or square — the bar is
+ * already the material on **every** face (#1054), so a new closed feature is a
+ * cut into it, hand-drawn or canned, exactly as `inferManualFeatureOperation`
+ * classifies a hand-drawn one. A canned shape reaches the same rule through
+ * `buildShapeFeature`; the gear action was the one creator with its own "the
+ * first machining feature is Add" default, which is right only where there is a
+ * base solid to make — a block. These tests pin each canned kind, first-feature
+ * and later, on both bar shapes and on a block, so "block unchanged" is proven
+ * rather than assumed.
+ *
+ * Text is the *other* creator with a private first-feature rule (rt3-d
+ * correction round 1, finding 1): it writes its row without going through
+ * `addFeature`, so `createTextFeatureAt` had the same Add rule the gear action
+ * had, and a closed outline run on a bar came out Add on every face. It is
+ * covered here at the same three levels — the run's own home is the canvas
+ * dialog, so the whole matrix is pinned through the store actions plus the
+ * helper that decides the default.
+ *
+ * A square blank's Around sheet is round-only for authoring (#1016 C2-U1): its
+ * frozen policy test (`squareAroundPolicy.test.ts`, four axis/unit specs) pins
+ * that every Around authoring path — `addFeature`, the drawing tools, imports,
+ * paste, and both gear branches — writes nothing on it, and rt2-c keeps those
+ * drawer entries visible-but-disabled while #1128 owns sheet work. That
+ * refusal is therefore *not* these items' default and must not be lifted here:
+ * a square blank authors Top and Bottom, so its coverage is two-fold.
+ *  1. Real creation of every named kind on the square blank's authorable
+ *     faces (Top and Bottom) is a cut into the bar, proving the bar-is-material
+ *     rule through the store actions rather than a draft;
+ *  2. its Around *default* is pinned per kind at the point creation decides
+ *     it — `buildShapeFeature` is the draft builder every canned creator
+ *     passes its profile to, and `gearCreationOperation` is the first-gear
+ *     rule the gear action applies to that draft — so enabling the sheet
+ *     later (#1128) cannot quietly bring the gear's Add back.
+ *
+ * Mutations checked one at a time against these assertions:
+ * - dropping the `barSeedsModel` branch in `gearCreationOperation` (i.e. the
+ *   first gear on a bar goes back to Add on Top/Bottom) → the bar gear
+ *   assertions fail, on both bar shapes and every face;
+ * - making that branch unconditional (every project subtract) → the block
+ *   assertions fail;
+ * - dropping the `barSeedsModel` guard in `createTextFeatureAt` (i.e. the first
+ *   text run on a bar goes back to Add) → the bar text assertions fail on both
+ *   bar shapes and every face; making it unconditional → the block text
+ *   assertions fail;
+ * - scoping the bar branch to a round bar → the square blank's real-creation
+ *   gear and text assertions fail;
+ * - removing `inferManualFeatureOperation` from `buildShapeFeature`'s closed
+ *   path (so a canned shape is always Add) → every canned assertion fails;
+ * - scoping the bar-is-material branch of `inferManualFeatureOperation` to a
+ *   round bar (`barSeedsModel` && round stock) (so a square bar classifies like
+ *   a block) → the square-blank real-creation assertions on Top and Bottom
+ *   (every kind) fail, and so do its Around creation-draft assertions;
+ * - dropping the square-blank guard in `addFeature` / `createAddGearFeatureAction`
+ *   (so a cutting outline is authored on the round-only sheet) → the
+ *   square-Around refusal assertions fail.
+ *
+ * Run with: npx tsx src/store/cannedShapeAroundDefaults.test.ts
+ */
+
+import {
+  newProject,
+  ellipseProfile,
+  ngonProfile,
+  roundStock,
+  slotProfile,
+  type Project,
+  type SketchFeature,
+  type SketchProfile,
+  type Stock,
+} from '../types/project'
+import { squareStock } from '../types/barStock'
+import { buildGearProfile, defaultGearCreationParams } from '../sketch/gearProfile'
+import { bundledMachines } from '../machine/registry'
+import { validateMachineDefinition } from '../engine/gcode/types'
+import { resolveCannedShapeShapes } from '../cannedShapes'
+import { useProjectStore } from './projectStore'
+import { switchWorkspaceFace } from './workspaceFace'
+import { activeFace } from './helpers/activeFace'
+import { buildShapeFeature } from './helpers/buildShapeFeature'
+import { gearCreationOperation } from './helpers/gearFeature'
+import { createTextFeatureAt } from './helpers/naming'
+import { defaultTextToolConfig, type TextToolConfig } from '../text'
+import { chamferedRectProfile, roundedRectProfile } from './helpers/cannedRectProfiles'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import type { ProjectStore } from './types'
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function assertEqual<T>(actual: T, expected: T, message: string): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${message}\n  Expected: ${JSON.stringify(expected)}\n  Actual: ${JSON.stringify(actual)}`)
+  }
+}
+
+const ROUND_BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
+const SQUARE_BAR = squareStock(40, 200, 'x', { x: 10, y: 30 })
+
+function projectWith(stock: Stock, type: 'milling' | 'rotary'): Project {
+  const base = newProject('Canned defaults', 'mm')
+  base.stock = stock
+  base.meta.projectType = type
+  if (type === 'rotary') {
+    const machine = validateMachineDefinition({
+      ...structuredClone(bundledMachines()[0]),
+      id: 'canned-defaults',
+      rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    })
+    base.meta.machineDefinitions = [machine]
+    base.meta.selectedMachineId = machine.id
+  }
+  return base
+}
+
+function resetStore(project: Project): void {
+  useProjectStore.setState({
+    project,
+    creationTarget: 'feature',
+    selection: {
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: [],
+      selectedNode: null,
+      mode: 'feature' as const,
+      sketchEditTool: null,
+      activeControl: null,
+      hoveredFeatureId: null,
+      groupFolderId: null,
+    },
+    history: { past: [], future: [], transactionStart: null },
+    sketchEditSession: null,
+    pendingConstraint: null,
+    pendingTransform: null,
+    pendingOffset: null,
+    pendingAdd: null,
+    pendingMove: null,
+    pendingShapeAction: null,
+  } as unknown as Partial<ProjectStore>)
+}
+
+/** One creation call per canned outline kind, through the action the UI uses. */
+const CANNED_CREATORS: ReadonlyArray<[kind: string, create: () => unknown]> = [
+  ['ellipse', () => useProjectStore.getState().addEllipseFeature('Ellipse', 10, 10, 4, 3, 5)],
+  ['slot', () => useProjectStore.getState().addSlotFeature('Slot', { x: 10, y: 20 }, { x: 30, y: 20 }, 4, 5)],
+  ['ngon', () => useProjectStore.getState().addNgonFeature('Polygon', 20, 30, 6, 5, 0, 5)],
+  ['roundrect', () => useProjectStore.getState().addRoundRectFeature('Rounded rect', 10, 10, 20, 10, 2, 5)],
+  ['chamferrect', () => useProjectStore.getState().addChamferRectFeature('Chamfered rect', 10, 10, 20, 10, 2, 5)],
+]
+
+/**
+ * The profile each canned creator passes to `buildShapeFeature` — the one call
+ * that decides the operation a new canned shape is created with. These are the
+ * same arguments the creators above use, so the draft the default is read from
+ * is the draft creation would write.
+ */
+const CANNED_DRAFT_PROFILES: ReadonlyArray<[kind: string, profile: () => SketchProfile]> = [
+  ['ellipse', () => ellipseProfile(10, 10, 4, 3)],
+  ['slot', () => slotProfile({ x: 10, y: 20 }, { x: 30, y: 20 }, 4)],
+  ['ngon', () => ngonProfile(20, 30, 6, 5, 0)],
+  ['roundrect', () => roundedRectProfile({ x: 10, y: 10 }, { x: 30, y: 20 }, 2)],
+  ['chamferrect', () => chamferedRectProfile({ x: 10, y: 10 }, { x: 30, y: 20 }, 2)],
+]
+
+/** The gear profile the gear action builds, at the size the fixtures use. */
+function gearProfile(): SketchProfile {
+  return buildGearProfile({
+    ...defaultGearCreationParams(8),
+    center: { x: 40, y: 30 },
+    outsideRadius: 8,
+  })
+}
+
+/** The gear through the placement + completion path the canvas button uses. */
+function createGear(center = { x: 40, y: 30 }, radius = 8): string[] {
+  const store = useProjectStore.getState()
+  store.startAddGearPlacement()
+  useProjectStore.getState().setPendingAddAnchor(center)
+  useProjectStore.getState().setPendingGearRadiusAt({ x: center.x + radius, y: center.y })
+  return useProjectStore.getState().completePendingGear()
+}
+
+/**
+ * An **outline** text run — closed glyph geometry, the case finding 1 names —
+ * with the dialog's own Subtract default. 'H' is a single closed outline, so the
+ * run's operation is the row's with no bore/island nesting of its own.
+ */
+function textConfig(operation: 'add' | 'subtract' = 'subtract'): TextToolConfig {
+  return {
+    ...defaultTextToolConfig('mm'),
+    text: 'H',
+    style: 'outline',
+    fontId: 'helvetiker_bold',
+    size: 30,
+    operation,
+  }
+}
+
+/** Place one text run through the store actions the canvas uses. */
+function createTextAt(operation: 'add' | 'subtract' = 'subtract'): string[] {
+  useProjectStore.getState().startAddTextPlacement(textConfig(operation))
+  return useProjectStore.getState().placePendingTextAt({ x: 20, y: 20 })
+}
+
+/** The operation on each created row, read the way the tree and CAM read it. */
+function operations(): string[] {
+  return useProjectStore.getState().project.features.map((row) => {
+    const resolved = resolveFeatureInstance(useProjectStore.getState().project, row.id)
+    assert(resolved, `row ${row.id} resolves`)
+    return resolved.operation
+  })
+}
+
+function onFace(project: Project, face: 'top' | 'bottom' | 'around'): void {
+  resetStore(project)
+  const switched = switchWorkspaceFace(face)
+  assert(switched, `the workspace reaches ${face}`)
+  assertEqual(activeFace(useProjectStore.getState().project), face, `the workspace is on ${face}`)
+}
+
+function createdFeature(id: string): SketchFeature {
+  const feature = resolveFeatureInstance(useProjectStore.getState().project, id)
+  assert(feature != null, `feature ${id} should exist`)
+  return feature
+}
+
+function testEveryCannedKindOnAroundCutsIntoTheBar(): void {
+  for (const [kind, create] of CANNED_CREATORS) {
+    onFace(projectWith(ROUND_BAR, 'rotary'), 'around')
+    create()
+    assertEqual(operations(), ['subtract'], `a first ${kind} on Around cuts into the bar`)
+  }
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'around')
+  const gearIds = createGear()
+  assertEqual(gearIds.length, 1, 'the gear is created on Around')
+  assertEqual(operations(), ['subtract'], 'a first gear on Around cuts into the bar, not Add')
+  console.log('around: every canned outline shape is a cut: PASSED')
+}
+
+function testLaterShapesOnAroundStillNest(): void {
+  // The fix must not replace the classifier: once a subtract exists, a canned
+  // shape inside it is an island again, exactly as before.
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'around')
+  assertEqual(createGear({ x: 40, y: 30 }, 15).length, 1, 'the outer gear is created')
+  useProjectStore.getState().addEllipseFeature('Ellipse', 40, 30, 3, 3, 5)
+  assertEqual(operations(), ['subtract', 'add'], 'a shape inside the gear cut is an island')
+  console.log('around: later shapes still nest: PASSED')
+}
+
+function testGearBoreOnAroundIsAnAddIsland(): void {
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'around')
+  const store = useProjectStore.getState()
+  store.startAddGearPlacement()
+  useProjectStore.getState().setPendingAddAnchor({ x: 40, y: 30 })
+  useProjectStore.getState().setPendingGearRadiusAt({ x: 55, y: 30 })
+  useProjectStore.getState().setPendingGearParams({ boreDiameter: 6 })
+  const ids = useProjectStore.getState().completePendingGear()
+  assertEqual(ids.length, 1, 'the gear is created')
+  const gear = createdFeature(ids[0])
+  assertEqual(gear.operation, 'subtract', 'the gear itself is a cut')
+  assertEqual(
+    resolveCannedShapeShapes(gear).map((shape) => shape.operation),
+    ['subtract', 'add'],
+    'its bore is an Add island, the reverse of the Top gear',
+  )
+  console.log('around: gear bore nests as an Add island: PASSED')
+}
+
+function testBlockKeepsItsBaseSolidDefault(): void {
+  // A block's first closed shape is its base solid, so every kind is Add. This
+  // is the historical rule item 33 leaves alone.
+  for (const face of ['top', 'bottom'] as const) {
+    for (const [kind, create] of CANNED_CREATORS) {
+      onFace(projectWith(newProject('Block', 'mm').stock, 'milling'), face)
+      create()
+      assertEqual(operations(), ['add'], `a first ${kind} on a block's ${face} is the base solid`)
+    }
+    onFace(projectWith(newProject('Block', 'mm').stock, 'milling'), face)
+    assertEqual(createGear().length, 1, `the gear is created on ${face}`)
+    assertEqual(operations(), ['add'], `a first gear on a block's ${face} is the base solid`)
+  }
+  console.log('block: the base-solid default is unchanged: PASSED')
+}
+
+function testEveryBarFaceIsACut(): void {
+  // Item 33: a bar is already solid, so a new closed feature on **any** face of
+  // bar stock, round or square, defaults to Subtract — hand-drawn or canned.
+  // Real creation through the same actions the drawer calls, one kind per
+  // assertion, plus the gear (the creator that had its own Add rule).
+  for (const face of ['top', 'bottom', 'around'] as const) {
+    onFace(projectWith(ROUND_BAR, 'rotary'), face)
+    useProjectStore.getState().addEllipseFeature('Ellipse', 10, 10, 4, 3, 5)
+    assertEqual(operations(), ['subtract'], `a hand-drawn shape on a round bar's ${face} cuts into the bar`)
+    onFace(projectWith(ROUND_BAR, 'rotary'), face)
+    assertEqual(createGear().length, 1, `the gear is created on a round bar's ${face}`)
+    assertEqual(operations(), ['subtract'], `a first gear on a round bar's ${face} cuts into the bar`)
+  }
+  for (const face of ['top', 'bottom'] as const) {
+    // The square blank's Around sheet is round-only for authoring (#1016 C2-U1),
+    // so its real creation covers the two faces it authors; the Around default
+    // is pinned per draft in `testSquareBarDefaultsAreSubtract` below.
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    useProjectStore.getState().addEllipseFeature('Ellipse', 10, 10, 4, 3, 5)
+    assertEqual(operations(), ['subtract'], `a hand-drawn shape on a square bar's ${face} cuts into the bar`)
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    assertEqual(createGear().length, 1, `the gear is created on a square bar's ${face}`)
+    assertEqual(operations(), ['subtract'], `a first gear on a square bar's ${face} cuts into the bar`)
+  }
+  console.log('every face of every bar shape: a new feature is a cut: PASSED')
+}
+
+function testGearDefaultPerFaceAndBarShape(): void {
+  // The gear action's own rule, pinned at the call that decides it, so the
+  // matrix is complete even where real creation is refused (a square blank's
+  // Around sheet) — and so a later change to the store's guards cannot hide a
+  // regression in the default.
+  for (const [shape, stock] of [['round', ROUND_BAR], ['square', SQUARE_BAR]] as const) {
+    for (const face of ['top', 'bottom', 'around'] as const) {
+      const project = projectWith(stock, 'rotary')
+      const draft = buildShapeFeature(project, 'feature', 'composite', gearProfile(), 'Gear', 5)
+      assertEqual(
+        gearCreationOperation(project, draft, face),
+        'subtract',
+        `a first gear on a ${shape} bar's ${face} is a cut into the bar`,
+      )
+    }
+  }
+
+  // A block keeps the base-solid rule, and a rotary project whose stock is a
+  // block has no bar to seed from, so it follows the block rule too.
+  for (const face of ['top', 'bottom'] as const) {
+    for (const project of [
+      projectWith(newProject('Block', 'mm').stock, 'milling'),
+      projectWith(newProject('Block', 'mm').stock, 'rotary'),
+    ]) {
+      const draft = buildShapeFeature(project, 'feature', 'composite', gearProfile(), 'Gear', 5)
+      assertEqual(
+        gearCreationOperation(project, draft, face),
+        'add',
+        `a first gear on block stock (${project.meta.projectType}) on ${face} is the base solid`,
+      )
+    }
+  }
+
+  // The rule is a default, not a switch: a second shape inside the bar cut still
+  // nests as an island, because `inferManualFeatureOperation` keeps classifying.
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'top')
+  assertEqual(createGear({ x: 40, y: 30 }, 15).length, 1, 'the outer gear is created')
+  useProjectStore.getState().addEllipseFeature('Ellipse', 40, 30, 3, 3, 5)
+  assertEqual(operations(), ['subtract', 'add'], 'a shape inside the bar cut is an island')
+  console.log('gear default per face and bar shape: PASSED')
+}
+
+function testSquareBarDefaultsAreSubtract(): void {
+  // Item 14 names both bar shapes, and the default is a property of the face,
+  // not of the bar's outline: `inferManualFeatureOperation` asks whether the bar
+  // is the material, which a square blank is as much as a round one. This is
+  // pinned per kind on the draft creation would write — `buildShapeFeature` is
+  // the one call every canned creator makes, and `gearCreationOperation` is the
+  // gear action's extra first-gear rule applied to that draft — so the default
+  // is read from the production path, not re-derived here.
+  const squareAround = (): Project => {
+    onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
+    return useProjectStore.getState().project
+  }
+
+  for (const [kind, profile] of CANNED_DRAFT_PROFILES) {
+    const draft = buildShapeFeature(squareAround(), 'feature', 'composite', profile(), `Square ${kind}`, 5)
+    assertEqual(draft.operation, 'subtract', `a ${kind}'s creation draft on a square bar's Around cuts into the bar`)
+  }
+
+  const around = squareAround()
+  const aroundGear = buildShapeFeature(around, 'feature', 'composite', gearProfile(), 'Gear', 5)
+  assertEqual(aroundGear.operation, 'subtract', "a gear's creation draft on a square bar's Around cuts into the bar")
+  assertEqual(
+    gearCreationOperation(around, aroundGear, 'around'),
+    'subtract',
+    "the first-gear Add rule does not override it on Around",
+  )
+  console.log('square Around: every canned creation draft is a cut: PASSED')
+}
+
+function testSquareBarCreationIsACut(): void {
+  // Item 14 names both bar shapes, and a square blank is a bar: the bar is the
+  // material on every face, so the first canned outline created on it is a cut.
+  // This runs the real store creators — the same actions the drawer calls — and
+  // reads the operation off the created row, not off a draft.
+  //
+  // A square blank's *Around sheet* is the one place those creators do not run:
+  // #1016 C2-U1 freezes it round-only (pinned by `squareAroundPolicy.test.ts`
+  // for every path and both gear branches) and #1128 owns that sheet. Top and
+  // Bottom are where a square blank authors, so that is where the bar-is-material
+  // default is proven through creation; the Around default it will need is
+  // pinned per kind in `testSquareBarDefaultsAreSubtract` above.
+  for (const face of ['top', 'bottom'] as const) {
+    for (const [kind, create] of CANNED_CREATORS) {
+      onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+      create()
+      assertEqual(operations(), ['subtract'], `a first ${kind} created on a square bar's ${face} cuts into the bar`)
+    }
+
+    // The gear was the creator with its own first-feature Add rule, so it is the
+    // one that item 33 changes; it is asserted here too, so the kinds above
+    // cannot pass by making only the outline creators a cut.
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    assertEqual(createGear().length, 1, `the gear is created on a square bar's ${face}`)
+    assertEqual(operations(), ['subtract'], `a first gear on a square bar's ${face} cuts into the bar`)
+  }
+  console.log('square bar: every canned outline created on Top/Bottom is a cut: PASSED')
+}
+
+/**
+ * A text run on a bar is a cut on every face (item 33, correction round 1
+ * finding 1).
+ *
+ * `createTextFeatureAt` is the second creator with a private "the first
+ * machining feature is Add" rule, and text is placed rather than added, so no
+ * other guard sees it. On a bar the run keeps the dialog's Subtract and cuts the
+ * bar, on Top, Bottom and Around, round and square. The square blank's Around
+ * sheet still refuses authoring (#1016 C2-U1), so that face is pinned at the
+ * helper below, exactly as the gear's is.
+ */
+function testTextOnEveryBarFaceIsACut(): void {
+  for (const face of ['top', 'bottom', 'around'] as const) {
+    onFace(projectWith(ROUND_BAR, 'rotary'), face)
+    const ids = createTextAt()
+    assertEqual(ids.length, 1, `the outline run is created on a round bar's ${face}`)
+    assertEqual(
+      createdFeature(ids[0]).operation,
+      'subtract',
+      `a first outline text run on a round bar's ${face} cuts into the bar`,
+    )
+    assertEqual(operations(), ['subtract'], `and that is the only row on a round bar's ${face}`)
+  }
+
+  for (const face of ['top', 'bottom'] as const) {
+    onFace(projectWith(SQUARE_BAR, 'rotary'), face)
+    const ids = createTextAt()
+    assertEqual(ids.length, 1, `the outline run is created on a square bar's ${face}`)
+    assertEqual(
+      createdFeature(ids[0]).operation,
+      'subtract',
+      `a first outline text run on a square bar's ${face} cuts into the bar`,
+    )
+  }
+
+  // The rule is a default, not an override of the run's own choice: an explicit
+  // Add in the text dialog is what the bar gets, because the bar may be built up
+  // on as much as cut into.
+  onFace(projectWith(ROUND_BAR, 'rotary'), 'top')
+  assertEqual(createTextAt('add').length, 1, 'the explicit-Add run is created')
+  assertEqual(operations(), ['add'], 'an explicit Add on a bar stays Add')
+  console.log('text: every authored bar face cuts, and an explicit Add is kept: PASSED')
+}
+
+/** The square blank's Around default, pinned where creation decides it. */
+function testSquareBarAroundTextDefaultIsACut(): void {
+  onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
+  const project = useProjectStore.getState().project
+  const draft = createTextFeatureAt(project, textConfig(), { x: 20, y: 20 })
+  assert(draft, 'the outline run generates a feature draft')
+  assertEqual(draft.operation, 'subtract', "a text run's creation draft on a square bar's Around cuts into the bar")
+  // Real authoring there is refused until #1128 owns the sheet, so the draft is
+  // the only place that default can be observed — and it must not be lifted
+  // here.
+  assertEqual(createTextAt(), [], 'the square blank holds its round-only Around sheet')
+  console.log('square Around: the text creation draft is a cut: PASSED')
+}
+
+/**
+ * A block's text default is unchanged: the first run is the base solid, and a
+ * later run keeps the dialog's operation.
+ */
+function testBlockTextKeepsItsBaseSolidDefault(): void {
+  for (const face of ['top', 'bottom'] as const) {
+    onFace(projectWith(newProject('Block', 'mm').stock, 'milling'), face)
+    assertEqual(createTextAt().length, 1, `the run is created on a block's ${face}`)
+    assertEqual(operations(), ['add'], `a first text run on a block's ${face} is the base solid`)
+  }
+
+  onFace(projectWith(newProject('Block', 'mm').stock, 'milling'), 'top')
+  assertEqual(createTextAt().length, 1, 'the first block run is created')
+  assertEqual(createTextAt().length, 1, 'the second block run is created')
+  assertEqual(operations(), ['add', 'subtract'], 'only the first block run earns the base-solid Add')
+  console.log('block: the text base-solid default is unchanged: PASSED')
+}
+
+function testSquareAroundAuthoringStaysRefused(): void {
+  // The refusal is #1016 C2-U1's round-only sheet, not item 14's default: a
+  // square blank is workflow-available on Around (its generated rotary models
+  // cut there) but the unrolled sheet's raw coordinates only describe a round
+  // bar, so a cutting outline is not authored on it — and a non-rotary cut
+  // stored there would not even be part of the job (`operationCutsInProject`).
+  // rt2-c keeps the drawer entries visible and disabled ("Not available on a
+  // square bar yet") and #1128 owns sheet work on the turned section. Pinned
+  // here as the guard's own contract — a canned creator must not grow a private
+  // path around `addFeature` — so that enabling the sheet is a deliberate change
+  // in #1128, not a side effect of a default. `squareAroundPolicy.test.ts` holds
+  // the store-wide version of this rule; do not remove either one.
+  for (const [kind, create] of CANNED_CREATORS) {
+    onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
+    const before = useProjectStore.getState().project
+    create()
+    assertEqual(useProjectStore.getState().project, before, `a ${kind} on a square blank's Around writes nothing`)
+  }
+  onFace(projectWith(SQUARE_BAR, 'rotary'), 'around')
+  const before = useProjectStore.getState().project
+  assertEqual(createGear(), [], 'the gear is refused on a square blank')
+  assertEqual(useProjectStore.getState().project, before, 'the refusal writes nothing')
+  console.log('square Around: cutting authoring stays refused until #1128: PASSED')
+}
+
+testEveryCannedKindOnAroundCutsIntoTheBar()
+testLaterShapesOnAroundStillNest()
+testGearBoreOnAroundIsAnAddIsland()
+testBlockKeepsItsBaseSolidDefault()
+testEveryBarFaceIsACut()
+testGearDefaultPerFaceAndBarShape()
+testSquareBarDefaultsAreSubtract()
+testSquareBarCreationIsACut()
+testTextOnEveryBarFaceIsACut()
+testSquareBarAroundTextDefaultIsACut()
+testBlockTextKeepsItsBaseSolidDefault()
+testSquareAroundAuthoringStaysRefused()

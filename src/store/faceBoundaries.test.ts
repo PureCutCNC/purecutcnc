@@ -345,7 +345,9 @@ for (const axis of ['x', 'y'] as const) {
   store().addRectFeature('Base', 0, 0, 100, 80, thickness)
   const topId = lastFeature().id
   switchWorkspaceFace('bottom')
-  store().addRectFeature('Recess', 20, 20, 40, 30, thickness)
+  // Blind, so it stays a ghost on Top: a through cut is now a real target on
+  // both flat faces (issue #1112 I) and would be in this face's set.
+  store().addRectFeature('Recess', 20, 20, 40, 30, thickness / 2)
   const bottomId = lastFeature().id
   const folderId = store().addFeatureFolder('features')
   useProjectStore.setState({

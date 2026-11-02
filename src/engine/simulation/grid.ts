@@ -140,10 +140,24 @@ export function seedSquareTopZ(
     const coordinate = acrossOrigin + (across + 0.5) * spec.cellSize
     acrossHeights[across] = squareSurfaceRadius(squareBar.side, (coordinate - squareBar.frame.zero) * anglePerAcross)
   }
+  // The section is constant along the bar, so when across runs along the rows
+  // (an X bar) every row is one distance — a native `fill` per row instead of a
+  // per-cell write (issue #1112 rt2-e; the square seed was the only
+  // square-specific stage of opening the panel and it was several times the
+  // round path's uniform `fill`). `fill` stores exactly what the indexed write
+  // does, so the seeded heights are byte-identical. Across runs across the
+  // columns for a Y bar, where no row is constant; that keeps the loop.
+  if (squareBar.frame.axis === 'x') {
+    for (let row = 0; row < spec.rows; row += 1) {
+      const rowBase = row * spec.cols
+      topZ.fill(acrossHeights[row], rowBase, rowBase + spec.cols)
+    }
+    return
+  }
   for (let row = 0; row < spec.rows; row += 1) {
+    const rowBase = row * spec.cols
     for (let col = 0; col < spec.cols; col += 1) {
-      const across = squareBar.frame.axis === 'x' ? row : col
-      topZ[row * spec.cols + col] = acrossHeights[across]
+      topZ[rowBase + col] = acrossHeights[col]
     }
   }
 }

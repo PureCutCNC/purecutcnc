@@ -37,6 +37,7 @@ import {
 import * as THREE from 'three'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { syncProjectSetups } from '../store/helpers/setups'
+import { activeSetup } from '../store/helpers/activeFace'
 import { aroundFrame } from '../engine/aroundFrame'
 import { buildClampMesh } from '../engine/csg'
 import { THEME_PALETTES } from '../theme/palette'
@@ -45,7 +46,7 @@ import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { PocketToolpathResult, ToolpathResult } from '../engine/toolpaths/types'
 import { simulateReplayItemsHeightfield, type SimulationGrid, type SimulationResult } from '../engine/simulation'
 import { findMillingOperationTool } from '../toolPolicy'
-import { buildSimulationBar, buildSimulationSetupInput, resolveSimulationSetup, simulationSetups, type SimulationSetupInput } from './simulationSetup'
+import { buildSimulationBar, buildSimulationSetupInput, simulationSetups, type SimulationSetupInput } from './simulationSetup'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -292,11 +293,12 @@ function testFlatSetupDropsAroundFeatures(): void {
     'a project with no Around feature simulates exactly the object it always did')
 }
 
-function testPickerAndBrokenAround(): void {
-  console.log('Testing the picker lists an Around setup and a broken one yields no simulation...')
+function testListedSetupAndBrokenAround(): void {
+  console.log('Testing the Around setup is the listed one and a broken one yields no simulation...')
   const { project, setup, paths } = makeAroundProject()
-  assertEqual(simulationSetups(project).map((entry) => entry.id), ['setup-around'], 'the picker lists the Around setup')
-  assertEqual(resolveSimulationSetup(project, null, project.operations[0]).id, 'setup-around', 'and resolution finds it')
+  assertEqual(simulationSetups(project).map((entry) => entry.id), ['setup-around'], 'the Around setup is the project\'s one')
+  // The face in view is the setup the simulation runs (issue #1112 F3).
+  assertEqual(activeSetup(project).id, 'setup-around', 'and the workspace face is on it')
 
   // The bar is no longer a round bar on the setup's axis: no simulation, no
   // exception.
@@ -314,6 +316,43 @@ function testPickerAndBrokenAround(): void {
     assert(!threw, 'a broken Around setup does not throw')
     assert(input === null, 'and yields no simulation')
   }
+}
+
+/**
+ * Opening the Simulation tab builds this setup input again on every switch, and
+ * unwrapping + folding a path is a fresh object per move: 11-13 ms of blocking
+ * render work for one 24k-move path on Frank's `turn-shape-test-01` (issue
+ * #1112 rt2-h). The turn is a pure function of the generated result and the
+ * frame's values, and nothing writes to a `ToolpathResult` afterwards, so it is
+ * kept — but only for the result it came from and the sheet it was turned for.
+ */
+function testTurningAPathIsReused(): void {
+  console.log('Testing a path turned once on one sheet is reused, and a new path or sheet turns again...')
+  const { project, setup, paths } = makeAroundProject()
+  const original = paths.get('opAround')!
+  const first = simulationInput(project, setup, paths).toolpaths.get('opAround')!
+  const second = simulationInput(project, setup, paths).toolpaths.get('opAround')!
+  assert(second === first, 'the same generated path on the same sheet is the same turned path')
+  assert(second !== original, 'the turned path is not the generated one')
+  assert(second.moves !== original.moves, 'and it holds its own moves')
+
+  // A regenerated result is a different object even when its content is
+  // identical (a backend switch clears and refills the generation cache). It
+  // must never read the older turn.
+  const regenerated = new Map([['opAround', { ...original, moves: original.moves.map((move) => ({ ...move })) }]])
+  const third = simulationInput(project, setup, regenerated).toolpaths.get('opAround')!
+  assert(third !== first, 'a regenerated path turns its own copy')
+  assertEqual(third.moves, first.moves, 'and the values are identical')
+
+  // Another sheet: the same generated path on a wider bar folds elsewhere, so
+  // the frame has to be part of what is remembered, not just the path.
+  const wider = makeAroundProject(roundStock(60, 200, 'x', { x: 10, y: 40 }))
+  const onWider = simulationInput(wider.project, wider.setup, paths).toolpaths.get('opAround')!
+  assert(onWider !== first, 'the same path on another sheet turns its own copy')
+  assert(
+    JSON.stringify(onWider.moves) !== JSON.stringify(first.moves),
+    'and folds to different points, because the sheet it lands on is a different one',
+  )
 }
 
 function testAroundClampBandsAreFlatBoxes(): void {
@@ -436,7 +475,8 @@ function testSecondTurnPocketAndBarData(): void {
 testSecondTurnPocketAndBarData()
 testAroundIsUnrolledFlat()
 testAroundSimulatesFlat()
-testPickerAndBrokenAround()
+testListedSetupAndBrokenAround()
+testTurningAPathIsReused()
 testFlatSetupDropsAroundFeatures()
 testAroundClampBandsAreFlatBoxes()
 testFlatSetupKeepsItsClampsAndBar()

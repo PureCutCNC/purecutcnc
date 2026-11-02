@@ -39,7 +39,8 @@ import { aroundFeaturesActive } from '../../store/helpers/projectType'
 import { camT } from './camI18n'
 import { machineMode, operationOffer } from './machineMode'
 
-type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
+/** Every resolved feature of one project, keyed by id — what the hint reads. */
+export type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
@@ -157,43 +158,6 @@ function importedModelFeatureIds(project: Project): string[] {
   return importedModelFeatures(project).map((feature) => feature.id)
 }
 
-/** An imported model a rotary operation can machine, as the target picker lists it. */
-export interface RotaryTargetModel {
-  id: string
-  name: string
-}
-
-/** The models the rotary target picker offers, in the project's own order. */
-export function rotaryTargetModels(project: Project): RotaryTargetModel[] {
-  return importedModelFeatures(project).map((feature) => ({ id: feature.id, name: feature.name }))
-}
-
-/**
- * The target a rotary operation's model checklist writes when `featureId` is
- * ticked or unticked (issue #1015 slice K). The list is the project's imported
- * models in project order, and an id in the current target that names no model
- * any more is dropped rather than written back. Unticking the last remaining
- * model is refused: a rotary operation always names the model it machines.
- */
-export function rotaryTargetToggle(project: Project, target: OperationTarget, featureId: string): OperationTarget {
-  const models = importedModelFeatureIds(project)
-  const checked = new Set(models.filter((id) => target.source === 'features' && target.featureIds.includes(id)))
-  if (checked.has(featureId)) {
-    if (checked.size > 1) checked.delete(featureId)
-  } else {
-    checked.add(featureId)
-  }
-  // A region filter riding on the target is not a model: ticking a model must
-  // not silently drop it (#1096). The region ids are the closed Around regions
-  // the current target carries, in project order.
-  const regionIds = target.source === 'features'
-    ? resolveFeatureInstances(project, target.featureIds)
-      .filter((feature) => isRegion(feature) && feature.authoringFace === 'around' && featureHasClosedGeometry(feature))
-      .map((feature) => feature.id)
-    : []
-  return { source: 'features', featureIds: [...models.filter((id) => checked.has(id)), ...regionIds] }
-}
-
 /** The per-kind hint for a rotary add-menu row when the project has no model. */
 function rotaryNoModelHint(kind: OperationKind): string {
   return camT(kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel')
@@ -237,8 +201,26 @@ export function getOperationAddHint(
 
   // What the selection is comes first; which face it is on only matters for
   // a selection the operation could otherwise take.
-  return getOperationAddHintWithMap(selection, kind, resolvedFeatureMap(project))
+  return operationSelectionHint(selection, kind, resolvedFeatureMap(project))
     ?? activeSetupTargetHint(project, selection.selectedFeatureIds)
+}
+
+/**
+ * The selection half of {@link getOperationAddHint}: why `kind` cannot take
+ * this selection at all, or null when it can.
+ *
+ * Separate because the face half is `activeSetupTargetHint`, and a caller
+ * judging a feature from the face it was *not* authored on asks the two in a
+ * different order than the CAM panel does (issue #1112 F2): the rotary rows
+ * deliberately ignore the selection when Add creates them, so a feature list
+ * built for one feature must still check that this feature is a model.
+ */
+export function operationSelectionHint(
+  selection: SelectionState,
+  kind: OperationKind,
+  featureById: ResolvedFeatureMap,
+): string | null {
+  return getOperationAddHintWithMap(selection, kind, featureById)
 }
 
 function getOperationAddHintWithMap(
@@ -611,7 +593,7 @@ export function quickOperationLabel(kind: OperationKind): string {
  * the tree/canvas produce when exactly that feature is selected. Used to run a
  * feature through `getOperationAddHint` without touching the live selection.
  */
-function singleFeatureSelection(featureId: string): SelectionState {
+export function singleFeatureSelection(featureId: string): SelectionState {
   return {
     mode: 'feature',
     selectedFeatureId: featureId,

@@ -33,6 +33,7 @@ import {
   operationFieldsForGroup,
   operationNoteShowsTextarea,
   resolvedEntryStrategy,
+  stockRadialRefVariant,
   type OperationFieldId,
 } from './operationFields'
 import {
@@ -427,6 +428,21 @@ function testStockToLeaveFollowsTheSurfacePattern() {
   }
 }
 
+/**
+ * #1112 decision 8.16: the radial-wall note belongs to an Around pocket. It
+ * must not leak onto a Top or Bottom pocket, whose walls are ordinary upright
+ * walls, and a rotary operation keeps its own cross-section picture.
+ */
+function testStockRadialReferenceFollowsTheFace() {
+  const pocket = makeOperation({ kind: 'pocket' })
+  assert(stockRadialRefVariant(pocket, 'around') === 'around', 'an Around pocket gets the radial-wall note')
+  assert(stockRadialRefVariant(pocket, 'top') === undefined, 'a Top pocket gets the plain wall picture')
+  assert(stockRadialRefVariant(pocket, 'bottom') === undefined, 'a Bottom pocket gets the plain wall picture')
+
+  const rotaryRough = makeOperation({ kind: 'rotary_rough' })
+  assert(stockRadialRefVariant(rotaryRough, 'around') === 'rotary', 'a rotary operation keeps the cross-section picture')
+}
+
 function testRoundLinkCornersFollowsTheGeneratorsOwnLinking() {
   const field = OPERATION_FIELDS.find((candidate) => candidate.id === 'roundLinkCorners')
   assert(field, 'roundLinkCorners must be declared')
@@ -574,6 +590,7 @@ testXyLeadIsOfferedOnEdgeRoutesButNotTrochoidalOnes()
 testTrochoidalPredicatesMatchTheEnginesOwn()
 testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()
+testStockRadialReferenceFollowsTheFace()
 testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
 testRotaryPassesIsARotaryStrategyField()

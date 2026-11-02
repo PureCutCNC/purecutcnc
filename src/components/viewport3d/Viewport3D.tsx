@@ -26,7 +26,7 @@ import type { ToolpathMove, ToolpathMoveKind, ToolpathResult } from '../../engin
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } from '../../engine/csg'
+import { applyClampHighlight, applyFeatureHighlights, applyTabHighlight, buildOriginTriad, buildScene } from '../../engine/csg'
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeaturesWorldBounds } from '../canvas/scenePrimitives'
 import { getFeatureGeometryProfiles } from '../../text'
@@ -496,6 +496,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   // highlight can recolor them in place without a full scene rebuild (issue #261).
   const clampMeshesRef = useRef<Map<string, THREE.Mesh>>(new Map())
   const tabMeshesRef = useRef<Map<string, THREE.Mesh>>(new Map())
+  // The most recently built feature meshes, keyed by the id they were drawn
+  // under, so selection/hover highlight can recolor them in place as well
+  // (issue #1112 F5: a Turn or Polygon is drawn from its own mesh).
+  const featureMeshesRef = useRef<Map<string, THREE.Object3D>>(new Map())
   const toolpathObjectsRef = useRef<THREE.Object3D[]>([])
   const originObjectRef = useRef<THREE.Object3D | null>(null)
   const buildRequestRef = useRef(0)
@@ -818,6 +822,29 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     applyFixtureHighlights()
   }, [applyFixtureHighlights])
 
+  // Feature meshes follow the same in-place rule: a canned model (Turn,
+  // Polygon) is drawn from its own mesh (issue #1112 F5), so selecting or
+  // hovering its row tints that mesh instead of rebuilding the scene. The 2D
+  // canvas reads the same two primitives, so both views highlight alike.
+  const selectedFeatureIds = selection.selectedFeatureIds
+  const hoveredFeatureId = selection.hoveredFeatureId
+  const applyFeatureHighlightsToScene = useCallback(() => {
+    applyFeatureHighlights(featureMeshesRef.current, { selectedFeatureIds, hoveredFeatureId }, threePalette)
+  }, [selectedFeatureIds, hoveredFeatureId, threePalette])
+
+  // Mirrored for the async scene-build callback, exactly as fixtures are: the
+  // ref keeps the current selection off that effect's dependency list, so a
+  // selection change can never rebuild the model.
+  const applyFeatureHighlightsRef = useRef(applyFeatureHighlightsToScene)
+  useEffect(() => {
+    applyFeatureHighlightsRef.current = applyFeatureHighlightsToScene
+  }, [applyFeatureHighlightsToScene])
+
+  // Recolor the feature meshes whenever selection/hover changes — no rebuild.
+  useEffect(() => {
+    applyFeatureHighlightsToScene()
+  }, [applyFeatureHighlightsToScene])
+
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -907,7 +934,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         // and selection may not have changed since the last rebuild (issue #261).
         clampMeshesRef.current = nextSceneObjects.clampMeshes
         tabMeshesRef.current = nextSceneObjects.tabMeshes
+        featureMeshesRef.current = nextSceneObjects.featureMeshes
         applyFixtureHighlightsRef.current()
+        applyFeatureHighlightsRef.current()
 
           const controls = controlsRef.current
         if (controls) {
@@ -986,8 +1015,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       window.clearTimeout(timeout)
     }
     // Keyed on geometry inputs only. Selection and collision no longer rebuild
-    // the CSG model — a separate effect recolors fixtures via applyFixtureHighlights
-    // (issue #261). applyFixtureHighlightsRef is a stable ref, so it's omitted.
+    // the CSG model — separate effects recolor fixtures and feature meshes via
+    // applyFixtureHighlights / applyFeatureHighlights (issues #261, #1112 F5).
+    // Both ...Ref helpers are stable refs, so they are omitted.
   }, [clearRenderedObjects, disposeObjectMaterial, originVisible, project, rebuildGridHelpers])
 
   useEffect(() => {

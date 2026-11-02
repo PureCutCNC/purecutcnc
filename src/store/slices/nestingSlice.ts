@@ -16,7 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import { applyNestToProject, discardNestFromProject } from '../helpers/nestApply'
-import { aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
@@ -82,7 +82,7 @@ export function createNestingSlice(
           const copiedIds = new Set(result.copyIds)
           const forbidden = result.project.features.some((feature) => (
             copiedIds.has(feature.id)
-            && aroundSketchAuthoringRefused(result.project, feature.authoringFace)
+            && aroundSheetAuthoringRefused(result.project, feature.authoringFace, featureOperation(result.project, feature))
           ))
           if (forbidden) return {}
         }

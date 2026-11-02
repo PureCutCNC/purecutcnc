@@ -38,17 +38,32 @@ function localizeParams(params: ToolpathWarning['params']): MessageParams | unde
 }
 
 /**
+ * Words the engine carries as an id rather than as text, so they follow the
+ * active language: a clamp move kind, the material a Follow line was kept clear
+ * of, and which end of the line stopped short. Each id is mapped to its word
+ * from `warnings.<table>.<id>` at display time.
+ */
+const NESTED_WORD_PARAMS = [
+  { id: 'moveKindId', word: 'moveKind', table: 'warnings.moveKind' },
+  { id: 'neighbourId', word: 'neighbour', table: 'warnings.neighbour' },
+  { id: 'sideId', word: 'side', table: 'warnings.side' },
+] as const
+
+/**
  * The single presentation mapper for structured engine warnings: resolves
  * `{ code, params }` to localized text in the active locale. Callers render
  * at display time (React components re-render via `useI18n()`), so switching
- * language re-translates visible warnings. The one nested translation is the
- * clamp move-kind word: engines pass a raw `moveKindId` and the localized
- * word is injected as `{moveKind}`.
+ * language re-translates visible warnings — including the nested words above.
  */
 export function toolpathWarningText(warning: ToolpathWarning): string {
   let params = warning.params
-  if (params && typeof params.moveKindId === 'string') {
-    params = { ...params, moveKind: translate(`warnings.moveKind.${params.moveKindId}` as MessageKey) }
+  if (params) {
+    const words: MessageParams = {}
+    for (const entry of NESTED_WORD_PARAMS) {
+      const id = params[entry.id]
+      if (typeof id === 'string') words[entry.word] = translate(`${entry.table}.${id}` as MessageKey)
+    }
+    if (Object.keys(words).length > 0) params = { ...params, ...words }
   }
   return translate(`warnings.${warning.code}` as MessageKey, localizeParams(params))
 }

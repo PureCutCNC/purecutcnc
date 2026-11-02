@@ -58,6 +58,18 @@ export interface CannedShapeCapabilities {
 }
 
 /**
+ * Where a regenerated model mesh grows from when its parameters change.
+ *
+ * `'bottom'` (the default) keeps each instance's existing `z_bottom` and puts
+ * the new height above it. `'center'` keeps the instance's centre, which is
+ * what a rotary solid needs: a Turn or Polygon is centred on the bar's pivot,
+ * so shrinking its diameter must move both its bottom and its top, not leave
+ * it hanging from the old bottom. Either way the placement belongs to the
+ * instance, not the shared definition (issue #1112).
+ */
+export type CannedModelZAnchor = 'bottom' | 'center'
+
+/**
  * The extension point slices D–G code against. Registering a generator is the
  * only change a new canned shape needs in the model:
  *
@@ -91,6 +103,11 @@ export interface CannedShapeGenerator<P extends CannedShapeParams = CannedShapeP
   generateMesh?(params: P): CannedShapeMesh | null
   /** What the kind supports. Omit when every capability is available. */
   capabilities?: CannedShapeCapabilities
+  /**
+   * Model kinds: how a regenerated mesh is anchored to each instance's span.
+   * Omit for a bottom-anchored model; a rotary solid on a bar sets `'center'`.
+   */
+  modelZAnchor?: CannedModelZAnchor
   /** Validate stored parameters. Omit when the shape has no schema to check. */
   normalizeParams?(raw: CannedShapeParams): P | null
   /**

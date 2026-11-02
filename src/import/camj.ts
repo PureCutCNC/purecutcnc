@@ -40,6 +40,8 @@ import { isBarStock } from '../types/barStock'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { rebuildCannedShapeModels } from '../cannedShapes/model'
+import { TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import type { CannedShapeData } from '../types/project'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
 import type { MachineLoadDiagnostic } from '../machine/diagnostics'
@@ -226,6 +228,56 @@ function remapConstraint(
 }
 
 /**
+ * A path run's baked `sourceFeatureId` names a row in the *source* project.
+ * Imported on its own it would dangle, or — worse — match an unrelated row in
+ * the target on an id collision, so point it at the imported copy and clear it
+ * when the source was not selected (issue #1112 DE2 review).
+ */
+function remapImportedTextLayout(
+  layout: FeatureInstance['textLayout'],
+  featureIdMap: Map<string, string>,
+): FeatureInstance['textLayout'] {
+  const cloned = cloneTextLayout(layout)
+  if (!cloned || cloned.kind !== 'path' || !cloned.sourceFeatureId) return cloned
+  const mapped = featureIdMap.get(cloned.sourceFeatureId)
+  if (mapped) {
+    cloned.sourceFeatureId = mapped
+  } else {
+    delete cloned.sourceFeatureId
+  }
+  return cloned
+}
+
+/**
+ * A Turn's copied profile remembers the feature it was picked from so the
+ * dialog can offer Refresh. That id names a row in the *source* project, so it
+ * must follow the imported copy for the same reason text-on-a-path does:
+ * imported on its own it dangles, and importing both would otherwise disable
+ * Refresh as "source missing". The copy itself is baked, so when the source
+ * was not selected there is nothing to point at and the stored id is left as
+ * it was (still refused as missing).
+ */
+function remapImportedCannedSource(
+  canned: CannedShapeData | null | undefined,
+  featureIdMap: Map<string, string>,
+): CannedShapeData | null | undefined {
+  if (!canned || canned.kind !== TURN_CANNED_KIND) return canned
+  const profile = canned.params.profile
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return canned
+  const sourceId = (profile as Record<string, unknown>).sourceFeatureId
+  if (typeof sourceId !== 'string') return canned
+  const mapped = featureIdMap.get(sourceId)
+  if (!mapped) return canned
+  return {
+    ...canned,
+    params: {
+      ...canned.params,
+      profile: { ...(profile as Record<string, unknown>), sourceFeatureId: mapped },
+    } as CannedShapeData['params'],
+  }
+}
+
+/**
  * Merge selected folders from a source .camj project into the current project.
  * Returns a new Project plus the ids that were created. The result is not yet
  * passed through syncFeatureTreeProject — the caller (store action) is
@@ -395,6 +447,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     mergedDefinitions[newDefId] = {
       ...sourceDef,
       id: newDefId,
+      canned: remapImportedCannedSource(sourceDef.canned, featureIdMap),
       profile: {
         start: { ...sourceDef.profile.start },
         segments: sourceDef.profile.segments.map((segment) => ({ ...segment })),
@@ -431,7 +484,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       name: featureName,
       definitionId: newDefinitionId,
       transform: { ...feature.transform },
-      textLayout: cloneTextLayout(feature.textLayout),
+      textLayout: remapImportedTextLayout(feature.textLayout, featureIdMap),
       constraints,
       folderId: sourceFolderId ? folderIdMap.get(sourceFolderId) ?? null : null,
       z_top: typeof feature.z_top === 'string' ? (dimensionIdMap.get(feature.z_top) ?? feature.z_top) : feature.z_top,

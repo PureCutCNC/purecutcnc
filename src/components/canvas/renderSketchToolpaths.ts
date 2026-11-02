@@ -20,6 +20,10 @@ import { pocketSlotFeedPercent } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import { toolpathForActiveFace } from './aroundToolpaths'
+import { foldToolpathForDisplay } from './aroundDisplayWrap'
+import { aroundFrame } from '../../engine/aroundFrame'
+import { activeFace } from '../../store/helpers/activeFace'
+import { isBarStock } from '../../types/barStock'
 import { canvasColors } from './canvasPalette'
 import { drawPlasmaKerfBands, drawPlasmaPierceMarkers } from './plasmaKerfBand'
 import { drawToolpath } from './previewPrimitives'
@@ -41,14 +45,23 @@ export function renderSketchToolpaths(
   // and the unrolled sheet share no plane — and an Around operation's wrapped
   // path comes back on the sheet (issue #395).
   const muted = mutedToolpathOperationIds(project)
+  // A toolpath is generated continuous and stored wrapped around the bar. On
+  // Around the unwrapped path can still run past the sheet (a multi-turn
+  // thread), so it is folded into the sheet for drawing only (issue #1112 L).
+  // The frame alone is enough here; building the full sheet would resolve every
+  // model band on every frame.
+  const sheet = activeFace(project) === 'around' && isBarStock(project.stock)
+    ? aroundFrame(project.stock)
+    : null
   const entries = toolpaths
     .map((toolpath) => toolpathForActiveFace(project, toolpath))
     .filter((toolpath): toolpath is ToolpathResult => toolpath !== null && toolpath.moves.length > 0)
     .map(toolpath => {
+    const display = sheet ? foldToolpathForDisplay(toolpath, sheet) : toolpath
     const percent = pocketSlotFeedPercent(project.operations.find(op => op.id === toolpath.operationId))
     const emphasized = toolpath.operationId === selectedId
     return {
-      toolpath, emphasized, muted: muted.has(toolpath.operationId),
+      toolpath: display, emphasized, muted: muted.has(toolpath.operationId),
       selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100,
     }
   }).sort((a, b) => Number(b.muted) - Number(a.muted))

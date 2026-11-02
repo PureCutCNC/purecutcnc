@@ -99,8 +99,11 @@ function setupListGrouped(project: Pick<Project, 'setups'>, listed: readonly Mac
  * The operations list shows every setup's operations, but only the active
  * setup's can be used from the face in view: an operation from another face is
  * listed as a ghost row, like a feature from the other face in the feature
- * tree. A project that is not grouped has one flat setup, so every operation
- * in it is on the active setup.
+ * tree. A ghost row is still selectable — selecting it turns the workspace over
+ * to its face (`store/workspaceFace.ts` `revealOperationFace`, issue #1112 F3),
+ * which is how the header face control stays the one setup choice. A project
+ * that is not grouped has one flat setup, so every operation in it is on the
+ * active setup.
  *
  * Membership follows the panel's own: an operation belongs to the setup its
  * `setupId` names, and one with no `setupId` reads as the first setup listed —
@@ -215,33 +218,27 @@ export function operationTargetReach(
 }
 
 /**
- * The reach cards worth showing for a setup's face (issue #1102): only where
- * the two faces meet, or where the setup cannot reach a target at all. A
- * single-sided target — a blind pocket, an Around feature, a rotary pass — has
- * nothing on the other side to measure, so its card could only ever read
- * "unverified". Rejected targets stay: "cannot reach" is an error to see.
+ * Whether a target is cut from both flat faces (issue #1112 item 38): a
+ * through-feature whose operations are split between Top and Bottom, so there
+ * are two passes with a middle to check. Coverage is what answers it — a
+ * feature that reaches both faces but is targeted from one setup only reads
+ * `singleSide`, and has nothing on the other side to measure.
  */
-export function visibleTargetReach(face: SetupFace, reaches: readonly TargetReach[]): TargetReach[] {
-  if (face === 'around') return []
-  return reaches.filter((entry) => (
-    entry.verdict.through || entry.verdict.status === 'cross-face' || entry.verdict.status === 'rejected'
-  ))
+export function cutFromBothSides(entry: TargetReach): boolean {
+  return entry.coverage !== null && entry.coverage.status !== 'singleSide'
 }
 
 /**
- * The folded cross-face list's `<summary>` line (issue #1102): what the list
- * holds, then every ticked target's name followed by ⇄, so the picks stay
- * visible while the list is closed.
+ * The reach cards worth showing for a setup's face (issue #1112 item 38):
+ * only targets cut from both faces, plus the ones the setup cannot reach at
+ * all. A single-sided target — a blind pocket, a through-hole cut from one
+ * setup, an Around feature, a rotary pass — has nothing on the other side to
+ * measure, so its card could only ever read "unverified" and is left out.
+ * Rejected targets stay: "cannot reach" is an error to see.
  */
-export function crossFaceSummaryLine(
-  summary: string,
-  candidates: readonly { id: string; name: string }[],
-  selectedIds: readonly string[],
-): string {
-  const picked = candidates
-    .filter((feature) => selectedIds.includes(feature.id))
-    .map((feature) => `${feature.name} ⇄`)
-  return picked.length > 0 ? `${summary}: ${picked.join(' ')}` : summary
+export function visibleTargetReach(face: SetupFace, reaches: readonly TargetReach[]): TargetReach[] {
+  if (face === 'around') return []
+  return reaches.filter((entry) => cutFromBothSides(entry) || entry.verdict.status === 'rejected')
 }
 
 /**

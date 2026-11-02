@@ -25,6 +25,7 @@ import type { PendingMoveTool } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { computeMoveDistancePreviewPoint, type OperationDimEdit } from './manualEntry'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 interface MovePreviewPoint {
@@ -141,7 +142,15 @@ export function useMoveWorkflow(ctx: MoveWorkflowCtx): MoveWorkflow {
     const distance = parseLengthInput(currentEdit.distance, projectRef.current.meta.units)
     if (distance === null) return
     const referencePoint = pm.toPoint ?? pendingMovePreviewPointRef.current?.point ?? pm.fromPoint
-    const toPoint = computeMoveDistancePreviewPoint(pm.fromPoint, referencePoint, distance)
+    // The typed distance is the preview's, so the point it commits is the one
+    // the canvas drew: a canned rotary move projects (and clamps) here too
+    // (issue #1112 rt6-d review). A copy passes through unchanged.
+    const toPoint = projectedMoveTarget(
+      projectRef.current,
+      pm,
+      pm.fromPoint,
+      computeMoveDistancePreviewPoint(pm.fromPoint, referencePoint, distance),
+    )
     if (currentEdit.kind === 'move') {
       completePendingMove(toPoint)
       setPendingMovePreviewPointRef(null)

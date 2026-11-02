@@ -72,16 +72,20 @@ function buildHeightfieldSurfaceObject(
  * Build and mount the complete stock scene for one grid. Passing a flat
  * round-bar descriptor adds the static lower half and removes the flat
  * underside (the lower half is the bar's underside); no descriptor builds the
- * block, square-blank or Around scene exactly as before.
+ * block, square-blank or Around scene exactly as before. `squareBlankSide`
+ * (issue #1112 rt3-b) clamps the wrapped surface and its walls onto the
+ * blank's own cross-section, so the bar view cannot draw outside the square it
+ * represents; it mounts nothing and changes no heightfield value.
  */
 export function buildSimulationStockScene(
   grid: SimulationGrid,
   stockColor: THREE.Color,
   frame?: AroundFrame,
   flatRoundBar?: FlatRoundBarDescriptor,
+  squareBlankSide?: number,
 ): SimulationStockScene {
   const heightfieldTexture = createHeightfieldTexture(grid)
-  const material = createHeightfieldMaterial(heightfieldTexture, grid, stockColor, frame, flatRoundBar)
+  const material = createHeightfieldMaterial(heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide)
   const surface = buildHeightfieldSurfaceObject(grid, material, frame)
   const boundary = createInstancedBoundaryGroup(
     heightfieldTexture,
@@ -90,6 +94,7 @@ export function buildSimulationStockScene(
     frame,
     flatRoundBar?.pivot,
     flatRoundBar,
+    squareBlankSide,
   )
   const lowerHalf = createFlatRoundBarLowerHalf(grid, flatRoundBar, stockColor)
 

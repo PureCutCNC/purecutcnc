@@ -895,7 +895,7 @@ test.describe('CAM operation browser smoke', () => {
 
     // Positive controls, so the "absent" assertions below cannot pass merely
     // because a locator stopped matching anything at all.
-    await expect(ui.cam.operationField(app.page, 'Target')).toHaveCount(1)
+    await expect(ui.cam.operationField(app.page, 'Cuts')).toHaveCount(1)
     await expect(
       app.page.locator('.cam-operation-properties .properties-group')
         .getByText('Stepdown', { exact: true }),

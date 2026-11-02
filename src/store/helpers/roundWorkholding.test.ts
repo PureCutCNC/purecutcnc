@@ -45,6 +45,8 @@ import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../projectStore'
 import { normalizeProject } from './projectFormat'
 import {
+  STANDARD_CHUCKS,
+  chuckSizePatch,
   defaultRoundWorkholding,
   isRoundWorkholding,
   roundWorkholdingDiameter,
@@ -148,15 +150,16 @@ function alongOf(clamp: Clamp, stock: BarStock): { low: number; size: number; di
 
 console.log('\nDefault chuck and tailstock')
 
-test('a 20 × 100 mm bar on X gives a 50 across chuck from minX − 40 to minX + 15, height 10 + 25', () => {
+test('a 20 × 100 mm bar on X gets the 4 inch starter with a 15 mm grip', () => {
   const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
   const chuck = defaultRoundWorkholding('chuck', bar, 'mm')
   assert.equal(chuck.type, 'chuck', 'it is a chuck')
-  assert.equal(chuck.h, 50, '50 across (twice 20 is 40, the 50 mm floor wins)')
-  assert.equal(chuck.x, -40, 'the body reaches 40 past the bar end')
+  // #1112 R2 item 23: 4 inch (100 mm) unless the bar is outside its range.
+  assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), 'Bison 4 inch body A')
+  assert.equal(chuck.x, -convertLength(1.97, 'inch', 'mm'), 'the documented body reaches past the bar end')
   assert.equal(chuck.x + chuck.w, 15, 'the grip reaches 15 into the bar')
   assert.equal(chuck.y + chuck.h / 2, roundStockCentre(bar), 'centred on the centreline')
-  assert.equal(chuck.height, 10 + 25, 'bar radius plus its own')
+  assert.equal(chuck.height, 10 + convertLength(3.94, 'inch', 'mm') / 2, 'bar radius plus its own')
 
   const tailstock = defaultRoundWorkholding('tailstock', bar, 'mm')
   assert.equal(tailstock.type, 'tailstock', 'it is a tailstock')
@@ -167,36 +170,39 @@ test('a 20 × 100 mm bar on X gives a 50 across chuck from minX − 40 to minX +
   assert.equal(tailstock.height, 10 + 25, 'the same height rule')
 })
 
-test('a 40 mm bar gets 80 across', () => {
+test('a 40 mm bar fits the 4 inch starter, not the 5 inch body', () => {
+  // Issue #1112 rt3-e item 28: with the full external gripping range the 4 inch
+  // preset holds 3..93 mm, so the default Ø40 mm bar no longer moves up to 5".
   const bar = roundStock(40, 100, 'x', { x: 0, y: 0 })
-  assert.equal(defaultRoundWorkholding('chuck', bar, 'mm').h, 80, 'twice the bar diameter')
-  assert.equal(defaultRoundWorkholding('chuck', bar, 'mm').height, 20 + 40, 'the height follows it')
+  const chuck = defaultRoundWorkholding('chuck', bar, 'mm')
+  assert.equal(chuck.h, convertLength(3.94, 'inch', 'mm'), '4 inch body A')
+  assert.equal(chuck.height, 20 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows it')
 })
 
 test('a 30 mm long bar grips 7.5', () => {
   const bar = roundStock(20, 30, 'x', { x: 0, y: 0 })
   const chuck = defaultRoundWorkholding('chuck', bar, 'mm')
-  assert.equal(chuck.x, -40, 'the body is unchanged')
+  assert.equal(chuck.x, -convertLength(1.97, 'inch', 'mm'), 'the body is unchanged')
   assert.equal(chuck.x + chuck.w, 7.5, 'a quarter of the length, not 15')
-  assert.equal(chuck.w, 40 + 7.5, 'body plus grip')
+  assert.equal(chuck.w, convertLength(1.97, 'inch', 'mm') + 7.5, 'body plus grip')
 })
 
 test('the defaults are converted for an inch project', () => {
-  const body = convertLength(40, 'mm', 'inch')
+  const body = 1.97
   const grip = Math.min(convertLength(15, 'mm', 'inch'), 4 / 4)
-  const own = Math.max(1.5, convertLength(50, 'mm', 'inch'))
+  const own = 3.94
   const bar = roundStock(0.75, 4, 'x', { x: 0, y: 0 })
   const chuck = defaultRoundWorkholding('chuck', bar, 'inch')
   assert.equal(chuck.w, body + grip, 'body plus grip in inches')
   assert.equal(chuck.h, own, 'the diameter floor in inches')
   assert.equal(chuck.x, -body, 'the body past the end in inches')
-  assert.equal(chuck.x + chuck.w, grip, 'the grip inside the bar')
+  assert.ok(Math.abs(chuck.x + chuck.w - grip) < 1e-12, 'the grip inside the bar')
   assert.equal(chuck.height, 0.75 / 2 + own / 2, 'the height in inches')
 
   const tailstock = defaultRoundWorkholding('tailstock', bar, 'inch')
   assert.equal(tailstock.x, 4, 'touches the far end face')
-  assert.equal(tailstock.w, body, 'body beyond it')
-  assert.equal(tailstock.h, own, 'the diameter floor')
+  assert.equal(tailstock.w, convertLength(40, 'mm', 'inch'), 'body beyond it')
+  assert.equal(tailstock.h, convertLength(50, 'mm', 'inch'), 'the diameter floor')
 })
 
 test('an axis Y bar starts at maxY and sits across X', () => {
@@ -204,14 +210,97 @@ test('an axis Y bar starts at maxY and sits across X', () => {
   assert.equal(roundStockCentre(bar), 10, 'the centreline is a Y bar X of 10')
   const chuck = defaultRoundWorkholding('chuck', bar, 'mm')
   assert.equal(chuck.y, 100 - 15, 'the grip starts at the start end (maxY)')
-  assert.equal(chuck.y + chuck.h, 100 + 40, 'the body reaches past it')
-  assert.equal(chuck.x, 10 - 25, 'centred across X')
-  assert.equal(chuck.w, 50, '50 across')
+  assert.equal(chuck.y + chuck.h, 100 + convertLength(1.97, 'inch', 'mm'), 'the body reaches past it')
+  assert.equal(chuck.x, 10 - convertLength(3.94, 'inch', 'mm') / 2, 'centred across X')
+  assert.equal(chuck.w, convertLength(3.94, 'inch', 'mm'), '4 inch body A')
 
   const tailstock = defaultRoundWorkholding('tailstock', bar, 'mm')
   assert.equal(tailstock.y, 0 - 40, 'the tailstock sits past the far end (minY)')
   assert.equal(tailstock.y + tailstock.h, 0, 'touching it')
   assert.equal(tailstock.x + tailstock.w / 2, 10, 'centred across X')
+})
+
+// ── Picking a standard size ───────────────────────────────────
+
+console.log('\nPicking a standard chuck size')
+
+test('a preset label is the size alone, so the picker reads as sizes not catalogue lines', () => {
+  // Issue #1112 R2 item 13: the field is a *size*. The catalogue entry (BISON
+  // 3204, its two source links) stays in the table's id and comment, never in
+  // the text the picker shows.
+  assert.deepEqual(STANDARD_CHUCKS.map((size) => size.label), ['3"', '4"', '5"', '6"', '8"', '10"', '12"'])
+  for (const size of STANDARD_CHUCKS) {
+    assert.match(size.label, /^\d+"$/, `${size.id}: the label is an inch size and nothing else`)
+    assert.equal(size.label, `${size.id.slice('bison-3204-'.length)}"`, `${size.id}: the label is its own size`)
+  }
+})
+
+test('each preset carries the full external gripping range, published in both units', () => {
+  // #1112 rt3-e item 28: `d1` is the minimum and `d3` the maximum of the jaw
+  // set's full external range, and the catalogue prints an inch and a metric
+  // column it rounds independently — so both are kept as published rather than
+  // one being converted into the other.
+  const published: Record<string, { minIn: number; maxIn: number; minMm: number; maxMm: number }> = {
+    'bison-3204-3': { minIn: 0.08, maxIn: 2.8, minMm: 2, maxMm: 71 },
+    'bison-3204-4': { minIn: 0.12, maxIn: 3.66, minMm: 3, maxMm: 93 },
+    'bison-3204-5': { minIn: 0.12, maxIn: 4.92, minMm: 3, maxMm: 125 },
+    'bison-3204-6': { minIn: 0.12, maxIn: 6.3, minMm: 3, maxMm: 160 },
+    'bison-3204-8': { minIn: 0.16, maxIn: 7.87, minMm: 4, maxMm: 200 },
+  }
+  const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
+  for (const [id, range] of Object.entries(published)) {
+    const size = STANDARD_CHUCKS.find((entry) => entry.id === id)
+    assert.ok(size, `${id}: the preset is listed`)
+    assert.equal(size.minIn, range.minIn, `${id}: the d1 minimum in inches, as published`)
+    assert.equal(size.maxIn, range.maxIn, `${id}: the d3 maximum in inches, as published`)
+    assert.equal(size.minMm, range.minMm, `${id}: the d1 minimum in mm, as published`)
+    assert.equal(size.maxMm, range.maxMm, `${id}: the d3 maximum in mm, as published`)
+    // The capacity a project stores is the metric column, not the inch column
+    // converted (the catalogue prints 71 mm, not 2.80 in × 25.4 = 71.12 mm).
+    assert.deepEqual(chuckSizePatch(id, bar, 'mm').chuck?.clampingRangeMm, { min: range.minMm, max: range.maxMm },
+      `${id}: the stored capacity is the published metric range`)
+  }
+})
+
+test('picking each preset uses its published body length and still grips the bar end', () => {
+  for (const axis of ['x', 'y'] as const) {
+    const bar = roundStock(20, 100, axis, { x: 0, y: 0 })
+    const start = defaultRoundWorkholding('chuck', bar, 'mm')
+    for (const size of STANDARD_CHUCKS) {
+      const picked: Clamp = {
+        id: 'cl-chuck',
+        name: 'Chuck',
+        visible: true,
+        ...start,
+        ...chuckSizePatch(size.id, bar, 'mm'),
+      }
+      const diameter = convertLength(size.diameterIn, 'inch', 'mm')
+      const body = convertLength(size.bodyIn, 'inch', 'mm')
+      const along = alongOf(picked, bar)
+      assert.equal(along.diameter, diameter, `${axis}/${size.id}: the published body diameter`)
+      assert.equal(along.size, body + 15, `${axis}/${size.id}: the published body plus the 15 mm grip`)
+      assert.ok(Math.abs(along.low + body) < 1e-9, `${axis}/${size.id}: the body reaches past the start end`)
+      assert.ok(Math.abs(along.low + along.size - 15) < 1e-9, `${axis}/${size.id}: the grip still reaches 15 into the bar`)
+      assert.equal(picked.height, barPivotZ(bar) + diameter / 2, `${axis}/${size.id}: the height follows it`)
+      assert.equal(
+        axis === 'x' ? picked.y + picked.h / 2 : picked.x + picked.w / 2,
+        barCentre(bar),
+        `${axis}/${size.id}: centred across the bar`,
+      )
+    }
+  }
+})
+
+test('picking 12 inch replaces the default 3 inch body instead of keeping its length', () => {
+  const bar = roundStock(20, 100, 'x', { x: 0, y: 0 })
+  const before = defaultRoundWorkholding('chuck', bar, 'mm')
+  const after = { ...before, ...chuckSizePatch('bison-3204-12', bar, 'mm') }
+  const body = convertLength(3.7, 'inch', 'mm')
+  assert.equal(after.w, body + 15, 'the real 12 inch body replaces the old 3 inch one')
+  assert.equal(after.h, convertLength(12.4, 'inch', 'mm'), 'and the diameter is the 12 inch one')
+  assert.equal(after.x, -body, 'it is re-placed against the bar end')
+  assert.ok(Math.abs(after.x + after.w - 15) < 1e-9, 'gripping the same 15 mm')
+  assert.notEqual(after.w, before.w, 'the old axial length really was different')
 })
 
 // ── syncRoundWorkholding ──────────────────────────────────────
@@ -233,7 +322,7 @@ test('the height follows a diameter change', () => {
   const { project } = barWithWorkholding()
   const wider = { ...project.stock, thickness: 30, profile: { ...project.stock.profile } } as RoundStock
   const next = syncRoundWorkholding({ ...project, stock: wider })
-  assert.equal(next.clamps[0].height, 15 + 25, 'bar radius plus the clamp radius')
+  assert.equal(next.clamps[0].height, 15 + convertLength(3.94, 'inch', 'mm') / 2, 'bar radius plus the clamp radius')
 })
 
 test('a step clamp is left alone', () => {
@@ -358,7 +447,7 @@ test('a same-axis resize keeps the clamps byte-for-byte', () => {
   assert.equal(afterDiameter[0].w, before[0].w, 'the along size is untouched')
   assert.equal(afterDiameter[0].h, before[0].h, 'the diameter is untouched')
   assert.equal(afterDiameter[0].y, roundStockCentre(wider) - before[0].h / 2, 'it is only recentred')
-  assert.equal(afterDiameter[0].height, 15 + 25, 'the height follows the new bar diameter')
+  assert.equal(afterDiameter[0].height, 15 + convertLength(3.94, 'inch', 'mm') / 2, 'the height follows the new bar diameter')
 
   const sameAxis = { ...project, stock: longer }
   assert.equal(transposeRoundWorkholding(bar, sameAxis), sameAxis,
@@ -511,9 +600,9 @@ test('resizing the bar diameter through the store recentres the chuck with the n
   const resized = stockOf() as RoundStock
   const after = clampsOf()[0]
   assert.equal(resized.thickness, 30, 'the diameter followed')
-  assert.equal(after.h, 50, 'the across-size is kept')
+  assert.equal(after.h, chuck.h, 'the across-size is kept')
   assert.equal(after.y, roundStockCentre(resized) - after.h / 2, 'centred on the new centreline')
-  assert.equal(after.height, 15 + 25, 'the height derives from the new diameter')
+  assert.equal(after.height, 15 + convertLength(3.94, 'inch', 'mm') / 2, 'the height derives from the new diameter')
 })
 
 test('moveClampControl on a chuck leaves it centred with a derived height', () => {
@@ -524,9 +613,12 @@ test('moveClampControl on a chuck leaves it centred with a derived height', () =
   useProjectStore.getState().moveClampControl('cl-chuck', { kind: 'anchor', index: 0 }, { x: -50, y: -20 })
 
   const after = clampsOf()[0]
-  assert.equal(after.h, 62, 'the dragged across-size is kept')
+  // The dragged anchor is the clamp's min corner, so the opposite corner — its
+  // default far corner (y + h) — fixes the across size the drag produces.
+  const draggedAcross = chuck.y + chuck.h + 20
+  assert.equal(after.h, draggedAcross, 'the dragged across-size is kept')
   assert.equal(after.y + after.h / 2, roundStockCentre(bar), 'centred after the drag')
-  assert.equal(after.height, 10 + 31, 'the height derives from the dragged size')
+  assert.equal(after.height, 10 + draggedAcross / 2, 'the height derives from the dragged size')
   assert.equal(after.w, 70, 'the along-axis size is the drag result')
 })
 

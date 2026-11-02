@@ -269,6 +269,48 @@ export const ROUND_BAR_SILHOUETTE_GLSL = /* glsl */ `
 `
 
 /**
+ * A square blank's silhouette (issue #1112 rt3-b): the bar view draws nothing
+ * outside the blank's own cross-section.
+ *
+ * The wrapped heightfield stores one radius per across cell, taken at the
+ * cell's own angle, and draws each cell as a flat quad at that radius with a
+ * radial wall to its neighbour. A round bar's polygon is inscribed in its
+ * circle by construction, so the render can only ever be inside it. A square
+ * blank's section is `halfSide / max(|sin|, |cos|)`, which *rises* away from
+ * the blank's flats, so the cell-centre radius is the largest radius in its
+ * cell: near a corner the quad overshoots the blank's flats and the wall
+ * between two cells straddles the true surface there, leaving a ragged fin up
+ * to one cell step (~0.02 in at the default detail) outside the blank — below
+ * its bottom face along both uncut ends, and above its top face, visibly as a
+ * ragged silhouette edge from any angle and as a thin lip under the ends from
+ * a low one. The turned middle shows none of it: its radius is far smaller
+ * than the blank's, so its own facets have nothing to poke out of.
+ *
+ * Clamping each rendered radius onto the blank's true surface removes every
+ * one of those, without touching a single heightfield value: `topZ` is still
+ * the cell's own radius, every cut is unchanged, and only the drawn position
+ * moves — and only where it is outside the blank. A block or a round bar
+ * passes no side and compiles exactly the shader it did before. Written in the
+ * scalar subset the tests can run.
+ */
+export const SQUARE_BLANK_SILHOUETTE_GLSL = /* glsl */ `
+  // The blank's surface radius along the ray at one angle: half the side on a
+  // flat, side/√2 at a corner.
+  float squareBlankSurfaceRadius(float side, float angle) {
+    float s = abs(sin(angle));
+    float c = abs(cos(angle));
+    return 0.5 * side / max(max(s, c), 0.000001);
+  }
+
+  // A radial height clamped onto the blank, so the drawn surface never leaves
+  // the square it represents.
+  float squareBlankSilhouetteRadius(float side, float angle, float radius) {
+    float surface = squareBlankSurfaceRadius(side, angle);
+    return radius < surface ? radius : surface;
+  }
+`
+
+/**
  * The smoothed surface normal at any point inside a cell, shared by the surface
  * sheet and by the wall mesh (which fills the small risers inside a slope with
  * the surface's own shading). Fragment-stage only (it reads screen
@@ -344,13 +386,15 @@ export const SURFACE_NORMAL_GLSL = /* glsl */ `
 
 ${DEPTH_DARKEN_GLSL}`
 
-const vertexShader = (flatRoundBar: boolean): string => /* glsl */ `
+const vertexShader = (flatRoundBar: boolean, squareBlank: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec2 uOrigin;
   uniform float uCellSize;
 ${flatRoundBar ? `  // Which world axis runs across the bar (0 = X, 1 = Z).
   uniform float uBarAxis;
-` : ''}
+` : ''}${squareBlank ? `  // The square blank's side, for the silhouette its own cross-section draws.
+  uniform float uBlankSide;
+` : ''}${squareBlank ? SQUARE_BLANK_SILHOUETTE_GLSL : ''}
   ${AROUND_FRAME_GLSL}
 #ifdef AROUND_WRAP
   out float vAcross;
@@ -376,7 +420,11 @@ ${flatRoundBar ? `  // World coordinate across the bar, so the top can stop on i
 
 #ifdef AROUND_WRAP
     displaced = aroundClampSheet(displaced);
-    vAcross = uAroundX ? displaced.z : displaced.x;
+${squareBlank ? `    // A square blank's section is widest at its cell centres, so the drawn quad
+    // can reach past the blank's flats near a corner: clamp it back onto the
+    // square the heightfield stands for (issue #1112 rt3-b).
+    displaced.y = squareBlankSilhouetteRadius(uBlankSide, 6.283185307179586 * ((uAroundX ? displaced.z : displaced.x) - uAroundZero) / uAroundPeriod, displaced.y);
+` : ''}    vAcross = uAroundX ? displaced.z : displaced.x;
     displaced = aroundPosition(displaced);
 #endif
 ${flatRoundBar ? `    vAcrossWorld = uBarAxis < 0.5 ? displaced.z : displaced.x;
@@ -445,8 +493,12 @@ export function createHeightfieldMaterial(
   stockColor: THREE.Color,
   frame?: AroundFrame,
   flatRoundBar?: FlatRoundBarDescriptor,
+  squareBlankSide?: number,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
+  // Only the wrapped bar view of a square blank has a silhouette to clamp to;
+  // a block, a flat setup or a round bar compiles exactly the shader it did.
+  const blankSide = frame === undefined ? undefined : squareBlankSide
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
@@ -464,8 +516,9 @@ export function createHeightfieldMaterial(
             uBarRadius: { value: flatRoundBar.radius },
           }
         : {}),
+      ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
     },
-    vertexShader: aroundShader(vertexShader(roundBar), frame),
+    vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined), frame),
     fragmentShader: aroundShader(fragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,

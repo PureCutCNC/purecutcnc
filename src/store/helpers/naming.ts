@@ -24,6 +24,7 @@ import type { TextFeatureData } from '../../types/project'
 import type { Point, Project, SketchFeature, Clamp, Tab, FeatureFolder, FeatureOperation } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { isMachinable } from './featureRoles'
+import { barSeedsModel } from './projectType'
 import { normalizeFeatureZRange } from './normalize'
 import { resolvedProjectFeatures } from './resolveFeatures'
 
@@ -52,6 +53,23 @@ export function textFolderBaseName(text: string): string {
   return normalized.length > 16 ? `${normalized.slice(0, 16)}…` : normalized
 }
 
+/**
+ * Build the text run's feature row.
+ *
+ * The operation rule (issue #1112 R2 item 14, generalised by rt3-d item 33) is
+ * the one every other creator follows: on **bar stock** — round or square, on
+ * Top, Bottom or Around — the bar is already the material, so the run keeps the
+ * operation chosen for it (Subtract by default, the dialog's own default) and
+ * cuts into the bar. A **block** project keeps the historical rule exactly: the
+ * first *machining* feature is Add, because on a block the first closed shape is
+ * the base solid. A rotary project whose stock is a block has no bar to seed
+ * from and follows the block rule too.
+ *
+ * Text is the last creator with its own "first machining feature is Add" rule —
+ * every other one reaches the same answer through `buildShapeFeature` /
+ * `inferManualFeatureOperation` (`barSeedsModel`) — and it writes its row
+ * directly rather than through `addFeature`, so the rule lives here.
+ */
 export function createTextFeatureAt(project: Project, config: TextToolConfig, anchor: Point): SketchFeature | null {
   const generatedShapes = generateTextShapes(config, { x: 0, y: 0 }).filter((shape) => !isProfileDegenerate(shape.profile))
   if (generatedShapes.length === 0) {
@@ -59,7 +77,8 @@ export function createTextFeatureAt(project: Project, config: TextToolConfig, an
   }
 
   const featureName = uniqueName(textFolderBaseName(config.text), project.features.map((feature) => feature.name))
-  const isFirstMachiningFeature = !resolvedProjectFeatures(project).some(isMachinable)
+  const isFirstMachiningFeature = !barSeedsModel(project)
+    && !resolvedProjectFeatures(project).some(isMachinable)
   const textData: TextFeatureData = {
     text: config.text,
     style: config.style,

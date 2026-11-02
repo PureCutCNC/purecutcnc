@@ -24,7 +24,7 @@ import { camPlanSetupProject } from './setupPlanning'
 import { createCamPlan } from './createCamPlan'
 import { reconcileCamPlanRest } from './reconcileRest'
 import { resolvePocketRegions } from '../../toolpaths/resolver'
-import { convertProjectUnits } from '../../../utils/units'
+import { convertProjectUnits, convertToolUnits } from '../../../utils/units'
 import { camPlanProjectFingerprint } from './createCamPlan'
 
 function fixture(axis: 'x' | 'y' = 'x'): Project {
@@ -62,7 +62,14 @@ function handOperation(project: Project, kind: Operation['kind'], pass: Operatio
 }
 
 for (const axis of ['x', 'y'] as const) for (const units of ['mm', 'inch'] as const) {
-  const project = units === 'mm' ? fixture(axis) : convertProjectUnits(fixture(axis), 'inch')
+  // A unit switch keeps tool records in their own units, and the plan only
+  // chooses tools in the project's units — convert the records too so the inch
+  // fixture is a real inch project (issue #1132).
+  const inchFixture = () => {
+    const converted = convertProjectUnits(fixture(axis), 'inch')
+    return { ...converted, tools: converted.tools.map((record) => convertToolUnits(record, 'inch')) }
+  }
+  const project = units === 'mm' ? fixture(axis) : inchFixture()
   const scale = units === 'mm' ? 1 : 1 / 25.4
   const before = JSON.stringify(project)
   const top = { ...project, activeSetupId: project.setups[0]!.id }
@@ -159,17 +166,6 @@ for (const axis of ['x', 'y'] as const) for (const units of ['mm', 'inch'] as co
   const cutZ = generated.moves.filter(move => move.kind !== 'rapid').flatMap(move => [move.from.z, move.to.z])
   assert(Math.abs(Math.max(...cutZ) - 4) < 1e-7, 'surface cleanup uses the Bottom retained surface')
   assert(!createCamPlan({ ...project, activeSetupId: project.setups[0]!.id }, []).operations.some(draft => draft.operation.kind === 'surface_clean'))
-}
-
-{
-  const project = fixture()
-  project.setups = project.setups.map(setup => setup.id === BOTTOM_SETUP_ID
-    ? { ...setup, kind: 'around', orientation: { axis: 'x', angleDeg: 0 } } : setup)
-  project.features = project.features.map(feature => ({ ...feature, authoringFace: 'around' }))
-  const plan = createCamPlan(project, [])
-  assert(plan.operations.length > 0)
-  assert(plan.operations.every(draft => draft.hardError !== null), 'Around remains blocked')
-  assert(plan.operations.some(draft => draft.hardError?.includes('Top setup only')), 'Around retains TURNED_SETUP_ERROR')
 }
 
 console.log('Bottom CAM Plan tests passed')

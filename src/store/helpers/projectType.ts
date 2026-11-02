@@ -103,15 +103,44 @@ export function machineMatchesProjectType(definition: MachineDefinition, type: P
 }
 
 /**
+ * Why a machine does not suit the project type (issue #1112, item 35).
+ *
+ * `wrong-kind` is a machine of the wrong family: a plasma table on a milling
+ * project, or any non-plasma machine on a plasma one. `missing-rotary` is the
+ * narrower case of a **router on a rotary project that has no rotary block**:
+ * the right family of machine, short one piece of hardware. The two are kept
+ * apart because the operator's fix differs — "choose a machine of the other
+ * kind" versus "give this machine a rotary axis" — and telling a router owner
+ * their machine "does not match this rotary project" reads as a wrong choice
+ * rather than a missing axis.
+ */
+export type MachineMismatchReason = 'wrong-kind' | 'missing-rotary'
+
+export interface MachineMismatch {
+  reason: MachineMismatchReason
+  /** The project's own type: it is the machine that has to change. */
+  expected: ProjectType
+  machineName: string
+}
+
+/**
  * `null` when the active machine suits the project type (or there is no
  * machine). `expected` is the project's own type: it is the machine that has
  * to change, and the warning says so.
  */
-export function projectMachineMismatch(project: Project): null | { expected: ProjectType; machineName: string } {
+export function projectMachineMismatch(project: Project): MachineMismatch | null {
   const definition = activeMachine(project)
   if (!definition) return null
   const type = projectType(project)
-  return machineMatchesProjectType(definition, type) ? null : { expected: type, machineName: definition.name }
+  if (machineMatchesProjectType(definition, type)) return null
+  // A rotary project is the only type that asks for hardware a router of the
+  // right family can simply be missing; every other refusal is a family
+  // mismatch (a plasma table is not a router and a router is not a plasma
+  // table).
+  const reason: MachineMismatchReason = type === 'rotary' && resolveMachineKind(definition) !== 'plasma'
+    ? 'missing-rotary'
+    : 'wrong-kind'
+  return { reason, expected: type, machineName: definition.name }
 }
 
 /**

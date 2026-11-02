@@ -19,13 +19,19 @@
  * ghost outlines of the other face's features and the marker for where the
  * Top origin lands once the stock is turned over. Reference geometry only —
  * nothing here is filled, hit-tested or snapped to.
+ *
+ * It also draws the one thing made on the Around sheet that a flat face can
+ * show exactly (issue #1112 rt2-d): a Turn or Polygon is a solid turned around
+ * the bar, so from Top or Bottom its side view is a read-only dashed outline
+ * rather than nothing at all.
  */
 
+import { cannedShapeIsModel } from '../../cannedShapes'
 import { activeFace, ghostFeatureIds, isThroughFeature } from '../../store/helpers/activeFace'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { getFeatureGeometryProfiles } from '../../text'
 import { getProfileBounds } from '../../types/project'
-import type { FlatFace, Point, Project, SketchFeature } from '../../types/project'
+import type { FlatFace, Point, Project, SetupFace, SketchFeature } from '../../types/project'
 import { canvasColors, canvasRgba } from './canvasPalette'
 import { traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
@@ -160,4 +166,88 @@ export function drawOtherFace(
     drawTopOriginLanding(ctx, project.origin, vt, topOriginLabel)
   }
   return ghostIds
+}
+
+/** What the hover/selection pass needs to colour a solid's side view. */
+export interface SideViewSelection {
+  hoveredFeatureId: string | null
+  selectedFeatureIds: readonly string[]
+}
+
+/** True for a Turn or Polygon: a generated model turned around the bar. */
+export function isRotarySolid(feature: { canned?: SketchFeature['canned'] }): boolean {
+  return cannedShapeIsModel(feature.canned)
+}
+
+/**
+ * Draw a Turn or Polygon on Top or Bottom, and return the ids drawn (issue
+ * #1112 rt2-d, item 19).
+ *
+ * Nothing made on the Around sheet is drawn on a flat face (issue #395): the
+ * sheet and a flat face share no plane. A Turn or a Polygon is the exception,
+ * because it is a solid of revolution about the bar's axis — the generated
+ * outline is its **side view**, which is exactly what a flat face sees, and
+ * the generator produces it in stock space for both faces.
+ *
+ * The outline is dashed and unfilled like a ghost, since nothing on the canvas
+ * can be edited: there are no handles and no drag. The click target is real
+ * though — the model is selectable on every face (issue #1112 I), so this
+ * function does not put it in `ghostFeatureIds`; the caller only leaves it out
+ * of the ordinary editable draw pass. It therefore takes the palette's hover
+ * and selection colours, which the ordinary pass would have drawn.
+ *
+ * It is always drawn, independent of "show other side": that toggle hides the
+ * *other face's* reference geometry, and this is the current face's own view
+ * of a solid that belongs to the bar rather than to a face.
+ */
+export function drawRotarySolidSideViews(
+  ctx: CanvasRenderingContext2D,
+  project: Project,
+  features: readonly ResolvedSketchFeature[],
+  vt: ViewTransform,
+  selection: SideViewSelection,
+  operationHighlightIds?: ReadonlySet<string> | null,
+): Set<string> {
+  const drawn = new Set<string>()
+  const face: SetupFace = activeFace(project)
+  if (face === 'around') return drawn
+  const quiet = canvasRgba(ghostColorKey(face), 0.6)
+  for (const feature of features) {
+    if (!feature.visible || !isRotarySolid(feature)) continue
+    const selected = selection.selectedFeatureIds.includes(feature.id)
+    const hovered = !selected && feature.id === selection.hoveredFeatureId
+    const highlighted = operationHighlightIds?.has(feature.id) ?? false
+    const stroke = selected
+      ? canvasColors().active
+      : hovered ? canvasColors().draft : quiet
+    ctx.save()
+    ctx.setLineDash(GHOST_DASH)
+    ctx.lineWidth = selected ? 2.2 : hovered ? 1.9 : 1.3
+    ctx.strokeStyle = stroke
+    for (const profile of getFeatureGeometryProfiles(feature)) {
+      // An armed operation rings what it could cut and veils the rest, the
+      // one pass the ordinary feature loop would have run for this model.
+      if (operationHighlightIds) {
+        traceProfilePath(ctx, profile, vt)
+        if (highlighted) {
+          ctx.save()
+          ctx.setLineDash([])
+          ctx.lineWidth = 3
+          ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+          ctx.shadowColor = canvasRgba('constraintHighlight', 0.85)
+          ctx.shadowBlur = 8
+          ctx.stroke()
+          ctx.restore()
+        } else if (profile.closed) {
+          ctx.fillStyle = canvasColors().veil
+          ctx.fill()
+        }
+      }
+      traceProfilePath(ctx, profile, vt)
+      ctx.stroke()
+    }
+    ctx.restore()
+    drawn.add(feature.id)
+  }
+  return drawn
 }

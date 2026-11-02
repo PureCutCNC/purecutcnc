@@ -161,4 +161,41 @@ test.describe('the project type is chosen when the project is created (#1046)', 
     await expect(ui.properties.projectTypeValue(app.page)).toHaveText('Rotary')
     expect((await getProject(app.page) as unknown as Project).meta.projectType).toBe('rotary')
   })
+
+  /**
+   * A template brings its own type (issue #1112, item 24). The dialog's tiles
+   * show the type the new project will get and stop offering a choice that
+   * would be discarded, and the created project takes the template's type,
+   * bar and chuck instead of the dialog's default milling project.
+   */
+  test('a template brings its project type and locks the tiles', async ({ app, ui }) => {
+    await createNewProject(app.page, ui, { type: 'Rotary', shape: 'Round bar', size: '25', length: '150' })
+    const template = await getProject(app.page) as unknown as Project
+    expect(template.meta.projectType).toBe('rotary')
+    expect(template.clamps).toHaveLength(1)
+
+    await ui.toolbar.newProjectButton(app.page).click()
+    const dialog = ui.newProjectDialog.root(app.page)
+    await expect(dialog).toBeVisible()
+    await ui.newProjectDialog.template(app.page, 'Current project').click()
+
+    // The type the dialog will use is the template's, shown and locked.
+    await expect(ui.newProjectDialog.typeTile(app.page, 'Rotary')).toBeChecked()
+    await expect(ui.newProjectDialog.typeTile(app.page, 'Rotary')).toBeDisabled()
+    await expect(ui.newProjectDialog.typeTile(app.page, 'Milling / routing')).toBeDisabled()
+    await expect(ui.newProjectDialog.typeLockNote(app.page)).toHaveText("Locked to the template's project type.")
+
+    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await expect(dialog).toHaveCount(0)
+
+    const created = await getProject(app.page) as unknown as Project
+    expect(created.meta.projectType).toBe('rotary')
+    expect(created.stock).toEqual(template.stock)
+    expect(created.clamps).toHaveLength(1)
+    expect(created.clamps[0].chuck).toEqual(template.clamps[0].chuck)
+    expect(created.clamps[0].x).toBeCloseTo(template.clamps[0].x, 6)
+    expect(created.clamps[0].y).toBeCloseTo(template.clamps[0].y, 6)
+    expect(created.clamps[0].w).toBeCloseTo(template.clamps[0].w, 6)
+    expect(created.clamps[0].h).toBeCloseTo(template.clamps[0].h, 6)
+  })
 })

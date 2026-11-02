@@ -278,7 +278,27 @@ export type ToolpathWarningCode =
   | 'carveNoTargets'
   | 'carveWrongKind'
   | 'carveNoValidTargets'
+  /** A Follow line on the Around face was stopped short of a neighbouring
+   *  section standing above the surface it is cut on, so the cutter body cannot
+   *  enter it (issue #1112 slice rt6-e; a safety rule, not an option). Params:
+   *  the guide feature's name, the distance kept, the project units, the
+   *  neighbour (`neighbour`, or `neighbourId: 'bar'` for the uncut bar, which
+   *  presentation translates) and `sideId` (`start` or `end`, likewise
+   *  translated). */
+  | 'carveNeighbourTrimmed'
+  /** The same keep-out broke the guide in the middle and left a span uncut
+   *  (`distance` is the length of line removed). */
+  | 'carveNeighbourTrimmedSpan'
+  /** The keep-out removed the whole guide: nothing is cut, and saying so
+   *  matters more than the missing motion (issue #1112 slice rt6-e). */
+  | 'carveNeighbourTrimmedAway'
   | 'targetsMissing'
+  /** A selected target resolved to a feature that exists, but that feature
+   *  expands into no geometry (a canned shape or a text feature whose
+   *  parameters yield nothing). Distinct from `targetsMissing`: the feature is
+   *  there, and saying it is gone sends the user looking for something they
+   *  can see in the tree. */
+  | 'targetsNoGeometry'
   // rest regions
   | 'restOnlyEdgeRoute'
   | 'restOnlyPocket'
@@ -413,6 +433,12 @@ export type ToolpathWarningCode =
    *  so the export is refused rather than written. Params: the machine's name
    *  and the project type it does not suit. */
   | 'exportMachineTypeMismatch'
+  /** The project is rotary and the machine it selected is a router with no
+   *  rotary block, so the Around setup's turning motion does not exist on it
+   *  (issue #1112, item 35). Kept apart from `exportMachineTypeMismatch` so the
+   *  message names the missing axis instead of telling a router owner their
+   *  machine is the wrong kind. Params: the machine's name. */
+  | 'exportMachineMissingRotaryAxis'
   /** The selected machine's templates still break a #1057 template rule, so
    *  the program is refused rather than written (#1119). The definition is
    *  kept, selected and shown with its diagnostics until it is corrected;
@@ -547,9 +573,12 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * #755).
  *
  * - `exportMachineTypeMismatch` — the machine selected for the project cannot
- *   run the job it holds: a plasma machine on a milling project, or a machine
- *   with no rotary on a rotary one. Publishing the program would invite a cut
- *   on the wrong machine (issue #1028).
+ *   run the job it holds: a plasma machine on a milling project. Publishing the
+ *   program would invite a cut on the wrong machine (issue #1028).
+ * - `exportMachineMissingRotaryAxis` — a router with no rotary block on a
+ *   rotary project. The same reasoning as the code above, but the machine is
+ *   the right family and short one axis, so the message says what is missing
+ *   instead of calling the choice wrong (issue #1112, item 35).
  * - `exportMachineTemplateInvalid` — the selected machine's own templates still
  *   break a #1057 class rule: a header that moves, a mode change inside the
  *   program, a placeholder that would become part of a G/M number. The program
@@ -601,6 +630,7 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'exportMachineTypeMismatch',
+  'exportMachineMissingRotaryAxis',
   'exportMachineTemplateInvalid',
   'postToolChangesDisabled',
   'postMixedSetups',

@@ -22,13 +22,23 @@ import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import type { ProjectType } from '../../types/project'
 
-export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, onExport, onProperties, children }: {
+export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, openForWarning = false, onExport, onProperties, children }: {
   section: CamSetupSection; grouped: boolean; projectType: ProjectType; selectedOperationId: string | null
+  /**
+   * The section holds work that is kept but can no longer cut (issue #1112 K).
+   * Its rows — and the warning on them — must not hide behind an expand step,
+   * so the section opens without the user asking.
+   */
+  openForWarning?: boolean
   onExport: (ids: string[]) => void; onProperties: () => void; children: ReactNode
 }) {
   const { t } = useI18n()
-  const [expanded, setExpanded] = useState(false)
-  const open = section.active || expanded || section.operations.some((operation) => operation.id === selectedOperationId)
+  // `null` until the user asks for something else: the default is that an
+  // active setup, a selected operation or kept-but-uncut work opens the card,
+  // and one click on the header still collapses it.
+  const [expanded, setExpanded] = useState<boolean | null>(null)
+  const open = section.active
+    || (expanded ?? (openForWarning || section.operations.some((operation) => operation.id === selectedOperationId)))
   const header = setupCardHeader(section, t)
   // An empty setup is one slim row: there is nothing to expand or export, and
   // no status block was left to show. It still opens the properties dialog.
@@ -41,7 +51,7 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
         aria-expanded={header.empty ? undefined : open}
         aria-label={header.ariaLabel}
         title={header.ariaLabel}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setExpanded(!open)}
       >
         <span className="cam-setup-group__name">{header.label}</span>
         {header.empty ? <span className="cam-setup-group__empty">{t('cam.setup.empty')}</span> : (

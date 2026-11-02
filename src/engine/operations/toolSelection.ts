@@ -21,10 +21,11 @@
  * V-carve against a flat endmill) and `null` tools on empty projects.
  *
  * Selection considers, in this order:
+ *  - project units → only tools written in the project's units are candidates,
+ *    and only bundled-library entries written in them are imported. A tool in
+ *    the other unit system is never picked and never converted (issue #1132:
+ *    a 4 mm ball endmill used to win an inch project's Rotary rough),
  *  - operation type → a best-first list of acceptable tool types,
- *  - project units → bundled-library entries are converted before comparison,
- *    and of two entries of the same size the one written in the project's
- *    units is imported, as it stands,
  *  - feature size → the largest tool within `autoToolDiameterLimit()` (a
  *    fraction of the feature's smallest dimension, capped at 1/4" for routing
  *    kinds); smallest available otherwise.
@@ -38,7 +39,7 @@ import type { OperationKind, OperationTarget, Project, Tool, ToolType } from '..
 import { getStockBounds } from '../../types/project'
 import { isMachinable } from '../../store/helpers/featureRoles'
 import { getFeatureGeometryBounds } from '../../text'
-import { convertLength, convertToolUnits } from '../../utils/units'
+import { convertLength } from '../../utils/units'
 import type { ToolLibraryEntry } from '../../toolLibrary'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
@@ -164,8 +165,15 @@ export function autoToolDiameterLimit(project: Project, kind: OperationKind, tar
   return capAutoToolDiameter(kind, project.meta.units, span == null ? null : span * fraction)
 }
 
-/** Two diameters closer than this, in project units, are the same size. */
-const SAME_SIZE_TOLERANCE = 1e-9
+/**
+ * The one same-units rule every automatic pick shares (issue #1132): a tool or
+ * a bundled-library entry is a candidate only when it is written in `units`.
+ * Nothing is converted across the unit systems, so an inch project can never be
+ * handed a metric cutter (or the reverse) by any auto-selection path.
+ */
+export function toolInUnits(candidate: { units: Tool['units'] }, units: Tool['units']): boolean {
+  return candidate.units === units
+}
 
 /**
  * Picks the largest candidate whose diameter is within `maxDiameter`; if none
@@ -186,23 +194,26 @@ function pickBySize<T extends { diameter: number }>(candidates: T[], maxDiameter
   return smallest()
 }
 
-/** Converts a bundled-library entry into a project-units tool template (no id). */
-function entryToProjectTool(entry: ToolLibraryEntry, toUnits: Tool['units']): Omit<Tool, 'id'> {
-  const converted = convertToolUnits({ ...entry, id: '__library__' }, toUnits)
+/**
+ * Copies a bundled-library entry into a project tool template (no id). The
+ * entry is already written in the project's units — `selectToolForOperation`
+ * only ever looks at those — so nothing is converted here.
+ */
+function entryToProjectTool(entry: ToolLibraryEntry): Omit<Tool, 'id'> {
   return {
-    name: converted.name,
-    units: converted.units,
-    type: converted.type,
-    diameter: converted.diameter,
-    vBitAngle: converted.vBitAngle,
-    flutes: converted.flutes,
-    material: converted.material,
-    defaultRpm: converted.defaultRpm,
-    defaultFeed: converted.defaultFeed,
-    defaultPlungeFeed: converted.defaultPlungeFeed,
-    defaultStepdown: converted.defaultStepdown,
-    defaultStepover: converted.defaultStepover,
-    maxCutDepth: converted.maxCutDepth,
+    name: entry.name,
+    units: entry.units,
+    type: entry.type,
+    diameter: entry.diameter,
+    vBitAngle: entry.vBitAngle,
+    flutes: entry.flutes,
+    material: entry.material,
+    defaultRpm: entry.defaultRpm,
+    defaultFeed: entry.defaultFeed,
+    defaultPlungeFeed: entry.defaultPlungeFeed,
+    defaultStepdown: entry.defaultStepdown,
+    defaultStepover: entry.defaultStepover,
+    maxCutDepth: entry.maxCutDepth,
     // Plasma consumables are not optional extras to this list: a G-code pierce
     // program writes its pierce height, cut height and dwell straight from
     // them, so dropping them hands the first torch an operator ever gets (Add
@@ -210,11 +221,11 @@ function entryToProjectTool(entry: ToolLibraryEntry, toUnits: Tool['units']): Om
     // with no standoff and no dwell — and nothing blocks it. A library value
     // that is genuinely 0 still arrives as 0; normalization is what turns a
     // missing consumable into that unconfigured 0 (issue #983).
-    ...(converted.type === 'plasma' ? {
-      pierceHeight: converted.pierceHeight,
-      cutHeight: converted.cutHeight,
-      pierceDelay: converted.pierceDelay,
-      qtplasmacMaterialNumber: converted.qtplasmacMaterialNumber,
+    ...(entry.type === 'plasma' ? {
+      pierceHeight: entry.pierceHeight,
+      cutHeight: entry.cutHeight,
+      pierceDelay: entry.pierceDelay,
+      qtplasmacMaterialNumber: entry.qtplasmacMaterialNumber,
     } : {}),
   }
 }
@@ -227,7 +238,8 @@ export type ToolSelection =
 /**
  * Chooses the tool to use for a new operation. Returns an existing project tool
  * id, a project-units tool template to import from the bundled library, or
- * `null` when no acceptable tool is available (caller keeps its own fallback).
+ * `null` when no acceptable tool is available in the project's units (caller
+ * keeps its own fallback).
  */
 export function selectToolForOperation(
   project: Project,
@@ -239,31 +251,23 @@ export function selectToolForOperation(
   const maxDiameter = autoToolDiameterLimit(project, kind, target)
 
   for (const type of preferredToolTypes(kind)) {
-    const existing = pickBySize(project.tools.filter((tool) => tool.type === type), maxDiameter)
+    const existing = pickBySize(
+      project.tools.filter((tool) => tool.type === type && toolInUnits(tool, units)),
+      maxDiameter,
+    )
     if (existing) {
       return { source: 'existing', toolId: existing.id }
     }
 
-    const libraryCandidates = libraryTools
-      .filter((entry) => entry.type === type)
-      .map((entry) => {
-        const tool = entryToProjectTool(entry, units)
-        return { tool, diameter: tool.diameter, native: entry.units === units }
-      })
-    const picked = pickBySize(libraryCandidates, maxDiameter)
+    // Only an entry written in the project's units may be imported. Importing
+    // the other unit's entry by conversion is what put a 4 mm cutter in an inch
+    // project (#1132); a missing size is preferred to a wrong-unit one.
+    const picked = pickBySize(
+      libraryTools.filter((entry) => entry.type === type && toolInUnits(entry, units)),
+      maxDiameter,
+    )
     if (picked) {
-      // A library can hold the same tool once per unit, as the bundled one
-      // does for its example torch. Take the entry written in the project's
-      // units when there is one: it is imported as it stands, under its own
-      // name, and still matches its library entry afterwards, where the
-      // converted twin would carry the other unit's name. Only an entry of
-      // the same size can take the pick's place, so the size that was chosen
-      // never changes; with no such entry the pick is imported by conversion.
-      const imported = picked.native
-        ? picked
-        : libraryCandidates.find((candidate) => candidate.native
-          && Math.abs(candidate.diameter - picked.diameter) <= SAME_SIZE_TOLERANCE) ?? picked
-      return { source: 'import', tool: imported.tool }
+      return { source: 'import', tool: entryToProjectTool(picked) }
     }
   }
 

@@ -17,17 +17,26 @@
 /**
  * The pure simulation computation behind `useSimulationModel.ts`.
  *
- * Every stock shape takes the same synchronous path (issue #1016 C2): a square
+ * Every stock shape takes the same heightfield path (issue #1016 C2): a square
  * blank is the round bar's radial heightfield whose cells start at the blank's
- * true cross section, so there is no separate square job and no worker. This
- * module stays free of React, the store and browser-only code: it holds the one
+ * true cross section, so there is no separate square job and no worker. The
+ * synchronous entry point is the reference; `computeSimulationResultAsync`
+ * drives the same engine in yielding, cancellable slices so the app can commit
+ * the simulation tab before a heavy replay (issue #1112 review P1). This module
+ * stays free of React, the store and browser-only code: it holds the one
  * definition of "a simulation result for this input" and the prior-operation
  * replay the playback starting stock is built from.
  */
 
 import { findOperationTool } from '../toolPolicy'
 import { createSimulationGrid } from '../engine/simulation/grid'
-import { simulateOperationHeightfield, simulateReplayItemsHeightfield } from '../engine/simulation/replay'
+import {
+  simulateOperationHeightfield,
+  simulateOperationHeightfieldChunked,
+  simulateReplayItemsHeightfield,
+  simulateReplayItemsHeightfieldChunked,
+  type SimulationChunkOptions,
+} from '../engine/simulation/replay'
 import type {
   SimulationBuildOptions,
   SimulationGrid,
@@ -104,46 +113,102 @@ export interface SimulationResultInput {
   paths: ReadonlyMap<string, ToolpathResult> | null
 }
 
-export function computeSimulationResult({
-  setupInput,
-  project,
-  simulationMode,
-  simulationDetailCells,
-  selectedInSetup,
-  paths,
-}: SimulationResultInput): SimulationResult {
-  // The simulated setup's frame: for Top, the project and paths as they are.
-  const localProject = setupInput?.project ?? project
-  const localPaths = setupInput?.toolpaths ?? NO_PATHS
-  const options = simulationBuildOptions(setupInput, simulationDetailCells)
+interface SimulationContext {
+  localProject: Project
+  localPaths: ReadonlyMap<string, ToolpathResult>
+  options: SimulationBuildOptions
+}
 
-  const emptyGrid = createSimulationGrid(localProject, options)
-  const emptySimulationResult = {
-    grid: emptyGrid,
-    stats: emptySimulationStats(emptyGrid),
+/**
+ * The setup-local inputs every mode starts from. The empty result is **not**
+ * built here: a mode that has something to replay throws it away, and a fresh
+ * grid is the most expensive thing a build allocates (issue #1112 rt2-e). It is
+ * built on demand by {@link emptySimulationResult}.
+ */
+function simulationContext(
+  setupInput: SimulationSetupInput | null,
+  project: Project,
+  simulationDetailCells: number,
+): SimulationContext {
+  return {
+    localProject: setupInput?.project ?? project,
+    localPaths: setupInput?.toolpaths ?? NO_PATHS,
+    options: simulationBuildOptions(setupInput, simulationDetailCells),
+  }
+}
+
+/**
+ * No operation to draw: the blank itself, built through the same option set as
+ * every other mode so a square blank's or round bar's seeded surface is what
+ * the panel reports.
+ */
+function emptySimulationResult(context: SimulationContext): SimulationResult {
+  const grid = createSimulationGrid(context.localProject, context.options)
+  return {
+    grid,
+    stats: emptySimulationStats(grid),
     warnings: [],
   }
+}
 
-  if (simulationMode === 'selected') {
-    const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
-    if (!selectedInSetup || !selectedLocalToolpath || !findOperationTool(localProject, selectedInSetup)) {
-      return emptySimulationResult
-    }
-
-    return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, options)
+/** One selected-operation replay item, or null when it cannot be drawn. */
+function selectedReplayItem(
+  context: SimulationContext,
+  selectedInSetup: Operation | null,
+): SimulationReplayItem | null {
+  const selectedLocalToolpath = selectedInSetup ? context.localPaths.get(selectedInSetup.id) ?? null : null
+  if (!selectedInSetup || !selectedLocalToolpath) return null
+  const toolRecord = findOperationTool(context.localProject, selectedInSetup)
+  if (!toolRecord) return null
+  const normalizedTool = normalizeToolForProject(toolRecord, context.localProject)
+  return {
+    operationId: selectedInSetup.id,
+    operationName: selectedInSetup.name,
+    toolRef: toolRecord.id,
+    toolType: toolRecord.type,
+    toolRadius: normalizedTool.radius,
+    vBitAngle: normalizedTool.vBitAngle,
+    toolpath: selectedLocalToolpath,
   }
+}
 
-  const replayItems = (setupInput?.operations ?? [])
-    .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
+/**
+ * The operations a visible replay cuts, in cut order: enabled, its toolpath
+ * shown, and a tool that can cut its kind (issue #1112 rt2-h review P2).
+ *
+ * Exported because the panel's replay key must name exactly this list. A key
+ * built from every setup operation instead names a hidden selection's preview
+ * path, which the visible replay drops — and that let the visible key equal the
+ * selected key, so one mode served the other's heightfield.
+ */
+export function visibleReplayOperations(
+  project: Project,
+  operations: readonly Operation[],
+): Operation[] {
+  return operations.filter((operation) =>
+    operation.enabled
+    && operation.showToolpath
+    && operation.toolRef
+    && findOperationTool(project, operation) !== null,
+  )
+}
+
+/** The visible mode's replay items, in cut order, skipping anything unbuildable. */
+function visibleReplayItems(
+  context: SimulationContext,
+  setupInput: SimulationSetupInput | null,
+  paths: ReadonlyMap<string, ToolpathResult> | null,
+): SimulationReplayItem[] {
+  return visibleReplayOperations(context.localProject, setupInput?.operations ?? [])
     .map((operation) => {
-      const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
-      const toolRecord = findOperationTool(localProject, operation)
+      const toolpath = paths === null ? null : context.localPaths.get(operation.id) ?? null
+      const toolRecord = findOperationTool(context.localProject, operation)
 
       if (!toolpath || !toolRecord) {
         return null
       }
 
-      const normalizedTool = normalizeToolForProject(toolRecord, localProject)
+      const normalizedTool = normalizeToolForProject(toolRecord, context.localProject)
       return {
         operationId: operation.id,
         operationName: operation.name,
@@ -155,12 +220,75 @@ export function computeSimulationResult({
       }
     })
     .filter((item) => item !== null)
+}
 
-  if (replayItems.length === 0) {
-    return emptySimulationResult
+/**
+ * The synchronous result (issue #1016 C2). Kept for the tests and consumers
+ * that already hold every input; the app opens the simulation tab through
+ * `computeSimulationResultAsync` so the render that switches tabs is never the
+ * one that replays a heavy selected operation (issue #1112 review P1).
+ */
+export function computeSimulationResult({
+  setupInput,
+  project,
+  simulationMode,
+  simulationDetailCells,
+  selectedInSetup,
+  paths,
+}: SimulationResultInput): SimulationResult {
+  const context = simulationContext(setupInput, project, simulationDetailCells)
+
+  if (simulationMode === 'selected') {
+    const item = selectedReplayItem(context, selectedInSetup)
+    if (!item) return emptySimulationResult(context)
+    return simulateOperationHeightfield(context.localProject, selectedInSetup!, item.toolpath, context.options)
   }
 
-  return simulateReplayItemsHeightfield(localProject, replayItems, options)
+  const replayItems = visibleReplayItems(context, setupInput, paths)
+  if (replayItems.length === 0) {
+    return emptySimulationResult(context)
+  }
+
+  return simulateReplayItemsHeightfield(context.localProject, replayItems, context.options)
+}
+
+/**
+ * The same result, built in yielding slices and cancellable (issue #1112
+ * review P1). The tab, its loading state and any loading overlay commit before
+ * the first slice runs; a superseded build returns null instead of installing a
+ * result the current selection no longer describes.
+ */
+export async function computeSimulationResultAsync(
+  {
+    setupInput,
+    project,
+    simulationMode,
+    simulationDetailCells,
+    selectedInSetup,
+    paths,
+  }: SimulationResultInput,
+  chunk: SimulationChunkOptions = {},
+): Promise<SimulationResult | null> {
+  const context = simulationContext(setupInput, project, simulationDetailCells)
+
+  if (simulationMode === 'selected') {
+    const item = selectedReplayItem(context, selectedInSetup)
+    if (!item) return emptySimulationResult(context)
+    return simulateOperationHeightfieldChunked(
+      context.localProject,
+      selectedInSetup!,
+      item.toolpath,
+      context.options,
+      chunk,
+    )
+  }
+
+  const replayItems = visibleReplayItems(context, setupInput, paths)
+  if (replayItems.length === 0) {
+    return emptySimulationResult(context)
+  }
+
+  return simulateReplayItemsHeightfieldChunked(context.localProject, replayItems, context.options, chunk)
 }
 
 /**
@@ -208,6 +336,30 @@ export function buildPriorReplayItems(
     .filter((item): item is SimulationReplayItem => item !== null)
 }
 
+/**
+ * The playback starting stock as a whole result: the prior operations replayed
+ * into a fresh grid.
+ *
+ * A full result rather than a bare grid because the replay is the same work a
+ * selected cut of the last prior operation is (issue #1112 rt2-h): the panel's
+ * result cache keys both, so pressing play on the finish reuses the heightfield
+ * the rough already built instead of replaying 24k moves again (89 ms on Frank's
+ * project).
+ */
+export function priorReplayResult(
+  project: Project,
+  operations: readonly Operation[],
+  paths: ReadonlyMap<string, ToolpathResult>,
+  selectedOperationId: string,
+  options: SimulationBuildOptions,
+): SimulationResult {
+  return simulateReplayItemsHeightfield(
+    project,
+    buildPriorReplayItems(project, operations, paths, selectedOperationId),
+    options,
+  )
+}
+
 /** The playback starting stock: the prior operations replayed into a fresh grid. */
 export function priorReplayGrid(
   project: Project,
@@ -216,9 +368,5 @@ export function priorReplayGrid(
   selectedOperationId: string,
   options: SimulationBuildOptions,
 ): SimulationGrid {
-  return simulateReplayItemsHeightfield(
-    project,
-    buildPriorReplayItems(project, operations, paths, selectedOperationId),
-    options,
-  ).grid
+  return priorReplayResult(project, operations, paths, selectedOperationId, options).grid
 }

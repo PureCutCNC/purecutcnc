@@ -45,6 +45,9 @@ import {
   type StockAxis,
 } from './project'
 
+/** The bar geometry the mesh builders read: the axis, the physical size and the plan box. */
+export type RotaryBarGeometry = Pick<BarStock, 'axis' | 'thickness' | 'profile'>
+
 /** True for a square blank, false for every other stock shape. */
 export function isSquareStock(stock: Stock): stock is SquareStock {
   return stock.shape === 'square'
@@ -125,19 +128,19 @@ export function normalizeSquareStock(stock: SquareStock): SquareStock {
 }
 
 /** The centreline's coordinate across the bar: a Y value for axis `'x'`, an X value for axis `'y'`. */
-export function barCentre(stock: BarStock): number {
+export function barCentre(stock: RotaryBarGeometry): number {
   const bounds = getStockBounds(stock)
   return stock.axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
 }
 
 /** The bar's length: its extent along {@link BarStock.axis}. */
-export function barLength(stock: BarStock): number {
+export function barLength(stock: RotaryBarGeometry): number {
   const bounds = getStockBounds(stock)
   return stock.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
 }
 
 /** The Z of the turning axis: mid-thickness, the same for a round bar and a square blank. */
-export function barPivotZ(stock: BarStock): number {
+export function barPivotZ(stock: RotaryBarGeometry): number {
   return stock.thickness / 2
 }
 
@@ -145,7 +148,7 @@ export function barPivotZ(stock: BarStock): number {
  * The largest radius the blank guarantees at **every** angle: the inscribed
  * circle. Half the diameter for a round bar, half the side for a square one.
  */
-export function barInscribedRadius(stock: BarStock): number {
+export function barInscribedRadius(stock: RotaryBarGeometry): number {
   return stock.thickness / 2
 }
 

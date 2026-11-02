@@ -176,9 +176,11 @@ assert.deepEqual(normalizeProject(migrated), migrated, 'missing-field migration 
 const inch = convertProjectUnits(reopened, 'inch')
 assert.equal(inch.operations[0].plasmaLeadInLength, 10 / 25.4)
 assert.deepEqual(inch.operations[0].plasmaStartPoint, { x: 50 / 25.4, y: 20 / 25.4 })
-// Native tool units are preserved but converted for generation.
+// Native tool units are preserved but converted for generation. The tool is
+// assigned by hand: an automatic pick never takes the other unit system's
+// tool (issue #1132), and a manual assignment is the untouched path.
 const inchTool = { ...p, tools: [convertToolUnits(p.tools[0], 'inch')] }
-assert.deepEqual(generate(inchTool).moves, outside.moves)
+assert.deepEqual(generate(inchTool, op(inchTool, ['part'], { toolRef: 'torch' })).moves, outside.moves)
 // Review #982: target every independent safety boundary, not just the whole guard.
 // Arc -> line -> centre keeps ordinary holes cutting while retaining the crater clearance.
 for (const thickness of [6, 12]) {

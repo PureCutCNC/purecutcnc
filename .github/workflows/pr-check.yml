@@ -66,8 +66,9 @@ jobs:
             command: test:e2e:project-input
           - lane: CAM and interaction
             command: test:e2e:workflow-ui
-          # The GPU visibility spec runs beside real worker startup, using the
-          # measured spare capacity of this lane rather than competing with CAM.
+          # The GPU visibility and 3D bar specs run beside real worker startup,
+          # using the measured spare capacity of this lane rather than competing
+          # with CAM, whose 20-minute job limit the 3D pair helped exhaust.
           - lane: Generation and rendering
             command: test:e2e:generation
 

@@ -206,6 +206,12 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
 
       <section className="cam-plan-editor__section">
         <h4>{camT('cam.plan.mainParameters')}</h4>
+        {fieldApplies('carveDepth', operation, selectedTool) ? (
+          <label className="cam-plan-field">
+            <span>{camT('cam.operation.carveDepth')}</span>
+            <PlanLengthInput value={operation.carveDepth} units={units} onCommit={(value) => onPatch({ carveDepth: value })} />
+          </label>
+        ) : null}
         {fieldApplies('stockToLeaveRadial', operation, selectedTool) ? (
           <label className="cam-plan-field">
             <span>{camT('cam.operation.stockToLeaveRadial')}</span>

@@ -41,7 +41,7 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { Operation, OperationKind, Tool } from '../../types/project'
+import type { Operation, OperationKind, SetupFace, Tool } from '../../types/project'
 import { isRotaryOperationKind, isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
@@ -145,6 +145,23 @@ function leavesStock(operation: Operation): boolean {
     && operation.kind !== 'v_carve'
     && operation.kind !== 'v_carve_medial'
     && operation.kind !== 'drilling'
+}
+
+/**
+ * Which stock-to-leave reference picture a row shows (#1112 decisions 7.10,
+ * 8.16). A rotary operation clears the bar's circumference, so its leave is
+ * drawn across a radial cross-section. Any other operation on the Around sheet
+ * keeps the pocket-wall picture — its walls are the pocket's — but the picture
+ * carries the "walls are radial" note, because a wrapped pocket's walls run
+ * toward the axis rather than standing up from the sheet. A Top or Bottom
+ * pocket gets neither: its walls are ordinary upright walls.
+ */
+export function stockRadialRefVariant(
+  operation: Pick<Operation, 'kind'>,
+  face: SetupFace,
+): 'rotary' | 'around' | undefined {
+  if (isRotaryOperationKind(operation.kind)) return 'rotary'
+  return face === 'around' ? 'around' : undefined
 }
 
 // ── Groups ─────────────────────────────────────────────────────────

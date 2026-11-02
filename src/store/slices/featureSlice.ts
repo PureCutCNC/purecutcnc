@@ -23,7 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
-import { activeFace, aroundSketchAuthoringRefused } from '../helpers/activeFace'
+import { activeFace, aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -46,6 +46,9 @@ import {
   IDENTITY_MATRIX,
 } from '../../types/project'
 import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
+import { multiplyMatrix, rotateMatrix, translateMatrix } from '../helpers/instanceTransforms'
+import { addCannedShapeFeature } from '../helpers/cannedShapeCreation'
+import { CHAMFER_RECT_CANNED_KIND, ELLIPSE_CANNED_KIND, NGON_CANNED_KIND, ROUND_RECT_CANNED_KIND, SLOT_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { toBlockStock } from '../helpers/stockShape'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
@@ -124,12 +127,14 @@ export type FeatureSlice = Pick<
  * {@link SketchFeature.authoringFace} (`derivedFeatures.ts`), and these paths
  * insert it directly rather than through `addFeature`, so the resulting faces
  * — not the current workspace face — are what the square blank's policy must
- * judge. An unset face means Top, so it is never refused here.
+ * judge. An unset face means Top, so it is never refused here. A derived region
+ * or construction row never cuts the sheet, so it is admitted on a square
+ * blank's Around sheet (issue #1112 decision 17).
  *
  * Returns true before any project, selection, history or pending mutation.
  */
 function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
-  return features.some((feature) => aroundSketchAuthoringRefused(project, feature.authoringFace ?? 'top'))
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
 }
 
 function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature | null {
@@ -574,8 +579,10 @@ export function createFeatureSlice(
         // unrolled sheet is round-only (issue #1016 C2-U1): a feature that would
         // be authored there is refused before any id, asset, tree, history or
         // selection work. A generated solid (C2-B) lands as an ordinary Top
-        // model through its own action and never comes through here.
-        if (aroundSketchAuthoringRefused(s.project, authoringFace)) return {}
+        // model through its own action and never comes through here. A region or
+        // a construction row is not a cut, so the sheet takes it (issue #1112
+        // decision 17).
+        if (aroundSheetAuthoringRefused(s.project, authoringFace, featureOperation(s.project, featureForInsert))) return {}
         // A rotary project's bar is already the material (#1054), so a first
         // subtract is a cut into the bar, not a base solid waiting to be made
         // into Add. Block projects keep the base-add rule unchanged.
@@ -1284,9 +1291,9 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'circle', circleProfile(cx, cy, r), name, depth))
     },
 
-    addEllipseFeature: (name, cx, cy, rx, ry, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'ellipse', ellipseProfile(cx, cy, rx, ry), name, depth))
-    },
+    addEllipseFeature: (name, cx, cy, rx, ry, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ELLIPSE_CANNED_KIND, params: { rx, ry } },
+        ellipseProfile(cx, cy, rx, ry), translateMatrix(cx, cy), depth),
 
     addPolygonFeature: (name, points, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', polygonProfile(points), name, depth))
@@ -1297,11 +1304,18 @@ export function createFeatureSlice(
     },
 
     addSlotFeature: (name, p1, p2, width, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', slotProfile(p1, p2, width), name, depth))
+      const length = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+      const centre = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      addCannedShapeFeature(get(), name, { kind: SLOT_CANNED_KIND, params: { length, width } },
+        slotProfile(p1, p2, width),
+        multiplyMatrix(translateMatrix(centre.x, centre.y), rotateMatrix(angle)), depth)
     },
 
     addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) =>
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth)),
+      addCannedShapeFeature(get(), name,
+        { kind: NGON_CANNED_KIND, params: { sides, size: circumradius, rotation: (firstVertexAngle * 180) / Math.PI } },
+        ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), translateMatrix(cx, cy), depth),
 
     addGearFeature: createAddGearFeatureAction(set, get),
 
@@ -1309,13 +1323,13 @@ export function createFeatureSlice(
 
     addRotarySolid: createAddRotarySolidAction(set, get),
 
-    addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addRoundRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ROUND_RECT_CANNED_KIND, params: { width: w, height: h, radius: corner } },
+        roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
 
-    addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addChamferRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: CHAMFER_RECT_CANNED_KIND, params: { width: w, height: h, chamfer: corner } },
+        chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
 
     expandTextFeature: (textFeatureId) => {
       const state = get()
@@ -1337,8 +1351,9 @@ export function createFeatureSlice(
       // the folders, definitions, rows, selection and history are written, and
       // judged by the rows about to be created rather than the workspace face.
       // Ordinary Top and round-bar Around text expansion is unaffected
-      // (issue #1016 C2-U1G).
-      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+      // (issue #1016 C2-U1G). Glyphs are lines, so the square blank still
+      // refuses them (issue #1112 decision 17).
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
         return
       }
 
@@ -1367,7 +1382,7 @@ export function createFeatureSlice(
 
       // Same atomic face check as Text: the plain outlines copy the canned
       // feature's face and are inserted directly, bypassing `addFeature`.
-      if (features.some((feature) => aroundSketchAuthoringRefused(state.project, feature.authoringFace))) {
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
         return
       }
 

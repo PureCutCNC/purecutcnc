@@ -64,6 +64,8 @@ export function CreationToolbar({
           hasLockedSelection={toolbar.sketchCommands.predicates.hasLockedSelectedFeatures}
           hasClosedSelection={toolbar.sketchCommands.predicates.hasOffsetEligibleSelectedFeatures}
           hasCannedSelection={toolbar.sketchCommands.predicates.hasCannedSelectedFeatures}
+          hasRotaryCannedSelection={toolbar.sketchCommands.predicates.hasRotaryCannedSelectedFeatures}
+          rotaryCannedShapeLabelKey={toolbar.sketchCommands.predicates.rotaryCannedShapeLabelKey}
           pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
           pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
           pendingOffset={toolbar.sketchCommands.boolean.offset.active}

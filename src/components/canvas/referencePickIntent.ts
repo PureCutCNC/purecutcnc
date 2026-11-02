@@ -31,7 +31,13 @@ export function referencePickIntent(state: ReferencePickState, clipboardPlacemen
   if (state.pendingSketchEdit) return state.pendingSketchEdit.phase === 'pick-reference' ? 'segment' : null
   if (state.pendingFeatureDistribution?.pickTarget === 'guide') return 'distribution-guide'
   if (state.pendingTextLayout?.pickTarget === 'guide') return 'text-guide'
-  if (clipboardPlacementPending || state.pendingAdd || state.pendingMove || state.pendingTransform || state.pendingOffset
+  // A canned-shape edit borrows `pendingAdd` only to open its side panel: it
+  // places nothing on the canvas. Counting it as a point pick claimed the
+  // pointer for a reference pick, which is what kept the ellipse's radius
+  // handles ungrabbable while their own Edit panel was open — the dots were
+  // drawn, the press was refused (issue #1112 rt7-g correction, round 3).
+  const placingWithPointer = state.pendingAdd !== null && state.pendingAdd.shape !== 'canned-edit'
+  if (clipboardPlacementPending || placingWithPointer || state.pendingMove || state.pendingTransform || state.pendingOffset
     || state.pendingDimension || state.tapeMeasure
     || state.pendingFeatureDistribution?.pickTarget === 'radial-center'
     || state.pendingTextLayout?.pickTarget === 'center'

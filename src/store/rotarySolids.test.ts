@@ -15,75 +15,66 @@
  */
 
 /**
- * The generated polygon solid on a round bar (issue #1016 C2-B).
- *
- * Mutations checked one at a time against these assertions:
- * - `z_bottom`/`z_top` written as `[0, barDiameter]` instead of the emitted
- *   mesh's Z bounds → the load-identity assertions fail (the loader's Z fit
- *   stops being the identity and the hex is stretched);
- * - the generated mesh serialized with `mesh` left on the feature instead of
- *   moved into `modelAssets` → the asset assertions fail;
- * - the model stamped `authoringFace: 'around'` → the load-identity test's
- *   `loadSTLTransformedGeometry` returns null;
- * - the operations left on the provisional setup id → "both operations join the
- *   real Around setup" fails;
- * - the finish operation created with `pass: 'rough'`, or the two kinds swapped
- *   → the kind/pass assertions fail;
- * - the target omitted or pointed at the folder → the target-id assertions and
- *   the generation test fail;
- * - the scratch tool's unit conversion dropped for one cross-unit tool default
- *   → "the operation lands in project units while the stored record does not"
- *   fails (feed/stepdown/plunge);
- * - the created feature's name not passed through `uniqueName` → the collision
- *   test fails against a pre-existing "Hex Model";
- * - creation split across two `set` calls → "one undo removes everything"
- *   fails;
- * - the refusal path calling `set` before validating → the invalid-input
- *   no-change assertions fail;
- * - the input numbers written to the feature/definition → the "no creation
- *   fields persisted" assertions fail;
- * - the tool check run on the raw record instead of the converted copy → the
- *   finite inch tool that overflows to `Infinity` in mm is created with an
- *   `Infinity` feed and the overflow refusals fail;
- * - the creation taking its own snapshot (or clearing `transactionStart`)
- *   inside an open transaction → the combined undo/redo and the "open
- *   transaction is preserved" assertions fail.
+ * Turn and Polygon as canned models on a round bar (issue #1112 slice G).
  *
  * Run with: npx tsx src/store/rotarySolids.test.ts
+ *
+ * Mutations checked one at a time against these assertions:
+ * - the creator writes a folder, a model and two operations as the old command
+ *   did → "one feature, no folder, no operation" fails;
+ * - the model is stamped `authoringFace: 'around'` → the consumer assertion
+ *   fails (the persisted-model loader returns null for Around);
+ * - `z_bottom`/`z_top` written as `[0, barDiameter]` instead of the emitted
+ *   mesh's own Z bounds → the load-identity and placement assertions fail;
+ * - the generated mesh built with rounded or re-derived numbers instead of the
+ *   shared builder → the vertex comparison against the old command fails;
+ * - the Y-bar start/length mapped as if Y grew away from the chuck → the
+ *   `start 10 on a Y bar` bounds assertion fails;
+ * - the canned parameters dropped from the definition, or an operation
+ *   created from a tool, → the parameter/tool assertions fail;
+ * - the creator split across two `set` calls → the one-undo assertion fails;
+ * - the refusal path calling `set` first → the no-change assertions fail;
+ * - the edit pinning the regenerated mesh's raw Z bounds instead of preserving
+ *   each instance's own placement → the moved, linked-copy and scaled
+ *   assertions fail;
+ * - the parameter edit anchoring the new height to the old bottom instead of
+ *   the instance centre → the cylinder-centreline assertions fail;
+ * - the old-folder fixture routed through the new creator → its folder and
+ *   operations disappear and the equivalence comparison has nothing to read.
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, getStockBounds, isRoundStock, newProject, roundStock } from '../types/project'
-import { squareStock } from '../types/barStock'
-import type { Project, SketchFeature, Tool } from '../types/project'
+import { defaultTool, newProject, rectProfile, roundStock } from '../types/project'
+import type { FeatureDefinition, FeatureInstance, Project, SketchFeature, Tool } from '../types/project'
 import { bundledMachines } from '../machine/registry'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { computeOperationToolpath } from '../engine/toolpaths/generateOperation'
-import { loadSTLTransformedGeometry } from '../engine/csg'
-import { computeMeshBounds, loadPersistedTriangleMesh, serializeImportedMesh } from '../engine/importedMesh'
-import type { ImportedModelSourceFormat } from '../types/project'
+import { loadPersistedTriangleMesh, serializeImportedMesh } from '../engine/importedMesh'
+import type { ImportedTriangleMesh } from '../engine/importedMesh'
+import { buildRotaryPolygonPrism } from '../engine/rotaryPrism'
+import { buildRotaryCylinderMesh, rotaryCylinderSegments } from '../engine/rotaryCylinder'
 import { validateMachineDefinition } from '../engine/gcode/types'
 import type { MachineDefinition } from '../engine/gcode/types'
-import { warningSeverity } from '../engine/toolpaths/warningCodes'
-import { activeFace, activeSetup } from './helpers/activeFace'
-import { provisionalSetupId } from './helpers/provisionalSetup'
+import { runPostProcessor } from '../engine/gcode/postprocessor'
+import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { rotarySolidCannedData, type RotarySolidInput, type RotarySolidRefusal } from './helpers/rotarySolids'
+import { generateCannedShapeMesh } from '../cannedShapes'
+import { rotarySolidBarLength, rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { useProjectStore } from './projectStore'
 import { switchWorkspaceFace } from './workspaceFace'
-import type { RotarySolidRefusal } from './helpers/rotarySolids'
 
-/** The typed refusal reason, or undefined when the creation succeeded. */
 function refusalReason(result: { ok: boolean; reason?: RotarySolidRefusal }): RotarySolidRefusal | undefined {
   return result.ok ? undefined : result.reason
-}
-
-function near(actual: number, expected: number, label: string, tolerance = 1e-9): void {
-  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`)
 }
 
 const store = () => useProjectStore.getState()
 
 function log(message: string): void {
   console.log(message)
+}
+
+function near(actual: number, expected: number, label: string, tolerance = 1e-9): void {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`)
 }
 
 // ── fixtures ──────────────────────────────────────────────────
@@ -99,7 +90,6 @@ interface BarSpec {
 const MM_X: BarSpec = { axis: 'x', units: 'mm', at: { x: 10, y: 30 }, diameter: 40, length: 200 }
 const MM_Y: BarSpec = { axis: 'y', units: 'mm', at: { x: 10, y: 30 }, diameter: 40, length: 200 }
 const INCH_X: BarSpec = { axis: 'x', units: 'inch', at: { x: 3, y: 5 }, diameter: 2, length: 8 }
-const INCH_Y: BarSpec = { axis: 'y', units: 'inch', at: { x: 3, y: 5 }, diameter: 2, length: 8 }
 
 function rotaryMachine(axis: 'x' | 'y'): MachineDefinition {
   const base = structuredClone(bundledMachines()[0])
@@ -110,14 +100,14 @@ function rotaryMachine(axis: 'x' | 'y'): MachineDefinition {
   })
 }
 
-function cutter(units: 'mm' | 'inch', id: string): Tool {
+function cutter(units: 'mm' | 'inch'): Tool {
   return {
     ...defaultTool(units, 1),
-    id,
-    name: `${id} ball`,
+    id: 'ball',
+    name: 'Ball',
     units,
     type: 'ball_endmill',
-    diameter: units === 'mm' ? 3 : 0.125,
+    diameter: units === 'mm' ? 4 : 0.25,
     defaultStepover: 0.4,
     defaultStepdown: units === 'mm' ? 1 : 0.04,
     defaultFeed: units === 'mm' ? 600 : 24,
@@ -125,774 +115,501 @@ function cutter(units: 'mm' | 'inch', id: string): Tool {
   }
 }
 
-/** A rotary project on the given bar, with the given tools, loaded onto Around. */
-function loadRotary(spec: BarSpec, tools: Tool[], features: SketchFeature[] = [], assets = {}): Project {
+/** A rotary project on the given bar, before any load. */
+function roundProject(spec: BarSpec = MM_X): Project {
   const base = newProject(`Solids ${spec.axis} ${spec.units}`, spec.units)
   base.meta.projectType = 'rotary'
   base.stock = roundStock(spec.diameter, spec.length, spec.axis, spec.at)
   const machine = rotaryMachine(spec.axis)
   base.meta.machineDefinitions = [machine]
   base.meta.selectedMachineId = machine.id
-  base.tools = tools
-  base.modelAssets = { ...base.modelAssets, ...assets }
-  const project = projectWithFeatures(base, features)
+  base.tools = [cutter(spec.units)]
+  return base
+}
+
+/** Load the bar, enter Around and return the project the workspace holds. */
+function loadRotary(project: Project): Project {
   store().loadProject(project)
   assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
   return store().project
 }
 
-/** A rotary project on a round bar with a *real* Around setup already active. */
-function loadRoundRealSetup(spec: BarSpec, tools: Tool[]): Project {
-  const base = newProject(`Real ${spec.axis} ${spec.units}`, spec.units)
-  base.meta.projectType = 'rotary'
-  base.stock = roundStock(spec.diameter, spec.length, spec.axis, spec.at)
-  const machine = rotaryMachine(spec.axis)
-  base.meta.machineDefinitions = [machine]
-  base.meta.selectedMachineId = machine.id
-  base.tools = tools
-  base.setups.push({
-    ...base.setups[0],
-    id: 'round-around',
-    name: 'Around',
-    kind: 'around',
-    orientation: { axis: spec.axis, angleDeg: 0 },
-  })
-  base.activeSetupId = 'round-around'
-  store().loadProject(projectWithFeatures(base, []))
-  assert.equal(activeFace(store().project), 'around', 'the fixture is on a real Around setup')
-  assert.notEqual(activeSetup(store().project).id, provisionalSetupId('around'), 'the setup is real')
-  return store().project
+function onlyModel(): FeatureInstance {
+  const project = store().project
+  const models = project.features.filter((feature) => project.featureDefinitions[feature.definitionId]?.kind === 'stl')
+  assert.equal(models.length, 1, `exactly one model (got ${models.length})`)
+  return models[0]
 }
 
-/** The project's own feature as a resolved-into-draft shape, for the load seam. */
-function createdFeature(id: string): SketchFeature & { definitionId: string } {
-  const instance = store().project.features.find((entry) => entry.id === id)
-  assert.ok(instance, `feature ${id} exists`)
-  const definition = store().project.featureDefinitions[instance.definitionId]
-  assert.ok(definition, `definition for ${id} exists`)
-  return {
-    ...(instance as unknown as SketchFeature),
-    definitionId: instance.definitionId,
+function modelAsset(feature: FeatureInstance): ImportedTriangleMesh {
+  const project = store().project
+  const definition = project.featureDefinitions[feature.definitionId]
+  const assetId = definition?.stl?.meshAssetId
+  assert.ok(assetId, 'the model references a mesh asset')
+  const asset = project.modelAssets[assetId]
+  assert.ok(asset, 'the mesh asset exists')
+  const mesh = loadPersistedTriangleMesh(asset)
+  assert.ok(mesh, 'the mesh asset loads')
+  return mesh
+}
+
+/** A legacy rotary-solid folder + model + operations, exactly as old files store it. */
+function legacyProject(base: Project, mesh: ImportedTriangleMesh, folderName: string): Project {
+  const assetId = 'model-asset-old'
+  const asset = serializeImportedMesh(mesh, 'stl')
+  const definition: FeatureDefinition = {
+    id: 'def-old',
+    kind: 'stl',
+    profile: rectProfile(
+      mesh.bounds.minX,
+      mesh.bounds.minY,
+      mesh.bounds.maxX - mesh.bounds.minX,
+      mesh.bounds.maxY - mesh.bounds.minY,
+    ),
+    dimensions: [],
+    text: null,
+    stl: { format: 'stl', meshAssetId: assetId, scale: 1, axisSwap: 'none' },
+    operation: 'model',
+  }
+  const feature = {
+    id: 'f-old',
+    definitionId: 'def-old',
+    name: `${folderName} Model`,
+    kind: 'stl' as const,
+    folderId: 'fd-old',
     sketch: {
       profile: definition.profile,
       origin: { x: 0, y: 0 },
       orientationAngle: 0,
-      dimensions: definition.dimensions,
-      constraints: [],
-    },
-    kind: definition.kind,
-    operation: definition.operation,
-    text: definition.text,
-    stl: definition.stl,
-  }
-}
-
-/** A tiny standalone asset that an existing feature can reference. */
-function tinyAsset(format: ImportedModelSourceFormat = 'stl'): NonNullable<Project['modelAssets']>[string] {
-  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])
-  return serializeImportedMesh({ positions, index: new Uint32Array([0, 1, 2]), bounds: computeMeshBounds(positions) }, format)
-}
-
-function existingModelFeature(id: string, assetId: string, folderId: string | null, name: string): SketchFeature {
-  return {
-    id,
-    name,
-    kind: 'stl',
-    operation: 'model',
-    authoringFace: 'top',
-    folderId,
-    sketch: {
-      profile: {
-        start: { x: 0, y: 0 },
-        segments: [
-          { type: 'line', to: { x: 1, y: 0 } },
-          { type: 'line', to: { x: 1, y: 1 } },
-          { type: 'line', to: { x: 0, y: 1 } },
-          { type: 'line', to: { x: 0, y: 0 } },
-        ],
-        closed: true,
-      },
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
       dimensions: [],
       constraints: [],
     },
-    stl: { format: 'stl', meshAssetId: assetId, scale: 1, axisSwap: 'none' },
-    z_top: 1,
-    z_bottom: 0,
+    operation: 'model' as const,
+    authoringFace: 'top' as const,
+    z_top: mesh.bounds.maxZ,
+    z_bottom: mesh.bounds.minZ,
     visible: true,
     locked: false,
   }
-}
-
-const POLYGON = { kind: 'polygon', sides: 6, acrossFlats: 16, rotationDeg: 0 } as const
-
-// ── creation, folder, model, operations ───────────────────────
-
-log('Testing polygon creation, folder, model asset and both operations...')
-{
-  const spec = MM_X
-  loadRotary(spec, [cutter('mm', 'ball')])
-  const before = store().project
-  const historyBefore = store().history.past.length
-  const bounds = getStockBounds(before.stock)
-  const alongStart = bounds.minX + 20
-  const alongEnd = alongStart + 60
-
-  const result = store().addRotarySolid({ ...POLYGON, alongStart, alongEnd, toolRef: 'ball' })
-  assert.ok(result.ok, `polygon created (${result.ok ? '' : `${result.reason} ${result.detail ?? ''}`})`)
-  if (!result.ok) throw new Error('unreachable')
-  assert.equal(store().history.past.length, historyBefore + 1, 'exactly one history entry')
-
-  const project = store().project
-  const folder = project.featureFolders.find((entry) => entry.id === result.folderId)
-  assert.ok(folder, 'the folder exists')
-  assert.equal(folder.name, 'Hex', 'the folder is named for the shape')
-  assert.equal(folder.section, 'features', 'the folder is an ordinary features folder')
-
-  const feature = createdFeature(result.featureId)
-  assert.equal(feature.folderId, result.folderId, 'the model is inside the folder')
-  assert.equal(feature.kind, 'stl', 'the model is an stl feature')
-  assert.equal(feature.operation, 'model', 'the model is an ordinary model feature')
-  assert.equal(feature.authoringFace, 'top', 'the model is authored on Top for the load pipeline')
-  assert.ok(feature.stl?.meshAssetId, 'the model references a mesh asset')
-  assert.equal(feature.stl?.mesh, undefined, 'no transient mesh is left on the feature')
-  const asset = project.modelAssets?.[feature.stl.meshAssetId]
-  assert.ok(asset, 'the asset is in the project')
-
-  // The mesh sits inside the bar and its Z bounds are the feature's own.
-  const meshBounds = loadPersistedTriangleMesh(asset)!.bounds
-  near(feature.z_bottom as number, meshBounds.minZ, 'z_bottom is the emitted mesh minimum Z')
-  near(feature.z_top as number, meshBounds.maxZ, 'z_top is the emitted mesh maximum Z')
-  assert.notEqual(feature.z_bottom, 0, 'the model is not stretched to the bar bottom')
-  assert.notEqual(feature.z_top, spec.diameter, 'the model is not stretched to the bar top')
-
-  // The plan sketch is the mesh's own absolute plan bounds.
-  const profileBounds = getStockBounds({ ...project.stock, profile: feature.sketch.profile })
-  near(profileBounds.minX, meshBounds.minX, 'sketch min X is the mesh plan minimum')
-  near(profileBounds.maxX, meshBounds.maxX, 'sketch max X is the mesh plan maximum')
-  near(profileBounds.minY, meshBounds.minY, 'sketch min Y is the mesh plan minimum')
-  near(profileBounds.maxY, meshBounds.maxY, 'sketch max Y is the mesh plan maximum')
-
-  // Rough then finish, both targeting exactly the created model.
-  assert.equal(project.operations.length, 2, 'two operations are created')
-  const rough = project.operations.find((entry) => entry.id === result.roughOperationId)
-  const finish = project.operations.find((entry) => entry.id === result.finishOperationId)
-  assert.ok(rough && finish, 'both operation ids resolve')
-  assert.equal(rough.kind, 'rotary_rough', 'the first is a rotary rough')
-  assert.equal(rough.pass, 'rough', 'the rough passes as rough')
-  assert.equal(finish.kind, 'rotary_finish', 'the second is a rotary finish')
-  assert.equal(finish.pass, 'finish', 'the finish passes as finish')
-  for (const operation of [rough, finish]) {
-    assert.deepEqual(operation.target, { source: 'features', featureIds: [result.featureId] }, 'targets the model')
-    assert.equal(operation.toolRef, 'ball', 'uses the existing tool')
-  }
-  const setup = activeSetup(project)
-  assert.equal(setup.kind, 'around', 'the workspace stays on Around')
-  assert.notEqual(setup.id, provisionalSetupId('around'), 'the provisional setup is made real in the same step')
-  assert.equal(rough.setupId, setup.id, 'the rough joins the real Around setup')
-  assert.equal(finish.setupId, setup.id, 'the finish joins the real Around setup')
-  assert.ok(project.setups.some((entry) => entry.id === setup.id && entry.kind === 'around'), 'the setup is stored')
-
-  // The write leaves the new folder selected (the model is a ghost on Around).
-  assert.deepEqual(store().selection.selectedNode, { type: 'folder', folderId: result.folderId }, 'the folder is selected')
-  assert.equal(store().selection.selectedFeatureId, null, 'no ghost feature is left selected')
-
-  // The input numbers are not stored anywhere.
-  const serialized = JSON.stringify({ folder, definition: project.featureDefinitions[feature.definitionId], instance: project.features.find((entry) => entry.id === result.featureId) })
-  for (const field of ['"sides"', '"acrossFlats"', '"rotationDeg"', '"alongStart"', '"alongEnd"', '"diameter"', 'polygonParams', 'solidParams']) {
-    assert.ok(!serialized.includes(field), `${field} is not persisted`)
-  }
-  const rawInstance = project.features.find((entry) => entry.id === result.featureId)!
-  assert.deepEqual(Object.keys(rawInstance).sort(), [
-    'authoringFace', 'constraints', 'definitionId', 'folderId', 'id', 'locked', 'name',
-    'textLayout', 'transform', 'visible', 'z_bottom', 'z_top',
-  ], 'the instance carries no creation fields')
-}
-
-// ── both axes, both units, an offset blank ────────────────────
-
-log('Testing both bar axes, both units and an offset blank...')
-{
-  for (const spec of [MM_X, MM_Y, INCH_X, INCH_Y]) {
-    const label = `${spec.axis}/${spec.units}`
-    loadRotary(spec, [cutter(spec.units, 'ball')])
-    const bounds = getStockBounds(store().project.stock)
-    const alongMin = spec.axis === 'x' ? bounds.minX : bounds.minY
-    const acrossMin = spec.axis === 'x' ? bounds.minY : bounds.minX
-    const acrossMax = spec.axis === 'x' ? bounds.maxY : bounds.maxX
-    const acrossFlats = spec.units === 'mm' ? 16 : 0.6
-    const radius = spec.diameter / 2
-    const apothem = acrossFlats / 2
-    const alongStart = alongMin + (spec.length * 0.1)
-    const alongEnd = alongStart + (spec.length * 0.3)
-
-    const result = store().addRotarySolid({ kind: 'polygon', sides: 6, acrossFlats, alongStart, alongEnd, toolRef: 'ball' })
-    assert.ok(result.ok, `${label}: created (${result.ok ? '' : result.reason})`)
-    if (!result.ok) throw new Error('unreachable')
-    const feature = createdFeature(result.featureId)
-    const asset = store().project.modelAssets![feature.stl!.meshAssetId!]
-    const mesh = loadPersistedTriangleMesh(asset)!
-    const centre = (acrossMin + acrossMax) / 2
-
-    // Absolute placement on the bar's own frame, both axes: along is the
-    // requested span, across is centred, Z straddles the centreline.
-    if (spec.axis === 'x') {
-      near(mesh.bounds.minX, alongStart, `${label}: along start`, 1e-4)
-      near(mesh.bounds.maxX, alongEnd, `${label}: along end`, 1e-4)
-      near((mesh.bounds.minY + mesh.bounds.maxY) / 2, centre, `${label}: centred across`, 1e-4)
-    } else {
-      near(mesh.bounds.minY, alongStart, `${label}: along start`, 1e-4)
-      near(mesh.bounds.maxY, alongEnd, `${label}: along end`, 1e-4)
-      near((mesh.bounds.minX + mesh.bounds.maxX) / 2, centre, `${label}: centred across`, 1e-4)
-    }
-    near(mesh.bounds.minZ, radius - apothem, `${label}: Z spans the apothem below the pivot`, 1e-4)
-    near(mesh.bounds.maxZ, radius + apothem, `${label}: Z spans the apothem above the pivot`, 1e-4)
-    near((mesh.bounds.minZ + mesh.bounds.maxZ) / 2, radius, `${label}: centred on the bar's pivot Z`, 1e-4)
-    near(feature.z_bottom as number, mesh.bounds.minZ, `${label}: z_bottom is the mesh minimum`)
-    near(feature.z_top as number, mesh.bounds.maxZ, `${label}: z_top is the mesh maximum`)
-  }
-}
-
-// ── the persisted-model load seam stays identity ──────────────
-
-log('Testing mesh Z bounds against the loader fit and the saved file...')
-{
-  for (const spec of [MM_X, MM_Y, INCH_X, INCH_Y]) {
-    const label = `${spec.axis}/${spec.units}`
-    loadRotary(spec, [cutter(spec.units, 'ball')])
-    const bounds = getStockBounds(store().project.stock)
-    const alongMin = spec.axis === 'x' ? bounds.minX : bounds.minY
-    const alongStart = alongMin + spec.length * 0.1
-    const alongEnd = alongStart + spec.length * 0.3
-    const acrossFlats = spec.units === 'mm' ? 16 : 0.6
-    const created = store().addRotarySolid({ kind: 'polygon', sides: 8, acrossFlats, alongStart, alongEnd, toolRef: 'ball' })
-    assert.ok(created.ok, `${label}: created`)
-    if (!created.ok) throw new Error('unreachable')
-
-    const project = store().project
-    const feature = createdFeature(created.featureId)
-    const asset = project.modelAssets![feature.stl!.meshAssetId!]
-    const mesh = loadPersistedTriangleMesh(asset)!
-    const transformed = loadSTLTransformedGeometry(feature, project)
-    assert.ok(transformed, `${label}: the model loads through the persisted-model seam`)
-    if (!transformed) throw new Error('unreachable')
-
-    // The loader fits raw mesh Z into [z_bottom, z_top]; equal bounds mean the
-    // fit is the identity and every loaded vertex keeps its real Z.
-    near(transformed.rawMinZ, mesh.bounds.minZ, `${label}: rawMinZ is the mesh minimum`)
-    near(transformed.meshHeight, mesh.bounds.maxZ - mesh.bounds.minZ, `${label}: mesh height is preserved`)
-    let minZ = Infinity
-    let maxZ = -Infinity
-    for (let i = 2; i < transformed.positions.length; i += 3) {
-      minZ = Math.min(minZ, transformed.positions[i])
-      maxZ = Math.max(maxZ, transformed.positions[i])
-    }
-    near(minZ, mesh.bounds.minZ, `${label}: loaded minimum Z is the mesh minimum`, 1e-4)
-    near(maxZ, mesh.bounds.maxZ, `${label}: loaded maximum Z is the mesh maximum`, 1e-4)
-
-    // Save and reload: the asset survives pruning, the Z band and the mesh are
-    // unchanged (the model is an ordinary persisted asset).
-    const saved = store().saveProject()
-    const reloaded = JSON.parse(saved) as Project
-    store().loadProject(reloaded)
-    const reloadedFeature = createdFeature(created.featureId)
-    const reloadedAsset = store().project.modelAssets?.[reloadedFeature.stl!.meshAssetId!]
-    assert.ok(reloadedAsset, `${label}: the asset survives save and reload`)
-    const reloadedMesh = loadPersistedTriangleMesh(reloadedAsset)!
-    near(reloadedMesh.bounds.minZ, mesh.bounds.minZ, `${label}: reloaded mesh minimum Z`)
-    near(reloadedMesh.bounds.maxZ, mesh.bounds.maxZ, `${label}: reloaded mesh maximum Z`)
-    near(reloadedFeature.z_bottom as number, mesh.bounds.minZ, `${label}: reloaded z_bottom`)
-    near(reloadedFeature.z_top as number, mesh.bounds.maxZ, `${label}: reloaded z_top`)
-    assert.equal(reloadedFeature.operation, 'model', `${label}: reloads as an ordinary model`)
-  }
-}
-
-// ── the real generation path ──────────────────────────────────
-
-log('Testing generated rough and finish moves on the actual bar...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const alongStart = bounds.minX + 20
-  const alongEnd = alongStart + 60
-  const created = store().addRotarySolid({ ...POLYGON, alongStart, alongEnd, toolRef: 'ball' })
-  assert.ok(created.ok, 'created')
-  if (!created.ok) throw new Error('unreachable')
-
-  const project = store().project
-  for (const id of [created.roughOperationId, created.finishOperationId]) {
-    const operation = project.operations.find((entry) => entry.id === id)!
-    const envelope = computeOperationToolpath(project, operation)
-    assert.ok(envelope, `${operation.kind}: generation returns an envelope`)
-    if (!envelope) throw new Error('unreachable')
-    const path = envelope.result
-    assert.ok(path.moves.length > 0, `${operation.kind}: nonempty moves`)
-    assert.deepEqual(
-      path.warnings.map((warning) => warningSeverity(warning.code)),
-      [],
-      `${operation.kind}: no generation warning at any severity`,
-    )
-    // What this measures: every generated point is finite; the path's along
-    // extent is the requested band pulled one cutter radius inside each stubbed
-    // end (#1045 slice D, the C2-F7 rule the square blank already used: a
-    // pass on the band edge would otherwise cut into the retained bar); and
-    // its closest approach to the bar axis reaches the hex's flat (apothem)
-    // radius, so the tool really does make contact with the generated solid.
-    // The *maximum* radial distance is deliberately not bounded — it is the
-    // safe-height retract plane above the bar top, not a cut — so this block
-    // makes no "everything stays inside the bar radius" claim.
-    assert.ok(isRoundStock(project.stock), `${operation.kind}: the fixture is a round bar`)
-    const axis = project.stock.axis
-    const acrossMin = axis === 'x' ? bounds.minY : bounds.minX
-    const acrossMax = axis === 'x' ? bounds.maxY : bounds.maxX
-    const axisCentre = (acrossMin + acrossMax) / 2
-    const pivotZ = project.stock.thickness / 2
-    const apothem = POLYGON.acrossFlats / 2
-    let minAlong = Infinity
-    let maxAlong = -Infinity
-    let minRadius = Infinity
-    for (const move of path.moves) {
-      for (const point of [move.from, move.to]) {
-        assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z), `${operation.kind}: finite points`)
-        const along = axis === 'x' ? point.x : point.y
-        const across = axis === 'x' ? point.y : point.x
-        minAlong = Math.min(minAlong, along)
-        maxAlong = Math.max(maxAlong, along)
-        minRadius = Math.min(minRadius, Math.hypot(across - axisCentre, point.z - pivotZ))
-      }
-    }
-    const tool = project.tools.find((entry) => entry.id === operation.toolRef)!
-    const cutterRadius = tool.diameter / 2
-    near(minAlong, alongStart + cutterRadius, `${operation.kind}: the path starts one cutter radius inside the requested along position`, 1e-4)
-    near(maxAlong, alongEnd - cutterRadius, `${operation.kind}: the path ends one cutter radius inside the requested along position`, 1e-4)
-    assert.ok(minRadius <= apothem + 1e-3, `${operation.kind}: the path reaches the hex flat surface (${minRadius} vs ${apothem})`)
-    assert.ok(minRadius > 0, `${operation.kind}: the path approaches the axis from the material side`)
-  }
-}
-
-// ── cross-unit existing tool ──────────────────────────────────
-
-log('Testing a tool stored in the other unit...')
-{
-  const project = loadRotary(MM_X, [cutter('inch', 'inch-ball')])
-  assert.equal(project.meta.units, 'mm', 'the project is metric')
-  const toolBefore = structuredClone(project.tools.find((entry) => entry.id === 'inch-ball')!)
-  const bounds = getStockBounds(project.stock)
-  const result = store().addRotarySolid({
-    ...POLYGON,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'inch-ball',
-  })
-  assert.ok(result.ok, `created with a cross-unit tool (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-
-  const after = store().project
-  const stored = after.tools.find((entry) => entry.id === 'inch-ball')!
-  assert.deepEqual(stored, toolBefore, 'the stored tool record is byte-identical')
-  assert.equal(stored.units, 'inch', 'the stored tool keeps its units')
-  assert.equal(stored.diameter, 0.125, 'the stored tool keees its raw diameter')
-  assert.equal(stored.defaultFeed, 24, 'the stored tool keeps its raw feed')
-  assert.equal(stored.defaultStepdown, 0.04, 'the stored tool keeps its raw stepdown')
-
-  const rough = after.operations.find((entry) => entry.id === result.roughOperationId)!
-  const finish = after.operations.find((entry) => entry.id === result.finishOperationId)!
-  near(rough.feed, 24 * 25.4, 'the operation feed lands in project units', 1e-9)
-  near(rough.plungeFeed, 8 * 25.4, 'the operation plunge feed lands in project units', 1e-9)
-  near(rough.stepdown, 0.04 * 25.4, 'the operation stepdown lands in project units', 1e-9)
-  assert.equal(rough.toolRef, 'inch-ball', 'the operation still references the stored record')
-  assert.equal(after.tools.length, 1, 'no tool was added or removed')
-  for (const operation of [rough, finish]) {
-    for (const [field, value] of [
-      ['feed', operation.feed], ['plungeFeed', operation.plungeFeed], ['stepdown', operation.stepdown],
-      ['stepover', operation.stepover], ['rpm', operation.rpm],
-    ] as const) {
-      assert.ok(Number.isFinite(value) && value > 0, `${operation.kind}: ${field} is finite and positive (${value})`)
-    }
-  }
-}
-
-// A large but representable cross-unit value is preserved exactly: not refused
-// and not clamped to some arbitrary ceiling.
-log('Testing a large-but-finite cross-unit conversion...')
-{
-  loadRotary(MM_X, [{ ...cutter('inch', 'inch-big'), defaultFeed: 1e10 }])
-  const bounds = getStockBounds(store().project.stock)
-  const result = store().addRotarySolid({
-    ...POLYGON,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'inch-big',
-  })
-  assert.ok(result.ok, `created (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-  const rough = store().project.operations.find((entry) => entry.id === result.roughOperationId)!
-  near(rough.feed, 1e10 * 25.4, 'the large converted feed is exact', 1e-6)
-}
-
-log('Testing cross-unit tool values that overflow on conversion...')
-{
-  // A record finite in its own units can overflow the project's unit:
-  // 0.25 in × Number.MAX_VALUE is Infinity mm. Every operation-seeding numeric
-  // is checked on the converted copy, so none of these can commit an operation
-  // with an infinite feed or depth.
-  const overflowing: Array<[string, 'diameter' | 'defaults', (tool: Tool) => Tool]> = [
-    ['diameter', 'diameter', (tool) => ({ ...tool, diameter: Number.MAX_VALUE })],
-    ['defaultFeed', 'defaults', (tool) => ({ ...tool, defaultFeed: Number.MAX_VALUE })],
-    ['defaultPlungeFeed', 'defaults', (tool) => ({ ...tool, defaultPlungeFeed: Number.MAX_VALUE })],
-    ['defaultStepdown', 'defaults', (tool) => ({ ...tool, defaultStepdown: Number.MAX_VALUE })],
-  ]
-  for (const [field, detail, mutate] of overflowing) {
-    loadRotary(MM_X, [mutate({ ...cutter('inch', 'edge'), units: 'inch', diameter: 0.25 })])
-    const bounds = getStockBounds(store().project.stock)
-    const before = store().project
-    const selectionBefore = store().selection
-    const dirtyBefore = store().dirty
-    const historyBefore = store().history.past.length
-    const result = store().addRotarySolid({
-      ...POLYGON,
-      alongStart: bounds.minX + 20,
-      alongEnd: bounds.minX + 80,
-      toolRef: 'edge',
-    })
-    assert.equal(result.ok, false, `${field}: the overflowing tool is refused`)
-    assert.equal(refusalReason(result), 'invalidTool', `${field}: with the typed invalidTool reason`)
-    assert.equal(!result.ok ? result.detail : undefined, detail, `${field}: names the unusable field group`)
-    assert.equal(store().project, before, `${field}: leaves the project untouched`)
-    assert.equal(store().selection, selectionBefore, `${field}: leaves the selection untouched`)
-    assert.equal(store().dirty, dirtyBefore, `${field}: leaves dirtiness untouched`)
-    assert.equal(store().history.past.length, historyBefore, `${field}: adds no history entry`)
-    assert.equal(store().project.operations.length, 0, `${field}: creates no operation`)
-  }
-}
-
-// ── unique ids and names beside existing content ──────────────
-
-log('Testing unique ids and names beside existing assets...')
-{
-  const existing = existingModelFeature('existing-model', 'existing-asset', 'existing-folder', 'Hex Model')
-  const base = newProject('Collide', 'mm')
-  base.meta.projectType = 'rotary'
-  base.stock = roundStock(40, 200, 'x', { x: 10, y: 30 })
-  const machine = rotaryMachine('x')
-  base.meta.machineDefinitions = [machine]
-  base.meta.selectedMachineId = machine.id
-  base.tools = [cutter('mm', 'hex-1')]
-  base.modelAssets = { 'existing-asset': tinyAsset() }
-  base.featureFolders = [{ id: 'existing-folder', name: 'Hex', collapsed: false, section: 'features' }]
-  const project = projectWithFeatures(base, [existing])
-  store().loadProject(project)
-  assert.equal(switchWorkspaceFace('around'), true, 'the workspace enters Around')
-
-  const bounds = getStockBounds(store().project.stock)
-  // An existing feature id and asset id that the new ids must not reuse.
-  const result = store().addRotarySolid({
-    ...POLYGON,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'hex-1',
-  })
-  assert.ok(result.ok, 'created beside existing content')
-  if (!result.ok) throw new Error('unreachable')
-
-  const after = store().project
-  assert.notEqual(result.folderId, 'existing-folder', 'a fresh folder id')
-  assert.notEqual(result.featureId, 'existing-model', 'a fresh feature id')
-  const folder = after.featureFolders.find((entry) => entry.id === result.folderId)!
-  assert.equal(folder.name, 'Hex 2', 'the folder name avoids the existing one')
-  const feature = after.features.find((entry) => entry.id === result.featureId)!
-  assert.equal(feature.name, 'Hex 2 Model', 'the feature name avoids the existing one')
-  const assetId = after.featureDefinitions[feature.definitionId].stl!.meshAssetId!
-  assert.notEqual(assetId, 'existing-asset', 'the new asset does not overwrite the existing one')
-  assert.ok(after.modelAssets!['existing-asset'], 'the existing asset is untouched')
-  assert.ok(after.modelAssets![assetId], 'the new asset is stored')
-}
-
-// ── undo and redo ─────────────────────────────────────────────
-
-log('Testing one undo removes everything and redo restores it...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  const before = store().project
-  const bounds = getStockBounds(before.stock)
-  const result = store().addRotarySolid({
-    ...POLYGON,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  })
-  assert.ok(result.ok, 'created')
-  if (!result.ok) throw new Error('unreachable')
-  const createdAssetId = store().project.featureDefinitions[
-    store().project.features.find((entry) => entry.id === result.featureId)!.definitionId
-  ].stl!.meshAssetId!
-
-  store().undo()
-  const undone = store().project
-  assert.equal(undone.features.length, before.features.length, 'undo removes the model')
-  assert.equal(undone.featureFolders.length, before.featureFolders.length, 'undo removes the folder')
-  assert.equal(undone.operations.length, 0, 'undo removes both operations')
-  assert.equal(undone.modelAssets?.[createdAssetId], undefined, 'undo removes the asset')
-  assert.deepEqual(Object.keys(undone.featureDefinitions), [], 'undo leaves no orphan definition')
-  assert.equal(activeFace(undone), 'around', 'undo keeps the workspace on Around')
-  assert.equal(store().history.future.length, 1, 'the undone step is redoable')
-
-  store().redo()
-  const redone = store().project
-  assert.equal(redone.features.length, before.features.length + 1, 'redo restores the model')
-  assert.equal(redone.featureFolders.length, before.featureFolders.length + 1, 'redo restores the folder')
-  assert.equal(redone.operations.length, 2, 'redo restores both operations')
-  assert.ok(redone.modelAssets?.[createdAssetId], 'redo restores the asset')
-  assert.equal(activeFace(redone), 'around', 'redo keeps the workspace on Around')
-}
-
-// ── creation inside an outer history transaction ──────────────
-
-log('Testing creation inside an outer transaction on the provisional setup...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  assert.equal(activeSetup(store().project).id, provisionalSetupId('around'), 'the fixture starts provisional')
-  const bounds = getStockBounds(store().project.stock)
-  const projectBefore = store().project
-  const snapBefore = projectBefore.grid.snapIncrement
-  const historyBefore = store().history.past.length
-
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
-  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
-  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-  const assetId = store().project.featureDefinitions[
-    store().project.features.find((entry) => entry.id === result.featureId)!.definitionId
-  ].stl!.meshAssetId!
-
-  // The creation joins the open transaction: no snapshot of its own, and the
-  // transaction is still there for its commit to own.
-  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
-  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
-  assert.equal(store().project.operations.length, projectBefore.operations.length + 2, 'both operations exist before the commit')
-  assert.notEqual(activeSetup(store().project).id, provisionalSetupId('around'), 'the write realised the provisional setup')
-
-  store().commitHistoryTransaction()
-  assert.equal(store().history.transactionStart, null, 'the commit closes the transaction')
-  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
-
-  store().undo()
-  const undone = store().project
-  assert.equal(undone.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
-  assert.equal(undone.features.length, projectBefore.features.length, 'undo removes the model')
-  assert.equal(undone.operations.length, projectBefore.operations.length, 'undo removes both operations')
-  assert.equal(undone.featureFolders.length, projectBefore.featureFolders.length, 'undo removes the folder')
-  assert.equal(undone.modelAssets?.[assetId], undefined, 'undo removes the asset')
-  assert.equal(activeFace(undone), 'around', 'undo keeps the workspace on Around')
-  assert.equal(store().history.future.length, 1, 'the combined step is redoable')
-
-  store().redo()
-  const redone = store().project
-  assert.equal(redone.grid.snapIncrement, snapBefore * 2, 'redo restores the grid edit')
-  assert.equal(redone.features.length, projectBefore.features.length + 1, 'redo restores the model')
-  assert.equal(redone.operations.length, projectBefore.operations.length + 2, 'redo restores both operations')
-  assert.ok(redone.modelAssets?.[assetId], 'redo restores the asset')
-}
-
-log('Testing creation inside an outer transaction on a real setup...')
-{
-  const project = loadRoundRealSetup(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(project.stock)
-  const snapBefore = project.grid.snapIncrement
-  const historyBefore = store().history.past.length
-
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 3 })
-  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
-  assert.ok(result.ok, `created inside the transaction (${result.ok ? '' : result.reason})`)
-  if (!result.ok) throw new Error('unreachable')
-  assert.ok(store().history.transactionStart, 'the transaction is still open after the creation')
-  assert.equal(store().history.past.length, historyBefore, 'the creation adds no snapshot inside a transaction')
-  assert.equal(activeSetup(store().project).id, 'round-around', 'the real setup stays active')
-
-  store().commitHistoryTransaction()
-  assert.equal(store().history.past.length, historyBefore + 1, 'the commit owns exactly one snapshot')
-  store().undo()
-  assert.equal(store().project.grid.snapIncrement, snapBefore, 'undo restores the prior grid edit')
-  assert.equal(store().project.features.length, project.features.length, 'undo removes the model')
-  assert.equal(activeSetup(store().project).id, 'round-around', 'undo keeps the real setup in view')
-  store().redo()
-  assert.equal(store().project.grid.snapIncrement, snapBefore * 3, 'redo restores the grid edit')
-  assert.equal(store().project.features.length, project.features.length + 1, 'redo restores the model')
-}
-
-log('Testing cancelling an outer transaction rolls the creation back...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const projectBefore = store().project
-  const snapBefore = projectBefore.grid.snapIncrement
-  const historyBefore = store().history.past.length
-
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: snapBefore * 2 })
-  const result = store().addRotarySolid({ ...POLYGON, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
-  assert.ok(result.ok, 'created inside the transaction')
-  store().cancelHistoryTransaction()
-
-  assert.equal(store().history.transactionStart, null, 'the transaction is closed')
-  assert.equal(store().project.grid.snapIncrement, snapBefore, 'cancel restores the prior grid edit')
-  assert.equal(store().project.features.length, projectBefore.features.length, 'cancel removes the model')
-  assert.equal(store().project.operations.length, projectBefore.operations.length, 'cancel removes the operations')
-  assert.equal(store().history.past.length, historyBefore, 'cancel adds no history entry')
-  assert.equal(activeFace(store().project), 'around', 'cancel keeps the workspace face')
-}
-
-log('Testing a refused creation leaves an open transaction alone...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const snapBefore = store().project.grid.snapIncrement
-  store().beginHistoryTransaction()
-  store().setGrid({ ...store().project.grid, snapIncrement: 3 })
-  const projectAfterEdit = store().project
-  const selectionAfterEdit = store().selection
-  const dirtyAfterEdit = store().dirty
-  const historyAfterEdit = store().history.past.length
-  const transactionStart = store().history.transactionStart
-  assert.ok(transactionStart, 'the transaction is open')
-
-  const refused = store().addRotarySolid({ ...POLYGON, sides: 2, alongStart: bounds.minX + 20, alongEnd: bounds.minX + 80, toolRef: 'ball' })
-  assert.equal(refused.ok, false, 'the bad input is refused')
-  assert.equal(store().history.transactionStart, transactionStart, 'the transaction snapshot is unchanged')
-  assert.equal(store().project, projectAfterEdit, 'the project is unchanged')
-  assert.equal(store().selection, selectionAfterEdit, 'the selection is unchanged')
-  assert.equal(store().dirty, dirtyAfterEdit, 'dirtiness is unchanged')
-  assert.equal(store().history.past.length, historyAfterEdit, 'no snapshot was added')
-
-  store().cancelHistoryTransaction()
-  assert.equal(store().project.grid.snapIncrement, snapBefore, 'the untouched transaction still cancels cleanly')
-}
-
-// ── refusals change nothing ───────────────────────────────────
-
-log('Testing refusals leave the project, history and selection untouched...')
-{
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  const bounds = getStockBounds(store().project.stock)
-  const base = {
-    kind: 'polygon' as const,
-    sides: 6,
-    acrossFlats: 16,
-    alongStart: bounds.minX + 20,
-    alongEnd: bounds.minX + 80,
-    toolRef: 'ball',
-  }
-  const before = store().project
-  const selectionBefore = store().selection
-  const dirtyBefore = store().dirty
-  const historyBefore = store().history.past.length
-  const assetsBefore = Object.keys(store().project.modelAssets ?? {}).length
-
-  const refusals: Array<[string, () => { ok: boolean; reason?: string }]> = [
-    ['sides below three', () => store().addRotarySolid({ ...base, sides: 2 })],
-    ['non-integer sides', () => store().addRotarySolid({ ...base, sides: 6.5 })],
-    ['sides above the ceiling', () => store().addRotarySolid({ ...base, sides: 65 })],
-    ['non-positive across flats', () => store().addRotarySolid({ ...base, acrossFlats: 0 })],
-    ['non-finite across flats', () => store().addRotarySolid({ ...base, acrossFlats: Infinity })],
-    ['non-finite rotation', () => store().addRotarySolid({ ...base, rotationDeg: NaN })],
-    ['descending along range', () => store().addRotarySolid({ ...base, alongStart: bounds.minX + 80, alongEnd: bounds.minX + 20 })],
-    ['along range outside the bar', () => store().addRotarySolid({ ...base, alongEnd: bounds.maxX + 10 })],
-    ['polygon wider than the bar', () => store().addRotarySolid({ ...base, acrossFlats: 41 })],
-    ['missing tool', () => store().addRotarySolid({ ...base, toolRef: 'nope' })],
-  ]
-  for (const [label, run] of refusals) {
-    const refused = run()
-    assert.equal(refused.ok, false, `${label} is refused`)
-    assert.equal(store().project, before, `${label} leaves the project untouched`)
-    assert.equal(store().selection, selectionBefore, `${label} leaves the selection untouched`)
-    assert.equal(store().dirty, dirtyBefore, `${label} leaves dirtiness untouched`)
-    assert.equal(store().history.past.length, historyBefore, `${label} adds no history entry`)
-    assert.equal(Object.keys(store().project.modelAssets ?? {}).length, assetsBefore, `${label} adds no asset`)
-  }
-
-  // Wrong project type / face / stock shape and an incompatible tool are typed.
-  store().loadProject(newProject('Milling', 'mm'))
-  assert.equal(refusalReason(store().addRotarySolid({ ...base })), 'notRotaryProject', 'a non-rotary project is refused')
-
-  loadRotary(MM_X, [cutter('mm', 'ball')])
-  store().setActiveSetup(store().project.setups.find((setup) => setup.kind !== 'around')?.id ?? provisionalSetupId('top'))
-  assert.notEqual(activeFace(store().project), 'around', 'the fixture is away from Around')
-  assert.equal(refusalReason(store().addRotarySolid({ ...base })), 'notAroundFace', 'a non-Around workspace is refused')
-
-  // An incompatible cutter and an unusable cutter record are both refused.
-  const plasma: Tool = { ...defaultTool('mm', 2), id: 'torch', type: 'plasma' }
-  const blunt: Tool = { ...cutter('mm', 'blunt'), diameter: 0 }
-  loadRotary(MM_X, [cutter('mm', 'ball'), plasma, blunt])
-  assert.equal(refusalReason(store().addRotarySolid({ ...base, toolRef: 'torch' })), 'toolIncompatible', 'a torch is refused')
-  assert.equal(refusalReason(store().addRotarySolid({ ...base, toolRef: 'blunt' })), 'invalidTool', 'a zero-diameter cutter is refused')
-
-  // A polygon needs a round bar; a real Around setup gives the square project a
-  // workspace face so the refusal is the stock shape, not the face.
-  const squareBase = newProject('Square', 'mm')
-  squareBase.meta.projectType = 'rotary'
-  squareBase.stock = squareStock(40, 200, 'x', { x: 10, y: 30 })
-  const machine = rotaryMachine('x')
-  squareBase.meta.machineDefinitions = [machine]
-  squareBase.meta.selectedMachineId = machine.id
-  squareBase.tools = [cutter('mm', 'ball')]
-  squareBase.setups.push({
-    ...squareBase.setups[0],
-    id: 'square-around',
-    name: 'Around',
-    kind: 'around',
-    orientation: { axis: 'x', angleDeg: 0 },
-  })
-  squareBase.activeSetupId = 'square-around'
-  store().loadProject(projectWithFeatures(squareBase, []))
-  assert.equal(activeFace(store().project), 'around', 'the square project is on a real Around setup')
-  assert.equal(refusalReason(store().addRotarySolid({ ...base })), 'needsRoundBar', 'a square blank is refused for a polygon')
-
-  // The active Around setup must turn about the bar's own axis. An existing
-  // Around feature keeps the setup from being re-axised onto the bar, so the
-  // real mismatch survives the reconciler.
-  const aroundLine: SketchFeature = {
-    id: 'around-line',
-    name: 'Around line',
-    kind: 'polygon',
-    operation: 'line',
-    authoringFace: 'around',
-    folderId: null,
-    sketch: {
-      profile: { start: { x: 0, y: 0 }, segments: [{ type: 'line', to: { x: 10, y: 0 } }], closed: false },
-      origin: { x: 0, y: 0 },
-      orientationAngle: 0,
-      dimensions: [],
-      constraints: [],
+  return projectWithFeatures(
+    {
+      ...base,
+      modelAssets: { ...base.modelAssets, [assetId]: asset },
+      featureDefinitions: { ...base.featureDefinitions, 'def-old': definition },
+      featureFolders: [{ id: 'fd-old', name: folderName, collapsed: false, section: 'features' }],
+      featureTree: [{ type: 'folder', folderId: 'fd-old' }, { type: 'feature', featureId: 'f-old' }],
     },
-    z_top: 40,
-    z_bottom: 39,
-    visible: true,
-    locked: false,
-  }
-  const yBase = newProject('Y bar', 'mm')
-  yBase.meta.projectType = 'rotary'
-  yBase.stock = roundStock(40, 200, 'y', { x: 10, y: 30 })
-  yBase.meta.machineDefinitions = [machine]
-  yBase.meta.selectedMachineId = machine.id
-  yBase.tools = [cutter('mm', 'ball')]
-  yBase.setups.push({
-    ...yBase.setups[0],
-    id: 'y-around',
-    name: 'Around',
-    kind: 'around',
-    orientation: { axis: 'x', angleDeg: 0 },
-  })
-  yBase.activeSetupId = 'y-around'
-  store().loadProject(projectWithFeatures(yBase, [aroundLine]))
-  assert.equal(activeFace(store().project), 'around', 'the Y bar project is on Around')
-  assert.equal(
-    refusalReason(store().addRotarySolid({ ...base })),
-    'setupAxisMismatch',
-    'an Around setup about the other axis is refused',
+    [feature as unknown as SketchFeature],
   )
 }
+
+/** Compute a toolpath and post it through the real postprocessor. */
+function movesAndGcode(project: Project, operationId: string): { moves: unknown[]; gcode: string } {
+  const operation = project.operations.find((entry) => entry.id === operationId)
+  assert.ok(operation, 'the operation exists')
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope, 'generation returns an envelope')
+  const toolRecord = project.tools.find((entry) => entry.id === operation.toolRef)
+  assert.ok(toolRecord, 'the operation tool exists')
+  const machine = project.meta.machineDefinitions.find((entry) => entry.id === project.meta.selectedMachineId)
+  assert.ok(machine, 'the machine exists')
+  const result = runPostProcessor({
+    project,
+    definition: validateMachineDefinition(machine),
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(toolRecord, project),
+      toolpath: envelope.result,
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  return {
+    moves: envelope.result.moves,
+    gcode: result.gcode.replace(/\b\d{4}-\d{2}-\d{2}\b/g, 'YYYY-MM-DD'),
+  }
+}
+
+/** Add the two rotary operations the old command created, through the store. */
+function addRotaryOperations(featureId: string): Project {
+  const target = { source: 'features' as const, featureIds: [featureId] }
+  assert.ok(store().addOperation('rotary_rough', 'rough', target), 'rough is created')
+  assert.ok(store().addOperation('rotary_finish', 'finish', target), 'finish is created')
+  return store().project
+}
+
+function operationByKind(project: Project, kind: 'rotary_rough' | 'rotary_finish') {
+  const operation = project.operations.find((entry) => entry.kind === kind)
+  assert.ok(operation, `${kind} exists`)
+  return operation
+}
+
+// ── creation ─────────────────────────────────────────────────
+
+function testPolygonCreation(): void {
+  loadRotary(roundProject())
+  const before = store().project
+  const historyBefore = store().history.past.length
+  const result = store().addRotarySolid({
+    kind: 'polygon',
+    start: 10,
+    length: 20,
+    sides: 6,
+    acrossFlats: 15,
+    rotationDeg: 0,
+  })
+  assert.ok(result.ok, `polygon created (${result.ok ? '' : result.reason})`)
+  if (!result.ok) return
+
+  const project = store().project
+  assert.equal(project.features.length, before.features.length + 1, 'one feature row')
+  assert.equal(project.featureFolders.length, before.featureFolders.length, 'no folder')
+  assert.equal(project.operations.length, before.operations.length, 'no operation')
+  assert.deepEqual(project.tools, before.tools, 'no tool is added or changed')
+  assert.equal(store().history.past.length, historyBefore + 1, 'one history entry')
+
+  const model = onlyModel()
+  assert.equal(model.name, 'Hex', 'a six-sided polygon is a Hex')
+  assert.equal(model.authoringFace, 'top', 'authored on Top for the persisted-model loader')
+  const definition = project.featureDefinitions[model.definitionId]
+  assert.equal(definition.kind, 'stl', 'the row is an stl model')
+  assert.equal(definition.operation, 'model', 'the row is a model')
+  assert.equal(definition.canned?.kind, 'polygon', 'the canned kind is stored')
+  assert.ok(definition.canned, 'the parameters are stored')
+  assert.equal((definition.canned.params as { start: number }).start, 10, 'start is stored')
+  assert.equal((definition.canned.params as { length: number }).length, 20, 'length is stored')
+
+  // The mesh is the old command's mesh, vertex for vertex, at the absolute
+  // stock coordinates the old command emitted.
+  const mesh = modelAsset(model)
+  const old = buildRotaryPolygonPrism(project.stock as Parameters<typeof buildRotaryPolygonPrism>[0], {
+    sides: 6,
+    acrossFlats: 15,
+    rotationDeg: 0,
+    alongStart: 20,
+    alongEnd: 40,
+  })
+  assert.deepEqual(Array.from(mesh.positions), Array.from(old.positions), 'the polygon vertices equal the old command')
+  assert.deepEqual(Array.from(mesh.index), Array.from(old.index), 'the polygon triangles equal the old command')
+  near(mesh.bounds.minZ, 12.5, 'polygon bottom on the bar centreline')
+  near(mesh.bounds.maxZ, 27.5, 'polygon top')
+  assert.deepEqual([model.z_bottom, model.z_top], [mesh.bounds.minZ, mesh.bounds.maxZ], 'the span is the mesh bounds')
+
+  // One undo removes everything; redo restores it.
+  store().undo()
+  assert.equal(store().project.features.length, before.features.length, 'undo removes the model')
+  store().redo()
+  assert.equal(store().project.features.length, before.features.length + 1, 'redo restores the model')
+}
+
+function testTurnCreation(): void {
+  loadRotary(roundProject())
+  const result = store().addRotarySolid({ kind: 'turn', start: 0, length: 40, diameter: 20 })
+  assert.ok(result.ok, `turn created (${result.ok ? '' : result.reason})`)
+  if (!result.ok) return
+  const model = onlyModel()
+  const project = store().project
+  const mesh = modelAsset(model)
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const canned = project.featureDefinitions[model.definitionId].canned
+  assert.ok(canned)
+  const segments = (canned.params as { segments: number }).segments
+  const old = buildRotaryCylinderMesh(project.stock as Parameters<typeof buildRotaryCylinderMesh>[0], {
+    diameter: 20,
+    alongStart: 10,
+    alongEnd: 50,
+  }, segments)
+  assert.deepEqual(Array.from(mesh.positions), Array.from(old.positions), 'the Turn vertices equal the cylinder builder')
+  assert.deepEqual(Array.from(mesh.index), Array.from(old.index), 'the Turn triangles equal the cylinder builder')
+  near(mesh.bounds.minX, 10, 'the Turn starts at the chuck end')
+  near(mesh.bounds.maxX, 50, 'the Turn length is 40')
+  near(mesh.bounds.minZ, 10, 'the Turn bottom is on the bar centreline minus radius', 1e-3)
+  near(mesh.bounds.maxZ, 30, 'the Turn top is on the bar centreline plus radius', 1e-3)
+}
+
+function testYAxisMapping(): void {
+  loadRotary(roundProject(MM_Y))
+  const result = store().addRotarySolid({
+    kind: 'polygon',
+    start: 10,
+    length: 20,
+    sides: 6,
+    acrossFlats: 10,
+    rotationDeg: 0,
+  })
+  assert.ok(result.ok, 'the Y-bar polygon is created')
+  if (!result.ok) return
+  const mesh = modelAsset(onlyModel())
+  // The chuck end of a Y bar is maxY = 230, so start 10 and length 20 is
+  // y 200..220 — never the mirrored y 10..30.
+  near(mesh.bounds.minY, 200, 'Y start from the chuck end')
+  near(mesh.bounds.maxY, 220, 'Y end from the chuck end')
+}
+
+function testRefusals(): void {
+  loadRotary(roundProject())
+  const before = store().project
+  const historyBefore = store().history.past.length
+  const cases: Array<[string, RotarySolidInput, RotarySolidRefusal]> = [
+    ['two sides', { kind: 'polygon', start: 0, length: 20, sides: 2, acrossFlats: 10, rotationDeg: 0 }, 'invalidSides'],
+    ['a polygon wider than the bar', { kind: 'polygon', start: 0, length: 20, sides: 6, acrossFlats: 41, rotationDeg: 0 }, 'polygonExceedsStock'],
+    ['a band past the bar', { kind: 'polygon', start: 190, length: 20, sides: 6, acrossFlats: 10, rotationDeg: 0 }, 'invalidAlongRange'],
+    ['a turn wider than the bar', { kind: 'turn', start: 0, length: 20, diameter: 41 }, 'diameterExceedsStock'],
+    ['a zero diameter', { kind: 'turn', start: 0, length: 20, diameter: 0 }, 'invalidDiameter'],
+    ['a start below zero', { kind: 'turn', start: -1, length: 20, diameter: 20 }, 'invalidStart'],
+  ]
+  for (const [label, input, reason] of cases) {
+    assert.equal(refusalReason(store().addRotarySolid(input)), reason, `${label} is refused`)
+    assert.equal(store().project.features.length, before.features.length, `${label} creates no feature`)
+    assert.equal(store().history.past.length, historyBefore, `${label} creates no history entry`)
+  }
+}
+
+// ── edit and linked copies ────────────────────────────────────
+
+function testEditRebuildsAndCopiesFollow(): void {
+  loadRotary(roundProject())
+  const created = store().addRotarySolid({
+    kind: 'polygon', start: 10, length: 20, sides: 6, acrossFlats: 15, rotationDeg: 0,
+  })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const model = onlyModel()
+  const centre = (Number(model.z_bottom) + Number(model.z_top)) / 2
+  const linked: FeatureInstance = {
+    ...model,
+    id: 'linked',
+    name: 'Linked copy',
+    z_bottom: Number(model.z_bottom) - 27.5,
+    z_top: Number(model.z_top) - 27.5,
+  }
+  const linkedCentre = (Number(linked.z_bottom) + Number(linked.z_top)) / 2
+  store().loadProject({ ...store().project, features: [...store().project.features, linked] })
+
+  const project = store().project
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const canned = rotarySolidCannedData(frame, {
+    kind: 'polygon', start: 30, length: 40, sides: 8, acrossFlats: 10, rotationDeg: 0,
+  }, project.meta.units)
+  assert.ok(canned)
+  const mesh = generateCannedShapeMesh(canned)
+  assert.ok(mesh)
+  store().updateFeature(model.id, { canned })
+
+  const edited = store().project
+  const editedModel = edited.features.find((feature) => feature.id === model.id)
+  const editedLink = edited.features.find((feature) => feature.id === 'linked')
+  assert.ok(editedModel && editedLink)
+  assert.equal(edited.featureDefinitions[editedModel.definitionId].canned?.kind, 'polygon')
+  // The edited row keeps its own centre and takes the new across-flats height.
+  near(Number(editedModel.z_bottom), centre - 5, 'the edited row keeps its centre')
+  near(Number(editedModel.z_top), centre + 5, 'the edited row reaches the new top')
+  // A linked copy shares the definition but not its placement, so it keeps its
+  // own centre too and is not left behind on the old bottom.
+  near(Number(editedLink.z_bottom), linkedCentre - 5, 'the linked copy keeps its own centre')
+  near(Number(editedLink.z_top), linkedCentre + 5, 'the linked copy follows the new height')
+  const assetMesh = modelAsset(editedModel)
+  assert.equal(assetMesh.positions.length, mesh.positions.length, 'the shared mesh was rebuilt')
+}
+
+function testScaledMovedEditKeepsPlacementAndRoundTrips(): void {
+  loadRotary(roundProject())
+  const created = store().addRotarySolid({ kind: 'turn', start: 0, length: 40, diameter: 20 })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const model = onlyModel()
+  const definition = store().project.featureDefinitions[model.definitionId]
+  assert.ok(definition.stl)
+
+  // A scaled model (the user's post-import scale) moved down: its centre is 10
+  // and its scaled height is the diameter × 2.
+  store().updateFeature(model.id, { stl: { ...definition.stl, scale: 2 } })
+  store().updateFeature(model.id, { z_bottom: -10, z_top: 30 })
+
+  const project = store().project
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const canned = rotarySolidCannedData(frame, { kind: 'turn', start: 0, length: 40, diameter: 10 }, project.meta.units)
+  assert.ok(canned)
+  store().updateFeature(model.id, { canned })
+
+  const edited = store().project.features.find((feature) => feature.id === model.id)
+  assert.ok(edited)
+  // New diameter 10 at scale 2 is a 20-high span around the moved centre 10.
+  near(Number(edited.z_bottom), 0, 'the scaled, moved row keeps its centre', 5e-3)
+  near(Number(edited.z_top), 20, 'the scaled, moved row takes the scaled height', 5e-3)
+  const editedDefinition = store().project.featureDefinitions[edited.definitionId]
+  assert.equal(editedDefinition.stl?.scale, 2, 'the user scale survives the parameter edit')
+
+  // Save → load must rebuild the same mesh without moving the row.
+  const saved = store().saveProject()
+  store().openProjectFromText(saved, null)
+  const after = store().project.features.find((feature) => feature.id === model.id)
+  assert.ok(after)
+  near(Number(after.z_bottom), 0, 'save/load keeps the placed bottom', 5e-3)
+  near(Number(after.z_top), 20, 'save/load keeps the scaled height', 5e-3)
+  const afterDefinition = store().project.featureDefinitions[after.definitionId]
+  assert.equal(afterDefinition.stl?.scale, 2, 'save/load keeps the user scale')
+  assert.equal((afterDefinition.canned?.params as { diameter: number }).diameter, 10, 'save/load keeps the new parameters')
+}
+
+// ── generator parameter sets and the old command ─────────────
+
+function testMeshEquivalenceAcrossParameterSets(): void {
+  const base = roundProject()
+  const project = loadRotary(base)
+  const frame = rotarySolidFrame(project)
+  assert.ok(frame)
+  const polygonSets = [
+    { sides: 6, acrossFlats: 15, rotationDeg: 0, start: 0, length: 40 },
+    { sides: 8, acrossFlats: 10, rotationDeg: 22.5, start: 10, length: 25 },
+    { sides: 3, acrossFlats: 20, rotationDeg: -15, start: 50, length: 60 },
+  ]
+  for (const set of polygonSets) {
+    const canned = rotarySolidCannedData(frame, { kind: 'polygon', ...set }, project.meta.units)
+    assert.ok(canned, `polygon set ${set.sides}/${set.acrossFlats} normalizes`)
+    const generated = generateCannedShapeMesh(canned)
+    assert.ok(generated)
+    const old = buildRotaryPolygonPrism(project.stock as Parameters<typeof buildRotaryPolygonPrism>[0], {
+      sides: set.sides,
+      acrossFlats: set.acrossFlats,
+      rotationDeg: set.rotationDeg,
+      alongStart: frame.alongMin + set.start,
+      alongEnd: frame.alongMin + set.start + set.length,
+    })
+    assert.deepEqual(Array.from(generated.positions), Array.from(old.positions), `polygon ${set.sides} vertices`)
+    assert.deepEqual(Array.from(generated.indices), Array.from(old.index), `polygon ${set.sides} triangles`)
+  }
+
+  const turnSets = [
+    { diameter: 20, start: 0, length: 40 },
+    { diameter: 32, start: 20, length: 70 },
+    { diameter: 8, start: 100, length: 30 },
+  ]
+  for (const set of turnSets) {
+    const canned = rotarySolidCannedData(frame, { kind: 'turn', ...set }, project.meta.units)
+    assert.ok(canned, `turn set ${set.diameter} normalizes`)
+    const generated = generateCannedShapeMesh(canned)
+    assert.ok(generated)
+    const segments = (canned.params as { segments: number }).segments
+    const old = buildRotaryCylinderMesh(project.stock as Parameters<typeof buildRotaryCylinderMesh>[0], {
+      diameter: set.diameter,
+      alongStart: frame.alongMin + set.start,
+      alongEnd: frame.alongMin + set.start + set.length,
+    }, segments)
+    assert.deepEqual(Array.from(generated.positions), Array.from(old.positions), `turn ${set.diameter} vertices`)
+    assert.deepEqual(Array.from(generated.indices), Array.from(old.index), `turn ${set.diameter} triangles`)
+  }
+}
+
+// ── toolpath and G-code equivalence ──────────────────────────
+
+function testToolpathAndGcodeEquivalence(): void {
+  // The old folder + model + operations and the new canned model + operations
+  // are built from the same bar, tool and operation defaults, so every move and
+  // the posted program must match.
+  const legacyBase = roundProject()
+  const oldMesh = buildRotaryPolygonPrism(legacyBase.stock as Parameters<typeof buildRotaryPolygonPrism>[0], {
+    sides: 6, acrossFlats: 15, rotationDeg: 0, alongStart: 20, alongEnd: 40,
+  })
+  const oldProject = legacyProject(legacyBase, oldMesh, 'Hex')
+  loadRotary(oldProject)
+  const oldWithOps = addRotaryOperations('f-old')
+
+  const newBase = roundProject()
+  store().loadProject(newBase)
+  assert.equal(switchWorkspaceFace('around'), true)
+  const created = store().addRotarySolid({
+    kind: 'polygon', start: 10, length: 20, sides: 6, acrossFlats: 15, rotationDeg: 0,
+  })
+  assert.ok(created.ok)
+  if (!created.ok) return
+  const newWithOps = addRotaryOperations(created.featureId)
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const oldResult = movesAndGcode(oldWithOps, operationByKind(oldWithOps, kind).id)
+    const newResult = movesAndGcode(newWithOps, operationByKind(newWithOps, kind).id)
+    assert.deepEqual(newResult.moves, oldResult.moves, `${kind}: the toolpath moves equal the old folder's model`)
+    assert.equal(newResult.gcode, oldResult.gcode, `${kind}: the posted G-code equals the old folder's model`)
+    assert.ok(newResult.moves.length > 0, `${kind}: real motion`)
+  }
+}
+
+// ── old projects stay old ────────────────────────────────────
+
+function testOldFolderLoadsUnchanged(): void {
+  const base = roundProject()
+  const oldMesh = buildRotaryPolygonPrism(base.stock as Parameters<typeof buildRotaryPolygonPrism>[0], {
+    sides: 6, acrossFlats: 15, rotationDeg: 0, alongStart: 20, alongEnd: 40,
+  })
+  const oldProject = legacyProject(base, oldMesh, 'Hex')
+  loadRotary(oldProject)
+  const loaded = store().project
+  assert.equal(loaded.featureFolders.length, 1, 'the old folder is kept')
+  assert.equal(loaded.featureFolders[0].name, 'Hex', 'the old folder name is kept')
+  const feature = loaded.features.find((entry) => entry.id === 'f-old')
+  assert.ok(feature, 'the old model row is kept')
+  assert.equal(feature.folderId, 'fd-old', 'the old model stays in its folder')
+  const definition = loaded.featureDefinitions[feature.definitionId]
+  assert.equal(definition.canned, undefined, 'no canned parameters are invented')
+  assert.equal(definition.stl?.meshAssetId, 'model-asset-old', 'the old mesh asset is kept')
+  assert.equal(loaded.operations.length, 0, 'loading creates no operation')
+}
+
+// ── run ──────────────────────────────────────────────────────
+
+loadRotary(roundProject())
+const frame = rotarySolidFrame(store().project)
+assert.ok(frame)
+assert.equal(rotarySolidBarLength(frame), 200, 'the test bar is 200 long')
+
+testPolygonCreation()
+testTurnCreation()
+testYAxisMapping()
+testRefusals()
+testEditRebuildsAndCopiesFollow()
+testScaledMovedEditKeepsPlacementAndRoundTrips()
+testMeshEquivalenceAcrossParameterSets()
+testToolpathAndGcodeEquivalence()
+testOldFolderLoadsUnchanged()
+
+// ── inch bar ─────────────────────────────────────────────────
+
+loadRotary(roundProject(INCH_X))
+const inch = store().addRotarySolid({
+  kind: 'polygon', start: 0.25, length: 1, sides: 6, acrossFlats: 0.3, rotationDeg: 0,
+})
+assert.ok(inch.ok, 'the inch polygon is created')
+if (inch.ok) {
+  const mesh = modelAsset(onlyModel())
+  near(mesh.bounds.minX, 3.25, 'inch start from the chuck end', 1e-4)
+  near(mesh.bounds.maxX, 4.25, 'inch length', 1e-4)
+  near(mesh.bounds.maxZ - mesh.bounds.minZ, 0.3, 'inch across flats', 1e-4)
+}
+
+// An inch Turn must choose its ring count from the inch sagitta, not the mm
+// one: the same physical tolerance gives a finer ring at inch scale.
+loadRotary(roundProject(INCH_X))
+const inchTurn = store().addRotarySolid({ kind: 'turn', start: 0.25, length: 1, diameter: 0.5 })
+assert.ok(inchTurn.ok, 'the inch turn is created')
+if (inchTurn.ok) {
+  const model = onlyModel()
+  const canned = store().project.featureDefinitions[model.definitionId].canned
+  assert.ok(canned)
+  assert.equal(
+    (canned.params as { segments: number }).segments,
+    rotaryCylinderSegments(0.25, 'inch'),
+    'the inch Turn stores the inch sagitta ring count',
+  )
+  const mesh = modelAsset(model)
+  near(mesh.bounds.minX, 3.25, 'inch Turn start', 1e-3)
+  near(mesh.bounds.maxX, 4.25, 'inch Turn length', 1e-3)
+}
+
+// A block is not a bar.
+const block = newProject('Block', 'mm')
+store().loadProject(block)
+assert.equal(refusalReason(store().addRotarySolid({ kind: 'turn', start: 0, length: 10, diameter: 5 })), 'notRotaryProject', 'a block project is refused')
 
 log('rotarySolids: all assertions passed.')

@@ -26,7 +26,7 @@
  * Run with: npx tsx src/engine/simulation/squareGrid.test.ts
  */
 
-import { createSimulationGrid, resolveSimulationGridSpec, squareSurfaceRadius } from './grid'
+import { createSimulationGrid, resolveSimulationGridSpec, seedSquareTopZ, squareSurfaceRadius } from './grid'
 import { simulateReplayItemsHeightfield } from './replay'
 import { newProject, rectProfile } from '../../types/project'
 import type { Project } from '../../types/project'
@@ -233,8 +233,54 @@ function testDescriptorValidation(): void {
   console.log('square initialization validation: PASSED')
 }
 
+/**
+ * The square seed writes one native row fill per row for an X bar (issue #1112
+ * rt2-e). That is a pure replacement of the per-cell write, so it must land on
+ * the same value in every cell — byte for byte, not within a tolerance. The
+ * reference here is the per-cell loop itself, run over the same spec, including
+ * a non-square grid (cols ≠ rows) and a non-integer cell size, because a fill
+ * range that is off by one row or one column is exactly the bug this replaces.
+ */
+function testSeedRowsMatchPerCellReference(): void {
+  console.log('Testing the square row fill is byte-identical to the per-cell seed...')
+  for (const axis of ['x', 'y'] as const) {
+    for (const targetLongAxisCells of [24, 60, 97]) {
+      const sheet = sheetProject(20, axis, 3)
+      const spec = resolveSimulationGridSpec(sheet.project, squareOptions(sheet, targetLongAxisCells))
+      const squareBar = { side: sheet.side, frame: sheet.frame }
+      const filled = new Float32Array(spec.cols * spec.rows)
+      const reference = new Float32Array(spec.cols * spec.rows)
+      seedSquareTopZ(filled, spec, squareBar)
+      // The pre-#1112-rt2-e seed, kept as the reference: every cell written from
+      // its own across height.
+      const anglePerAcross = (2 * Math.PI) / squareBar.frame.circumference
+      const acrossOrigin = squareBar.frame.axis === 'x' ? spec.originY : spec.originX
+      const acrossCount = squareBar.frame.axis === 'x' ? spec.rows : spec.cols
+      const acrossHeights = new Float32Array(acrossCount)
+      for (let across = 0; across < acrossCount; across += 1) {
+        const coordinate = acrossOrigin + (across + 0.5) * spec.cellSize
+        acrossHeights[across] = squareSurfaceRadius(squareBar.side, (coordinate - squareBar.frame.zero) * anglePerAcross)
+      }
+      for (let row = 0; row < spec.rows; row += 1) {
+        for (let col = 0; col < spec.cols; col += 1) {
+          reference[row * spec.cols + col] = acrossHeights[squareBar.frame.axis === 'x' ? row : col]
+        }
+      }
+      assert(filled.length === reference.length, `${axis}/${targetLongAxisCells}: the seed covers every cell`)
+      for (let i = 0; i < reference.length; i += 1) {
+        assert(
+          Object.is(filled[i], reference[i]),
+          `${axis}/${targetLongAxisCells}: cell ${i} must be ${reference[i]}, got ${filled[i]}`,
+        )
+      }
+    }
+  }
+  console.log('square row-fill seed: PASSED')
+}
+
 try {
   testSeedMatchesSquareCrossSection()
+  testSeedRowsMatchPerCellReference()
   testTopZMutationLeavesBaselineImmutable()
   testRenderEnvelopeHoldsCornersButPivotStaysNominal()
   testVirginSquareStatsAreZero()

@@ -67,6 +67,7 @@ export const warningsEn = {
   'warnings.stepdownPositive': 'Operation stepdown must be greater than zero',
   'warnings.targetsNotFound': 'One or more target features not found',
   'warnings.targetsMissing': 'Some selected target features are missing',
+  'warnings.targetsNoGeometry': 'Some selected target features have no geometry',
   'warnings.stepoverRatioRange': 'Stepover ratio must be between 0 and 1',
   'warnings.operationStepoverRatioRange': 'Operation stepover ratio must be between 0 and 1',
   'warnings.rotaryStepdownBelowMinimum': '{operation}: the stepdown is below 0.01 mm; increase it',
@@ -207,6 +208,14 @@ export const warningsEn = {
   'warnings.carveNoTargets': 'Follow-line operation has no feature targets',
   'warnings.carveWrongKind': 'Only follow-line operations can be resolved by the carving generator',
   'warnings.carveNoValidTargets': 'No valid target features were found for this follow-line operation',
+  'warnings.carveNeighbourTrimmed': '{name}: stopped {distance} {units} short of {neighbour} at the {side} so the cutter does not cut into it.',
+  'warnings.carveNeighbourTrimmedSpan': '{name}: {distance} {units} of the line was left uncut where it passes {neighbour}, so the cutter does not cut into it.',
+  'warnings.carveNeighbourTrimmedAway': '{name}: nothing was cut — the line would cut into {neighbour}, so it was kept clear of it.',
+  // The neighbouring material and the ends of a line, named by the two warnings
+  // above: the engine carries an id so the words follow the active language.
+  'warnings.neighbour.bar': 'the uncut bar',
+  'warnings.side.start': 'start',
+  'warnings.side.end': 'end',
   // rest regions
   'warnings.restOnlyEdgeRoute': 'Rest regions can only be generated for edge-route operations',
   'warnings.restOnlyPocket': 'Rest regions can only be generated for pocket operations',
@@ -256,6 +265,7 @@ export const warningsEn = {
   'warnings.ordinaryClampOverlap': '{operation}: the {clamp} reaches into the corners the square blank sweeps as it turns; move it clear of the blank before machining.',
   'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
   'warnings.exportMachineTypeMismatch': 'The selected machine "{machine}" does not match this {expected} project. Choose a machine that does, or change the project type, before exporting.',
+  'warnings.exportMachineMissingRotaryAxis': 'The selected machine "{machine}" has no rotary axis, so it cannot turn the bar this project machines around. Add a rotary axis to that machine (or choose one that has it) before exporting.',
   'warnings.exportMachineTemplateInvalid': 'The selected machine "{machine}" cannot be exported: its own templates break a machine-template rule. Correct the machine before exporting.',
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
   'warnings.postToolChangesDisabled': 'Operation "{operation}" needs tool "{tool}", but tool changes are disabled: the program keeps cutting with the previous tool. Turn tool changes on, or export one operation at a time.',
