@@ -232,9 +232,15 @@ export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): 
   bytes += triangles * 2 * 4
   // Along mode turns every candidate into this buffer; around mode fuses it.
   if (setup.mode === 'along') bytes += vertices * 3 * 4
-  // Raster clip-candidate scratch (Int32 index, Float64 max, Int32 cells, 4 Int32
-  // boxes) and, around mode only, the axial cell-range caches.
-  bytes += triangles * 32
+  // Raster clip-candidate scratch. The along path rasterises through the general
+  // kernel, which keeps a Float64 maximum, an Int32 cell and a four-Int32 box per
+  // candidate (32 bytes); around mode's fused kernel collects the candidate
+  // index alone and reads its box off the hit test, so it is charged the index
+  // (4 bytes). Charging the flat kernel's arrays to an around worker overstated
+  // it by 28 bytes a triangle -- 13.8 MB on the bust, one worker's worth of the
+  // 512 MiB budget at #1115 slice p-e.
+  bytes += triangles * (setup.mode === 'along' ? 32 : 4)
+  // Around mode also caches the axial centre/bbox cell ranges per triangle.
   if (setup.mode === 'around') bytes += triangles * 16
   // One height map plus the peak-limit neighbourhood map the clip pass builds
   // from it (#1050 slices B/C): both modes allocate that pair, per angle.

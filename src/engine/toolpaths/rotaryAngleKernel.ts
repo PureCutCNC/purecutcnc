@@ -67,8 +67,8 @@ function planFromPayload(plan: RotaryAnglePlanPayload): RotaryStripPlanValue {
     hull: plan.hull,
     minAlong: plan.minAlong,
     maxAlong: plan.maxAlong,
-    bucketStarts: plan.bucketStarts,
-    bucketTriangles: plan.bucketTriangles,
+    bucketBits: plan.bucketBits,
+    bucketWords: plan.bucketWords,
     always: plan.always,
     bucketWidth: plan.bucketWidth,
   }

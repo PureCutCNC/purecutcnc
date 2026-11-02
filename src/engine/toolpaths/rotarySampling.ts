@@ -262,9 +262,21 @@ interface RotaryStripPlan {
   readonly hull: Float64Array
   readonly minAlong: number
   readonly maxAlong: number
-  /** CSR offsets into `bucketTriangles`: `STRIP_BUCKETS + 1` entries. */
-  readonly bucketStarts: Uint32Array
-  readonly bucketTriangles: Uint32Array
+  /**
+   * One **bit** per (bucket, triangle): the members of bucket `k` are the set
+   * bits of words `k * bucketWords ... (k + 1) * bucketWords - 1`, bit `b` of
+   * word `w` being triangle `w * 32 + b` (issue #1115 slice p-e).
+   *
+   * The same membership a CSR list of `bucketTriangles` held, at **one bit** per
+   * listing instead of four bytes plus a `bucketStarts` offset. On the bust a
+   * triangle is listed in ~41 of the 256 buckets, so the index was 19.7 M
+   * listings: 79 MB in the CSR form, 15.8 MB here. It is the largest single
+   * object a pool worker copies, and the compact form is what lets six workers
+   * fit the 512 MiB budget instead of three.
+   */
+  readonly bucketBits: Uint32Array
+  /** 32-bit words per bucket: `ceil(triangleCount / 32)`, `0` for an empty mesh. */
+  readonly bucketWords: number
   /** Triangle starts (offsets into `index`) that reach the strip at every turn. */
   readonly always: Uint32Array
   readonly bucketWidth: number
@@ -591,7 +603,7 @@ function buildStripPlan(
     for (let t = 0; t < all.length; t++) all[t] = t
     const plan: RotaryStripPlan = {
       across, up, hull, minAlong, maxAlong,
-      bucketStarts: new Uint32Array(STRIP_BUCKETS + 1), bucketTriangles: new Uint32Array(0),
+      bucketBits: new Uint32Array(0), bucketWords: 0,
       always: all, bucketWidth,
     }
     workspace.plan = plan
@@ -634,35 +646,28 @@ function buildStripPlan(
   const always = new Uint32Array(alwaysCount)
   let alwaysIndex = 0
   for (let t = 0; t < triangleCount; t++) if (arcFirst[t] === -1) always[alwaysIndex++] = t * 3
-  const bucketStarts = new Uint32Array(STRIP_BUCKETS + 1)
-  for (let t = 0; t < triangleCount; t++) {
-    const first = arcFirst[t]
-    if (first < 0) continue
-    const last = arcLast[t]
-    if (last >= first) {
-      for (let k = first; k <= last; k++) bucketStarts[k + 1]++
-    } else {
-      for (let k = first; k < STRIP_BUCKETS; k++) bucketStarts[k + 1]++
-      for (let k = 0; k <= last; k++) bucketStarts[k + 1]++
-    }
+  // One bit per listing. A triangle's arc is contiguous (modulo the wrap), so the
+  // set it fills is the same one a CSR list appended it to; the scatter costs the
+  // same 19.7 M writes the counting pass plus the fill pass used to, for a
+  // quarter of the bytes.
+  const bucketWords = Math.ceil(triangleCount / 32)
+  const bucketBits = new Uint32Array(STRIP_BUCKETS * bucketWords)
+  const markBucket = (k: number, t: number): void => {
+    bucketBits[k * bucketWords + (t >>> 5)] |= 1 << (t & 31)
   }
-  for (let k = 0; k < STRIP_BUCKETS; k++) bucketStarts[k + 1] += bucketStarts[k]
-  const bucketTriangles = new Uint32Array(bucketStarts[STRIP_BUCKETS])
-  const cursor = bucketStarts.slice(0, STRIP_BUCKETS)
   for (let t = 0; t < triangleCount; t++) {
     const first = arcFirst[t]
     if (first < 0) continue
     const last = arcLast[t]
-    const offset = t * 3
     if (last >= first) {
-      for (let k = first; k <= last; k++) bucketTriangles[cursor[k]++] = offset
+      for (let k = first; k <= last; k++) markBucket(k, t)
     } else {
-      for (let k = first; k < STRIP_BUCKETS; k++) bucketTriangles[cursor[k]++] = offset
-      for (let k = 0; k <= last; k++) bucketTriangles[cursor[k]++] = offset
+      for (let k = first; k < STRIP_BUCKETS; k++) markBucket(k, t)
+      for (let k = 0; k <= last; k++) markBucket(k, t)
     }
   }
   const plan: RotaryStripPlan = {
-    across, up, hull, minAlong, maxAlong, bucketStarts, bucketTriangles, always, bucketWidth,
+    across, up, hull, minAlong, maxAlong, bucketBits, bucketWords, always, bucketWidth,
   }
   workspace.plan = plan
   workspace.reach = reach
@@ -942,10 +947,23 @@ export function runRotaryAngleJob(
   // a cell's value is the maximum over all covering triangles either way.
   let count = plan.always.length
   for (let i = 0; i < plan.always.length; i++) subset[i] = plan.always[i]
-  for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
-    const start = plan.bucketStarts[bucket]
-    const end = plan.bucketStarts[bucket + 1]
-    for (let i = start; i < end; i++) subset[count++] = plan.bucketTriangles[i]
+  // The two buckets' set bits, each bucket in ascending triangle order: the
+  // order a triangle is rasterised in cannot change the map (a cell takes the
+  // maximum), but keeping it ascending keeps the reads sequential.
+  const bucketWords = plan.bucketWords
+  if (bucketWords > 0) {
+    const bucketBits = plan.bucketBits
+    for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
+      const base = bucket * bucketWords
+      for (let word = 0; word < bucketWords; word++) {
+        let bits = bucketBits[base + word]
+        while (bits !== 0) {
+          const lowest = bits & -bits
+          subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
+          bits ^= lowest
+        }
+      }
+    }
   }
   const buildOptions = {
     window,

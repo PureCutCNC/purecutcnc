@@ -71,9 +71,10 @@ export interface RotaryAnglePlanPayload {
   readonly hull: Float64Array
   readonly minAlong: number
   readonly maxAlong: number
-  /** CSR offsets into `bucketTriangles`: `STRIP_BUCKETS + 1` entries. */
-  readonly bucketStarts: Uint32Array
-  readonly bucketTriangles: Uint32Array
+  /** One bit per (bucket, triangle); see `RotaryStripPlan.bucketBits` (#1115 p-e). */
+  readonly bucketBits: Uint32Array
+  /** 32-bit words per bucket. */
+  readonly bucketWords: number
   /** Triangle starts that reach the strip at every turn. */
   readonly always: Uint32Array
   readonly bucketWidth: number
@@ -232,8 +233,8 @@ export function buildRotaryAnglePlan(plan: RotaryStripPlanValue, mode: RotaryAng
     hull: plan.hull,
     minAlong: plan.minAlong,
     maxAlong: plan.maxAlong,
-    bucketStarts: plan.bucketStarts,
-    bucketTriangles: plan.bucketTriangles,
+    bucketBits: plan.bucketBits,
+    bucketWords: plan.bucketWords,
     always: plan.always,
     bucketWidth: plan.bucketWidth,
     ...(mode === 'along' ? { across: plan.across, up: plan.up } : {}),
@@ -282,8 +283,8 @@ export function copyRotaryAnglePlan(plan: RotaryAnglePlanPayload): RotaryAnglePl
     hull: plan.hull.slice(),
     minAlong: plan.minAlong,
     maxAlong: plan.maxAlong,
-    bucketStarts: plan.bucketStarts.slice(),
-    bucketTriangles: plan.bucketTriangles.slice(),
+    bucketBits: plan.bucketBits.slice(),
+    bucketWords: plan.bucketWords,
     always: plan.always.slice(),
     bucketWidth: plan.bucketWidth,
     ...(plan.across !== undefined ? { across: plan.across.slice() } : {}),
@@ -316,8 +317,7 @@ export function copyRotaryAngleSetup(setup: RotaryAngleSetupPayload): RotaryAngl
 export function rotaryAnglePlanTransfer(plan: RotaryAnglePlanPayload): ArrayBuffer[] {
   return [
     plan.hull.buffer as ArrayBuffer,
-    plan.bucketStarts.buffer as ArrayBuffer,
-    plan.bucketTriangles.buffer as ArrayBuffer,
+    plan.bucketBits.buffer as ArrayBuffer,
     plan.always.buffer as ArrayBuffer,
     ...(plan.across !== undefined ? [plan.across.buffer as ArrayBuffer] : []),
     ...(plan.up !== undefined ? [plan.up.buffer as ArrayBuffer] : []),
@@ -344,8 +344,7 @@ export function rotaryAngleSetupBytes(setup: RotaryAngleSetupPayload): number {
     if (array !== undefined) bytes += array.byteLength
   }
   add(setup.plan.hull)
-  add(setup.plan.bucketStarts)
-  add(setup.plan.bucketTriangles)
+  add(setup.plan.bucketBits)
   add(setup.plan.always)
   add(setup.plan.across)
   add(setup.plan.up)
@@ -443,6 +442,6 @@ export function describeRotaryAngleSetup(setup: RotaryAngleSetupPayload): string
       : `${setup.plan.across.length} cross-section points`)
   }
   parts.push(`${setup.along.length} along positions`)
-  parts.push(`${setup.plan.bucketTriangles.length} bucket entries`)
+  parts.push(`${setup.plan.bucketBits.length} bucket words for ${setup.plan.bucketWords} words a bucket`)
   return parts.join(', ')
 }

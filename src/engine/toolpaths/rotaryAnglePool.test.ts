@@ -328,7 +328,7 @@ function prepFor(
     requestedCellSize: 0.2,
     plan: {
       hull: planValue.hull, minAlong: planValue.minAlong, maxAlong: planValue.maxAlong,
-      bucketStarts: planValue.bucketStarts, bucketTriangles: planValue.bucketTriangles,
+      bucketBits: planValue.bucketBits, bucketWords: planValue.bucketWords,
       always: planValue.always, bucketWidth: planValue.bucketWidth,
     },
     raster: { section: new Float64Array(6), along: new Float32Array(3) },
