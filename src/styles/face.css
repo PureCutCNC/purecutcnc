@@ -553,6 +553,7 @@
 .cam-setup-group__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cam-setup-group__empty { color: var(--text-dim); font-size: 11px; }
 .cam-setup-group__warn { flex: 0 0 auto; color: var(--warning-text); }
+.cam-setup-group__generating { flex: 0 0 auto; }
 .cam-setup-group--bottom .cam-setup-group__toggle { color: var(--face-bottom-text); }
 .cam-setup-group--around .cam-setup-group__toggle { color: var(--role-region-text); }
 .cam-setup-group--active .cam-setup-group__header { background: var(--accent-soft); }

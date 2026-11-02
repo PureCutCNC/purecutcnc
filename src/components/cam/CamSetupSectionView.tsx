@@ -22,7 +22,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import type { ProjectType } from '../../types/project'
 
-export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, openForWarning = false, onExport, onProperties, children }: {
+export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, openForWarning = false, generating = false, generationPaused = false, onExport, onProperties, children }: {
   section: CamSetupSection; grouped: boolean; projectType: ProjectType; selectedOperationId: string | null
   /**
    * The section holds work that is kept but can no longer cut (issue #1112 K).
@@ -30,6 +30,12 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
    * so the section opens without the user asking.
    */
   openForWarning?: boolean
+  /**
+   * One of the section's operations is generating (issue #1143). The header
+   * shows the same badge as the rows, so a collapsed card still says so.
+   */
+  generating?: boolean
+  generationPaused?: boolean
   onExport: (ids: string[]) => void; onProperties: () => void; children: ReactNode
 }) {
   const { t } = useI18n()
@@ -60,6 +66,14 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
             <span className="face-chip">{header.programChip}</span>
           </>
         )}
+        {generating ? (
+          <span
+            className={`cam-operation-badge cam-setup-group__generating ${generationPaused ? 'cam-operation-badge--paused' : 'cam-operation-badge--generating'}`}
+            title={generationPaused ? t('cam.treeRow.generationPaused') : t('cam.treeRow.generating')}
+          >
+            {generationPaused ? <Icon id="pause" /> : <span className="cam-generating-spinner" />}
+          </span>
+        ) : null}
         {header.warn ? (
           <span
             className="cam-setup-group__warn"
