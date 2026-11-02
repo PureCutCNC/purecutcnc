@@ -762,6 +762,13 @@ const MAX_LINK_WORK = 4_000_000
  * per-call `MAX_LINK_WORK` cannot. Past it the remaining links retract through
  * the old travel path, so a long, fine job stays finite instead of running a
  * quadratic pass for every ring.
+ *
+ * #1117 fix 1 (P2): **each** link path gets its own budget -- the raised link
+ * and the at-layer candidate. The at-layer candidate can be rejected after its
+ * walk, and the raised link is the fallback for every boundary it does not win;
+ * charging both to one counter let a rejected attempt starve a later raised
+ * link, which then dropped to the travel height instead of the raised height the
+ * baseline gave it.
  */
 const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
 
@@ -2342,7 +2349,17 @@ function roughFromTargets(
     return -1
   }
   const leftoverCache = new Map<string, number[]>()
-  let linkWindowWork = 0
+  // #1117 fix 1 (P2): two operation budgets, not one. The at-layer candidate is
+  // an **attempt**: it may be rejected after its walk, and the raised link that
+  // replaces it has to be the link the operation would have emitted without the
+  // attempt -- the handoff requires every link that does not qualify to stay
+  // byte-identical. Sharing one counter with the raised link let a rejected
+  // attempt consume the budget the fallback needed, so a later raised link ran
+  // out of budget, `linkLeftoverAt` returned `[]`, and the boundary fell back
+  // further, to the travel height. Each bucket also gets its own cache entries:
+  // a shared entry would skip the raised link's own charge and change which
+  // links get its budget, so the fallback would still drift from the baseline.
+  const linkWindowWork = { raised: 0, atLayer: 0 }
   /**
    * The widest angle off its axis at which the cutter body can meet any
    * material at all (#1093). A ball's sphere and shank stay inside the cylinder
@@ -2373,7 +2390,13 @@ function roughFromTargets(
     if (!windowRows.includes(k)) windowRows.push(k)
     return windowRows
   }
-  const linkLeftoverAt = (row: RotaryLinkRow, angleDeg: number, layer: number, reachDeg = 0): number[] => {
+  const linkLeftoverAt = (
+    row: RotaryLinkRow,
+    angleDeg: number,
+    layer: number,
+    reachDeg = 0,
+    budget: 'raised' | 'atLayer' = 'raised',
+  ): number[] => {
     const k = pointIndexAt(angleDeg)
     if (k < 0) return []
     // The base walk reads the link angle's own row and is already bounded by
@@ -2385,21 +2408,25 @@ function roughFromTargets(
     if (windowed && work > MAX_LINK_WORK) return []
     // Two reaches that select the same angle rows leave the same material, so
     // the key is the row span rather than the per-link height. Without this a
-    // long job recomputes the whole walk for every ring boundary.
-    const key = windowed
-      ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
-      : `${k}:${layer}`
+    // long job recomputes the whole walk for every ring boundary. The budget
+    // bucket is part of the key so an at-layer walk never stands in for the
+    // raised link's own charge (#1117 fix 1).
+    const key = `${
+      windowed
+        ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
+        : `${k}:${layer}`
+    }:${budget}`
     const cached = leftoverCache.get(key)
     if (cached) return cached
     if (windowed) {
       // The per-call cap above cannot bound the operation: the link plan asks
       // at every ring boundary. Past the operation budget the rest of the links
       // retract, and the empty answer is cached so they do not retry the walk.
-      if (linkWindowWork + work > MAX_LINK_WINDOW_WORK) {
+      if (linkWindowWork[budget] + work > MAX_LINK_WINDOW_WORK) {
         leftoverCache.set(key, [])
         return []
       }
-      linkWindowWork += work
+      linkWindowWork[budget] += work
     }
     // The blank's own height over the body's window: a square blank's corner is
     // higher than its face, and an earlier layer that did not cut at a face
@@ -2614,7 +2641,11 @@ function roughFromTargets(
     // as the height rises, and the link's lowest height is the layer radius, so
     // that height's window is the widest one this link can need.
     const reach = bodyReachDeg(layerRadius)
-    const leftover = linkLeftoverAt(row, from.a, layer, reach)
+    // #1117 fix 1 (P2): this walk is charged to the at-layer bucket, never to
+    // the raised link's. This candidate can still be rejected below, and the
+    // raised link that takes over must keep the budget and the cache entries
+    // the baseline gave it.
+    const leftover = linkLeftoverAt(row, from.a, layer, reach, 'atLayer')
     if (leftover.length === 0) return null
     // The scallop the tool leaves between two rings: a ball cuts lowest at its
     // own along position and rises by `r - sqrt(r^2 - dx^2)` at either side, so

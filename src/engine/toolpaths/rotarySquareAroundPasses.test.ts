@@ -463,6 +463,25 @@ console.log('Testing the operation-level link-window budget...')
   assert.ok(beforeFallback > 100,
     `links run before the budget is spent, so the fallback is past it (${beforeFallback} links)`)
   assert.ok(result.moves.some(linkMove), 'the operation still links its easy rings')
+  // #1117 fix 1 (P2) baseline regression: the at-layer candidate is an
+  // **attempt** tried at each boundary, and it has to be charged to its own
+  // operation budget. When it spent the raised link's budget instead, 176 of
+  // this fixture's raised links were starved and fell back one step further, to
+  // the travel height -- the second A0 traverse from x=4 to x=5 dropped from the
+  // baseline z=36.284268390 to z=49.284271247. The baseline has 960 raised
+  // traverses (constant-z rapids below the travel height) and 288 plunges; the
+  // shared budget left 784 and 464. The assertions below lock that baseline.
+  assert.equal(plunges.length, 288,
+    `the raised-link budget is untouched by the at-layer attempts (${plunges.length} plunges)`)
+  const raisedTraverses = result.moves.filter(linkMove)
+  assert.equal(raisedTraverses.length, 960,
+    `every qualifying link keeps its baseline raised traverse (${raisedTraverses.length})`)
+  const a0FirstBoundary = raisedTraverses.filter((move) => move.from.a === 0
+    && Math.abs(move.from.x - 4) < 1e-9 && Math.abs(move.to.x - 5) < 1e-9)
+  assert.equal(a0FirstBoundary.length, 2,
+    `both A0 traverses from x=4 to x=5 stay raised (${a0FirstBoundary.length})`)
+  assert.ok(Math.abs(a0FirstBoundary[1].from.z - 36.284268390) < 1e-9,
+    `the second A0 traverse keeps the baseline raised height (${a0FirstBoundary[1].from.z})`)
 }
 
 // ---------------------------------------------------------------------------
