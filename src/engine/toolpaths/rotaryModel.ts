@@ -2534,23 +2534,77 @@ function roughFromTargets(
    * along position removes nothing and the link would cut uncut blank), a
    * transition that the row cannot actually sample (see the inclusive scan and
    * its span-coverage rule below), more than one band of material to remove, a
-   * region (outside it the standing stock is the blank), a square blank (its
-   * corner-to-corner rule is a separate one), a changed angle (A0 to A360 is a
+   * region span outside the mask, a square transition that is not two corner
+   * arcs meeting at the touch gate's boundary, a changed angle (A0 to A360 is a
    * commanded turn, not equal), a row the work budget refused, and a transition
    * between rings that are not adjacent. The caller passes the previous ring's
    * own along coordinate, so a ring that emitted nothing -- a skipped ring --
    * leaves `current` at an earlier along position and cannot link across the
    * gap; a partial ring whose last run is the adjoining one is fine, exactly as
-   * the raised link already links partial runs at their shared angle. Split
-   * rings are rejected by the caller, which tracks both adjoining rings'
-   * eligibility: a run boundary is not a whole ring's end.
+   * the raised link already links partial runs at their shared angle.
+   *
+   * **Square blanks** (#1117 slice B) cut short arcs around the corners, so
+   * every ring is split and the only link that can stay down joins two of those
+   * arcs at their **shared boundary angle**. The gate is angle-only, so the
+   * neighbouring ring's first cut is exactly the previous ring's last cut: a
+   * ring traverses its arcs in order, and the angle it ends on is where
+   * `squareRotaryTouchRadius` falls to the layer radius. The check below asks
+   * that the sample just outside that run is one the gate no longer cuts, which
+   * is what makes the shared angle a *corner-arc* boundary rather than the
+   * ring's own end.
+   *
+   * The link then cuts at the same height the two rings already cut at there,
+   * `max(model, layerRadius)`, and the blank's corner envelope above it is at
+   * most the one band this layer removes -- the leftover check below is what
+   * proves it. Once a layer's radius is at or below the blank's inscribed
+   * radius the gate no longer splits the ring: it is one whole turn at A0/A360,
+   * and a link there is not between corner arcs. It stays raised, because the
+   * layer that should have lowered the face may itself have been air (the gate
+   * does not cut a face above its own radius), and the first cut at that along
+   * position would then take more than one stepdown out of the blank; the
+   * seeded square suite's stage-descent assertion catches exactly that.
+   *
+   * **Regions** (#1096, #1117 slice B) are a mask on the tool position, so the
+   * link is a cut from one along position to another at one angle and its
+   * **whole span** must be inside the region -- the same rule the finish's
+   * `followLink` applies, including a narrow excluded strip that falls between
+   * two samples. A gap between two region bands is therefore never cut across;
+   * it keeps the raised link, whose height comes from `linkLeftoverAt`'s region
+   * walk and so clears the **uncut blank** that stands there. The same walk
+   * treats every angular cell outside the mask as blank, so the cutter body
+   * reaching material outside the region is part of the one-band check: past
+   * the first layer that material is above the link by more than one band, and
+   * the link is refused.
    */
-  const linkAtLayer = (layer: number, layerRadius: number, fromAlong: number, from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
-    if (square || region !== null) return null
+  const linkAtLayer = (layer: number, layerRadius: number, fromAlong: number, from: ToolpathPoint, to: ToolpathPoint, outward: number): readonly RotaryLinkStep[] | null => {
     if (from.a === undefined || to.a === undefined || from.a !== to.a) return null
     if (alongCoordinate(stock, from) !== fromAlong) return null
     const toAlong = alongCoordinate(stock, to)
     if (!(toAlong > fromAlong)) return null
+    // #1096: the link is one straight cut at one angle, so the region decides
+    // on the segment, not on the dense row's samples. `null` from the mask means
+    // it has no boundary test, and then the row samples get the point test.
+    let pointOnlyRegion = false
+    if (region !== null && insideRegion !== null) {
+      if (!insideRegion(fromAlong, from.a) || !insideRegion(toAlong, from.a)) return null
+      const segment = rotaryRegionSegmentContains(region, stock, fromAlong, toAlong, from.a)
+      if (segment === false) return null
+      pointOnlyRegion = segment === null
+    }
+    // A square blank's link joins two corner arcs, so the shared angle must be
+    // the touch gate's own boundary: the sample just outside this ring's last
+    // run is one the gate no longer cuts. `outward` is the previous ring's
+    // traversal direction in the angle grid, so this is the sample that ring
+    // would have cut next. The 0/360 grid sample is duplicated, so the physical
+    // neighbour of either end is the sample one step inside the seam.
+    if (square) {
+      const k = pointIndexAt(from.a)
+      if (k < 0) return null
+      const last = angles.length - 1
+      if (last < 1) return null
+      const neighbour = outward < 0 ? (k === 0 ? last - 1 : k - 1) : (k === last ? 1 : k + 1)
+      if (layerRadius < squareRotaryTouchRadius(stock, angles[neighbour], tool.radius, tool.type)) return null
+    }
     const row = linkRowAt(from.a)
     if (!row) return null
     // The material the earlier layers left, over **the whole cutter body** at
@@ -2584,6 +2638,8 @@ function roughFromTargets(
     for (let i = 0; i < row.along.length; i++) {
       const x = row.along[i]
       if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
+      // A mask with no boundary test keeps the finish's old per-sample rule.
+      if (pointOnlyRegion && insideRegion !== null && !insideRegion(x, from.a)) return null
       const tip = row.tips[i]
       if (!Number.isFinite(tip)) return null
       const height = Math.max(tip, layerRadius)
@@ -2690,11 +2746,12 @@ function roughFromTargets(
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
       // #1117 review (P2): the at-layer candidate joins two **adjoining rings**
-      // of this layer, so both must be whole. A split ring is a ring whose cut
-      // runs are separated by angular sectors this layer does not remove; its
-      // first/last run can share an angle with the neighbouring ring while the
-      // transition itself is not an end-to-end ring link. The raised link is
-      // the fallback the handoff requires there.
+      // of this layer, so both must be eligible. A split ring is a ring whose
+      // cut runs are separated by angular sectors this layer does not remove; on
+      // a round bar or with a region its first/last run can share an angle with
+      // the neighbouring ring while the transition itself is not an end-to-end
+      // ring link, so the raised link is the fallback there. A square blank's
+      // arcs are the exception the caller below spells out.
       let previousRingSplit = false
       let previousRingEmitted = false
       const layerLink = raisedLinkPlan(layer)
@@ -2716,16 +2773,21 @@ function roughFromTargets(
         // emitted anything, so a skipped ring's wider gap never qualifies. A
         // partial run links when the emitted angle is exactly shared, which the
         // link itself checks; an A-changing corner transition keeps the raised
-        // or travel-height link. **Split** rings on either side keep the raised
-        // link: their runs are partial arcs, so the shared angle is a run
-        // boundary rather than the end of a whole ring, and the plan requires
-        // the raised fallback there. (A ring that emitted nothing is caught by
-        // the `fromAlong` check inside the candidate; `previousRingEmitted`
-        // makes that explicit.)
-        const ringLink = i === 0 || !previousRingEmitted || previousRingSplit || splitRing
+        // or travel-height link. **Split** rings keep the raised link on a round
+        // bar and with a region: their runs are separated by angular sectors
+        // this layer does not remove, so the shared angle is a run boundary
+        // rather than the end of a whole ring. A **square** blank is the
+        // exception (#1117 slice B): its rings are corner arcs by construction,
+        // and two neighbouring rings share the gate boundary angle exactly, so
+        // the candidate above proves the cut rather than refusing it outright.
+        // (A ring that emitted nothing is caught by the `fromAlong` check inside
+        // the candidate; `previousRingEmitted` makes that explicit.)
+        const splitBlocked = (previousRingSplit || splitRing) && !(square && region === null)
+        const ringLink = i === 0 || !previousRingEmitted || splitBlocked
           ? layerLink
           : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
-            linkAtLayer(layer, layerRadius, along[i - 1], from, to) ?? layerLink(from, to)
+            linkAtLayer(layer, layerRadius, along[i - 1], from, to, (ring - 1) % 2 === 0 ? 1 : -1)
+              ?? layerLink(from, to)
         const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, ringLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
@@ -2813,9 +2875,16 @@ function roughFromTargets(
  * it is a **cutting feed** at `max(this layer's radius, the model)` along the
  * bar (#1117): that removes only the band this layer removes anyway, so it
  * neither cuts deeper nor adds a feed, and it is the common case on a round bar.
- * Everything that cannot be proved safe keeps the raised link: it rises to the
- * highest material this operation's own earlier layers left on the path, plus
- * the 1 mm clearance, rapids across and drops back. The constant-height
+ * A **square** blank's rings are corner arcs, so a link between two of them at
+ * the gate's boundary angle is tried too; a layer below the blank's inscribed
+ * radius is one whole turn at A0/A360 and keeps the raised link, because the
+ * first cut at that along position would take more than one stepdown out of the
+ * blank. A **region** limits the link the same way it limits a ring: the whole
+ * along span must be inside the mask, and the material outside it stands as the
+ * uncut blank in the one-band check, so a link at a later layer is raised over
+ * it. Everything that cannot be proved safe keeps the raised link: it rises to
+ * the highest material this operation's own earlier layers left on the path,
+ * plus the 1 mm clearance, rapids across and drops back. The constant-height
  * traverse is a **rapid**: it is in air by construction, and a feed through air
  * makes the machine creep. Its rise and drop stay feeds; the first layer has
  * nothing removed in front of it and, where no at-layer cut qualifies, keeps the
