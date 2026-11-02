@@ -30,6 +30,13 @@
  *   around (`conservativeCellBounds`) and along. The lift is part of the
  *   comparison because it is no longer applied inside the angle: dropping the
  *   central application leaves every row one cell rise low and this fails.
+ * - **warning preservation and merge order** against parameters derived from the
+ *   geometry, not from the other driver: a tight requested cell size makes
+ *   every angle raise `surfaceHeightMapReduced` with its own cell count, so the
+ *   first-code-wins merge has to keep the first angle's numbers and drop the
+ *   later angles' -- with batches answered in reverse too. A driver-to-driver
+ *   comparison cannot see this: both drivers share the assembler, so a mutation
+ *   that drops every per-angle warning from it leaves them equal.
  * - **moves and posted bytes** through `computeOperationToolpath` =
  *   `computeOperationToolpathAsync` for the canned Turn/Polygon project (an STL
  *   prism plus an Around rectangle), rough and finish, around and along, on an
@@ -49,8 +56,12 @@
  * and cost about 35 s of generation per operation, so the full parity run over
  * them is off by default: set `ROTARY_PARITY_FIXTURES=1` with
  * `work/busto-rect-stock.camj` and `work/busto-round-stock.camj` present (copied
- * from the p-a worktree) to run it. It compares the two drivers' moves, warnings
- * and posted programs on both operations of both files.
+ * from the p-a worktree) to run it. Both files save their operations `around`,
+ * so the matrix forces **both directions** on every operation and compares
+ * every output the handoff names: the base grid's rows and lifts, its warnings,
+ * the moves, the bounds and the posted bytes. The base rows and lifts also equal
+ * a recorded digest, because a shared change to the sampler would otherwise
+ * move both drivers together and no parity check could see it.
  *
  * Run with: npx tsx src/engine/toolpaths/rotarySamplingParity.test.ts
  */
@@ -74,6 +85,7 @@ import type { MachineDefinition } from '../gcode/types'
 import { normalizeToolForProject } from './geometry'
 import { computeOperationToolpath, computeOperationToolpathAsync } from './generateOperation'
 import {
+  assembleRotarySampling,
   createRotarySamplingPrep,
   refineAroundSampling,
   refineAroundSamplingAsync,
@@ -82,8 +94,16 @@ import {
   sampleRotaryModel,
   sampleRotaryModelAsync,
   serialRotaryBatches,
+  turnedModelPositions,
 } from './rotarySampling'
-import type { RotaryBatchFactory, RotaryModelMesh, RotarySampleOptions } from './rotarySampling'
+import type {
+  RotaryAngleJob,
+  RotaryAngleSample,
+  RotaryBatchFactory,
+  RotaryModelMesh,
+  RotarySampleOptions,
+  RotarySamplingPrep,
+} from './rotarySampling'
 import type { NormalizedTool, ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
@@ -233,6 +253,81 @@ for (const { name, stock } of STOCKS) {
     // Arrival order is not output order.
     const reversed = await sampleRotaryModelAsync(mesh, stock, BALL, options, [], reversedBatches)
     assertSamplingEqual(reversed, sync, `${name} ${mode} reversed`)
+  }
+}
+
+// ── warnings: preserved, and merged first-code-wins in angle order ─────────
+
+/**
+ * `chooseHeightMapCellSize` raises `surfaceHeightMapReduced` for every angle
+ * whose turned envelope needs more than the cell budget, with **that angle's own
+ * requested cell count** in `params.from`. A tight requested cell size makes
+ * every angle of the hex raise the same code with different parameters -- the
+ * case where "the two drivers agree" says nothing, because dropping every
+ * per-angle warning from the shared assembler leaves both of them warning-free
+ * and equal. So the expectations here are computed from the turned geometry and
+ * compared literally, and the batch is answered in reverse as well: the merge
+ * must keep the **first angle in angle order**'s parameters, not the first
+ * result to arrive, which in the reversed run is the last angle's.
+ */
+{
+  const stock = STOCKS[0].stock
+  const mesh = prism(stock, HEX_SECTION, [10, 30])
+  const angles = [0, 30, 60, 90, 120, 150]
+  const requestedCellSize = 0.01
+  const options: RotarySampleOptions = {
+    anglesDeg: angles, along: ALONG, requestedCellSize, conservativeCellBounds: true,
+  }
+  const TO = (1_000_000).toLocaleString()
+  // One `from` per angle, from the mesh turned by the same rule the job uses --
+  // independent of `chooseHeightMapCellSize` and of the assembler under test.
+  const expectedFrom = angles.map((angle) => {
+    const turned = turnedModelPositions(mesh.positions, stock, angle)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (let i = 0; i < turned.length; i += 3) {
+      if (turned[i] < minX) minX = turned[i]
+      if (turned[i] > maxX) maxX = turned[i]
+      if (turned[i + 1] < minY) minY = turned[i + 1]
+      if (turned[i + 1] > maxY) maxY = turned[i + 1]
+    }
+    const cell = Math.max(requestedCellSize, 1e-6)
+    const cells = Math.max(1, Math.ceil((maxX - minX) / cell)) * Math.max(1, Math.ceil((maxY - minY) / cell))
+    return cells.toLocaleString()
+  })
+  assert.ok(new Set(expectedFrom).size > 1,
+    `the fixture must raise one code with different parameters per angle, or ordering cannot be observed (${expectedFrom.join(', ')})`)
+  assert.notEqual(expectedFrom[0], expectedFrom[angles.length - 1],
+    'the first and last angles must differ, or the reversed run cannot tell angle order from arrival order')
+  const warningFrom = (from: string): ToolpathWarning =>
+    ({ code: 'surfaceHeightMapReduced', params: { from, to: TO } })
+  // Every angle's own job carries its own parameters.
+  const prep = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize, conservativeCellBounds: true,
+  })
+  const plan = prep.planFor(angles)
+  for (let k = 0; k < angles.length; k++) {
+    const sample = runRotaryAngleJob(prep, plan, { index: k, angle: angles[k] })
+    assert.deepEqual(sample.warnings, [warningFrom(expectedFrom[k])],
+      `angle ${angles[k]} must raise the reduced-cell warning with its own count`)
+  }
+  // The assembly keeps one warning per code, in angle order: the first angle's.
+  const expected: ToolpathWarning[] = [warningFrom(expectedFrom[0])]
+  const syncWarnings: ToolpathWarning[] = []
+  const sync = sampleAnglesWithPrep(prep, angles, syncWarnings)
+  assert.equal(sync.tipRadius.length, angles.length, 'the sync driver samples every angle')
+  assert.deepEqual(syncWarnings, expected, 'sync: the first angle in angle order supplies the parameters')
+  for (const [label, factory] of [
+    ['async', serialRotaryBatches],
+    ['async reversed', reversedBatches],
+  ] as const) {
+    const asyncWarnings: ToolpathWarning[] = []
+    const asyncResult = await sampleRotaryModelAsync(mesh, stock, BALL, options, asyncWarnings, factory)
+    assert.equal(asyncResult.tipRadius.length, angles.length, `${label}: every angle sampled`)
+    assert.deepEqual(asyncWarnings, expected,
+      `${label}: the first angle in angle order supplies the parameters, whatever order results arrive in`)
   }
 }
 
@@ -394,6 +489,92 @@ for (const axis of AXES) {
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../../..')
 
+/**
+ * One dispatch of the asynchronous driver, kept for the comparison: the jobs'
+ * angles, and every result with its row **copied**.
+ *
+ * The copy matters: assembly applies each sample's lift to the `Float32Array` in
+ * place, and the driver assembles the very arrays the runner returned. Keeping
+ * the references would read the rows back already lifted and compare a lifted
+ * row against a lifted row, which is the identity, not the check.
+ */
+interface CapturedRotaryBatch {
+  readonly jobs: readonly RotaryAngleJob[]
+  readonly samples: readonly RotaryAngleSample[]
+}
+
+/** A batch factory that records the prep and every batch it is asked to run. */
+function captureRotaryBatches(): {
+  readonly factory: RotaryBatchFactory
+  readonly prep: () => RotarySamplingPrep | null
+  readonly batches: CapturedRotaryBatch[]
+} {
+  let captured: RotarySamplingPrep | null = null
+  const batches: CapturedRotaryBatch[] = []
+  return {
+    factory: (prep) => {
+      captured = prep
+      const serial = serialRotaryBatches(prep)
+      return async (jobs) => {
+        const samples = await serial(jobs)
+        batches.push({
+          jobs: [...jobs],
+          samples: samples.map((sample) => ({ ...sample, row: sample.row.slice() })),
+        })
+        return samples
+      }
+    },
+    prep: () => captured,
+    batches,
+  }
+}
+
+/** The same prep, with fresh scratch: the synchronous driver's install of it. */
+function freshPrep(prep: RotarySamplingPrep): RotarySamplingPrep {
+  return createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
+    along: prep.along,
+    requestedCellSize: prep.requestedCellSize,
+    ...(prep.conservativeCellBounds ? { conservativeCellBounds: true } : {}),
+    ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
+    ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
+  })
+}
+
+/**
+ * The base grid's rows and lifts, as a digest, per fixture operation and
+ * direction.
+ *
+ * A driver-to-driver comparison cannot police a change to the sampler itself:
+ * both drivers run the same per-angle job and the same assembly, so a shared
+ * regression moves both answers together and leaves them equal. These digests
+ * pin the values the pre-p-d1 synchronous code produced. The moves and posted
+ * programs built on them are byte-identical to the pre-p-d1 code (commit
+ * `cf06f791`) in **both** directions, and to the p-a baseline's stored hashes
+ * around, so the fixture matrix fails on a shared change instead of quietly
+ * agreeing with itself.
+ *
+ * Re-record only with a deliberate change to the sampled values, and expect the
+ * emitted motion and the posted program to move with it.
+ */
+const FIXTURE_SAMPLING_DIGESTS: Record<string, string> = {
+  'busto-rect-stock.camj op0021 around':
+    '1bc17b61ef0470952340d8f4319fef5e8f52ba791d24021c92e18ddb0c5b2274',
+  'busto-rect-stock.camj op0021 along':
+    '4911c476d1cc05850a735d5eb0e3c769b8013e17431bec785a623f54fc11981a',
+  'busto-rect-stock.camj op0022 around':
+    '70420aa37793b513bcf6584fba6fb04e9ce034ec96afd65ed95f02da0a996a31',
+  'busto-rect-stock.camj op0022 along':
+    '133b7c67cd85de23f43ad301efafaae924d9816763b407f94ed0bf69afd3da12',
+  'busto-round-stock.camj op0025 around':
+    '9553bb5897b3e09bbaf08d8b0d399eac44ee27a6b23a45ba7a2c325c421f4e1c',
+  'busto-round-stock.camj op0025 along':
+    'b3d7fdd6a81356b728c1f985db3470c71823a29786656500a8e1c1cfcd5378c6',
+  'busto-round-stock.camj op0015 around':
+    '9e128e6777d9c07a1f386af96c9ce35d2655679051604af7a38b8a66bab46b0b',
+  'busto-round-stock.camj op0015 along':
+    'ff36ff827c12e12b4c07758ea7dfa7647761a78575794a9812affbadbdbe95f1',
+};
+
 if (process.env.ROTARY_PARITY_FIXTURES === '1') {
   const fixtures = ['busto-rect-stock.camj', 'busto-round-stock.camj']
   for (const name of fixtures) {
@@ -402,20 +583,75 @@ if (process.env.ROTARY_PARITY_FIXTURES === '1') {
       assert.fail(`${path} is missing: copy the p-a work/ fixtures before running ROTARY_PARITY_FIXTURES=1`)
     }
     const project = normalizeProject(JSON.parse(readFileSync(path, 'utf8')))
-    for (const operation of project.operations.filter((candidate) => candidate.kind === 'rotary_rough' || candidate.kind === 'rotary_finish')) {
-      const label = `${name} ${operation.id}`
-      console.log(`${label}: generating synchronously…`)
-      const sync = computeOperationToolpath(project, operation)
-      assert.ok(sync, `${label}: the synchronous entry generates`)
-      console.log(`${label}: generating asynchronously…`)
-      const asyncEnvelope = await computeOperationToolpathAsync(project, operation)
-      assert.ok(asyncEnvelope, `${label}: the asynchronous entry generates`)
-      assert.ok(sync.result.moves.length > 0, `${label}: emits motion`)
-      assert.deepEqual(asyncEnvelope.result.moves, sync.result.moves, `${label}: moves`)
-      assert.deepEqual(asyncEnvelope.result.warnings, sync.result.warnings, `${label}: warnings`)
-      assert.equal(post(project, operation, asyncEnvelope.result), post(project, operation, sync.result),
-        `${label}: posted program`)
-      console.log(`${label}: ${sync.result.moves.length} moves identical on both drivers`)
+    const rotaryOperations = project.operations.filter(
+      (candidate) => candidate.kind === 'rotary_rough' || candidate.kind === 'rotary_finish')
+    // Both files save every operation `around`; the handoff requires the along
+    // cases as controls, so the matrix forces each direction over the saved row.
+    for (const saved of rotaryOperations) {
+      for (const direction of DIRECTIONS) {
+        const operation: Operation = { ...saved, rotaryPassDirection: direction }
+        const label = `${name} ${saved.id} ${saved.kind} ${direction}`
+        console.log(`${label}: generating synchronously…`)
+        const sync = computeOperationToolpath(project, operation)
+        assert.ok(sync, `${label}: the synchronous entry generates`)
+        assert.ok(sync.result.moves.length > 0, `${label}: the synchronous entry emits motion`)
+        const capture = captureRotaryBatches()
+        console.log(`${label}: generating asynchronously…`)
+        const asyncEnvelope = await computeOperationToolpathAsync(project, operation, {
+          rotaryRunBatch: capture.factory,
+        })
+        assert.ok(asyncEnvelope, `${label}: the asynchronous entry generates`)
+        assert.ok(asyncEnvelope.result.moves.length > 0, `${label}: the asynchronous entry emits motion`)
+        assert.deepEqual(asyncEnvelope.result.moves, sync.result.moves, `${label}: moves`)
+        assert.deepEqual(asyncEnvelope.result.warnings, sync.result.warnings, `${label}: warnings`)
+        assert.deepEqual(asyncEnvelope.result.bounds, sync.result.bounds, `${label}: bounds`)
+        assert.equal(post(project, operation, asyncEnvelope.result), post(project, operation, sync.result),
+          `${label}: posted program`)
+
+        // Rows, lifts and warnings: the batch the operation's own grid produced
+        // is assembled here, and the synchronous driver samples the same angle
+        // list from the same prep. Every later batch is a refinement round whose
+        // rows are compared through the motion they produce above: both drivers
+        // run the identical refinement over them and the posted program matches.
+        const prep = capture.prep()
+        assert.ok(prep, `${label}: the asynchronous driver dispatched at least one batch`)
+        if (direction === 'around') {
+          assert.ok(capture.batches.length > 1,
+            `${label}: around mode must refine, or the matrix never exercises a second batch`)
+        } else {
+          assert.equal(capture.batches.length, 1, `${label}: along mode dispatches one batch`)
+        }
+        const base = capture.batches[0]
+        assert.ok(base, `${label}: the base angle batch was dispatched`)
+        const syncWarnings: ToolpathWarning[] = []
+        const syncSampling = sampleAnglesWithPrep(freshPrep(prep), base.jobs.map((job) => job.angle), syncWarnings)
+        const asyncWarnings: ToolpathWarning[] = []
+        const asyncSampling = assembleRotarySampling(prep, base.jobs, base.samples, asyncWarnings, false)
+        assert.deepEqual(asyncSampling.anglesDeg, syncSampling.anglesDeg, `${label}: base angles`)
+        assert.deepEqual(asyncSampling.lifts, syncSampling.lifts, `${label}: lifts`)
+        assert.equal(asyncSampling.tipRadius.length, syncSampling.tipRadius.length, `${label}: base row count`)
+        for (let k = 0; k < syncSampling.tipRadius.length; k++) {
+          assert.deepEqual(asyncSampling.tipRadius[k], syncSampling.tipRadius[k], `${label}: base row ${k}`)
+        }
+        assert.deepEqual(asyncWarnings, syncWarnings, `${label}: base warnings`)
+        // Non-vacuity: the grid really sampled the model, and along mode really
+        // carries no cell-rise lift.
+        assert.ok(asyncSampling.tipRadius.some((row) => Array.from(row).some((value) => Number.isFinite(value))),
+          `${label}: the base grid samples the model`)
+        if (direction === 'along') {
+          assert.deepEqual(asyncSampling.lifts, base.jobs.map(() => 0),
+            `${label}: along mode asks for no conservative cell rise`)
+        }
+        const digest = createHash('sha256').update(JSON.stringify({
+          angles: asyncSampling.anglesDeg,
+          lifts: asyncSampling.lifts,
+          rows: asyncSampling.tipRadius.map((row) => Array.from(row)),
+        })).digest('hex')
+        assert.equal(digest, FIXTURE_SAMPLING_DIGESTS[`${name} ${saved.id} ${direction}`],
+          `${label}: base rows and lifts moved`)
+        console.log(`${label}: ${sync.result.moves.length} moves identical on both drivers; `
+          + `${asyncSampling.tipRadius.length} base rows, lifts and warnings identical`)
+      }
     }
   }
 } else {
