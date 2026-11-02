@@ -45,7 +45,8 @@
  */
 
 import { isRotaryOperationKind } from '../../types/project'
-import { generateRotaryOperation } from './rotaryOperation'
+import { generateRotaryOperation, generateRotaryOperationAsync } from './rotaryOperation'
+import type { RotaryBatchFactory } from './rotaryModel'
 import { generatePlasmaProfileToolpath, plasmaSetupIsTop } from './plasma'
 
 import { applyClampWarnings } from './clamps'
@@ -90,6 +91,16 @@ export interface ComputeOperationOptions {
    * for every request, to be thrown away.
    */
   trace?: boolean
+}
+
+/** The asynchronous entry's options: the synchronous ones plus the batch seam. */
+export interface ComputeOperationAsyncOptions extends ComputeOperationOptions {
+  /**
+   * The per-angle batch runner rotary sampling dispatches through. Omitted, the
+   * driver's in-process serial runner is used, which is the same computation
+   * with an `await` in the middle; a worker pool supplies its own (p-d2).
+   */
+  rotaryRunBatch?: RotaryBatchFactory
 }
 
 export interface OperationToolpathEnvelope {
@@ -193,12 +204,7 @@ export function computeOperationToolpath(
 
   // An operation its setup may not cut produces no motion, and says why.
   const block = setupGenerationBlock(project, operation)
-  if (block) {
-    return {
-      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation, project.meta.units)], bounds: null },
-      raw: null,
-    }
-  }
+  if (block) return blockedToolpath(project, operation, block)
 
   if (isRotaryOperationKind(operation.kind)) {
     return { result: generateRotaryOperation(project, operation), raw: null }
@@ -261,10 +267,53 @@ export function computeOperationToolpath(
 }
 
 /**
+ * The asynchronous counterpart of {@link computeOperationToolpath} (#1115 slice
+ * p-d1).
+ *
+ * Only the rotary kinds differ, and only in *where an angle's row comes from*:
+ * their sampling is dispatched through `options.rotaryRunBatch` and awaited,
+ * while every other kind -- and every rotary refusal -- runs exactly the
+ * synchronous code. The synchronous entry above stays the default; p-d3's
+ * worker is what will call this one.
+ */
+export async function computeOperationToolpathAsync(
+  project: Project,
+  operation: Operation,
+  options: ComputeOperationAsyncOptions = {},
+): Promise<OperationToolpathEnvelope | null> {
+  // Every non-rotary kind -- plasma's setup diagnosis, the Around unwrap, the
+  // face and setup frames -- stays on the synchronous path untouched.
+  if (!isRotaryOperationKind(operation.kind)) return computeOperationToolpath(project, operation, options)
+  const block = setupGenerationBlock(project, operation)
+  if (block) return blockedToolpath(project, operation, block)
+  return {
+    result: await generateRotaryOperationAsync(project, operation, options.rotaryRunBatch),
+    raw: null,
+  }
+}
+
+/**
  * The per-kind dispatch, for a project in the conventional top-down frame:
  * the cutter comes down onto the face that is up. A turned setup's project
  * has already been turned into that frame by the time it gets here.
  */
+/**
+ * The result for an operation its setup may not cut: no motion, and the warning
+ * that says which guard refused it. Shared by the synchronous entry and its
+ * asynchronous rotary twin (#1115 slice p-d1), so the two can never disagree
+ * about a blocked operation.
+ */
+function blockedToolpath(
+  project: Project,
+  operation: Operation,
+  block: SetupGenerationBlock,
+): OperationToolpathEnvelope {
+  return {
+    result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation, project.meta.units)], bounds: null },
+    raw: null,
+  }
+}
+
 function computeTopDownToolpath(
   project: Project,
   operation: Operation,

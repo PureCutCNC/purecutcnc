@@ -227,7 +227,13 @@ function splitSegmentAtUnmachinableSurface(
   return chunks
 }
 
-const MAX_HEIGHT_MAP_CELLS = 1_000_000
+/**
+ * The most cells one height map may hold. Exported because a worker pool has to
+ * budget the maps it lets its workers build before it starts any of them
+ * (#1115 slice p-d2): `chooseHeightMapCellSize` caps a map at this many cells,
+ * so it is also the largest per-angle heap one worker can be asked for.
+ */
+export const MAX_HEIGHT_MAP_CELLS = 1_000_000
 
 /**
  * Scratch records for the no-centre clip candidates, reused across height maps.

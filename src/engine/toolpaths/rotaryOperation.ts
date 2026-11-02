@@ -21,8 +21,15 @@ import { setupForOperation } from '../setupOrientation'
 import { resolveFinishModelSurface } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
 import { splitFeatureTargets, buildRegionMask, type SplitFeatureTargets } from './regions'
-import { generateRotaryFinish, generateRotaryRough, rotaryAlongRange } from './rotaryModel'
-import type { RotaryFinishParams } from './rotaryModel'
+import {
+  generateRotaryFinish,
+  generateRotaryFinishAsync,
+  generateRotaryRough,
+  generateRotaryRoughAsync,
+  rotaryAlongRange,
+  serialRotaryBatches,
+} from './rotaryModel'
+import type { RotaryBatchFactory, RotaryFinishParams } from './rotaryModel'
 import type { NormalizedTool, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
 
@@ -360,25 +367,59 @@ export function rotaryFinishWithoutRough(
   return rotaryUncoveredModelIds(roughs, modelIds, regions).length > 0
 }
 
-export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
-  const empty = (code: ToolpathWarningCode): ToolpathResult => ({
-    operationId: operation.id, moves: [], bounds: null,
-    warnings: [{ code, params: { operation: operation.name } }],
-  })
+/**
+ * The saved operation's rotary context, or the refusal that stops it before any
+ * sampling (#1115 slice p-d1).
+ *
+ * Both drivers share it, so a saved operation that is refused -- a non-Turn
+ * setup, a missing model, a bad tool, an empty cut range -- is refused
+ * identically whether the rows are sampled inline or through a batch factory.
+ */
+function rotaryOperationInputs(
+  project: Project,
+  operation: Operation,
+): { result: ToolpathResult } | {
+  stock: BarStock
+  surface: RotaryContext['surface']
+  tool: NormalizedTool
+  params: RotaryFinishParams
+  modelIds: string[]
+  modelNames: string[]
+  regions: RotaryRegionFilter
+} {
   const built = rotaryContext(project, operation)
-  if ('code' in built) return empty(built.code)
+  if ('code' in built) {
+    return {
+      result: {
+        operationId: operation.id, moves: [], bounds: null,
+        warnings: [{ code: built.code, params: { operation: operation.name } }],
+      },
+    }
+  }
   const { stock, surface, tool, params, modelIds, modelNames, regions } = built
-  const result = operation.kind === 'rotary_rough'
-    ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
-    : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
+  return { stock, surface, tool, params, modelIds, modelNames, regions }
+}
+
+/**
+ * The generated result with the operation's own name folded into every warning
+ * and, for a finish, the advisory naming the models no preceding rough covers
+ * (#1112 decision 7.11).
+ *
+ * Advisory only: the finish emits exactly the model-following motion either way,
+ * and this warning changes nothing about it. The names stay a list so
+ * presentation joins them in the active language (#1112 C2).
+ */
+function rotaryOperationResult(
+  project: Project,
+  operation: Operation,
+  inputs: { modelIds: string[]; modelNames: string[]; regions: RotaryRegionFilter },
+  result: ToolpathResult,
+): ToolpathResult {
   const warnings: ToolpathWarning[] = result.warnings.map((warning) => ({
     ...warning, params: { ...warning.params, operation: operation.name },
   }))
-  // Advisory only: the finish still emits exactly the model-following motion
-  // above, and this warning changes nothing about it. The message names the
-  // models left uncovered (#1112 decision 7.11), in target order; the names
-  // stay a list so presentation joins them in the active language (#1112 C2).
   if (operation.kind === 'rotary_finish') {
+    const { modelIds, modelNames, regions } = inputs
     const uncovered = rotaryUncoveredModelIds(rotaryPrecedingRoughs(project, operation), modelIds, regions)
     if (uncovered.length > 0) {
       const names = uncovered.map((modelId) => modelNames[modelIds.indexOf(modelId)])
@@ -386,4 +427,39 @@ export function generateRotaryOperation(project: Project, operation: Operation):
     }
   }
   return { ...result, warnings }
+}
+
+export function generateRotaryOperation(project: Project, operation: Operation): ToolpathResult {
+  const inputs = rotaryOperationInputs(project, operation)
+  if ('result' in inputs) return inputs.result
+  const { stock, surface, tool, params } = inputs
+  const result = operation.kind === 'rotary_rough'
+    ? generateRotaryRough(operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {})
+    : generateRotaryFinish(operation.id, surface.mesh, stock, tool, params, {})
+  return rotaryOperationResult(project, operation, inputs, result)
+}
+
+/**
+ * `generateRotaryOperation` through the asynchronous sampling driver (#1115
+ * slice p-d1).
+ *
+ * The adapter, the refusals and the advisory are the synchronous functions;
+ * only where an angle's row comes from changes. `factory` is the injected batch
+ * runner -- the seam p-d2's worker pool and p-d3's worker fill in -- and the
+ * default is the in-process serial one, so this is the same computation with an
+ * `await` in the middle.
+ */
+export async function generateRotaryOperationAsync(
+  project: Project,
+  operation: Operation,
+  factory: RotaryBatchFactory = serialRotaryBatches,
+): Promise<ToolpathResult> {
+  const inputs = rotaryOperationInputs(project, operation)
+  if ('result' in inputs) return inputs.result
+  const { stock, surface, tool, params } = inputs
+  const result = operation.kind === 'rotary_rough'
+    ? await generateRotaryRoughAsync(
+      operation.id, surface.mesh, stock, tool, { ...params, stepdown: operation.stepdown }, {}, factory)
+    : await generateRotaryFinishAsync(operation.id, surface.mesh, stock, tool, params, {}, factory)
+  return rotaryOperationResult(project, operation, inputs, result)
 }
