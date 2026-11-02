@@ -85,14 +85,13 @@ and 6.7x on branches that passed alone, and it failed `npm run build` four times
 during 0.6.0 (issue #1111). It was measuring machine load.
 
 Re-measured for #1111 slice pg-b (2026-11-02, Linux/node 22, five serial
-invocations each) the separation is gone: baseline 4.98–5.17 against 4.99–5.28
-with the rebuild restored, i.e. the baseline itself straddles the 5x limit. The
-rebuild is cheap on that fixture (70 non-empty schedules across 92,282 per-piece
-cache hits; only a move whose Z changes by more than a cell has a schedule at
-all), so the numbers are dominated by the difference between the wrapped and flat
-kernels, which is what the ratio measures rather than the cache. The threshold
-was left at 5 rather than re-tuned to fit one machine — that is the reading a
-second measurement would have to reproduce before it meant anything.
+invocations each) the separation is gone: baseline 4.89–5.09 against 4.94–5.55
+with the per-frame rebuild restored, and the review of that slice measured a
+healthy baseline at 5.15x. The ranges overlap and the baseline alone crossed 5,
+so a threshold there fails running branches. The rebuild is cheap on that fixture
+(only a move whose Z changes by more than a cell has a schedule at all), so the
+numbers are dominated by the difference between the wrapped and flat kernels,
+which is what the ratio measures rather than the cache.
 
 That test's default guard is therefore **counted work** — schedules derived per
 source move / cell size / cutter radius, which is a property of the path and
@@ -104,7 +103,11 @@ PURECUT_SQUARE_PLAYBACK_PERF=1 npx tsx src/engine/simulation/squarePlayback.test
 
 Without the flag the test runs every correctness and counted-work assertion,
 prints one line saying the ratio was skipped, and never calls `cpuRatio`. With
-it, the same ratio and its 5x limit run as before. This is not a general
+it, the ratio and its raw times are printed; it **enforces no pass/fail
+threshold**. The limit was removed rather than re-tuned to fit one machine's
+overlap, because a constant fitted to noise is not a gate. `squarePlayback.test.ts`
+carries a guard that reads this section and the test's own source and fails if a
+threshold on the ratio comes back to either. This is not a general
 exemption: an assertion that can only be measured by time does not belong in the
 default build, and the flag exists only where a deterministic substitute already
 covers the property. It also does not change `src/test/cpuRatio.ts` or any other

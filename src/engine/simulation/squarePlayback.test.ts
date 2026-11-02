@@ -52,19 +52,18 @@
  * 3): 4.31–4.35 after correction 3, 3.87–3.99 on `integration/0.6.0`, and
  * 5.91–5.92 on the pre-correction branch (every frame called the 17-argument
  * interval helper and rewrote five per-image scratch arrays for every cell).
- * Limit 5 sits between the fixed cost and the old one; the geometric midpoint
- * of 4.33 and 5.92 is 5.06.
  *
- * Re-measured for issue #1111 slice pg-b (2026-11-02, Linux/node 22, five serial
- * invocations each, fixture construction outside the timed region): baseline
- * ratio 4.98–5.17 (subject 8.6–9.1 ms, reference 1.7–1.8 ms) and 4.99–5.28 with
- * a per-frame schedule rebuild restored (8.3–9.3 ms vs 1.6–1.8 ms). The limit
- * does not separate those two on that machine — the baseline itself straddles 5
- * — because the schedule rebuild is nearly free on this fixture: one invocation
- * rebuilds 70 non-empty schedules across 92,282 per-piece cache hits, and only a
- * move whose Z changes by more than a cell has a schedule at all. The ratio is
- * therefore a recorded constant-factor signal, not a gate; that is why it is
- * opt-in.
+ * The ratio is **reported, never asserted** (issue #1111 review P2). Five serial
+ * opt-in invocations on 2026-11-02 (Linux/node 22, fixture construction outside
+ * the timed region) put the baseline at 4.89–5.09 (subject 8.6–9.2 ms,
+ * reference 1.7–1.8 ms) and 4.94–5.55 with the per-frame schedule rebuild
+ * restored (8.8–10.2 ms vs 1.8 ms). The ranges overlap — the baseline alone
+ * crossed 5 on a healthy run, and the reviewer measured 5.15x unmodified — so no
+ * threshold on this fixture separates the regression from machine noise. The
+ * rebuild only repeats a schedule build and its allocation per piece, which is
+ * small next to the cell loop, so the spread is dominated by the wrapped-versus-
+ * flat difference rather than by the cache. `testOptInTimingContract` below
+ * keeps the number from turning back into a gate.
  *
  * Run with: npx tsx src/engine/simulation/squarePlayback.test.ts
  * Opt-in timing: PURECUT_SQUARE_PLAYBACK_PERF=1 npx tsx src/engine/simulation/squarePlayback.test.ts
@@ -105,8 +104,9 @@ import type { SimulationGrid } from './types'
  * `npm run build`: the reference time alone swung 2.7–15.9 ms across runs during
  * 0.6.0, so the ratio tracked machine load and failed four builds (5.25x, 7.00x,
  * 5.01x, 5.27x, 6.7x on a busy pool) while the same branch passed alone. The
- * counted-work guard below is the load-independent default; this flag restores
- * the broader constant-factor signal for someone explicitly looking for it.
+ * counted-work guard below is the load-independent default; this flag prints
+ * the broader constant-factor signal, without a pass/fail threshold, for someone
+ * explicitly looking for it.
  */
 const PERF_ENABLED = process.env.PURECUT_SQUARE_PLAYBACK_PERF === '1'
 
@@ -444,15 +444,10 @@ function testSquarePlaybackTiming(): void {
       `  square-to-round playback: wrapped ${subjectMs.toFixed(1)} ms vs flat reference `
       + `${referenceMs.toFixed(1)} ms CPU (ratio ${ratio.toFixed(2)})`,
     )
+    // No pass/fail threshold (issue #1111 review P2): the baseline and the
+    // schedule-rebuild regression overlap on this fixture, so a constant here
+    // fails healthy branches. Keep the measurement, drop the verdict.
     assert(referenceMs > 0, 'reference must do measurable work or the ratio is meaningless')
-    assert(
-      ratio < 5,
-      `square-to-round playback cost ${ratio.toFixed(2)}x the flat-kernel reference `
-      + `(limit 5x; ${subjectMs.toFixed(1)} ms vs ${referenceMs.toFixed(1)} ms CPU) — check that `
-      + 'the wrapped kernel keeps the horizontal interval test inline, caches the ramp '
-      + 'sample schedule per source move instead of deriving it per frame, and never '
-      + 'evaluates the batch ceiling an axial constant-Z flat cut cannot need',
-    )
   } else {
     console.log(
       '  CPU-time ratio skipped (load-sensitive, issue #1111): set '
@@ -607,10 +602,57 @@ function testLibraryAddedPlayback(): void {
   console.log(`library ball-finish playback: PASSED (${removedAgainst(live, baseGrid)} cells removed)`)
 }
 
+/**
+ * Opt-in timing reports; it does not gate (issue #1111 review P2).
+ *
+ * The ratio is a constant-factor signal whose spread does not separate the
+ * schedule-cache regression from machine noise on this fixture, so a pass/fail
+ * threshold on it fails healthy branches — baseline runs reached 5.09x and 5.15x
+ * with no regression present. The flag keeps the measurement; this guard keeps
+ * the measurement from turning back into an assertion, and keeps the
+ * documentation from promising a limit the numbers do not support. It reads this
+ * file's own source, so deleting the report fails it too.
+ */
+function testOptInTimingContract(): void {
+  console.log('Testing the opt-in timing contract...')
+  const source = readFileSync(new URL(import.meta.url), 'utf8')
+  const doc = readFileSync(new URL('../../../docs/PERF_ASSERTIONS.md', import.meta.url), 'utf8')
+
+  // The measurement itself stays: the flag, and all three reported numbers.
+  assert(
+    source.includes('PURECUT_SQUARE_PLAYBACK_PERF'),
+    'the opt-in flag must stay — this guard verified a threshold, not the measurement',
+  )
+  for (const field of ['subjectMs', 'referenceMs', 'ratio']) {
+    assert(
+      source.includes(`${field}.toFixed(`),
+      `the opt-in run must keep reporting ${field}; removing it deletes the measurement`,
+    )
+  }
+
+  // Nothing compares the ratio with a constant, in the test or in the document
+  // that describes it — so the docs cannot promise a limit the test dropped.
+  for (const [name, text] of [['the test', source], ['docs/PERF_ASSERTIONS.md', doc]] as const) {
+    const comparison = /\bratio\s*(?:<=|>=|<|>)\s*[\d.]/.exec(text)
+    assert.equal(
+      comparison,
+      null,
+      `${name} compares the playback ratio with a constant (${comparison?.[0]}); the measured `
+      + 'baseline and regression overlap, so there is no supported pass/fail threshold',
+    )
+  }
+  assert(
+    doc.replace(/\s+/g, ' ').includes('enforces no pass/fail threshold'),
+    'docs/PERF_ASSERTIONS.md must say the opt-in run reports the ratio instead of gating on it',
+  )
+  console.log('  opt-in timing reports the ratio and enforces no threshold: PASSED')
+}
+
 // The deterministic guard runs first: its counts must be printed even when the
-// opt-in, load-sensitive timing assertion (PURECUT_SQUARE_PLAYBACK_PERF=1,
-// issue #1111) ends the run.
+// opt-in, load-sensitive timing run (PURECUT_SQUARE_PLAYBACK_PERF=1, issue
+// #1111) stops on its zero-reference check.
 testRampScheduleGuard()
 testSquarePlaybackTiming()
 testLibraryAddedPlayback()
+testOptInTimingContract()
 console.log('\nAll square playback cost tests PASSED.')
