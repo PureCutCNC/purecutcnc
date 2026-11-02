@@ -485,6 +485,72 @@ console.log('Testing the operation-level link-window budget...')
 }
 
 // ---------------------------------------------------------------------------
+// 3c-2. #1117 fix 2 (P2): an **accepted** at-layer link still has to pay the
+//     raised link's budget.
+//
+//     The baseline charged the raised walk at every eligible ring boundary. A
+//     winning candidate replaces the walk's **output**, so with fix 1 alone it
+//     skipped the charge too: the raised bucket was under-spent, and a later
+//     boundary whose candidate was **rejected** found material the baseline had
+//     already refused to walk. This fixture is the mixed case -- 4 mm flat
+//     cutter, stepdown 2: the first layers accept corner-arc links, and past the
+//     operation budget the later boundaries must keep the baseline's
+//     travel-height fallback. Without the fix, 784 fallback plans changed: A0
+//     X5->X6 at layer 5 read z=41.191374123 instead of the baseline travel-height
+//     z=49.284271247, and 784 within-layer plunges disappeared (2002 -> 1218).
+//
+//     Mutation caught: skip the raised walk when `linkAtLayer` accepts, i.e.
+//     `linkAtLayer(...) ?? layerLink(...)` in the ring loop.
+// ---------------------------------------------------------------------------
+
+/** A rough ring-to-ring link: a cut at one angle that changes the along coordinate. */
+const isAlongLink = (move: ToolpathMove): boolean => move.kind === 'cut'
+  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
+  && move.from.x !== move.to.x
+/** The raised form of the same link: its constant-height traverse is a rapid. */
+const isRaisedAlongLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
+  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
+  && move.from.x !== move.to.x
+
+console.log('Testing that accepted at-layer links keep the raised-link budget history...')
+{
+  const stock = squareStock(40, 400, 'x', { x: 0, y: 0 })
+  const model = revolved(stock, [{ along: 2, radius: 6 }, { along: 398, radius: 14 }], 96)
+  const pivot = barPivotZ(stock)
+  const result = generateRotaryRough('window-budget-mixed', model, stock, FLAT, {
+    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 2, alongEnd: 398,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.5, stepdown: 2,
+    passDirection: 'around',
+  }, {})
+  // The mix itself: accepted at-layer cuts and budget-refused raised fallbacks
+  // in one operation. Either one alone cannot expose the accounting bug.
+  const accepted = result.moves.filter(isAlongLink)
+  const raised = result.moves.filter(isRaisedAlongLink)
+  assert.ok(accepted.length > 0,
+    `the fixture accepts at-layer links (${accepted.length})`)
+  assert.ok(raised.length > 0,
+    `and still emits raised fallbacks (${raised.length})`)
+  // The accepted links may not refund the raised budget: the retracts the
+  // baseline spent it on are still there, one plunge per refused boundary.
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+  assert.equal(plunges.length, 2002,
+    `the accepted links do not refund the raised budget (${plunges.length} plunges, baseline 2002)`)
+  // The boundary the review named: A0 X5->X6 falls past the budget, so every
+  // copy of it retracts and traverses at the travel height -- exactly the
+  // baseline plan. With the accepted links uncharged, one copy found a leftover
+  // at z=41.191374123 instead of the travel height z=49.284271247.
+  const travelTip = barMaxRadius(stock) + 1
+  const a0Fallbacks = raised.filter((move) => move.from.a === 0
+    && Math.abs(move.from.x - 5) < 1e-9 && Math.abs(move.to.x - 6) < 1e-9)
+  assert.equal(a0Fallbacks.length, 4,
+    `every A0 X5->X6 boundary keeps its raised fallback (${a0Fallbacks.length})`)
+  for (const move of a0Fallbacks) {
+    assert.ok(Math.abs(move.from.z - pivot - travelTip) < 1e-9,
+      `a refused A0 X5->X6 boundary keeps the baseline travel height (${(move.from.z - pivot).toFixed(9)} vs ${travelTip.toFixed(9)})`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3d. #1117 slice B: square corner arcs link at the layer.
 //
 //     A square around ring is a set of short arcs at the blank's corners, so
@@ -506,15 +572,6 @@ console.log('Testing the operation-level link-window budget...')
 //        whole-ring layers (3-5) link at the layer at A0/A360, cutting the
 //        neighbouring corner by more than one band, instead of raising.
 // ---------------------------------------------------------------------------
-
-/** A rough ring-to-ring link: a cut at one angle that changes the along coordinate. */
-const isAlongLink = (move: ToolpathMove): boolean => move.kind === 'cut'
-  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
-  && move.from.x !== move.to.x
-/** The raised form of the same link: its constant-height traverse is a rapid. */
-const isRaisedAlongLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
-  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
-  && move.from.x !== move.to.x
 
 console.log('Testing that the square around rough links its corner arcs at the layer...')
 {

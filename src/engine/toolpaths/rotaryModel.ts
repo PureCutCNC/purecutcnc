@@ -769,6 +769,18 @@ const MAX_LINK_WORK = 4_000_000
  * charging both to one counter let a rejected attempt starve a later raised
  * link, which then dropped to the travel height instead of the raised height the
  * baseline gave it.
+ *
+ * #1117 fix 2 (P2): the raised bucket also has to advance for an **accepted**
+ * at-layer link. The candidate is an addition to the link plan, not a
+ * replacement for the raised plan's accounting: the baseline (`805abe6a`)
+ * charged the raised walk at every eligible boundary, so skipping it wherever
+ * the candidate won left the bucket under-spent and a later rejected boundary
+ * found material the baseline had already refused to walk. The fix computes the
+ * raised plan first, at every eligible boundary, and only then overrides the
+ * **emitted** steps with the at-layer candidate; the raised walk's charge and
+ * cache entries therefore reproduce the baseline exactly, wherever the boundary
+ * lands. The candidate's own bucket and cache keys stay separate, so it can
+ * never spend what the raised plan needs.
  */
 const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
 
@@ -2359,6 +2371,12 @@ function roughFromTargets(
   // further, to the travel height. Each bucket also gets its own cache entries:
   // a shared entry would skip the raised link's own charge and change which
   // links get its budget, so the fallback would still drift from the baseline.
+  //
+  // #1117 fix 2 (P2): the raised charge must also happen when the candidate
+  // **wins**. The caller therefore computes the raised plan first and overlays
+  // the at-layer steps on top of it, so `raised` collects the same sequence of
+  // charges and cache hits the baseline did over the whole operation. An
+  // accepted candidate is an overlay, never a skipped charge.
   const linkWindowWork = { raised: 0, atLayer: 0 }
   /**
    * The widest angle off its axis at which the cutter body can meet any
@@ -2644,7 +2662,10 @@ function roughFromTargets(
     // #1117 fix 1 (P2): this walk is charged to the at-layer bucket, never to
     // the raised link's. This candidate can still be rejected below, and the
     // raised link that takes over must keep the budget and the cache entries
-    // the baseline gave it.
+    // the baseline gave it. #1117 fix 2 (P2): that is true when the candidate
+    // **wins** too -- the caller has already computed the raised plan, so an
+    // accepted candidate only overrides the emitted steps and cannot unspend a
+    // baseline charge.
     const leftover = linkLeftoverAt(row, from.a, layer, reach, 'atLayer')
     if (leftover.length === 0) return null
     // The scallop the tool leaves between two rings: a ball cuts lowest at its
@@ -2814,11 +2835,24 @@ function roughFromTargets(
         // (A ring that emitted nothing is caught by the `fromAlong` check inside
         // the candidate; `previousRingEmitted` makes that explicit.)
         const splitBlocked = (previousRingSplit || splitRing) && !(square && region === null)
+        // #1117 fix 2 (P2): compute the raised plan **first** at every eligible
+        // boundary, even when the at-layer candidate wins. The raised walk is
+        // the baseline's accounting, not only its fallback: its budget charge
+        // and cache entries have to advance in the same order the pre-slice
+        // operation walked them, or a later **rejected** boundary finds material
+        // the baseline had already refused to walk and drops to a different
+        // height. (On `window-budget` with the 4 mm flat cutter and stepdown 2,
+        // skipping the accepted links' charges changed 784 fallback plans --
+        // A0 X5->X6 at layer 5 read z 41.191 instead of the baseline 49.284.)
+        // The candidate is an overlay on the emitted steps only; it has its own
+        // budget so it can never spend the raised walk's.
         const ringLink = i === 0 || !previousRingEmitted || splitBlocked
           ? layerLink
-          : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
-            linkAtLayer(layer, layerRadius, along[i - 1], from, to, (ring - 1) % 2 === 0 ? 1 : -1)
-              ?? layerLink(from, to)
+          : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+            const raised = layerLink(from, to)
+            return linkAtLayer(layer, layerRadius, along[i - 1], from, to, (ring - 1) % 2 === 0 ? 1 : -1)
+              ?? raised
+          }
         const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, ringLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
