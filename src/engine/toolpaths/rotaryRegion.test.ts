@@ -57,7 +57,7 @@ import { validateMachineDefinition } from '../gcode/types'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject, toClipperPath } from './geometry'
 import { buildMaskFromClipperPaths, buildRegionMask } from './regions'
-import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
+import { generateRotaryFinish, generateRotaryRough, rotaryRegionContains } from './rotaryModel'
 import { rotaryTravelZ, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathResult } from './types'
@@ -970,14 +970,15 @@ const ROUND_FINISH_PARAMS = {
   console.log(`  seam: ${links.length} links in A180..A${seamAngle.toFixed(2)}`)
 }
 
-// ── a slanted region edge is an A-changing transition, not a link ─────────
+// ── a slanted region edge links its runs on the swept path ────────────────
 
-// #1117 slice B: the at-layer link requires **exactly equal** commanded A on
-// both rings. A region drawn as a slanted band on the sheet has an across
-// boundary that moves with the along position, so two neighbouring rings start
-// and end at different angles: the transition must keep the old retract, not a
-// cutting link that changes A at the layer. (Bypassing the exact-angle check
-// emits two diagonal cuts at the layer height on this fixture.)
+// #1117 slice B kept **exactly equal** commanded A on both rings, so a slanted
+// region band -- whose across boundary moves with the along position, leaving
+// two neighbouring rings' runs a few degrees apart -- kept the old retract.
+// #1117 rl-e is the slice that proves that transition instead: the link's whole
+// swept path (a slope in along and A) must pass the at-layer rules and stay
+// inside the mask, and then it is a cutting link like any other. This fixture is
+// the case the old refusal was written for, so it is the one that must now move.
 {
   const stock = roundStock(12, 30, 'x')
   const centre = barCentre(stock)
@@ -999,20 +1000,34 @@ const ROUND_FINISH_PARAMS = {
   assert.deepEqual(result.warnings, [], 'the slanted rough has no warning')
   // Lanes where two rings do share the boundary angle still link at the layer.
   assert.ok(ringLinks(result).length > 0, 'the slanted band still links its equal-angle transitions')
-  // A cut never changes both the along coordinate and the angle: a ring cut
-  // turns A at one along position, and a link runs along the bar at one angle.
-  // A diagonal cut would be the exact-angle check being bypassed.
+  // #1117 rl-e: the A-changing transition is a diagonal cut at the layer. A ring
+  // cut turns A at one along position and an equal-angle link runs along the bar
+  // at one angle, so a cut that changes both is this link and nothing else.
   const diagonal = result.moves.filter((move) => move.kind === 'cut'
     && move.from.a !== undefined && move.to.a !== undefined
     && move.from.a !== move.to.a && alongOf(stock, move.from) !== alongOf(stock, move.to))
-  assert.equal(diagonal.length, 0,
-    `no cutting link changes A and the along coordinate together (${diagonal.length})`)
-  // And the transition is still a raised retract, not a low traverse.
+  assert.ok(diagonal.length > 0,
+    `the A-changing transition links at the layer (${diagonal.length} diagonal cuts)`)
+  for (const move of diagonal) {
+    // The proof that admitted it: every pose of the slope is inside the mask,
+    // sampled here far finer than the generator's own dense row.
+    for (let step = 0; step <= 32; step++) {
+      const t = step / 32
+      const along = alongOf(stock, move.from) + (alongOf(stock, move.to) - alongOf(stock, move.from)) * t
+      const angle = move.from.a! + (move.to.a! - move.from.a!) * t
+      assert.ok(rotaryRegionContains(slant, stock, along, angle),
+        `an A-changing link leaves the region at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
+    }
+    // And it is a layer link, not the travel-height traverse.
+    assert.ok(Math.max(move.from.z, move.to.z) < rotaryTravelZ(stock, 'mm') - 1e-6,
+      'the A-changing link stays at the layer')
+  }
+  // The transitions that cannot be proved still retract at the travel height.
   assert.ok(result.moves.some((move) => move.kind === 'rapid'
     && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a
     && Math.min(move.from.z, move.to.z) >= rotaryTravelZ(stock, 'mm') - 1e-6),
     'the slanted transition retracts at the travel height')
-  console.log(`  slant: ${ringLinks(result).length} equal-angle links, 0 diagonal cuts`)
+  console.log(`  slant: ${ringLinks(result).length} equal-angle links, ${diagonal.length} diagonal cuts`)
 }
 
 // ── no region: byte-identical output ──────────────────────────────────────
@@ -1033,7 +1048,13 @@ const ROUND_FINISH_PARAMS = {
 // same change.
 const NO_REGION_HASHES: Record<string, string> = {
   'round/rotary_rough/along': 'moves=57c161faf512400a warnings= gcode=53019c8531aafcfd',
-  'round/rotary_rough/around': 'moves=d7dfce187ea681cd warnings= gcode=575b132f764c48cd',
+  // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
+  // earlier layer actually left (the lowest pass over the ring positions)
+  // instead of an upper bound on it, so this fixture's asymmetric prism keeps
+  // more of its ring-to-ring links at the layer -- 29 equal-angle links became
+  // 46 and the raised links fell from 31 to 18. The raised form is unchanged
+  // wherever it is still emitted.
+  'round/rotary_rough/around': 'moves=3e60f391315f97bf warnings= gcode=3fe65d95fa34c3f2',
   'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
   'round/rotary_finish/around': 'moves=a7ebe0d9cd48dd07 warnings=rotaryFinishWithoutRough gcode=4cb6a2c9c5c1e547',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=53c3d57f9a4146bb',

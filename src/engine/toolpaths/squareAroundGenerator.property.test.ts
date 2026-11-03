@@ -1190,6 +1190,12 @@ interface Case {
   mesh?: RotaryModelMesh
   /** The non-revolved model's boundary radius at one angle (#1093 review). */
   meshRadiusAt?: (angleDeg: number) => number
+  /**
+   * The same boundary for a model whose radius also varies **along** the bar
+   * (#1117 rl-e). The lobe case needs it: the boundary angle only drifts because
+   * the lobe's cross-section changes along, so one angle's radius is not enough.
+   */
+  meshRadiusAt2?: (along: number, angleDeg: number) => number
   /** The along span the non-revolved model occupies. */
   meshAlong?: { readonly from: number; readonly to: number }
   type: 'flat_endmill' | 'ball_endmill'
@@ -3035,6 +3041,9 @@ let worstRapidLinkLabel = ''
 // hole in the proof.
 const atLayerLinkCounts = {
   total: 0, round: 0, square: 0, ball: 0, flat: 0, axisX: 0, axisY: 0, mm: 0, inch: 0, region: 0,
+  // #1117 rl-e: at-layer links whose whole swept path also changes A. A run that
+  // stops drawing them must fail rather than pass with a hole in the proof.
+  acrossAngle: 0,
 }
 // The minima below are compared and reported in **millimetres** (#1117 rl-c
 // correction, review finding 2). The set carries millimetre and inch cases, so a
@@ -3117,6 +3126,7 @@ function linkModelRadiusAt(entry: Case, along: number, angleDeg: number): number
   if (entry.mesh) {
     const span = entry.meshAlong
     if (span && (along < span.from - 1e-9 || along > span.to + 1e-9)) return null
+    if (entry.meshRadiusAt2) return entry.meshRadiusAt2(along, angleDeg)
     return entry.meshRadiusAt ? entry.meshRadiusAt(angleDeg) : null
   }
   return modelSurfaceAt(entry.profile, along)
@@ -3218,11 +3228,20 @@ interface LinkProofContext {
  *    mask. A link that steps over an excluded strip or crosses the gap between
  *    two bands cuts uncut blank, and the reference's own material there is the
  *    blank -- which is what makes it unsafe, not merely out of region.
+ *
+ * #1117 rl-e extends all four to a link that **also changes A** (the partial-ring
+ * case: a ring's run ends where the layer's boundary crosses, and the next
+ * ring's run starts a few degrees away). The same bounds are swept across the A
+ * change: the removal is `referenceMove`'s continuous sweep of the slope, the
+ * model is read at the interpolated angle and the footprint window covers every
+ * angle from the start to the end of the change, and the region is sampled along
+ * the slope rather than at one angle.
  */
 function proveAtLayerLink(
   context: LinkProofContext,
   move: ToolpathMove,
   fromAngle: number,
+  toAngle: number = fromAngle,
 ): void {
   const { entry, reference, stock, pivot, cutterRadius, budget, alongOf } = context
   const fromAlong = alongOf(move.from)
@@ -3239,63 +3258,96 @@ function proveAtLayerLink(
   if ((entry.units ?? 'mm') === 'mm') counts.mm++
   else counts.inch++
   if (entry.region !== undefined) counts.region++
+  if (toAngle !== fromAngle) counts.acrossAngle++
 
   // Every value this proof compares and reports is normalised to millimetres
   // (#1117 rl-c correction, review finding 2): the set carries millimetre and
   // inch cases, and an inch case's raw project-unit number is 25.4 times smaller.
   const units = entry.units ?? 'mm'
   const mm = (value: number): number => convertLength(value, units, 'mm')
+  // #1117 rl-e: the link may sweep A as well as along, so every message names the
+  // angle it *starts* at and, when it moves, the one it ends at.
+  const angleLabel = toAngle === fromAngle
+    ? `A${fromAngle.toFixed(2)}`
+    : `A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)}`
+  const dAngle = toAngle - fromAngle
   const bound = entry.stepdown + context.linkAllowance
   trackMinimumMm(worstAtLayerLinkMargin, bound - moveSurfaceWorst, units,
-    `${entry.label} A${fromAngle.toFixed(2)} along ${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`)
+    `${entry.label} ${angleLabel} along ${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`)
   assert.ok(moveSurfaceWorst <= bound,
-    `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+    `${entry.label}: a rough at-layer link at ${angleLabel} along `
     + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} removes ${mm(moveSurfaceWorst).toFixed(4)} mm of the `
     + `material the earlier layers left, over the ${mm(bound).toFixed(4)} mm one-stepdown bound `
     + `(cell along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
     + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)})`)
 
-  // The region: the link is one straight cut at one angle, so a mask that can
-  // answer a whole **segment** must say yes. Point sampling at the reference's
-  // along resolution is not enough on its own -- an excluded strip narrower than
-  // one sample falls between two of them, which is exactly the gap a stay-down
-  // link must not step over -- so both views are asserted.
+  // The region: the link is one straight cut, so a mask that can answer a whole
+  // **segment** must say yes. Point sampling at the reference's along resolution
+  // is not enough on its own -- an excluded strip narrower than one sample falls
+  // between two of them, which is exactly the gap a stay-down link must not step
+  // over -- so both views are asserted. #1117 rl-e: a link that also changes A is
+  // a slope in (along, A); the mask is asked along it, one segment per sampled
+  // pair of path points, so a strip anywhere on the slope is still named.
   if (context.regionMask !== undefined) {
-    const segment = context.regionMask.containsSegment?.(
-      context.regionPoint(fromAlong, fromAngle),
-      context.regionPoint(toAlong, fromAngle),
-    )
-    assert.ok(segment !== false,
-      `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
-      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
-      + `operation's region; its whole span must be inside`)
+    if (dAngle === 0) {
+      const segment = context.regionMask.containsSegment?.(
+        context.regionPoint(fromAlong, fromAngle),
+        context.regionPoint(toAlong, fromAngle),
+      )
+      assert.ok(segment !== false,
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
+        + `operation's region; its whole span must be inside`)
+    } else {
+      const steps = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin),
+        Math.ceil(Math.abs(dAngle) / budget.angleDeg))
+      for (let segmentStep = 0; segmentStep < steps; segmentStep++) {
+        const t0 = segmentStep / steps
+        const t1 = (segmentStep + 1) / steps
+        const mid = fromAngle + dAngle * (t0 + t1) / 2
+        const segment = context.regionMask.containsSegment?.(
+          context.regionPoint(fromAlong + span * t0, mid),
+          context.regionPoint(fromAlong + span * t1, mid),
+        )
+        assert.ok(segment !== false,
+          `${entry.label}: a rough at-layer link at ${angleLabel} along `
+          + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
+          + `operation's region at A${mid.toFixed(2)}; its whole swept path must be inside`)
+      }
+    }
   }
 
   const corner = barMaxRadius(stock)
   const modelAllowance = entry.requestedCellSize + budget.alongBin + 1e-6
   const underLimit = corner * budget.angleDeg * Math.PI / 180 + budget.alongBin + 1e-6
-  const samples = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin))
+  const samples = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin),
+    Math.ceil(Math.abs(dAngle) / budget.angleDeg))
   const wrapped = ((fromAngle % 360) + 360) % 360
   const rayCell = Math.floor(wrapped / reference.angleDeg) % reference.angleBins
   for (let s = 0; s <= samples; s++) {
     const fraction = s / samples
     const along = fromAlong + span * fraction
+    // #1117 rl-e: the path is one straight move in (along, A), so the angle at
+    // fraction `f` is the linear interpolation -- the same pose the reference's
+    // own sweep replays.
+    const angle = fromAngle + dAngle * fraction
     const tip = (move.from.z - pivot) + (move.to.z - move.from.z) * fraction
-    const model = linkModelRadiusAt(entry, along, fromAngle)
+    const model = linkModelRadiusAt(entry, along, angle)
     if (model !== null) {
       const slack = tip - model
       trackMinimumMm(worstLinkModelSlack, slack, units,
-        `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`)
+        `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`)
       const slackMm = mm(slack)
       assert.ok(slackMm >= -mm(modelAllowance),
-        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} commands tip `
-        + `${mm(tip).toFixed(4)} mm at along ${along.toFixed(2)}, ${(-slackMm).toFixed(4)} mm below the `
-        + `model ${mm(model).toFixed(4)} mm (allowed ${mm(modelAllowance).toFixed(4)} mm)`)
+        `${entry.label}: a rough at-layer link at ${angleLabel} commands tip `
+        + `${mm(tip).toFixed(4)} mm at along ${along.toFixed(2)} A${angle.toFixed(2)}, `
+        + `${(-slackMm).toFixed(4)} mm below the model ${mm(model).toFixed(4)} mm `
+        + `(allowed ${mm(modelAllowance).toFixed(4)} mm)`)
     }
     if (context.regionMask !== undefined) {
-      assert.ok(context.regionMask.containsPoint(context.regionPoint(along, fromAngle)),
-        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} cuts across untouched `
-        + `stock at along ${along.toFixed(2)}, outside the operation's region`)
+      assert.ok(context.regionMask.containsPoint(context.regionPoint(along, angle)),
+        `${entry.label}: a rough at-layer link at ${angleLabel} cuts across untouched `
+        + `stock at along ${along.toFixed(2)} A${angle.toFixed(2)}, outside the operation's region`)
     }
   }
 
@@ -3316,27 +3368,43 @@ function proveAtLayerLink(
   const reachBins = Math.ceil((bodyAngularReachDeg(context.ball, cutterRadius, tipLow, reference.maxMaterial)
     + reference.angleDeg) / reference.angleDeg)
   const allowedMm = mm(underLimit)
+  // #1117 rl-e: a link that changes A sweeps the body across **every angle from
+  // its start to its end**, not just the reach around its own ray, so the window
+  // is the union of the reach at each angle of the slope. A rock held at the end
+  // angle would still leave the body free to cut at the middle of the change.
+  const angleBinsToCheck: number[] = []
+  if (dAngle === 0) {
+    for (let step = -reachBins; step <= reachBins; step++) {
+      angleBinsToCheck.push(((rayCell + step) % reference.angleBins + reference.angleBins) % reference.angleBins)
+    }
+  } else {
+    const sweptFirst = Math.floor((Math.min(fromAngle, toAngle) - reachBins * reference.angleDeg) / reference.angleDeg)
+    const sweptLast = Math.ceil((Math.max(fromAngle, toAngle) + reachBins * reference.angleDeg) / reference.angleDeg)
+    for (let bin = sweptFirst; bin <= sweptLast; bin++) {
+      angleBinsToCheck.push(((bin % reference.angleBins) + reference.angleBins) % reference.angleBins)
+    }
+  }
   for (let i = first; i <= last; i++) {
     const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
-    for (let step = -reachBins; step <= reachBins; step++) {
-      const k = ((rayCell + step) % reference.angleBins + reference.angleBins) % reference.angleBins
+    for (const k of angleBinsToCheck) {
       const cellAngle = (k + 0.5) * reference.angleDeg
       const solid = linkProtectedSolid(entry, reference, i * reference.angleBins + k, cellAlong, cellAngle)
       if (solid === null) continue
       linkFootprintCells++
-      if (step !== 0) linkFootprintOffRay++
+      if (k !== rayCell) linkFootprintOffRay++
       const gapMm = mm(solid.gap)
       if (gapMm > worstLinkSolidGap) {
         worstLinkSolidGap = gapMm
         worstLinkSolidGapLabel = `${entry.label} along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)}`
       }
       assert.ok(gapMm <= allowedMm,
-        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
         + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} leaves the protected model `
         + `${gapMm.toFixed(4)} mm short at along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)} `
         + `(${solid.cavity ? 'a cavity below the intact shell' : 'the outermost surface'} stands at `
         + `${mm(solid.standing).toFixed(4)} mm; allowed ${allowedMm.toFixed(4)} mm). The body sweeps `
-        + `this cell even though the link's own ray is at A${fromAngle.toFixed(2)}.`)
+        + `this cell somewhere between A${Math.min(fromAngle, toAngle).toFixed(2)} and `
+        + `A${Math.max(fromAngle, toAngle).toFixed(2)}.`)
     }
   }
 
@@ -3351,7 +3419,7 @@ function proveAtLayerLink(
       const drop = retainedRemoval(reference, index, blank)
       linkEndCells++
       assert.ok(drop <= 1e-6,
-        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
         + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} lowered a retained end by `
         + `${drop.toFixed(4)} mm at along ${cellAlong.toFixed(2)} A${((k + 0.5) * reference.angleDeg).toFixed(2)}`)
     }
@@ -3816,7 +3884,12 @@ for (const { entry, program } of CASES) {
       // here, whether it is a ring arc at the layer or a turn at the corner
       // envelope. It is outside the `lowZ` gate below because the corner-envelope
       // turn is above the travel height and would otherwise never be looked at.
-      if (!stage.finish && stage.direction === 'around' && move.kind === 'cut') {
+      // #1117 rl-e: a cut that changes along **and** A is a link, not a turn --
+      // it is one straight commanded slope, and the at-layer link proof below
+      // owns it (the turn rule is about a pose that only rotates, where the blank
+      // under the body is the only thing that can be hit).
+      if (!stage.finish && stage.direction === 'around' && move.kind === 'cut'
+        && alongOf(move.from) === alongOf(move.to)) {
         proveRoughTurn(linkProof, move)
       }
       if (move.kind === 'rapid') {
@@ -3862,8 +3935,11 @@ for (const { entry, program } of CASES) {
         // instead would cut the terrace between the two rings.
         // Only an around stage's constant-angle along feed is a #1093 link; an
         // along-mode pass is a constant-angle cut by construction.
+        // #1117 rl-e: a rough link may also change A -- the partial-ring case, one
+        // straight slope in (along, A). The finish's links stay at one angle.
         const linkMove = stage.direction === 'around'
-          && fromAngle === toAngle && alongOf(move.from) !== alongOf(move.to)
+          && alongOf(move.from) !== alongOf(move.to)
+          && (fromAngle === toAngle || !stage.finish)
         if (linkMove) {
           if (stage.finish) {
             finishLinkChecks++
@@ -3904,7 +3980,7 @@ for (const { entry, program } of CASES) {
             // when every stay-down rough link was the old raised plan's rise and
             // drop; since #1117 the traverse itself is a cut.
             roughLinkChecks++
-            proveAtLayerLink(linkProof, move, fromAngle)
+            proveAtLayerLink(linkProof, move, fromAngle, toAngle)
           }
         }
         if (stage.direction === 'around') {
@@ -4210,16 +4286,17 @@ for (const { entry, program } of CASES) {
   const underLimit = corner * referenceAngleRad + budget.alongBin + 1e-6
   if (entry.mesh) {
     const radiusAt = entry.meshRadiusAt
+    const radiusAt2 = entry.meshRadiusAt2
     const meshAlong = entry.meshAlong
-    assert.ok(radiusAt !== undefined && meshAlong !== undefined,
+    assert.ok((radiusAt !== undefined || radiusAt2 !== undefined) && meshAlong !== undefined,
       `${entry.label}: a mesh case supplies its boundary radius and along span`)
-    if (!radiusAt || !meshAlong) continue
+    if ((!radiusAt && !radiusAt2) || !meshAlong) continue
     for (let i = 0; i < reference.alongBins; i++) {
       const along = reference.alongStart + (i + 0.5) * reference.alongBin
       if (along < meshAlong.from || along > meshAlong.to) continue
       for (let k = 0; k < reference.angleBins; k++) {
         const angle = (k + 0.5) * reference.angleDeg
-        const wanted = radiusAt(angle)
+        const wanted = radiusAt2 ? radiusAt2(along, angle) : (radiusAt as (angleDeg: number) => number)(angle)
         const material = reference.material[i * reference.angleBins + k]
         checkedSurfaceCells++
         meshSurfaceCells++
@@ -4403,7 +4480,8 @@ console.log(`  #1093 rough links: ${rapidLinkChecks} replayed as in-air rapids `
 // turn from swinging through the blank's face. The minima are in millimetres,
 // converted per case before the comparison (rl-c correction, review finding 2).
 console.log(`  #1117 at-layer rough links: ${atLayerLinkCounts.total} proved `
-  + `(${atLayerLinkCounts.round} round / ${atLayerLinkCounts.square} square; `
+  + `(${atLayerLinkCounts.acrossAngle} across an A change; `
+  + `${atLayerLinkCounts.round} round / ${atLayerLinkCounts.square} square; `
   + `${atLayerLinkCounts.ball} ball / ${atLayerLinkCounts.flat} flat; `
   + `axis x ${atLayerLinkCounts.axisX} / y ${atLayerLinkCounts.axisY}; `
   + `${atLayerLinkCounts.mm} mm / ${atLayerLinkCounts.inch} inch; `
@@ -4441,6 +4519,7 @@ assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (
 // here instead of passing with a hole where that dimension's proof should be.
 assert.ok(atLayerLinkCounts.total > 0,
   `the at-layer rough links are proved against the reference (${atLayerLinkCounts.total})`)
+
 assert.ok(atLayerLinkCounts.round > 0, `an at-layer link on a round bar (${atLayerLinkCounts.round})`)
 assert.ok(atLayerLinkCounts.square > 0, `an at-layer link on a square blank (${atLayerLinkCounts.square})`)
 assert.ok(atLayerLinkCounts.ball > 0, `an at-layer link with a ball cutter (${atLayerLinkCounts.ball})`)
