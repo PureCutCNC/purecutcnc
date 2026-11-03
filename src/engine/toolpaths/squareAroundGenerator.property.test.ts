@@ -3036,20 +3036,73 @@ let worstRapidLinkLabel = ''
 const atLayerLinkCounts = {
   total: 0, round: 0, square: 0, ball: 0, flat: 0, axisX: 0, axisY: 0, mm: 0, inch: 0, region: 0,
 }
-let worstAtLayerLinkMargin = Number.POSITIVE_INFINITY
-let worstAtLayerLinkMarginLabel = ''
-let worstLinkModelSlack = Number.POSITIVE_INFINITY
-let worstLinkModelSlackLabel = ''
-let worstLinkMaterialSlack = Number.POSITIVE_INFINITY
-let worstLinkMaterialSlackLabel = ''
+// The minima below are compared and reported in **millimetres** (#1117 rl-c
+// correction, review finding 2). The set carries millimetre and inch cases, so a
+// raw project-unit value would let an inch case win the minimum with a number
+// 25.4 times smaller and then print it as millimetres. Every site records through
+// `trackMinimumMm`, so the comparison and the label cannot use different units.
+interface LinkMinimum {
+  /** The smallest value seen so far, in millimetres. */
+  value: number
+  label: string
+}
+
+/**
+ * Record one case's project-unit value as a running minimum in millimetres.
+ *
+ * #1117 rl-c correction (review finding 2), extracted for the same reason
+ * `checkEngagement` is: the unit block below drives it directly, so a mutation
+ * that drops the conversion (or compares raw values) fails there as well as in
+ * the seeded run. The passing run before this fix reported `0.0279 mm` -- an
+ * inch fixture's raw value -- as the closest model tip.
+ */
+function trackMinimumMm(minimum: LinkMinimum, value: number, units: Units, label: string): void {
+  const millimetres = convertLength(value, units, 'mm')
+  if (millimetres < minimum.value) {
+    minimum.value = millimetres
+    minimum.label = label
+  }
+}
+
+const worstAtLayerLinkMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+const worstLinkModelSlack: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+/** The largest shortfall of the protected solid from the model in a swept footprint, in mm. */
+let worstLinkSolidGap = 0
+let worstLinkSolidGapLabel = ''
+/** Footprint cells the model-protection proof read, and how many were off the link's own ray. */
+let linkFootprintCells = 0
+let linkFootprintOffRay = 0
 let linkEndCells = 0
 // #1117: a low A-changing rough cut turns through material at its own ray; one
 // that cannot show that is only allowed at the blank's corner envelope.
 let lowTurnChecks = 0
 let cornerTurnChecks = 0
-/** The closest a low turn came to its allowed sampler lift, in project units. */
-let worstTurnMargin = Number.POSITIVE_INFINITY
-let worstTurnLabel = ''
+/** The closest a low turn came to its allowed sampler lift, in millimetres. */
+const worstTurnMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+
+// #1117 rl-c correction (review finding 2): a running minimum is compared **and**
+// reported in millimetres, whatever units its case was drawn in. Checked here as
+// well as through the seeded run because the seeded minimum is data-dependent:
+// comparing raw project units lets an inch case win with a number 25.4 times
+// smaller, and reporting the winner unconverted labels that raw number "mm" --
+// the run before this fix printed 0.0279 mm from an inch fixture.
+{
+  const minimum: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+  // 0.1 mm expressed in inches: raw 0.003937, and 0.1 mm when normalised.
+  const inchValue = convertLength(0.1, 'mm', 'inch')
+  trackMinimumMm(minimum, 0.2, 'mm', 'a 0.2 mm case')
+  trackMinimumMm(minimum, inchValue, 'inch', 'a 0.1 mm inch case')
+  assert.equal(minimum.label, 'a 0.1 mm inch case',
+    'the 0.1 mm inch case is the smaller of the two once both are millimetres')
+  assert.ok(Math.abs(minimum.value - 0.1) < 1e-9,
+    `the inch case is reported as ${minimum.value.toFixed(4)} mm, not its raw `
+    + `${inchValue.toFixed(4)} project units`)
+  // The comparison converts too: raw units would keep the inch value (0.003937 <
+  // 0.05) even though 0.05 mm is the smaller length.
+  trackMinimumMm(minimum, 0.05, 'mm', 'a 0.05 mm case')
+  assert.equal(minimum.label, 'a 0.05 mm case',
+    'a 0.05 mm case is smaller than the 0.1 mm inch case, not larger as raw units would say')
+}
 
 /**
  * The independent model radius a rough link must protect, at one along position
@@ -3067,6 +3120,48 @@ function linkModelRadiusAt(entry: Case, along: number, angleDeg: number): number
     return entry.meshRadiusAt ? entry.meshRadiusAt(angleDeg) : null
   }
   return modelSurfaceAt(entry.profile, along)
+}
+
+/**
+ * What the protected solid still stands at in one reference cell, against the
+ * independent model there, or `null` where this case's model has no surface.
+ *
+ * #1117 rl-c correction (review finding 1). The solid is **every** interval the
+ * ray still holds, not its outermost radius: a cut that takes a band out from
+ * under an intact shell leaves `material` at the shell while the model's own
+ * surface is gone, and `reference.occupied` is the only place that interval list
+ * survives. `gap` is how far the solid inside `[0, model]` falls short of the
+ * model -- `0` when the model is intact, positive when it was cut into -- and
+ * `cavity` says which read produced it.
+ */
+interface LinkSolid {
+  readonly gap: number
+  /** The solid standing inside the model radius, in project units. */
+  readonly standing: number
+  readonly cavity: boolean
+}
+
+function linkProtectedSolid(
+  entry: Case,
+  reference: Reference,
+  index: number,
+  along: number,
+  angleDeg: number,
+): LinkSolid | null {
+  const model = linkModelRadiusAt(entry, along, angleDeg)
+  if (model === null) return null
+  const occupied = reference.occupied.get(index)
+  if (occupied === undefined) {
+    const standing = reference.material[index]
+    return { gap: Math.max(0, model - standing), standing, cavity: false }
+  }
+  let standing = 0
+  for (const span of occupied) {
+    // The list is ascending and disjoint, so nothing after the model matters.
+    if (span.contact >= model) break
+    standing += Math.min(span.exit, model) - span.contact
+  }
+  return { gap: Math.max(0, model - standing), standing, cavity: true }
 }
 
 /** Everything the at-layer link and corner-turn proofs read for one case. */
@@ -3104,9 +3199,16 @@ interface LinkProofContext {
  * 2. **The model is protected.** The commanded span is sampled at the reference's
  *    along resolution and its interpolated tip must stay at or above the
  *    independent model surface (`max(model, layer)` is convex in along, so the
- *    commanded chord cannot sag below it), and the reference's material under the
- *    link's own ray must stay at or above the model. A link that dives to a low
- *    model between rings fails the first; one that cuts a gouge fails the second.
+ *    commanded chord cannot sag below it), and the reference's solid across the
+ *    **whole footprint the cutter body sweeps** -- every along bin within one
+ *    cutter radius and every angle bin within the body's angular reach, reading
+ *    `reference.occupied` as well as the outermost material -- must still hold the
+ *    model. A link that dives to a low model between rings fails the first; one
+ *    that cuts a gouge at its own ray **or at a neighbouring ray of a
+ *    non-revolved model, or under an intact shell**, fails the second. The
+ *    single-ray read this replaces passed a link at A30 that removed 0.4348 mm of
+ *    protected model 12.25 deg away (the review measured it at A42.125; this
+ *    reference's nearest cell centre is A42.25).
  * 3. **The retained ends are protected.** Every cell the cutter body can reach
  *    inside the link's axial footprint and outside the cut band keeps the blank.
  *    The global retained-end assertion already says so; this attributes it to the
@@ -3138,17 +3240,18 @@ function proveAtLayerLink(
   else counts.inch++
   if (entry.region !== undefined) counts.region++
 
+  // Every value this proof compares and reports is normalised to millimetres
+  // (#1117 rl-c correction, review finding 2): the set carries millimetre and
+  // inch cases, and an inch case's raw project-unit number is 25.4 times smaller.
+  const units = entry.units ?? 'mm'
+  const mm = (value: number): number => convertLength(value, units, 'mm')
   const bound = entry.stepdown + context.linkAllowance
-  const margin = bound - moveSurfaceWorst
-  if (margin < worstAtLayerLinkMargin) {
-    worstAtLayerLinkMargin = margin
-    worstAtLayerLinkMarginLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
-      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`
-  }
+  trackMinimumMm(worstAtLayerLinkMargin, bound - moveSurfaceWorst, units,
+    `${entry.label} A${fromAngle.toFixed(2)} along ${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`)
   assert.ok(moveSurfaceWorst <= bound,
     `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
-    + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} removes ${moveSurfaceWorst.toFixed(4)} mm of the `
-    + `material the earlier layers left, over the ${bound.toFixed(4)} mm one-stepdown bound `
+    + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} removes ${mm(moveSurfaceWorst).toFixed(4)} mm of the `
+    + `material the earlier layers left, over the ${mm(bound).toFixed(4)} mm one-stepdown bound `
     + `(cell along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
     + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)})`)
 
@@ -3181,48 +3284,63 @@ function proveAtLayerLink(
     const model = linkModelRadiusAt(entry, along, fromAngle)
     if (model !== null) {
       const slack = tip - model
-      if (slack < worstLinkModelSlack) {
-        worstLinkModelSlack = slack
-        worstLinkModelSlackLabel = `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`
-      }
-      assert.ok(slack >= -modelAllowance,
+      trackMinimumMm(worstLinkModelSlack, slack, units,
+        `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`)
+      const slackMm = mm(slack)
+      assert.ok(slackMm >= -mm(modelAllowance),
         `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} commands tip `
-        + `${tip.toFixed(4)} at along ${along.toFixed(2)}, ${(-slack).toFixed(4)} mm below the model `
-        + `${model.toFixed(4)} (allowed ${modelAllowance.toFixed(4)})`)
+        + `${mm(tip).toFixed(4)} mm at along ${along.toFixed(2)}, ${(-slackMm).toFixed(4)} mm below the `
+        + `model ${mm(model).toFixed(4)} mm (allowed ${mm(modelAllowance).toFixed(4)} mm)`)
     }
     if (context.regionMask !== undefined) {
       assert.ok(context.regionMask.containsPoint(context.regionPoint(along, fromAngle)),
         `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} cuts across untouched `
         + `stock at along ${along.toFixed(2)}, outside the operation's region`)
     }
-    // The reference's own material under the link's ray: no cut may leave it
-    // below the model, because nothing later in this operation repairs a gouge.
-    const i = Math.floor((along - reference.alongStart) / reference.alongBin)
-    if (i < 0 || i >= reference.alongBins) continue
-    const material = reference.material[i * reference.angleBins + rayCell]
-    const materialModel = linkModelRadiusAt(
-      entry,
-      reference.alongStart + (i + 0.5) * reference.alongBin,
-      (rayCell + 0.5) * reference.angleDeg,
-    )
-    if (materialModel === null) continue
-    const materialSlack = material - materialModel
-    if (materialSlack < worstLinkMaterialSlack) {
-      worstLinkMaterialSlack = materialSlack
-      worstLinkMaterialSlackLabel = `${entry.label} along ${along.toFixed(2)} A${fromAngle.toFixed(2)}`
-    }
-    assert.ok(materialSlack >= -underLimit,
-      `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} leaves `
-      + `${(-materialSlack).toFixed(4)} mm less than the model under its own ray at along `
-      + `${along.toFixed(2)} (material ${material.toFixed(4)}, model ${materialModel.toFixed(4)}; `
-      + `allowed ${underLimit.toFixed(4)})`)
   }
 
-  // The retained ends: this link's own body footprint, outside the cut band.
+  // The protected model across the **whole footprint the cutter body sweeps**
+  // (#1117 rl-c correction, review finding 1). The material under the link's own
+  // ray is not enough: the body reaches neighbouring rays, and a non-revolved
+  // model's radius differs at each of them, so a link that meets the model at its
+  // own angle can still cut 0.4348 mm out of the model 12.25 deg away. Reading
+  // `reference.occupied` as well means a band removed from under an intact shell
+  // counts too -- the scalar material read cannot see it. The window is the same
+  // one `referenceMove` sweeps with: every along bin within one cutter radius and
+  // every angle bin within the body's angular reach at the link's lowest tip.
   const low = Math.min(fromAlong, toAlong) - cutterRadius
   const high = Math.max(fromAlong, toAlong) + cutterRadius
   const first = Math.max(0, Math.floor((low - reference.alongStart) / reference.alongBin))
   const last = Math.min(reference.alongBins - 1, Math.floor((high - reference.alongStart) / reference.alongBin))
+  const tipLow = Math.min(move.from.z, move.to.z) - pivot
+  const reachBins = Math.ceil((bodyAngularReachDeg(context.ball, cutterRadius, tipLow, reference.maxMaterial)
+    + reference.angleDeg) / reference.angleDeg)
+  const allowedMm = mm(underLimit)
+  for (let i = first; i <= last; i++) {
+    const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
+    for (let step = -reachBins; step <= reachBins; step++) {
+      const k = ((rayCell + step) % reference.angleBins + reference.angleBins) % reference.angleBins
+      const cellAngle = (k + 0.5) * reference.angleDeg
+      const solid = linkProtectedSolid(entry, reference, i * reference.angleBins + k, cellAlong, cellAngle)
+      if (solid === null) continue
+      linkFootprintCells++
+      if (step !== 0) linkFootprintOffRay++
+      const gapMm = mm(solid.gap)
+      if (gapMm > worstLinkSolidGap) {
+        worstLinkSolidGap = gapMm
+        worstLinkSolidGapLabel = `${entry.label} along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)}`
+      }
+      assert.ok(gapMm <= allowedMm,
+        `${entry.label}: a rough at-layer link at A${fromAngle.toFixed(2)} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} leaves the protected model `
+        + `${gapMm.toFixed(4)} mm short at along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)} `
+        + `(${solid.cavity ? 'a cavity below the intact shell' : 'the outermost surface'} stands at `
+        + `${mm(solid.standing).toFixed(4)} mm; allowed ${allowedMm.toFixed(4)} mm). The body sweeps `
+        + `this cell even though the link's own ray is at A${fromAngle.toFixed(2)}.`)
+    }
+  }
+
+  // The retained ends: this link's own body footprint, outside the cut band.
   for (let i = first; i <= last; i++) {
     const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
     if (cellAlong < context.alongLimits.min || cellAlong > context.alongLimits.max) continue
@@ -3276,16 +3394,15 @@ function proveRoughTurn(context: LinkProofContext, move: ToolpathMove): void {
   // The sampler's documented conservative cell lift is what may put a ring above
   // the blank's own touch radius; anything more is a turn through air.
   const allowance = entry.requestedCellSize + context.budget.alongBin + 1e-6
+  // Reported in millimetres (#1117 rl-c correction, review finding 2), so an
+  // inch case's raw value cannot win the minimum 25.4 times smaller.
+  const units = entry.units ?? 'mm'
   const delta = move.to.a - move.from.a
   const steps = Math.max(2, Math.ceil(Math.abs(delta) / 2))
   for (let s = 0; s <= steps; s++) {
     const angle = move.from.a + delta * s / steps
     const touch = rawStockSurface(stock, angle, cutterRadius, context.ball)
-    const margin = allowance - (height - touch)
-    if (margin < worstTurnMargin) {
-      worstTurnMargin = margin
-      worstTurnLabel = `${label} at A${angle.toFixed(2)}`
-    }
+    trackMinimumMm(worstTurnMargin, allowance - (height - touch), units, `${label} at A${angle.toFixed(2)}`)
     const slack = touch - height
     assert.ok(slack >= -allowance,
       `${entry.label}: a low A-changing rough cut at A${move.from.a.toFixed(2)}->`
@@ -4283,20 +4400,22 @@ console.log(`  #1093 rough links: ${rapidLinkChecks} replayed as in-air rapids `
   + `worst body clearance ${worstRapidLinkMargin.toFixed(4)} mm (${worstRapidLinkLabel || 'none'})`)
 // #1117 slice C: the at-layer cutting links proved against the reference, by the
 // dimensions the slice must cover, and the corner-turn rule that keeps a low
-// turn from swinging through the blank's face.
+// turn from swinging through the blank's face. The minima are in millimetres,
+// converted per case before the comparison (rl-c correction, review finding 2).
 console.log(`  #1117 at-layer rough links: ${atLayerLinkCounts.total} proved `
   + `(${atLayerLinkCounts.round} round / ${atLayerLinkCounts.square} square; `
   + `${atLayerLinkCounts.ball} ball / ${atLayerLinkCounts.flat} flat; `
   + `axis x ${atLayerLinkCounts.axisX} / y ${atLayerLinkCounts.axisY}; `
   + `${atLayerLinkCounts.mm} mm / ${atLayerLinkCounts.inch} inch; `
   + `${atLayerLinkCounts.region} in a region), `
-  + `closest to the one-stepdown bound at ${worstAtLayerLinkMargin.toFixed(4)} mm margin `
-  + `(${worstAtLayerLinkMarginLabel || 'none'}); `
-  + `closest model tip ${worstLinkModelSlack.toFixed(4)} mm (${worstLinkModelSlackLabel || 'none'}); `
-  + `closest material-under-the-ray ${worstLinkMaterialSlack.toFixed(4)} mm `
-  + `(${worstLinkMaterialSlackLabel || 'none'}); ${linkEndCells} retained-end cells kept`)
+  + `closest to the one-stepdown bound at ${worstAtLayerLinkMargin.value.toFixed(4)} mm margin `
+  + `(${worstAtLayerLinkMargin.label || 'none'}); `
+  + `closest model tip ${worstLinkModelSlack.value.toFixed(4)} mm (${worstLinkModelSlack.label || 'none'}); `
+  + `largest protected-solid shortfall ${worstLinkSolidGap.toFixed(4)} mm `
+  + `(${worstLinkSolidGapLabel || 'none'}); ${linkFootprintCells} footprint cells read `
+  + `(${linkFootprintOffRay} off the link's own ray) and ${linkEndCells} retained-end cells kept`)
 console.log(`  #1117 corner turns: ${lowTurnChecks} low cutting turns (closest to the allowed `
-  + `sampler lift at ${worstTurnMargin.toFixed(4)} mm margin, ${worstTurnLabel || 'none'}), `
+  + `sampler lift at ${worstTurnMargin.value.toFixed(4)} mm margin, ${worstTurnMargin.label || 'none'}), `
   + `${cornerTurnChecks} at the corner envelope`)
 console.log(`  #1093 finish links: ${finishLinkChecks} replayed `
   + `(${finishAfterRoughLinkChecks} after a rough), worst removal ${worstFinishLinkBite.toFixed(4)} mm `
@@ -4353,5 +4472,171 @@ assert.ok(defaultBoth > 0, `a rough+finish default program (${defaultBoth})`)
 assert.ok(defaultMixed > 0, `an along-rough + around-finish default program (${defaultMixed})`)
 assert.ok(defaultRetained > 0, `a default program with retained ends (${defaultRetained})`)
 assert.ok(defaultFree > 0, `a default program with free ends (${defaultFree})`)
+
+// Snapshot the seeded run's footprint coverage before the synthetic replays
+// below: they call `proveAtLayerLink` too, so the coverage asserts at the end must
+// judge the seeded run only.
+const seededFootprint = {
+  cells: linkFootprintCells,
+  offRay: linkFootprintOffRay,
+  links: atLayerLinkCounts.total,
+}
+
+// ── #1117 rl-c correction: the model proof sweeps the body's footprint ──────
+//
+// Review finding 1: the at-layer link's model protection read the material only
+// under the link's **own ray**, so an in-memory replay at A30 passed while
+// removing 0.4348 mm of protected model at A42.125 -- over the 0.0718 mm reference
+// allowance -- and a band taken from under an intact shell was invisible to the
+// scalar material read entirely. These two synthetic replays are that repro,
+// reduced to one link and placed on this reference's 0.5 deg cell centres (so the
+// gouged cell is A42.25). They run **after** the seeded coverage assertions on
+// purpose: they replay through the same `referenceMove`, which updates the
+// worst-case state the diagnostics above report, and a synthetic call must not
+// pad a coverage count.
+{
+  const angleBins = 720
+  const angleDeg = 0.5
+  const alongBin = 0.0282
+  const alongBins = Math.ceil(10 / alongBin)
+  const linkAngle = 30
+  const cutterRadius = 2
+  const tip = 3
+  // The reference allowance the proof allows an intact model, exactly the
+  // review's 0.0718 mm on a 5 mm round bar: corner * angleDeg + alongBin.
+  const allowanceMm = 5 * angleDeg * Math.PI / 180 + alongBin + 1e-6
+  assert.ok(Math.abs(allowanceMm - 0.0718) < 5e-5,
+    `the repro's reference allowance is 0.0718 mm (${allowanceMm.toFixed(4)})`)
+  // A flat at A30 with its tip on a 3 mm model touches a ray 12.25 deg away at
+  // 3 / cos(12.25 deg); the model there stands 0.4348 mm higher.
+  const spikeAngle = 42.25
+  const lost = 0.4348
+  const contact = tip / Math.cos((spikeAngle - linkAngle) * Math.PI / 180)
+  const spikeRadius = contact + lost
+  const modelAt = (angleDegrees: number): number => (angleDegrees >= 42 ? spikeRadius : tip)
+  // Angle bin 84 -- the A42.25 cell -- and bin 60, the link's own ray at A30.25.
+  const spikeBin = 84
+  const rayBin = 60
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+
+  const entryFor = (label: string, bar: BarStock): Case => ({
+    label,
+    stock: bar,
+    profile: [{ along: 0, radius: tip }, { along: 10, radius: tip }],
+    mesh: revolved(bar, [{ along: 0, radius: tip }, { along: 10, radius: tip }], 8),
+    meshRadiusAt: modelAt,
+    meshAlong: { from: -2, to: 12 },
+    type: 'flat_endmill',
+    diameter: cutterRadius * 2,
+    stepdown: 1,
+    stepover: 2,
+    roughSpacing: 1,
+    finishSpacing: 1,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: true,
+    alongStart: 0,
+    alongEnd: 10,
+    defaultParams: false,
+    compact: true,
+  })
+  /**
+   * The state an earlier layer left: the model exactly, except that a spike cell
+   * may keep a **shell** of `shell` mm standing above it (probe 2), which is what
+   * makes the removed band a cavity rather than a surface loss.
+   */
+  const referenceFor = (bar: BarStock, shell?: number): Reference => {
+    const reference = createReference(bar, 0, alongBins * alongBin, alongBin, angleBins)
+    for (let i = 0; i < reference.alongBins; i++) {
+      for (let k = 0; k < reference.angleBins; k++) {
+        const standing = shell !== undefined && k === spikeBin ? shell : modelAt((k + 0.5) * angleDeg)
+        reference.material[i * reference.angleBins + k] = standing
+      }
+    }
+    return reference
+  }
+  const proofFor = (caseEntry: Case, reference: Reference, bar: BarStock): LinkProofContext => ({
+    entry: caseEntry,
+    reference,
+    stock: bar,
+    pivot: barPivotZ(bar),
+    cutterRadius,
+    ball: false,
+    alongOf,
+    alongLimits: alongBounds(bar),
+    regionPoint: (along, angle): { x: number; y: number } => ({ x: along, y: angle }),
+    budget: { alongStart: 0, alongBins, alongBin, angleBins, angleDeg, cells: alongBins * angleBins },
+    linkAllowance: alongBin,
+    travelTip: barMaxRadius(bar) + 1,
+  })
+  const link = (bar: BarStock): ToolpathMove => ({
+    kind: 'cut',
+    from: { x: 0, y: 0, z: barPivotZ(bar) + tip },
+    to: { x: 10, y: 0, z: barPivotZ(bar) + tip },
+  })
+
+  // Probe 1: the neighbouring ray. The 5 mm blank lets the link take the model
+  // at A42.25 down from the model to the cutter's own contact.
+  {
+    const bar = roundStock(10, 30, 'x', { x: 0, y: 0 })
+    const entry = entryFor('#1117 rl-c repro: a link at A30 gouges the ray at A42.25', bar)
+    const reference = referenceFor(bar)
+    const move = link(bar)
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, linkAngle, linkAngle)
+    assert.equal(reference.material[rayBin], tip,
+      'the repro link leaves its own ray at the model, as the old single-ray read saw')
+    const neighbour = linkProtectedSolid(entry, reference, spikeBin, alongBin / 2, spikeAngle)
+    assert.ok(neighbour !== null && !neighbour.cavity
+      && Math.abs(neighbour.gap - lost) < 1e-9,
+    `the repro link removes ${neighbour?.gap.toFixed(4)} mm of protected model at A42.25 `
+      + `(expected ${lost.toFixed(4)}, allowance ${allowanceMm.toFixed(4)})`)
+    assert.throws(
+      () => proveAtLayerLink(proofFor(entry, reference, bar), move, linkAngle),
+      /protected model 0\.4348 mm short at along [\d.]+ A42\.25 \(the outermost surface[^)]*allowed 0\.0718 mm\)/,
+      'the footprint proof rejects a gouge at a neighbouring ray its own ray cannot see',
+    )
+    console.log(`  #1117 rl-c repro 1: an A${linkAngle} link leaves its own ray intact and removes `
+      + `${neighbour.gap.toFixed(4)} mm of protected model at A${spikeAngle} `
+      + `(allowance ${allowanceMm.toFixed(4)} mm); the footprint proof rejects it`)
+  }
+
+  // Probe 2: a cavity below an intact shell. A 15 mm blank leaves the flat's
+  // cylinder (which ends at 9.42 mm on this ray) inside the standing shell, so the
+  // outermost material still reads above the model at 10 mm while the band under
+  // the shell is gone. Only `reference.occupied` sees that.
+  {
+    const bar = roundStock(30, 30, 'x', { x: 0, y: 0 })
+    const entry = entryFor('#1117 rl-c repro: an intact shell over a cavity', bar)
+    const reference = referenceFor(bar, 10)
+    const move = link(bar)
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, linkAngle, linkAngle)
+    const shell = linkProtectedSolid(entry, reference, spikeBin, alongBin / 2, spikeAngle)
+    assert.equal(reference.material[spikeBin], 10,
+      'the repro leaves the outermost surface above the model, so a scalar read is clean')
+    assert.ok(shell !== null && shell.cavity && Math.abs(shell.gap - lost) < 1e-9,
+      `the repro leaves a ${shell?.gap.toFixed(4)} mm cavity under the shell (expected ${lost.toFixed(4)})`)
+    assert.throws(
+      () => proveAtLayerLink(proofFor(entry, reference, bar), move, linkAngle),
+      /protected model 0\.4348 mm short at along [\d.]+ A42\.25 \(a cavity below the intact shell/,
+      'the footprint proof reads reference.occupied, not only the outermost material',
+    )
+    console.log(`  #1117 rl-c repro 2: the outermost surface stands at 10.0000 mm over a `
+      + `${shell.gap.toFixed(4)} mm cavity below the model; the footprint proof rejects it`)
+  }
+}
+
+// #1117 rl-c correction (review finding 1): the model proof must sweep the body's
+// footprint, not one ray per link. More cells than links is not enough on its own
+// (a link's own ray can visit several along bins), so require cells off that ray.
+// Judged on the snapshot above, so the synthetic replays cannot pad it; kept after
+// them so a footprint that collapses back to the link's own ray fails on the
+// synthetic gouge first, where the failure is readable.
+assert.ok(seededFootprint.cells > seededFootprint.links,
+  `the link model proof sweeps the cutter body's footprint (${seededFootprint.cells} cells)`)
+assert.ok(seededFootprint.offRay > 0,
+  `the link model proof reads neighbouring rays (${seededFootprint.offRay} cells off the link's own ray)`)
 
 console.log(`engine/toolpaths/squareAroundGenerator.property.test.ts: all assertions passed in ${((Date.now() - startedAt) / 1000).toFixed(1)} s (including generation)`)
