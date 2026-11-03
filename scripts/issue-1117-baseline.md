@@ -50,11 +50,33 @@ the later slices. The other two fixtures already carry `'around'`.
 
 ## Baseline
 
-| fixture / op | moves | plunges | rapids | descending feeds (vertical) | air feeds | air rapids | air moves | air distance (in) | air minutes | cut minutes | generation ms (runs 1–3) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| busto-round `op0025` | 24997 | 121 | 525 | 9872 (2543) | 5119 | 525 | 5644 | 745.05 | 28.66 | 82.23 | 32823 / 28428 / 27850 |
-| busto-rect `op0021` | 34339 | 118 | 749 | 13354 (3738) | 8494 | 749 | 9243 | 1804.80 | 69.42 | 110.36 | 35833 / 35737 / 35953 |
-| square-to-round `op0028` (forced around) | 9312 | 16 | 224 | 3888 (768) | 2245 | 224 | 2469 | 751.95 | 25.07 | 26.03 | 47 / 47 / 46 |
+| fixture / op | moves | plunges | rapids | descending feeds (vertical) | air feeds | air rapids | air moves | air distance (in) | air minutes | cut minutes | generation ms (runs 1–3) | candidate plunges | candidate rapids | candidate descending feeds (vertical) | candidate air minutes | candidate generation ms (runs 1–3) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| busto-round `op0025` | 24997 | 121 | 525 | 9872 (2543) | 5119 | 525 | 5644 | 745.05 | 28.66 | 82.23 | 32823 / 28428 / 27850 | 121 | 479 | 9828 (2497) | 28.38 | 28184 / 28044 / 27914 |
+| busto-rect `op0021` | 34339 | 118 | 749 | 13354 (3738) | 8494 | 749 | 9243 | 1804.80 | 69.42 | 110.36 | 35833 / 35737 / 35953 | 118 | 593 | 13198 (3582) | 68.23 | 36271 / 36221 / 36435 |
+| square-to-round `op0028` (forced around) | 9312 | 16 | 224 | 3888 (768) | 2245 | 224 | 2469 | 751.95 | 25.07 | 26.03 | 47 / 47 / 46 | 16 | 36 | 3700 (580) | 23.67 | 46 / 45 / 49 |
 
 Warm-up runs (not in the table) produced identical counts; generation was
 29039 ms (busto-round), 35905 ms (busto-rect), 57 ms (square-to-round).
+
+## Candidate (#1117)
+
+The candidate columns are the same three around rough operations measured with
+the same harness on `feat/issue-1117-1117-rl-d-dsh` (all four #1117 slices), on
+the same machine and in the same session. The base branch
+(`feat/issue-1117-rough-ring-links`) was re-measured first with that harness and
+reproduced the recorded baseline exactly -- the same moves, plunges, rapids,
+descending feeds and air counts above -- with generation at
+28137–30684 ms (busto-round), 35734–37138 ms (busto-rect) and 47–49 ms
+(square-to-round). That re-measured spread is the variation the candidate
+generation time is judged against.
+
+The candidate replaces **46 / 156 / 188** raised ring-to-ring links (round,
+rect, square) with at-layer cutting feeds; those are the only link runs that
+differ, and every other link run, every ring cut, and every other operation on
+these fixtures (both finishes, the along rough) is byte-identical in moves and
+in the posted program. Full candidate counts not carried in the table: air
+feeds 5074 / 8338 / 2057, air rapids 479 / 593 / 36, air moves
+5553 / 8931 / 2093, air distance 737.87 / 1773.99 / 709.96 in, cut minutes
+82.10 / 110.28 / 26.02, moves 24911 / 34027 / 8936, warm-up generation
+28835 ms (busto-round), 36400 ms (busto-rect), 59 ms (square-to-round).
