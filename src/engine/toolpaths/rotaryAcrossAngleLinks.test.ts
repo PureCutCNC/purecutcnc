@@ -53,7 +53,11 @@
  *    cut is emitted at all;
  *  - drop the at-layer one-band check from the A-changing path (`leftover[i] -
  *    height > allowance`) -> block 3: the wide slanted band emits 12 diagonal
- *    cuts instead of the 4 that clear the material the earlier layers left.
+ *    cuts instead of the 4 that clear the material the earlier layers left;
+ *  - drop the whole-path region test (`rotaryRegionSlopeContains`) from the
+ *    A-changing path, keeping only the waypoint point checks -> block 4: the
+ *    masked fixture emits the 14.5 -> 15.5 cut across the excluded slit at
+ *    X14.87 again (4 A-changing links instead of 3).
  */
 
 import assert from 'node:assert/strict'
@@ -293,6 +297,76 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
     `the narrow band keeps the raised transition (${diag(refused.moves).length} diagonals)`)
   console.log(`  rl-e region: wide band ${diag(accepted.moves).length} diagonals, `
     + `narrow band ${diag(refused.moves).length}`)
+}
+
+// ---------------------------------------------------------------------------
+// 4. #1117 rl-e correction: an A-changing link never crosses an excluded strip.
+//
+//    The same slanted-band fixture, now with a 0.02 mm wide **excluded** slit at
+//    X14.87. The dense row's waypoints either side of the slit are all inside the
+//    mask, so a point-by-point check accepts the 14.5 -> 15.5 transition and the
+//    commanded cut crosses the slit. The link's path is one straight segment in
+//    (along, A) -- across is affine in A -- so the mask's own boundary test must
+//    decide that segment, not its waypoints.
+// ---------------------------------------------------------------------------
+{
+  const stock = roundStock(12, 30, 'x')
+  const centre = barCentre(stock)
+  const tool: NormalizedTool = { ...BALL, id: 'ball-3', diameter: 3, radius: 1.5 }
+  const mesh = surface(stock, () => 4, 3, 27, 40, 192)
+  const params = {
+    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
+    safeRadius: 25, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
+  }
+  const feature = (id: string, points: Array<{ x: number; y: number }>, mode?: 'include' | 'exclude'): SketchFeature => ({
+    id, name: id, kind: 'polygon', operation: 'region', authoringFace: 'around', folderId: null,
+    sketch: {
+      profile: polygonProfile(points) as SketchProfile,
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
+    },
+    z_top: 0, z_bottom: 0, visible: true, locked: false,
+    ...(mode === undefined ? {} : { regionMaskMode: mode }),
+  } as SketchFeature)
+  // The slanted band of block 3, and a slit 0.02 mm wide across the whole sheet,
+  // narrower than any sample of the dense row that crosses it.
+  const band = [
+    { x: 3, y: centre - 2 }, { x: 27, y: centre + 2 },
+    { x: 27, y: centre + 3 }, { x: 3, y: centre - 1 },
+  ]
+  const slit = [
+    { x: 14.87, y: centre - 6 }, { x: 14.89, y: centre - 6 },
+    { x: 14.89, y: centre + 6 }, { x: 14.87, y: centre + 6 },
+  ]
+  const plain = buildRegionMask([feature('slant', band)])
+  const sliced = buildRegionMask([feature('slant', band), feature('slit', slit, 'exclude')])
+  assert.ok(plain && sliced, 'both masks build')
+  const segment = sliced!.containsSegment
+  assert.ok(segment, 'the slit mask exposes its whole-segment test')
+  /** One point of the commanded path on the Around sheet, as `rotaryRegionContains` maps it. */
+  const sheet = (along: number, angle: number): { x: number; y: number } =>
+    ({ x: along, y: centre + angle * Math.PI * stock.thickness / 360 })
+  const unsliced = generateRotaryRough('rl-e-slit-control', mesh, stock, tool,
+    { ...params, region: plain! }, {})
+  const refused = generateRotaryRough('rl-e-slit', mesh, stock, tool,
+    { ...params, region: sliced! }, {})
+  assert.deepEqual(unsliced.warnings, [], 'the unsliced control warns about nothing')
+  assert.deepEqual(refused.warnings, [], 'the slit rough warns about nothing')
+  // The control proves the slit is what removes the transition: without it the
+  // same fixture emits 4 A-changing links, with it 3.
+  assert.equal(diag(unsliced.moves).length, 4,
+    `the unsliced control links 4 A-changing transitions (${diag(unsliced.moves).length})`)
+  assert.equal(diag(refused.moves).length, 3,
+    `the slit refuses the one transition that crosses it (${diag(refused.moves).length} of 4)`)
+  // Pinned on the emitted motion: every A-changing cut's **whole** commanded
+  // segment is inside the mask, so the slit is never stepped over. A waypoint
+  // check alone passes this fixture with the crossing link emitted.
+  for (const move of diag(refused.moves)) {
+    assert.ok(segment!(sheet(move.from.x, move.from.a!), sheet(move.to.x, move.to.a!)),
+      `an A-changing link crosses the excluded slit (X${move.from.x.toFixed(3)} -> `
+      + `${move.to.x.toFixed(3)}, A${move.from.a!.toFixed(3)} -> ${move.to.a!.toFixed(3)})`)
+  }
+  console.log(`  rl-e slit: ${diag(unsliced.moves).length} A-changing links unsliced, `
+    + `${diag(refused.moves).length} with the 0.02 mm excluded slit`)
 }
 
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')

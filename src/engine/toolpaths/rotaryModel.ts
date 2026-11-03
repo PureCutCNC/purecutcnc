@@ -433,6 +433,38 @@ export function rotaryRegionSegmentContains(
 }
 
 /**
+ * Is an A-changing link's **whole swept path** inside the operation's region
+ * (#1117 rl-e correction, review finding 1)?
+ *
+ * The link is one commanded straight move in `(along, A)`. The sheet's across
+ * coordinate is affine in A -- `centre + a * pi * thickness / 360` -- so that
+ * move is one straight segment on the sheet: the path's angle at every along
+ * position lies exactly on the segment from `(fromAlong, across(fromAngle))` to
+ * `(toAlong, across(toAngle))`. The mask's boundary test therefore decides the
+ * whole path at once, and can see an excluded strip narrower than the sample
+ * spacing that a point-by-point check of the emitted waypoints steps over.
+ *
+ * `null` means the mask has no boundary test, and the caller keeps its
+ * per-sample point check.
+ */
+export function rotaryRegionSlopeContains(
+  mask: RotaryRegionMask,
+  stock: BarStock,
+  fromAlong: number,
+  fromAngle: number,
+  toAlong: number,
+  toAngle: number,
+): boolean | null {
+  if (mask.containsSegment === undefined) return null
+  const acrossAt = (angleDeg: number): number => barCentre(stock) + angleDeg * Math.PI * stock.thickness / 360
+  const fromAcross = acrossAt(fromAngle)
+  const toAcross = acrossAt(toAngle)
+  return stock.axis === 'x'
+    ? mask.containsSegment({ x: fromAlong, y: fromAcross }, { x: toAlong, y: toAcross })
+    : mask.containsSegment({ x: fromAcross, y: fromAlong }, { x: toAcross, y: toAlong })
+}
+
+/**
  * Emit one pass's runs, and say where the pass left the tool. A run that starts
  * where the previous pass finished links to it -- a rise to `travelZ`, a turn,
  * and a drop, each its own `cut` move so a merged move can never lose one of the
@@ -2661,7 +2693,11 @@ function roughFromTargets(
    *   rule refuses it too.
    * - **The region.** The path is a slope in `(along, A)`, not one angle's
    *   segment, so every dense path sample must be inside the mask (the rule
-   *   `followLink` uses where the mask has no boundary test).
+   *   `followLink` uses where the mask has no boundary test). A mask that can
+   *   prove a whole segment (`containsSegment`) decides the **entire path**: the
+   *   slope in `(along, A)` is one straight segment on the sheet, because across
+   *   is affine in A, so `rotaryRegionSlopeContains` sees an excluded strip
+   *   narrower than the sample spacing that the waypoint checks step over.
    * - **A square blank** keeps its gate rule at **both** ends: each end must be a
    *   corner-arc boundary of the touch gate, because an A-changing link between
    *   corner arcs joins two gate boundaries as well.
@@ -2705,6 +2741,12 @@ function roughFromTargets(
     // are part of it.
     if (region !== null && insideRegion !== null) {
       if (!insideRegion(fromAlong, fromA) || !insideRegion(toAlong, toA)) return null
+      // #1117 rl-e correction (review finding 1): the whole swept path is one
+      // segment on the sheet. Checking only the emitted waypoints let a link cut
+      // across an excluded slit that fell between two samples; the mask's own
+      // boundary test decides the path, exactly as it does for the equal-angle
+      // link. `null` (a point-only mask) keeps the per-waypoint check below.
+      if (rotaryRegionSlopeContains(region, stock, fromAlong, fromA, toAlong, toA) === false) return null
     }
     // A square blank's link joins two corner arcs at the touch gate's boundary,
     // so each end must be one: `outward` is the previous ring's traversal

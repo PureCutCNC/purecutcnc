@@ -367,6 +367,54 @@ function box(
 }
 
 /**
+ * A closed surface whose radius varies **along the bar and with the angle**
+ * (#1117 rl-e): a cylindrical body with one smooth lobe. This is the case that
+ * makes a ring *partial* and its run boundary drift with the along position, so
+ * two neighbouring rings' runs end a few degrees apart and the link that joins
+ * them changes A. `radiusAt(along, aDeg)` is written in the Around frame's own A
+ * -- A0 is the mesh's +up direction, which is the angle the around rings start
+ * and end on -- so the mesh and the case's `meshRadiusAt2` boundary are the same
+ * function and the independent model read is not a second convention.
+ */
+function lobed(
+  stock: BarStock,
+  radiusAt: (along: number, aDeg: number) => number,
+  alongFrom: number,
+  alongTo: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  for (let step = 0; step <= steps; step++) {
+    const along = alongFrom + (alongTo - alongFrom) * step / steps
+    for (let j = 0; j < segments; j++) {
+      const aDeg = 360 * j / segments
+      // A0 is the mesh's +up direction, so the mesh angle is A + 90 degrees.
+      const meshAngle = (aDeg + 90) * Math.PI / 180
+      const radius = radiusAt(along, aDeg)
+      const across = centre + radius * Math.cos(meshAngle)
+      const up = pivot + radius * Math.sin(meshAngle)
+      if (stock.axis === 'x') positions.push(along, across, up)
+      else positions.push(across, along, up)
+    }
+  }
+  for (let step = 0; step < steps; step++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = step * segments + j
+      const b = step * segments + j2
+      const c = (step + 1) * segments + j2
+      const d = (step + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
  * The finished model's radius at an along position between two profile rings,
  * or `null` in a vertical shoulder (where a revolved "radius at this along"
  * does not exist) or outside the model.
@@ -2207,6 +2255,67 @@ function drawLinkCase(spec: LinkCaseSpec): Case {
 }
 
 /**
+ * The case the A-changing link exists for (#1117 rl-e correction, review finding
+ * 2): a cylinder with one smooth lobe whose height grows along the bar. The angle
+ * where the lobe crosses each layer -- the end of a partial ring's run -- moves
+ * with the along position, so two neighbouring rings' runs end and start a few
+ * degrees apart and the link joining them changes A. Without a case of this shape
+ * the link proof's swept-footprint branch (the union of body windows across the A
+ * change) is never entered, and the suite passes with zero A-changing links.
+ *
+ * The body is deliberately smaller than the lobe's crest (`base + lobe` on a
+ * Ø`thickness` bar) so the lobe is machined, and the bar's own ends are the
+ * operation's ends, so no retained stub lifts the rings. A rough-only program is
+ * enough: the at-layer link is the rough's, and the finish's link never changes A.
+ */
+function drawLinkAcrossCase(cutter: 'ball_endmill' | 'flat_endmill' = 'ball_endmill'): Case {
+  const thickness = 20
+  const length = 12
+  const stock = roundStock(thickness, length, 'x', { x: 0, y: 0 })
+  const base = 5
+  const lobe = 3.6
+  const rise = 0.02
+  /** The LOBE's own radius in the Around frame's A (A0 is the crest). */
+  const radiusAt = (along: number, aDeg: number): number => {
+    const height = lobe + rise * along
+    let delta = ((aDeg % 360) + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= 70) return base
+    const c = Math.cos(u * Math.PI / 140)
+    return base + height * c * c
+  }
+  const diameter = 3
+  const cutterLabel = cutter === 'ball_endmill' ? 'ball' : 'flat'
+  return {
+    label: `#1117 ${cutterLabel} D${diameter} round ${thickness}x${length} drifting lobe around rough ends 0`,
+    stock,
+    // Only the label and the revolved fallback read the profile; this model is
+    // the mesh and its own boundary below.
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: lobed(stock, radiusAt, 0, length, 120, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: cutter,
+    diameter,
+    stepdown: 1,
+    stepover: 1,
+    roughSpacing: 1,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
  * The matrix the link proof must cover (#1117): round and square, ball and
  * flat, axis X and Y, millimetres and inches, and a masked case. Every entry is
  * an around rough so the emitted links are the operation's own.
@@ -3535,6 +3644,17 @@ const CASES = [
   // both stock axes, both units, both blank shapes, both cutters and a masked
   // case.
   ...LINK_MATRIX.map((spec) => fitEntry(drawLinkCase(spec))),
+  // #1117 rl-e correction (review finding 2): the A-changing link's own case. The
+  // matrix above emits equal-angle links only, so the swept-footprint branch of
+  // the proof (every body window from the start angle to the end one) was entered
+  // for no link at all and the suite passed with zero of them.
+  fitEntry(drawLinkAcrossCase('ball_endmill')),
+  // The same lobe with a **flat**: its body is a disc at the tip, so within its
+  // reach it clears nothing above the commanded height. That is the shape the
+  // footprint-height lift exists for -- a ball's own rise already clears a couple
+  // of tenths at the edge of its reach -- so this case is what keeps the lift (and
+  // the proof's swept window) load-bearing rather than decorative.
+  fitEntry(drawLinkAcrossCase('flat_endmill')),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -4530,6 +4650,13 @@ assert.ok(atLayerLinkCounts.mm > 0, `an at-layer link in millimetres (${atLayerL
 assert.ok(atLayerLinkCounts.inch > 0, `an at-layer link in inches (${atLayerLinkCounts.inch})`)
 assert.ok(atLayerLinkCounts.region > 0,
   `an at-layer link inside a region (${atLayerLinkCounts.region})`)
+// #1117 rl-e correction (review finding 2): the swept-footprint proof for an
+// A-changing link is only a proof if the seeded run actually emits one. It passed
+// with zero, so the whole `dAngle !== 0` branch of `proveAtLayerLink` (the union
+// of body windows across the A change, the slope's region segments and its
+// region-point samples) never ran. The lobe case above is the one that emits them.
+assert.ok(atLayerLinkCounts.acrossAngle > 0,
+  `an at-layer link across an A change is proved (${atLayerLinkCounts.acrossAngle})`)
 assert.ok(linkEndCells > 0,
   `the at-layer link's retained-end proof checked cells (${linkEndCells})`)
 // The corner-turn rule needs both shapes exercised: an arc at the layer (low)
@@ -4567,12 +4694,18 @@ const seededFootprint = {
 // under the link's **own ray**, so an in-memory replay at A30 passed while
 // removing 0.4348 mm of protected model at A42.125 -- over the 0.0718 mm reference
 // allowance -- and a band taken from under an intact shell was invisible to the
-// scalar material read entirely. These two synthetic replays are that repro,
-// reduced to one link and placed on this reference's 0.5 deg cell centres (so the
-// gouged cell is A42.25). They run **after** the seeded coverage assertions on
-// purpose: they replay through the same `referenceMove`, which updates the
-// worst-case state the diagnostics above report, and a synthetic call must not
-// pad a coverage count.
+// scalar material read entirely. These synthetic replays are that repro, reduced
+// to one link and placed on this reference's 0.5 deg cell centres (so the gouged
+// cell is A42.25). They run **after** the seeded coverage assertions on purpose:
+// they replay through the same `referenceMove`, which updates the worst-case state
+// the diagnostics above report, and a synthetic call must not pad a coverage
+// count.
+//
+// #1117 rl-e correction (review finding 2) adds the third: an **A-changing** link
+// whose own path is clean and whose swept body still cuts an off-path ray. Its
+// spike sits outside the start pose's reach and inside the end pose's, so only the
+// union of body windows across the A change can see it -- the branch the seeded
+// run never entered while it emitted no A-changing link at all.
 {
   const angleBins = 720
   const angleDeg = 0.5
@@ -4598,12 +4731,12 @@ const seededFootprint = {
   const rayBin = 60
   const alongOf = (point: ToolpathMove['from']): number => point.x
 
-  const entryFor = (label: string, bar: BarStock): Case => ({
+  const entryFor = (label: string, bar: BarStock, radiusAt: (angleDegrees: number) => number = modelAt): Case => ({
     label,
     stock: bar,
     profile: [{ along: 0, radius: tip }, { along: 10, radius: tip }],
     mesh: revolved(bar, [{ along: 0, radius: tip }, { along: 10, radius: tip }], 8),
-    meshRadiusAt: modelAt,
+    meshRadiusAt: radiusAt,
     meshAlong: { from: -2, to: 12 },
     type: 'flat_endmill',
     diameter: cutterRadius * 2,
@@ -4627,22 +4760,26 @@ const seededFootprint = {
    * may keep a **shell** of `shell` mm standing above it (probe 2), which is what
    * makes the removed band a cavity rather than a surface loss.
    */
-  const referenceFor = (bar: BarStock, shell?: number): Reference => {
+  const referenceFor = (
+    bar: BarStock,
+    shell?: number,
+    radiusAt: (angleDegrees: number) => number = modelAt,
+  ): Reference => {
     const reference = createReference(bar, 0, alongBins * alongBin, alongBin, angleBins)
     for (let i = 0; i < reference.alongBins; i++) {
       for (let k = 0; k < reference.angleBins; k++) {
-        const standing = shell !== undefined && k === spikeBin ? shell : modelAt((k + 0.5) * angleDeg)
+        const standing = shell !== undefined && k === spikeBin ? shell : radiusAt((k + 0.5) * angleDeg)
         reference.material[i * reference.angleBins + k] = standing
       }
     }
     return reference
   }
-  const proofFor = (caseEntry: Case, reference: Reference, bar: BarStock): LinkProofContext => ({
+  const proofFor = (caseEntry: Case, reference: Reference, bar: BarStock, radius = cutterRadius): LinkProofContext => ({
     entry: caseEntry,
     reference,
     stock: bar,
     pivot: barPivotZ(bar),
-    cutterRadius,
+    cutterRadius: radius,
     ball: false,
     alongOf,
     alongLimits: alongBounds(bar),
@@ -4704,6 +4841,77 @@ const seededFootprint = {
     )
     console.log(`  #1117 rl-c repro 2: the outermost surface stands at 10.0000 mm over a `
       + `${shell.gap.toFixed(4)} mm cavity below the model; the footprint proof rejects it`)
+  }
+
+  // Probe 3 (#1117 rl-e correction, review finding 2): the **A-changing** link.
+  // The link runs A30 -> A38 where the model is flat at the tip, so its own rays
+  // and every waypoint read clean. Its body, though, is swept across the change:
+  // the end pose reaches the A66.25 spike from 28.25 degrees away, while the start
+  // pose's reach stops at A63.7. That is exactly the branch the seeded run never
+  // entered before the lobe cases -- the window is the **union** of the body's
+  // reach at every angle on the slope, not the reach around the start ray -- and
+  // the spike cell stands 0.2 mm above the swept contact.
+  {
+    const bar = roundStock(10, 30, 'x', { x: 0, y: 0 })
+    const fromAngle = 30
+    const toAngle = 38
+    // The spike is one cell, outside the start ray's reach and inside the end
+    // pose's: A66.25 is 36.25 degrees from A30 and 28.25 from A38.
+    const spikeBin3 = 132
+    const spikeAngle3 = (spikeBin3 + 0.5) * angleDeg
+    const excess = 0.2
+    const sweptContact = tip / Math.cos((spikeAngle3 - toAngle) * Math.PI / 180)
+    const sweptRadius = sweptContact + excess
+    const modelAt3 = (angleDegrees: number): number =>
+      (Math.abs(angleDegrees - spikeAngle3) < 1e-9 ? sweptRadius : tip)
+    const entry = {
+      ...entryFor(
+        '#1117 rl-e repro: an A-changing link sweeps the body onto A66.25',
+        bar,
+        modelAt3,
+      ),
+      stepdown: 2,
+    }
+    const reference = referenceFor(bar, undefined, modelAt3)
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: { x: 0, y: 0, z: barPivotZ(bar) + tip, a: fromAngle },
+      to: { x: 10, y: 0, z: barPivotZ(bar) + tip, a: toAngle },
+    }
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, fromAngle, toAngle)
+    // Nothing on the path itself is below the model: the single-ray rule passes.
+    for (const k of [60, 64, 68, 76]) {
+      assert.equal(reference.material[k], tip,
+        `the A-changing repro leaves its own path's ray at A${((k + 0.5) * angleDeg).toFixed(2)} alone`)
+    }
+    // The body reaches the spike only from the **end** of the move: at the start
+    // pose the same cell is beyond its reach. The sweep leaves the whole spike
+    // column cut where some pose could reach it, and the end cell is the deepest.
+    const spikeAlong3 = 10 - alongBin
+    const spikeIndex3 = Math.floor(spikeAlong3 / alongBin) * reference.angleBins + spikeBin3
+    const sweptEnd = reference.material[spikeIndex3]
+    assert.ok(sweptEnd < sweptRadius - 2 * allowanceMm,
+      `the swept body cuts the A${spikeAngle3} cell to ${sweptEnd.toFixed(4)} from its `
+      + `${sweptRadius.toFixed(4)} model, so the off-path spike is real`)
+    let rejected: Error | null = null
+    try {
+      proveAtLayerLink(proofFor(entry, reference, bar), move, fromAngle, toAngle)
+    } catch (error) {
+      rejected = error as Error
+    }
+    assert.ok(rejected !== null, 'the swept-footprint proof rejects the A-changing gouge')
+    // The rejection must name the angle **no pose on the link's own path** stands
+    // on -- A66.25 -- and say that the body sweeps it across the A change. The
+    // closest along cell whose state exceeds the allowance is a few bins into the
+    // path, so the message's along position is not pinned to the end.
+    assert.ok(rejected.message.includes(`A${spikeAngle3.toFixed(2)}`),
+      `the rejection names the swept angle A${spikeAngle3} (${rejected.message})`)
+    assert.match(rejected.message,
+      /The body sweeps this cell somewhere between A30\.00 and A38\.00/,
+      `the rejection names the swept A change (${rejected.message})`)
+    console.log(`  #1117 rl-e repro: an A30->A38 link leaves its own path intact and its swept `
+      + `body cuts the off-path A${spikeAngle3} cell to ${sweptEnd.toFixed(4)} of its `
+      + `${sweptRadius.toFixed(4)} model; the swept-footprint proof rejects it`)
   }
 }
 
