@@ -3183,8 +3183,10 @@ function trackMinimumMm(minimum: LinkMinimum, value: number, units: Units, label
 }
 
 const worstAtLayerLinkMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
-// #1117 rl-e correction 2: A-changing segments whose height is sized by the
-// tallest material in the body's window, and the closest one came to that bound.
+// #1117 rl-e correction 3: A-changing segments whose height is sized by the
+// tallest material in the body's window, and the closest one came to it. This is
+// a diagnostic and a coverage count; the rule's regression lives in
+// `rotaryAcrossAngleLinks.test.ts` (block 5).
 let footprintHeightChecks = 0
 let footprintHeightBites = 0
 const worstFootprintHeightMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
@@ -3522,20 +3524,26 @@ function proveAtLayerLink(
     }
   }
 
-  // #1117 rl-e correction 2 (review finding, P2): the **footprint-height** rule,
-  // proved independently of the replay.
+  // #1117 rl-e correction 3: the **footprint-height** window, read as a
+  // diagnostic and a coverage count -- not asserted as a clearance.
   //
   // The at-layer candidate may not ride at the height its *own ray* finds while
   // the cutter body reaches taller material a few degrees away: a ball's surface
   // at an angular offset is at or above its tip, and a flat's bottom face is a
   // disc, so both meet any material inside the body's angular reach that stands
-  // above the commanded tip. The generator therefore sizes each A-changing
-  // sample from the **tallest material in the body's window** (and the body
-  // window is widened by the A change, because the sweep visits every angle in
-  // it). `referenceMove` below can only report what the swept body actually
-  // removes, so on a conservative height map it would already be too late to
-  // notice a link that rides low: this assertion reads the independent model at
-  // every swept angle instead, which is the quantity the height is sized from.
+  // above the commanded tip. The generator sizes each A-changing sample from the
+  // **tallest material in the body's window**, widened by the A change because
+  // the sweep visits every angle in it.
+  //
+  // Two things follow, and the review's correction 3 is why they are separate:
+  // the window read below reports the closest an emitted tip came to the
+  // independent model's tallest material (the run prints it), while the **rule**
+  // is pinned by a dedicated generator fixture in
+  // `rotaryAcrossAngleLinks.test.ts` (block 5), whose emitted A-changing links
+  // ride below the ridge when the lift is removed. There is no clearance
+  // assertion here: an upper sampling-error bound cannot establish a minimum,
+  // and the conservative grid tip already covers most of the window on the
+  // seeded cases (measured: 0.0088 mm on the drifted lobe).
   //
   // Only an A-changing link is judged: the equal-angle candidate has no window
   // widening and is outside this slice's correction.
@@ -3553,7 +3561,6 @@ function proveAtLayerLink(
       + Math.abs(dAngle)
     const half = Math.max(0, Math.ceil(reach / reference.angleDeg))
     let windowMax = Number.NEGATIVE_INFINITY
-    let windowAngle = Number.NaN
     let pathMax = Number.NEGATIVE_INFINITY
     for (let s2 = 0; s2 <= samples; s2++) {
       const fraction = s2 / samples
@@ -3566,10 +3573,7 @@ function proveAtLayerLink(
         const k = ((baseBin + step) % reference.angleBins + reference.angleBins) % reference.angleBins
         const cellAngle = (k + 0.5) * reference.angleDeg
         const model = linkModelRadiusAt(entry, along, cellAngle)
-        if (model !== null && model > windowMax) {
-          windowMax = model
-          windowAngle = cellAngle
-        }
+        if (model !== null && model > windowMax) windowMax = model
       }
     }
     if (windowMax > Number.NEGATIVE_INFINITY) {
@@ -3581,26 +3585,6 @@ function proveAtLayerLink(
       // such a link fails on the coverage assertion below instead of passing
       // with the rule unexercised.
       if (windowMax > pathMax + 1e-9) footprintHeightBites++
-      // The generator reads the tallest material in the window through the ring
-      // grid, whose conservative cell bound is up to one `requestedCellSize`
-      // above the true surface, so a link sized that way stands clear of the
-      // material by part of that bound. Half of it is what this proof requires:
-      // it is the part of the read no sampler resolution can take away, while a
-      // link that merely *touches* the tallest material (a height taken from its
-      // own ray) is well inside it. Measured on the drifted-lobe case, the
-      // generator's own margin is 1.3168 mm and a candidate sized from its row
-      // reads 0.0088 mm, so the two bounds this separates are not close.
-      const headroomMm = mm(segmentTip - windowMax)
-      const requiredMm = mm(entry.requestedCellSize) / 2
-      assert.ok(headroomMm >= requiredMm - 1e-9,
-        `${entry.label}: a rough at-layer link at ${angleLabel} along `
-        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} commands tip `
-        + `${mm(segmentTip).toFixed(4)} mm while the body's window (${reach.toFixed(2)} deg at the `
-        + `layer) reaches the model at ${mm(windowMax).toFixed(4)} mm at A${windowAngle.toFixed(2)}: `
-        + `only ${headroomMm.toFixed(4)} mm of headroom, under the ${requiredMm.toFixed(4)} mm `
-        + `(half the conservative cell the window's tallest material is read through). The link's own path `
-        + `reads ${mm(pathMax).toFixed(4)} mm, so a height taken from its own ray rides `
-        + `${mm(windowMax - pathMax).toFixed(4)} mm below the taller material a few degrees away.`)
     }
   }
   // The retained ends: this link's own body footprint, outside the cut band.
@@ -4747,14 +4731,15 @@ assert.ok(atLayerLinkCounts.region > 0,
 // region-point samples) never ran. The lobe case above is the one that emits them.
 assert.ok(atLayerLinkCounts.acrossAngle > 0,
   `an at-layer link across an A change is proved (${atLayerLinkCounts.acrossAngle})`)
-// #1117 rl-e correction 2: the A-changing link's height must be sized from the
-// **tallest material the body's window reaches**, not from its own ray -- the
-// rule that keeps a link from riding into material a few degrees away. It is
-// proved against the independent model inside `proveAtLayerLink`, so a run that
-// stops sizing links this way fails there. These two guards keep that proof
-// exercised: at least one A-changing sample has to be judged, and at least one
-// has to be sized by material the link's own path does not see -- otherwise the
-// rule passes vacuously on links whose own ray is already the tallest thing.
+// #1117 rl-e correction 3: the A-changing link's height must be sized from the
+// **tallest material the body's window reaches**, not from its own ray. The
+// seeded run cannot assert a clearance (review finding: an upper sampling-error
+// bound cannot establish a minimum, and the conservative grid tip covers most of
+// the window); the dedicated generator fixture in `rotaryAcrossAngleLinks.test.ts`
+// (block 5) pins the rule and fails without the lift. These two guards keep this
+// run's diagnostic honest: at least one A-changing sample has to be judged, and
+// at least one has to be sized by material the link's own path does not see --
+// otherwise the rule would pass vacuously on links whose own ray is the tallest.
 assert.ok(footprintHeightChecks > 0,
   `an A-changing link's height is proved against the body window (${footprintHeightChecks})`)
 assert.ok(footprintHeightBites > 0,

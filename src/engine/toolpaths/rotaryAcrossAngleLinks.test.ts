@@ -57,7 +57,10 @@
  *  - drop the whole-path region test (`rotaryRegionSlopeContains`) from the
  *    A-changing path, keeping only the waypoint point checks -> block 4: the
  *    masked fixture emits the 14.5 -> 15.5 cut across the excluded slit at
- *    X14.87 again (4 A-changing links instead of 3).
+ *    X14.87 again (4 A-changing links instead of 3);
+ *  - remove the footprint-height lift from `linkAcrossAngle` (`height =
+ *    max(tipHere, tipNext)`) -> block 5: the A-changing links ride below the
+ *    ridge the body's window reaches, by more than the sampler's own cell.
  */
 
 import assert from 'node:assert/strict'
@@ -367,6 +370,120 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
   }
   console.log(`  rl-e slit: ${diag(unsliced.moves).length} A-changing links unsliced, `
     + `${diag(refused.moves).length} with the 0.02 mm excluded slit`)
+}
+
+
+// ---------------------------------------------------------------------------
+// 5. #1117 rl-e correction 3: an A-changing link's height is the tallest
+//    material the **body's window** reaches, not the height its own ray finds.
+//
+//    A flat's bottom face is a disc at the tip, so material a few degrees away
+//    that stands above the tip is cut by the body even when the link's own ray
+//    reads clean. `linkAcrossAngle` therefore sizes each step from the tallest
+//    grid tip inside `bodyReachDeg(layerRadius) + |delta|`, and this block pins
+//    that rule against an independently computed window on a generator case.
+//
+//    The fixture is a small twisted ridge: a V-lobe whose crest rotates six
+//    degrees per millimetre, so every ring's run end drifts and the transition
+//    is an A-changing link. The link joins two runs at a boundary that sits a
+//    fraction of a band under the crest; the crest itself is inside the body's
+//    window at the layer radius and outside the link's own ray. Without the
+//    lift the emitted steps fall back to the own rows and ride under the ridge.
+//
+//    This is the **rule**, not a safety minimum: the emitted tip must cover the
+//    window's tallest material up to the sampler's own cell (the only slack is
+//    the analytic-versus-grid reading, `2 * requestedCellSize`). An upper
+//    sampling-error bound cannot establish a fixed minimum clearance, which is
+//    why the property suite no longer asserts one.
+// ---------------------------------------------------------------------------
+{
+  const stock = roundStock(8, 6, 'x', { x: 0, y: 0 })
+  const flat: NormalizedTool = {
+    id: 'flat-1', name: '1 mm flat end mill', sourceUnits: 'mm', units: 'mm',
+    type: 'flat_endmill', diameter: 1, radius: 0.5, vBitAngle: null,
+    flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+    defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+  }
+  const base = 2
+  const lobe = 1.5
+  const twist = 6
+  const halfWidth = 60
+  /** The model in the **Around** frame: A0 is the mesh's +up, so the crest is at A = twist * along. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= halfWidth) return base
+    const c = Math.cos(u * Math.PI / (2 * halfWidth))
+    return base + lobe * c * c
+  }
+  const params = {
+    stepover: 0.5, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 0, alongEnd: 6,
+    safeRadius: 12, requestedCellSize: 0.12, stepdown: 1, passDirection: 'around' as const,
+  }
+  const mesh = surface(stock, (along, meshAngle) => radiusAt(along, meshAngle - 90), 0, 6, 120, 240)
+  const result = generateRotaryRough('rl-e-footprint', mesh, stock, flat, params, {})
+  assert.deepEqual(result.warnings, [], 'the twisted-ridge rough warns about nothing')
+  const links = diag(result.moves)
+  assert.ok(links.length > 0,
+    `the drifting boundary links across A (${links.length} diagonal cut moves)`)
+  const pivot = barPivotZ(stock)
+  const maxRadius = barMaxRadius(stock)
+  const cutterRadius = flat.radius
+  /** The widest angle at which the flat's body reaches material at `material`. */
+  const bodyReachDeg = (tip: number, material: number): number => {
+    if (!(tip > 0)) return 90
+    if (!(material > tip)) return 0
+    return Math.min(Math.atan(cutterRadius / tip), Math.acos(tip / material)) * 180 / Math.PI
+  }
+  const cell = params.requestedCellSize
+  let ownRayUnsafe = 0
+  let closest = Number.POSITIVE_INFINITY
+  let closestLabel = ''
+  for (const move of links) {
+    const fromAngle = move.from.a!
+    const toAngle = move.to.a!
+    const fromAlong = alongOf(move.from)
+    const toAlong = alongOf(move.to)
+    const tip = Math.max(move.from.z, move.to.z) - pivot
+    // The window the generator sizes from: the body's reach at the link's
+    // **lowest** height (one stepdown under the ring it joins), widened by the
+    // A change because the path visits every angle in between.
+    const layerRadius = Math.max(0, Math.min(move.from.z, move.to.z) - pivot - params.stepdown)
+    const span = bodyReachDeg(layerRadius, maxRadius) + Math.abs(toAngle - fromAngle)
+    let ownMax = Number.NEGATIVE_INFINITY
+    let windowMax = Number.NEGATIVE_INFINITY
+    const steps = 12
+    for (let s = 0; s <= steps; s++) {
+      const fraction = s / steps
+      const along = fromAlong + (toAlong - fromAlong) * fraction
+      const angle = fromAngle + (toAngle - fromAngle) * fraction
+      ownMax = Math.max(ownMax, radiusAt(along, angle))
+      for (let d = -Math.ceil(span / 0.5); d <= Math.ceil(span / 0.5); d++) {
+        windowMax = Math.max(windowMax, radiusAt(along, angle + d * 0.5))
+      }
+    }
+    if (windowMax > ownMax + cell) ownRayUnsafe++
+    const margin = tip - windowMax
+    if (margin < closest) {
+      closest = margin
+      closestLabel = `A${fromAngle.toFixed(1)}->${toAngle.toFixed(1)} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`
+    }
+    assert.ok(margin >= -2 * cell,
+      `an A-changing link's tip covers the body window's tallest material at `
+      + `A${fromAngle.toFixed(1)}->${toAngle.toFixed(1)} along `
+      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}: tip ${tip.toFixed(3)}, `
+      + `window ${windowMax.toFixed(3)}, own ray ${ownMax.toFixed(3)} `
+      + `(allowed ${(2 * cell).toFixed(3)} of sampling slack)`)
+  }
+  // The fixture is only load-bearing if the window really is above the link's
+  // own ray: at least one link must be sized by material its ray does not see.
+  assert.ok(ownRayUnsafe > 0,
+    `a link's window stands above its own ray (${ownRayUnsafe} of ${links.length})`)
+  console.log(`  rl-e footprint: ${links.length} A-changing links, `
+    + `${ownRayUnsafe} sized by material off their own ray, closest `
+    + `${closest.toFixed(3)} mm to the window (${closestLabel})`)
 }
 
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')
