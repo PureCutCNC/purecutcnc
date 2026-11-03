@@ -458,8 +458,12 @@ console.log('Testing the operation-level link-window budget...')
     && move.from.a === move.to.a && move.from.z === move.to.z
     && move.to.x > move.from.x
     && move.from.z - pivot < barMaxRadius(stock) + 1 - 1e-9
+  // #1117 (square links): a boundary is linked either by the raised traverse
+  // or, where it qualifies, by the at-layer cut that replaces it.
+  const atLayerLink = (move: ToolpathMove): boolean => move.kind === 'cut'
+    && move.from.a !== undefined && move.from.a === move.to.a && move.to.x > move.from.x + 1e-12
   const beforeFallback = result.moves.slice(0, result.moves.indexOf(firstFallback))
-    .filter(linkMove).length
+    .filter((move) => linkMove(move) || atLayerLink(move)).length
   assert.ok(beforeFallback > 100,
     `links run before the budget is spent, so the fallback is past it (${beforeFallback} links)`)
   assert.ok(result.moves.some(linkMove), 'the operation still links its easy rings')
@@ -471,17 +475,27 @@ console.log('Testing the operation-level link-window budget...')
   // baseline z=36.284268390 to z=49.284271247. The baseline has 960 raised
   // traverses (constant-z rapids below the travel height) and 288 plunges; the
   // shared budget left 784 and 464. The assertions below lock that baseline.
+  //
+  // #1117 (square links): the whole rings below the blank's inscribed radius
+  // now link at the layer too, so 784 of those 960 raised traverses became
+  // at-layer cuts (392 equal-angle cuts before, 1177 now). Diffed against the
+  // pre-change output, every other move -- the 176 remaining raised traverses
+  // and all 288 plunges -- is identical, so the raised budget is still exactly
+  // the baseline's.
   assert.equal(plunges.length, 288,
     `the raised-link budget is untouched by the at-layer attempts (${plunges.length} plunges)`)
   const raisedTraverses = result.moves.filter(linkMove)
-  assert.equal(raisedTraverses.length, 960,
-    `every qualifying link keeps its baseline raised traverse (${raisedTraverses.length})`)
-  const a0FirstBoundary = raisedTraverses.filter((move) => move.from.a === 0
+  assert.equal(raisedTraverses.length, 176,
+    `every link that does not qualify keeps its baseline raised traverse (${raisedTraverses.length})`)
+  assert.equal(result.moves.filter(atLayerLink).length, 1177,
+    'the replaced boundaries are at-layer cuts')
+  const a0FirstBoundary = result.moves.filter((move) => move.from.a === 0
     && Math.abs(move.from.x - 4) < 1e-9 && Math.abs(move.to.x - 5) < 1e-9)
   assert.equal(a0FirstBoundary.length, 2,
-    `both A0 traverses from x=4 to x=5 stay raised (${a0FirstBoundary.length})`)
-  assert.ok(Math.abs(a0FirstBoundary[1].from.z - 36.284268390) < 1e-9,
-    `the second A0 traverse keeps the baseline raised height (${a0FirstBoundary[1].from.z})`)
+    `two A0 boundaries from x=4 to x=5 (${a0FirstBoundary.length})`)
+  assert.ok(atLayerLink(a0FirstBoundary[0]), 'the first, a whole ring, now links at the layer')
+  assert.ok(linkMove(a0FirstBoundary[1]) && Math.abs(a0FirstBoundary[1].from.z - 36.284268390) < 1e-9,
+    `the second keeps the baseline raised height (${a0FirstBoundary[1].from.z})`)
 }
 
 // ---------------------------------------------------------------------------
@@ -560,17 +574,17 @@ console.log('Testing that accepted at-layer links keep the raised-link budget hi
 //     rings already cut: the link can stay at `max(model, layer radius)` and
 //     remove the one band this layer removes, the first layer included (nothing
 //     is assumed cleared in front of it). An A-changing transition between two
-//     arcs of one ring still turns at the blank's corner envelope, and a layer
-//     whose ring is a single whole turn (below the blank's inscribed radius)
-//     keeps the raised link because the corner material its body reaches stands
-//     more than one band above the layer radius.
+//     arcs of one ring still turns at the blank's corner envelope. A layer whose
+//     ring is a single whole turn (below the blank's inscribed radius) links at
+//     A0/A360 too (#1117 square links): it used to keep the raised link, because
+//     the candidate required a gate boundary, and it now takes at most one
+//     stepdown from what the earlier layers left over the cutter body's window.
 //
 //     Mutations each fail here:
 //      - the exact-angle check bypassed -> the A-changing arc turn becomes a
 //        cutting link at the layer instead of a turn at the corner envelope;
-//      - the body window dropped from the at-layer leftover walk -> the
-//        whole-ring layers (3-5) link at the layer at A0/A360, cutting the
-//        neighbouring corner by more than one band, instead of raising.
+//      - the touch-gate boundary rule restored as a refusal -> the whole-ring
+//        layers (3-5) keep their raised links.
 // ---------------------------------------------------------------------------
 
 console.log('Testing that the square around rough links its corner arcs at the layer...')
@@ -584,15 +598,20 @@ console.log('Testing that the square around rough links its corner arcs at the l
   assert.deepEqual(rough.warnings, [], 'the corner-link rough has no warning')
   const links = rough.moves.filter(isAlongLink)
   const raised = rough.moves.filter(isRaisedAlongLink)
+  const atSeam = (link: ToolpathMove): boolean => {
+    const angle = angleOf(link.from)
+    return Math.abs(angle) <= 1e-9 || Math.abs(angle - 360) <= 1e-9
+  }
   // Two layers still have a radius above the blank's inscribed radius (10 mm),
   // so the touch gate keeps arcs at them; seven pulled-in rings give six
   // boundaries. Every one shares the arc boundary angle, so every one links.
   const arcLayers = 2
   const boundaries = 6
-  assert.equal(links.length, arcLayers * boundaries,
-    `every corner-arc boundary links at the layer (${links.length} of ${arcLayers * boundaries})`)
+  const arcLinks = links.filter((link) => !atSeam(link))
+  assert.equal(arcLinks.length, arcLayers * boundaries,
+    `every corner-arc boundary links at the layer (${arcLinks.length} of ${arcLayers * boundaries})`)
   const layerRadius = [maxRadius - stepdown, maxRadius - 2 * stepdown]
-  for (const link of links) {
+  for (const link of arcLinks) {
     const height = link.from.z - pivot
     assert.ok(layerRadius.some((radius) => Math.abs(height - radius) <= 1e-6),
       `a corner link stays at its layer's radius (${height.toFixed(4)} is one of ${layerRadius.map((r) => r.toFixed(3)).join('/')})`)
@@ -602,6 +621,8 @@ console.log('Testing that the square around rough links its corner arcs at the l
     // or above its height, so the link removes material there.
     assert.ok(height <= squareRotaryTouchRadius(SQUARE, angle, FLAT.radius, FLAT.type) + 0.06,
       `the link at A${angle.toFixed(2)} stays under the blank material at its own ray`)
+  }
+  for (const link of links) {
     // The retained band is where the ring cuts are: the link never leaves it.
     assert.ok(link.from.x >= SQUARE_BASE.alongStart + FLAT.radius - 1e-9
       && link.to.x <= SQUARE_BASE.alongEnd - FLAT.radius + 1e-9,
@@ -613,25 +634,41 @@ console.log('Testing that the square around rough links its corner arcs at the l
   assert.equal(firstLayer.length, boundaries,
     `the first layer links every corner boundary (${firstLayer.length})`)
 
-  // Layers 3-5 have a radius at or below the inscribed radius, so the gate does
-  // not split the ring: it is one whole turn at A0/A360, and the corner material
-  // the cutter body reaches at that height stands more than one band above the
-  // layer radius. Those transitions keep the raised link; a low link there would
-  // cut more than this layer's band out of the neighbouring corner.
-  const faceLinks = links.filter((link) => {
-    const angle = angleOf(link.from)
-    return Math.abs(angle) <= 1e-9 || Math.abs(angle - 360) <= 1e-9
-  })
-  assert.equal(faceLinks.length, 0,
-    'a whole-ring layer at a face angle does not link at the layer')
-  const raisedBelowTravel = raised.filter((link) => link.from.z - pivot < TRAVEL_TIP - 1e-6)
-  assert.equal(raisedBelowTravel.length, 3 * boundaries,
-    `the three whole-ring layers keep their raised links (${raisedBelowTravel.length} of ${3 * boundaries})`)
-  for (const link of raisedBelowTravel) {
-    const angle = angleOf(link.from)
-    assert.ok(Math.abs(angle) <= 1e-9 || Math.abs(angle - 360) <= 1e-9,
-      `a whole-ring boundary is the ring's own end (A${angle.toFixed(2)})`)
+  // #1117 (square links): layers 3-5 have a radius at or below the inscribed
+  // radius, so the gate does not split the ring: it is one whole turn, and its
+  // boundary is the ring's own end at A0/A360. Those transitions now link at
+  // the layer. Each removes at most one stepdown of the blank the earlier layers
+  // left over the flat's whole window: here the material at an angle is the
+  // blank's touch radius, lowered to every earlier layer radius below it (the
+  // 1.5 mm rings are closer than the 4 mm cutter, so a layer that cut an angle
+  // cut it along the whole band).
+  const wholeRingLayers = [3, 4, 5].map((layer) => Math.max(maxRadius - layer * stepdown, 0))
+  const faceLinks = links.filter(atSeam)
+  assert.equal(faceLinks.length, 3 * boundaries,
+    `the three whole-ring layers link at A0/A360 (${faceLinks.length} of ${3 * boundaries})`)
+  for (const link of faceLinks) {
+    const height = link.from.z - pivot
+    // The link cuts at `max(model, layer radius)`: its layer is the deepest one
+    // at or below its height (layer 5 is clamped by the 5 mm model).
+    const layer = wholeRingLayers.findIndex((radius, index) => radius <= height + 1e-6
+      && (index === 0 || wholeRingLayers[index - 1] > height + 1e-6)) + 3
+    assert.ok(layer >= 3 && (Math.abs(height - wholeRingLayers[layer - 3]) <= 1e-6 || height >= ROUND_RADIUS - 1e-6),
+      `a whole-ring link cuts at its layer's radius or on the model (${height.toFixed(4)})`)
+    const reach = Math.atan(FLAT.radius / height) * 180 / Math.PI
+    for (let offset = -reach; offset <= reach + 1e-9; offset += reach / 20) {
+      let material = squareRotaryTouchRadius(SQUARE, offset, FLAT.radius, FLAT.type)
+      for (let earlier = 1; earlier < layer; earlier++) {
+        const radius = maxRadius - earlier * stepdown
+        if (radius < material) material = radius
+      }
+      assert.ok(material - height <= stepdown + 1e-6,
+        `the whole-ring link at layer ${layer} meets ${material.toFixed(4)} at A${offset.toFixed(2)}, `
+        + `more than one stepdown over ${height.toFixed(4)}`)
+    }
   }
+  const raisedBelowTravel = raised.filter((link) => link.from.z - pivot < TRAVEL_TIP - 1e-6)
+  assert.equal(raisedBelowTravel.length, 0,
+    `no whole-ring boundary keeps a raised link (${raisedBelowTravel.length})`)
 
   // The A-changing transition between two arcs of one ring is a turn at the
   // blank's corner envelope, never a cutting link at the layer. Its span

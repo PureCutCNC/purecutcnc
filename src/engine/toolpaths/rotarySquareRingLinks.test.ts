@@ -1,0 +1,238 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * #1117 (square links): a square blank's around rough links its **whole** and
+ * **model-split** rings at the layer, not only its corner arcs.
+ *
+ * Frank's busto-rect rough (square blank, no region) retracted between rings on
+ * every layer below the corner layers. The at-layer candidate required each
+ * transition to be a corner-arc boundary of the touch gate -- the sample just
+ * outside the ring's run had to be one the gate no longer cuts -- and a complete
+ * ring's end (A0/A360) or a run the **model** ends never is one. Without a region
+ * that rule is now a choice of bound, not a refusal: a link that is not a gate
+ * boundary may take one stepdown from the material it meets (the earlier layers'
+ * envelope, and the ring it starts from), with no scallop or cell allowance.
+ * The independent proof is `squareAroundGenerator.property.test.ts`; this file
+ * pins the shapes and the fallbacks.
+ *
+ * Mutations, each failing here (see the slice report for the measured run):
+ *  - the touch-gate rule restored as a refusal -> no whole-ring links;
+ *  - `MAX_LINK_ACROSS_DEG` lifted -> a >45 deg ring transition is cut low;
+ *  - the skipped-ring guards removed -> a link spans an empty ring;
+ *  - the at-layer budget unbounded, charged per window instead of per new row,
+ *    or shared with the raised link -> the exhaustion fixture's layers move.
+ */
+
+import assert from 'node:assert/strict'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import type { BarStock } from '../../types/project'
+import { generateRotaryRough } from './rotaryModel'
+import type { RotaryModelMesh } from './rotaryModel'
+import type { NormalizedTool, ToolpathMove } from './types'
+
+const BALL2: NormalizedTool = {
+  id: 'ball-2', name: '2 mm ball nose', sourceUnits: 'mm', units: 'mm',
+  type: 'ball_endmill', diameter: 2, radius: 1, vBitAngle: null,
+  flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+  defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+}
+const BALL4: NormalizedTool = { ...BALL2, id: 'ball-4', name: '4 mm ball nose', diameter: 4, radius: 2 }
+
+/** A closed surface whose radius varies along the bar and with the angle. */
+function shaped(
+  stock: BarStock,
+  radiusAt: (along: number, aDeg: number) => number,
+  from: number,
+  to: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  for (let s = 0; s <= steps; s++) {
+    const along = from + (to - from) * s / steps
+    for (let j = 0; j < segments; j++) {
+      const aDeg = 360 * j / segments
+      const t = (aDeg + 90) * Math.PI / 180
+      const radius = radiusAt(along, aDeg)
+      if (stock.axis === 'x') positions.push(along, centre + radius * Math.cos(t), pivot + radius * Math.sin(t))
+      else positions.push(centre + radius * Math.cos(t), along, pivot + radius * Math.sin(t))
+    }
+  }
+  for (let s = 0; s < steps; s++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = s * segments + j
+      const b = s * segments + j2
+      const c = (s + 1) * segments + j2
+      const d = (s + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/** A closed surface of revolution, one ring per entry. */
+function revolved(stock: BarStock, rings: readonly { along: number; radius: number }[], segments: number): RotaryModelMesh {
+  return shaped(stock, (along) => {
+    for (let i = 0; i + 1 < rings.length; i++) {
+      const a = rings[i]
+      const b = rings[i + 1]
+      if (along >= a.along && along <= b.along) {
+        return a.radius + (b.radius - a.radius) * (along - a.along) / (b.along - a.along)
+      }
+    }
+    return rings[rings.length - 1].radius
+  }, rings[0].along, rings[rings.length - 1].along, rings.length - 1, segments)
+}
+
+const alongOf = (point: ToolpathMove['from']): number => point.x
+/** An at-layer link: a cut that moves along the bar (ring cuts keep along fixed). */
+const isAtLayerLink = (move: ToolpathMove): boolean => move.kind === 'cut' && alongOf(move.to) > alongOf(move.from) + 1e-12
+const isSeam = (angle: number | undefined): boolean => angle === 0 || angle === 360
+
+/** The layers of an around rough: each ends with the rapid back along the bar. */
+function layersOf(moves: readonly ToolpathMove[]): ToolpathMove[][] {
+  const layers: ToolpathMove[][] = [[]]
+  for (const move of moves) {
+    if (move.kind === 'rapid' && alongOf(move.to) < alongOf(move.from) - 1e-9) layers.push([])
+    else layers[layers.length - 1].push(move)
+  }
+  return layers
+}
+
+// ---------------------------------------------------------------------------
+// 1. A busto-rect-like square: a small model inside a square blank. A twisted
+//    lobe on a base well inside the inscribed radius, two lobes along the bar
+//    and a collar in the middle. The upper layers cut corner arcs, the middle
+//    ones whole rings, the lower ones rings the lobe splits (run ends drifting
+//    with along, so A-changing links), and the collar empties the rings over it
+//    on the lowest layers (skipped rings).
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a square blank links whole and model-split rings at the layer...')
+{
+  const side = 14
+  const length = 8
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const pivot = barPivotZ(stock)
+  const radiusAt = (along: number, aDeg: number): number => {
+    const collar = along > length / 2 - 0.6 && along < length / 2 + 0.6 ? 5.5 : 0
+    let delta = ((aDeg - 7 * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= 70) return Math.max(3, collar)
+    const c = Math.cos(u * Math.PI / 140)
+    const humps = 0.5 - 0.5 * Math.cos(2 * Math.PI * 2 * along / length)
+    return Math.max(3 + 2.4 * humps * c * c, collar)
+  }
+  const rough = generateRotaryRough('square-ring-links', shaped(stock, radiusAt, 0, length, 80, 240), stock, BALL2, {
+    stepover: 0.6, sampleSpacing: 0.6, stockToLeave: 0, alongStart: 0, alongEnd: length,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.25, stepdown: 1.5, passDirection: 'around',
+  }, {})
+  assert.deepEqual(rough.warnings, [], 'the rough has no warning')
+  const ringAlong = [...new Set(rough.moves
+    .filter((move) => move.kind === 'cut' && alongOf(move.from) === alongOf(move.to) && move.from.a !== move.to.a)
+    .map((move) => alongOf(move.from)))].sort((a, b) => a - b)
+  const ringSpacing = ringAlong[1] - ringAlong[0]
+  const links = rough.moves.filter(isAtLayerLink)
+  const whole = links.filter((move) => move.from.a === move.to.a && isSeam(move.from.a))
+  const split = links.filter((move) => move.from.a === move.to.a && !isSeam(move.from.a))
+  const across = links.filter((move) => move.from.a !== move.to.a)
+
+  // Complete rings below the inscribed radius join at A0/A360. The touch-gate
+  // rule refused every one: the neighbour of a whole ring's end is cut.
+  assert.ok(whole.length > 0, `whole rings link at A0/A360 (${whole.length})`)
+  for (const link of whole) {
+    assert.equal(link.to.a, link.from.a, 'a whole-ring link keeps its angle')
+    assert.ok(link.from.z - pivot <= barMaxRadius(stock), 'a whole-ring link is a cut below the blank')
+  }
+  // Rings the model splits link at their shared run boundary and across the
+  // few degrees a drifting run end moves.
+  assert.ok(split.length > 0, `model-split rings link at a shared run angle (${split.length})`)
+  assert.ok(across.length > 0, `adjacent model-split rings link across an A change (${across.length})`)
+  for (const link of across) {
+    const drift = Math.abs((link.to.a ?? 0) - (link.from.a ?? 0))
+    assert.ok(drift <= 45 + 1e-9, `an A-changing link sweeps at most 45 deg (${drift.toFixed(2)})`)
+  }
+  // A transition wider than 45 deg is a different shape (a run end jumping
+  // round the bar) and keeps the pre-#1117 retract, as on busto-rect layer 15.
+  const wideTurns = rough.moves.filter((move) => move.kind === 'rapid'
+    && alongOf(move.to) > alongOf(move.from) + 1e-9
+    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 45)
+  assert.ok(wideTurns.length > 0, `a >45 deg ring transition keeps its retract (${wideTurns.length})`)
+  // A ring that emits nothing (over the collar) leaves a gap no link crosses:
+  // every link joins two adjacent rings.
+  for (const link of links) {
+    const span = alongOf(link.to) - alongOf(link.from)
+    assert.ok(span <= ringSpacing + 1e-9,
+      `a link joins adjacent rings (${alongOf(link.from).toFixed(3)}->${alongOf(link.to).toFixed(3)}, spacing ${ringSpacing.toFixed(3)})`)
+  }
+  const skips = rough.moves.filter((move) => alongOf(move.to) - alongOf(move.from) > ringSpacing * 1.5)
+  assert.ok(skips.length > 0, `the collar leaves skipped rings (${skips.length} transitions)`)
+  for (const move of skips) {
+    assert.notEqual(move.kind, 'cut', 'a transition across a skipped ring is not a cutting link')
+  }
+  // Pinned on the fixture so any change in what qualifies is a visible diff.
+  assert.equal(whole.length, 63, `whole-ring links (${whole.length})`)
+  assert.equal(split.length, 17, `split-ring equal-angle links (${split.length})`)
+  assert.equal(across.length, 16, `A-changing links (${across.length})`)
+  console.log(`  ${whole.length} whole-ring, ${split.length} split-ring and ${across.length} A-changing links; `
+    + `${wideTurns.length} wide turns and ${skips.length} skipped-ring transitions keep their retract`)
+}
+
+// ---------------------------------------------------------------------------
+// 2. Budget exhaustion. The at-layer walk has its own operation budget; past it
+//    a boundary keeps the raised plan, which is computed first and charged to
+//    its own bucket, so the fallback is the motion the operation had before the
+//    at-layer candidate existed. This is #1093's long square bar at half the
+//    stepdown: the at-layer budget runs out on layer 5. Layers 1-3 are corner
+//    arcs, layer 4 is the first whole ring (refused outright before this slice),
+//    and layers 5-9 keep the raised links and retracts they had before it --
+//    measured identical to the pre-slice output move for move.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a spent at-layer budget falls back to the unchanged raised plan...')
+{
+  const length = 400
+  const stock = squareStock(40, length, 'x', { x: 0, y: 0 })
+  const model = revolved(stock, [{ along: 2, radius: 6 }, { along: length - 2, radius: 14 }], 96)
+  const rough = generateRotaryRough('at-layer-budget', model, stock, BALL4, {
+    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 2, alongEnd: length - 2,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.5, stepdown: 2.5, passDirection: 'around',
+  }, {})
+  assert.deepEqual(rough.warnings, [], 'the rough has no warning')
+  const layers = layersOf(rough.moves)
+  const atLayer = layers.map((layer) => layer.filter(isAtLayerLink).length)
+  const raised = layers.map((layer) => layer.filter((move) => move.kind === 'rapid'
+    && move.from.a === move.to.a && move.from.z === move.to.z && alongOf(move.to) > alongOf(move.from)).length)
+  const plunges = layers.map((layer) => layer.filter((move) => move.kind === 'plunge').length)
+  assert.deepEqual(atLayer, [392, 392, 392, 392, 0, 0, 0, 0, 0],
+    `the at-layer links stop where their budget is spent (${atLayer.join(',')})`)
+  assert.deepEqual(raised.slice(4), [392, 392, 351, 228, 104],
+    `past the at-layer budget the raised links are the pre-slice ones (${raised.join(',')})`)
+  assert.deepEqual(plunges, [4, 4, 4, 1, 197, 393, 353, 229, 105],
+    `and so are the retracts the raised budget leaves (${plunges.join(',')})`)
+  // Layer 4 is a whole ring: its boundaries are A0/A360, refused before.
+  assert.ok(layers[3].filter(isAtLayerLink).every((move) => isSeam(move.from.a)),
+    'the first whole-ring layer links at A0/A360')
+  console.log(`  at-layer links per layer ${atLayer.join(',')}; raised ${raised.join(',')}`)
+}
+
+console.log('rotary square ring-link tests passed')

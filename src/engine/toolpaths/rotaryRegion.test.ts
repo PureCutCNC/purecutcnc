@@ -1058,7 +1058,11 @@ const NO_REGION_HASHES: Record<string, string> = {
   'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
   'round/rotary_finish/around': 'moves=a7ebe0d9cd48dd07 warnings=rotaryFinishWithoutRough gcode=4cb6a2c9c5c1e547',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=53c3d57f9a4146bb',
-  'square/rotary_rough/around': 'moves=fc0afa2059c87ee8 warnings= gcode=d579362ca9d1a59e',
+  // #1117 (square links) re-recorded this row: without a region a square
+  // blank's whole rings (below its inscribed radius) now link at the layer
+  // instead of only its corner arcs. 33 raised links became at-layer cuts;
+  // every other move is byte-identical to the previous recording.
+  'square/rotary_rough/around': 'moves=5c5e53752aee749e warnings= gcode=ef20cc7e63adae10',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=755a66621cb1363c',
   'square/rotary_finish/around': 'moves=d1de25da5d3cdede warnings=rotaryFinishWithoutRough gcode=a16b2707bada1bdf',
 }

@@ -939,7 +939,10 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // leftover is now what an earlier layer left (its lowest pass over the
       // ring positions) instead of an upper bound on it, so the corner-arc links
       // of layers past the first qualify too. The along row did not move.
-      direction === 'along' ? 'fac8eaac0fb0b159' : 'b76603265e59076e',
+      // #1117 (square links) re-recorded it again: the whole rings below the
+      // blank's inscribed radius now link at the layer too (10 raised links
+      // became at-layer cuts; nothing else moved).
+      direction === 'along' ? 'fac8eaac0fb0b159' : '87d8b1bd453b40f4',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
     const first = outermost(withLeave, spanStart)

@@ -1346,6 +1346,13 @@ interface Case {
    * proof cannot pass vacuously on it.
    */
   requiresAcrossAngle?: boolean
+  /**
+   * #1117 (square links): this case exists for a square blank's **whole-ring**
+   * links -- the A0/A360 boundary of a ring below the blank's inscribed radius,
+   * which the touch-gate boundary rule used to refuse. The replay asserts it
+   * proved at least one, so restoring that rule fails here.
+   */
+  requiresWholeRingSquareLinks?: boolean
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number, units: Units = 'mm'): NormalizedTool {
@@ -2431,6 +2438,66 @@ function drawTwistCase(): Case {
 }
 
 /**
+ * #1117 (square links): a busto-rect-like square case. Frank's busto-rect rough
+ * (a 1/4" ball, a sculpted model well inside a square blank) retracted at every
+ * ring boundary below the corner layers, because the touch-gate boundary rule
+ * refused complete rings and model-split rings alike. This is that shape small
+ * enough to replay: a square blank, a ball, and a chiral model -- a base well
+ * inside the inscribed radius with one twisted lobe -- so the upper layers cut
+ * corner arcs, the middle layers whole rings (links at A0/A360) and the lowest
+ * layers rings the lobe splits, whose run ends drift with the along position
+ * (A-changing links). Rings sit closer than a radius apart, as on busto-rect, so
+ * the link's between-ring scallop is small. Every emitted link goes through the
+ * same unchanged proof as every other; the case must emit both whole-ring and
+ * A-changing links.
+ */
+function drawSquareWholeRingCase(): Case {
+  const side = 14
+  const length = 8
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const base = 3
+  const lobe = 2.4
+  const twist = 7
+  const halfWidth = 70
+  /** The model in the Around frame's own A: the crest is at A = `twist * along`. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= halfWidth) return base
+    const c = Math.cos(u * Math.PI / (2 * halfWidth))
+    return base + lobe * c * c
+  }
+  return {
+    label: `#1117 square links ball D2 square ${side}x${length} twisted lobe around rough ends 0`,
+    stock,
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: twisted(stock, radiusAt, 0, length, 80, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: 'ball_endmill',
+    diameter: 2,
+    stepdown: 1.5,
+    stepover: 0.6,
+    roughSpacing: 0.6,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.25,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+    requiresAcrossAngle: true,
+    requiresWholeRingSquareLinks: true,
+    maxReplayCells: 3_000_000,
+  }
+}
+
+/**
  * The matrix the link proof must cover (#1117): round and square, ball and
  * flat, axis X and Y, millimetres and inches, and a masked case. Every entry is
  * an around rough so the emitted links are the operation's own.
@@ -3072,6 +3139,24 @@ function assertStageDescent(
         visit(along, fromAngle, fromTip + (toTip - fromTip) * fraction)
       }
     } else {
+      // #1117 (square links): a cut along the bar at one angle -- an at-layer
+      // ring link -- is a straight commanded move, so it passes over every along
+      // sample between its ends at the interpolated tip, exactly as an along
+      // stage's pass does. Judging only its two ends let a later layer's link
+      // meet a sample the earlier layer's straight link had already lowered as
+      // if it were the raw blank (117 false first-cut misses on flat cones once
+      // square whole rings link). Sampling it judges more of the motion, not
+      // less; a move that also changes A keeps its endpoint judgement.
+      if (Math.abs(dAlong) > 1e-9 && Math.abs(dAngle) <= 1e-9) {
+        const low = Math.min(fromAlong, toAlong)
+        const high = Math.max(fromAlong, toAlong)
+        for (const along of alongSamples) {
+          if (along < low - DESCENT_TOLERANCE) continue
+          if (along > high + DESCENT_TOLERANCE) break
+          visit(along, fromAngle, fromTip + (toTip - fromTip) * (along - fromAlong) / dAlong)
+        }
+        continue
+      }
       if (Math.abs(dAlong) > 1e-9) {
         visit(fromAlong, fromAngle, fromTip)
         visit(toAlong, toAngle, toTip)
@@ -3302,6 +3387,9 @@ const worstAtLayerLinkMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, l
 // cases read this to assert their own coverage, and the seeded run's totals are
 // asserted separately below.
 const acrossAngleByCase = new Map<string, number>()
+// #1117 (square links): equal-angle at-layer links at A0/A360 on a square blank,
+// per case -- the whole-ring boundary the touch-gate rule used to refuse.
+const wholeRingSquareByCase = new Map<string, number>()
 const worstLinkModelSlack: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
 /** The largest shortfall of the protected solid from the model in a swept footprint, in mm. */
 let worstLinkSolidGap = 0
@@ -3489,6 +3577,9 @@ function proveAtLayerLink(
   if (toAngle !== fromAngle) {
     counts.acrossAngle++
     acrossAngleByCase.set(entry.label, (acrossAngleByCase.get(entry.label) ?? 0) + 1)
+  } else if (stock.shape === 'square'
+    && (Math.abs(fromAngle) <= 1e-9 || Math.abs(fromAngle - 360) <= 1e-9)) {
+    wholeRingSquareByCase.set(entry.label, (wholeRingSquareByCase.get(entry.label) ?? 0) + 1)
   }
 
   // Every value this proof compares and reports is normalised to millimetres
@@ -3785,6 +3876,10 @@ const CASES = [
   // gouging. Its links go through the same proof as every other, and the case
   // must emit A-changing links (`requiresAcrossAngle`).
   fitEntry(drawTwistCase()),
+  // #1117 (square links): busto-rect's shape on a small square blank -- whole
+  // rings below the inscribed radius and lobe-split rings below them. Must emit
+  // whole-ring and A-changing links (`requiresWholeRingSquareLinks`).
+  fitEntry(drawSquareWholeRingCase()),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -4799,7 +4894,17 @@ for (const { entry } of CASES) {
   const across = acrossAngleByCase.get(entry.label) ?? 0
   assert.ok(across > 0,
     `${entry.label}: the case emits at-layer links that change A (${across})`)
-  console.log(`  #1117 rl-f twisted ridge: ${across} at-layer links change A (${entry.label})`)
+  console.log(`  #1117 A-changing case: ${across} at-layer links change A (${entry.label})`)
+}
+// #1117 (square links): the whole-ring case has to prove whole-ring links, or
+// the touch-gate rule could come back and the case would still pass on its
+// corner arcs alone.
+for (const { entry } of CASES) {
+  if (!entry.requiresWholeRingSquareLinks) continue
+  const whole = wholeRingSquareByCase.get(entry.label) ?? 0
+  assert.ok(whole > 0,
+    `${entry.label}: the case proves whole-ring at-layer links at A0/A360 (${whole})`)
+  console.log(`  #1117 square links: ${whole} whole-ring links at A0/A360 (${entry.label})`)
 }
 assert.ok(linkEndCells > 0,
   `the at-layer link's retained-end proof checked cells (${linkEndCells})`)
