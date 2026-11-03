@@ -35,13 +35,17 @@
  *  - the skipped-ring guards removed -> a link spans an empty ring;
  *  - the at-layer budget unbounded, charged per window instead of per new row,
  *    or shared with the raised link -> the exhaustion fixture's layers move.
+ *  - the per-link row cap back to 64 -> the dense grid's widest drift drops to
+ *    7.4 deg;
+ *  - the link-row sample budgets shared -> the raised path gets no row once the
+ *    at-layer rows have spent theirs.
  */
 
 import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
-import { generateRotaryRough } from './rotaryModel'
-import type { RotaryModelMesh } from './rotaryModel'
+import { generateRotaryRough, linkRowBudget } from './rotaryModel'
+import type { RotaryLinkRow, RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove } from './types'
 
 const BALL2: NormalizedTool = {
@@ -102,6 +106,23 @@ function revolved(stock: BarStock, rings: readonly { along: number; radius: numb
   }, rings[0].along, rings[rings.length - 1].along, rings.length - 1, segments)
 }
 
+/**
+ * Block 1's model: a twisted lobe on a 3 mm base, two humps along the bar and a
+ * 5.5 mm collar in the middle; the crest turns `twist` degrees per millimetre.
+ */
+function lobeRadiusAt(length: number, twist: number): (along: number, aDeg: number) => number {
+  return (along, aDeg) => {
+    const collar = along > length / 2 - 0.6 && along < length / 2 + 0.6 ? 5.5 : 0
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= 70) return Math.max(3, collar)
+    const c = Math.cos(u * Math.PI / 140)
+    const humps = 0.5 - 0.5 * Math.cos(2 * Math.PI * 2 * along / length)
+    return Math.max(3 + 2.4 * humps * c * c, collar)
+  }
+}
+
 const alongOf = (point: ToolpathMove['from']): number => point.x
 /** An at-layer link: a cut that moves along the bar (ring cuts keep along fixed). */
 const isAtLayerLink = (move: ToolpathMove): boolean => move.kind === 'cut' && alongOf(move.to) > alongOf(move.from) + 1e-12
@@ -132,16 +153,7 @@ console.log('Testing that a square blank links whole and model-split rings at th
   const length = 8
   const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
   const pivot = barPivotZ(stock)
-  const radiusAt = (along: number, aDeg: number): number => {
-    const collar = along > length / 2 - 0.6 && along < length / 2 + 0.6 ? 5.5 : 0
-    let delta = ((aDeg - 7 * along) % 360 + 360) % 360
-    if (delta > 180) delta -= 360
-    const u = Math.abs(delta)
-    if (u >= 70) return Math.max(3, collar)
-    const c = Math.cos(u * Math.PI / 140)
-    const humps = 0.5 - 0.5 * Math.cos(2 * Math.PI * 2 * along / length)
-    return Math.max(3 + 2.4 * humps * c * c, collar)
-  }
+  const radiusAt = lobeRadiusAt(length, 7)
   const rough = generateRotaryRough('square-ring-links', shaped(stock, radiusAt, 0, length, 80, 240), stock, BALL2, {
     stepover: 0.6, sampleSpacing: 0.6, stockToLeave: 0, alongStart: 0, alongEnd: length,
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.25, stepdown: 1.5, passDirection: 'around',
@@ -233,6 +245,76 @@ console.log('Testing that a spent at-layer budget falls back to the unchanged ra
   assert.ok(layers[3].filter(isAtLayerLink).every((move) => isSeam(move.from.a)),
     'the first whole-ring layer links at A0/A360')
   console.log(`  at-layer links per layer ${atLayer.join(',')}; raised ${raised.join(',')}`)
+}
+
+// ---------------------------------------------------------------------------
+// 3. A dense angular grid. An A-changing link samples one model row per grid
+//    angle it crosses, and the per-link cap on those rows used to be 64. On a
+//    fine grid a drift well inside 45 deg crosses more than that (busto-rect's
+//    adaptive grid, ~0.17 deg near A0, needed 72-165 rows), and the cap refused
+//    a link the proof would accept. Block 1's model with the crest turning
+//    60 deg/mm, a 0.1 mm sample spacing and a 0.1 mm cell: the cap of 256 lets
+//    drifts up to ~14 deg link; with 64 only drifts under ~7.4 deg do.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that a fine angular grid does not cap a short A-changing link...')
+{
+  const side = 14
+  const length = 8
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const rough = generateRotaryRough('dense-grid', shaped(stock, lobeRadiusAt(length, 60), 0, length, 80, 240), stock, BALL2, {
+    stepover: 0.6, sampleSpacing: 0.1, stockToLeave: 0, alongStart: 0, alongEnd: length,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.1, stepdown: 1.5, passDirection: 'around',
+  }, {})
+  assert.deepEqual(rough.warnings, [], 'the rough has no warning')
+  const across = rough.moves.filter(isAtLayerLink).filter((move) => move.from.a !== move.to.a)
+  const drifts = across.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)))
+  const widest = Math.max(0, ...drifts)
+  assert.ok(widest > 10, `an A-changing link across more than 64 fine grid rows links (widest ${widest.toFixed(2)} deg)`)
+  assert.ok(widest <= 45 + 1e-9, 'and still within 45 deg')
+  assert.equal(across.length, 17, `A-changing links on the dense grid (${across.length})`)
+  console.log(`  ${across.length} A-changing links, widest ${widest.toFixed(2)} deg`)
+}
+
+// ---------------------------------------------------------------------------
+// 4. The link-row sample budget is per path. An A-changing candidate samples a
+//    model row for every grid angle it crosses, rows the raised plan never asks
+//    for; on one shared total those attempts could spend the samples a later
+//    raised link needs, and that link would drop to the travel height. With a
+//    stub sampler of 1001-sample rows, 1998 at-layer rows exhaust the 2M budget,
+//    and the raised path still gets a new row -- and a row the at-layer path
+//    already sampled is shared (charged to the raised budget, not resampled).
+// ---------------------------------------------------------------------------
+
+console.log('Testing that at-layer link rows cannot spend the raised link-row budget...')
+{
+  const samples = 1001
+  let sampled = 0
+  const rowAt = linkRowBudget(samples, (key): RotaryLinkRow => {
+    sampled++
+    return { along: Array.from({ length: samples }, (_, i) => i), tips: Array.from({ length: samples }, () => key) }
+  })
+  let atLayerRows = 0
+  for (let k = 0; k < 4000; k++) {
+    if (rowAt(k * 0.05, 'atLayer') === null) break
+    atLayerRows++
+  }
+  assert.equal(atLayerRows, Math.floor(2_000_000 / samples),
+    `the at-layer path runs out of samples on its own budget (${atLayerRows} rows)`)
+  assert.equal(rowAt(atLayerRows * 0.05 + 0.05, 'atLayer'), null, 'a further at-layer row is refused')
+  const fresh = rowAt(300, 'raised')
+  assert.ok(fresh !== null, 'a raised row is still affordable after the at-layer budget is spent')
+  const before = sampled
+  const shared = rowAt(0, 'raised')
+  assert.ok(shared !== null && shared.tips[0] === 0, 'the raised path reuses a row the at-layer path sampled')
+  assert.equal(sampled, before, 'without sampling the angle again')
+  // A cancelled sampling is not a property of the angle, so it is not shared.
+  let stop = true
+  const stoppable = linkRowBudget(samples, (key) => (stop ? 'stopped' : { along: [0], tips: [key] }))
+  assert.equal(stoppable(10, 'atLayer'), null, 'a stopped sampling gives no row')
+  stop = false
+  assert.ok(stoppable(10, 'raised') !== null, 'and the other path samples the angle afresh')
+  console.log(`  ${atLayerRows} at-layer rows spent their budget; the raised path still sampled a new row`)
 }
 
 console.log('rotary square ring-link tests passed')

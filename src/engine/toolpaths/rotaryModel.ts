@@ -355,7 +355,7 @@ interface RotaryRun {
  * square blank -- floored at the retained stub's exact contact); `NaN` still
  * means "no model under the tool".
  */
-interface RotaryLinkRow {
+export interface RotaryLinkRow {
   readonly along: readonly number[]
   readonly tips: readonly number[]
 }
@@ -364,7 +364,7 @@ interface RotaryLinkRow {
  * The link path a budget belongs to (#1117 fix 1): the raised link, whose
  * accounting must match the pre-#1117 operation, or the at-layer candidate.
  */
-type RotaryLinkBucket = 'raised' | 'atLayer'
+export type RotaryLinkBucket = 'raised' | 'atLayer'
 
 /**
  * One commanded leg of a ring-to-ring link (#1093). The finish's surface-
@@ -844,11 +844,12 @@ const MAX_LINK_ACROSS_DEG = 45
  * keeps one wide drift from spending the whole budget.
  */
 const MAX_LINK_ACROSS_ROWS = 512
-// #1117 (square links): a quarter of the operation budget. 64 refused valid
-// short drifts on a fine grid (busto-rect: 0.476 deg rows, so a 30-45 deg drift
-// inside `MAX_LINK_ACROSS_DEG` crosses 64-95 rows); 128 admits a 45 deg drift on
-// any grid of 0.36 deg or coarser while one candidate still cannot take more
-// than a quarter of the operation's rows.
+// #1117 (square links): half of the operation budget, 256 rows. 64 refused
+// valid short drifts on busto-rect's adaptive grid, which refines to about
+// 0.17 deg near A0: drifts of 12-28 deg inside `MAX_LINK_ACROSS_DEG` crossed
+// 72, 97, 138 and 165 rows. 256 admits a 45 deg drift on any grid of 0.18 deg
+// or coarser, while one candidate still cannot take more than half of the
+// operation's rows (rows already sampled by another candidate cost nothing).
 const MAX_LINK_ACROSS_ROWS_PER_LINK = MAX_LINK_ACROSS_ROWS / 2
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
@@ -1723,50 +1724,26 @@ function completeRotaryTargets(
   // -- the caller then keeps the old retract/rapid/plunge rather than sampling
   // a coarser, unsafe row.
   //
-  // #1117 (square links): two sample budgets, one per link path, exactly as
-  // the leftover walk has two work buckets. The at-layer candidate samples rows
-  // the raised plan never asks for (every grid angle an A-changing link
-  // crosses), and a shared total would let those attempts starve a later raised
-  // row, which would then fall back to the travel height. Each bucket decides
-  // and charges an angle on **its own first request**, so the raised bucket
-  // sees the same sequence of charges and refusals it did before the at-layer
-  // candidate existed. The sampled row itself is shared: it depends only on
-  // the angle, so one sampling serves both paths.
-  const sampledRows = new Map<number, RotaryLinkRow | null>()
-  const linkDecisions = { raised: new Map<number, RotaryLinkRow | null>(), atLayer: new Map<number, RotaryLinkRow | null>() }
-  const linkSampleTotals = { raised: 0, atLayer: 0 }
-  const linkRowAt = (angleDeg: number, bucket: RotaryLinkBucket = 'raised'): RotaryLinkRow | null => {
-    const key = ((angleDeg % 360) + 360) % 360
-    const linkCache = linkDecisions[bucket]
-    const cached = linkCache.get(key)
-    if (cached !== undefined) return cached
-    if (params.passDirection !== 'around' || along.length <= 1) {
-      linkCache.set(key, null)
-      return null
-    }
-    const spacing = Math.min(
-      aroundArcStep(stock, params, tool.units),
-      params.stepover,
-      tool.radius / 4,
-    )
-    const span = along[along.length - 1] - along[0]
-    const intervals = span > 0 ? Math.ceil(span / Math.max(spacing, 1e-9)) : 0
-    if (!Number.isFinite(intervals) || intervals <= 0 || intervals + 1 > MAX_LINK_SAMPLES
-      || linkSampleTotals[bucket] + intervals + 1 > MAX_LINK_TOTAL_SAMPLES
-      // The row is walked once per ring boundary, and the rough's leftover walk
-      // is row x along; cap that product and retract instead of running a
-      // quadratic pass on a long bar with a small cutter.
-      || (intervals + 1) * along.length > MAX_LINK_WORK) {
-      linkCache.set(key, null)
-      return null
-    }
-    const shared = sampledRows.get(key)
-    if (shared !== undefined) {
-      if (shared !== null) linkSampleTotals[bucket] += shared.along.length
-      linkCache.set(key, shared)
-      return shared
-    }
-    const linkAlong = Array.from({ length: intervals + 1 }, (_, i) => along[0] + span * i / intervals)
+  // #1117 (square links): one sample budget per link path; see
+  // `linkRowBudget`.
+  const linkSpacing = Math.min(
+    aroundArcStep(stock, params, tool.units),
+    params.stepover,
+    tool.radius / 4,
+  )
+  const linkSpan = along[along.length - 1] - along[0]
+  const linkIntervals = linkSpan > 0 ? Math.ceil(linkSpan / Math.max(linkSpacing, 1e-9)) : 0
+  // Every row has the same along grid, so whether a row is affordable at all
+  // is one answer for the operation. The row is walked once per ring boundary,
+  // and the rough's leftover walk is row x along; cap that product and retract
+  // instead of running a quadratic pass on a long bar with a small cutter.
+  const linkRowSamples = params.passDirection !== 'around' || along.length <= 1
+    || !Number.isFinite(linkIntervals) || linkIntervals <= 0 || linkIntervals + 1 > MAX_LINK_SAMPLES
+    || (linkIntervals + 1) * along.length > MAX_LINK_WORK
+    ? null
+    : linkIntervals + 1
+  const linkRowAt = linkRowBudget(linkRowSamples, (key) => {
+    const linkAlong = Array.from({ length: linkIntervals + 1 }, (_, i) => along[0] + linkSpan * i / linkIntervals)
     const sampled = sampleRotaryModelWithWorkspace(
       samplingMesh,
       stock,
@@ -1784,14 +1761,8 @@ function completeRotaryTargets(
       warnings,
       workspace,
     )
-    if (!sampled.valid || sampled.stopped) {
-      // A stopped sampling is not a property of the angle: keep it out of the
-      // shared rows so the other path does not inherit it.
-      if (!sampled.stopped) sampledRows.set(key, null)
-      linkCache.set(key, null)
-      return null
-    }
-    linkSampleTotals[bucket] += linkAlong.length
+    if (sampled.stopped) return 'stopped'
+    if (!sampled.valid) return null
     const raw = sampled.tipRadius[0]
     const linkTips = Array.from(raw, (tip) =>
       Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
@@ -1816,12 +1787,61 @@ function completeRotaryTargets(
         }
       }
     }
-    const row: RotaryLinkRow = { along: linkAlong, tips: linkTips }
-    sampledRows.set(key, row)
+    return { along: linkAlong, tips: linkTips }
+  })
+  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
+}
+
+/**
+ * The link-row cache and its sample budgets (#1093, #1117 square links),
+ * apart from the model sampling so the accounting can be tested on its own.
+ *
+ * `rowSamples` is the sample count every row of this operation has, or `null`
+ * when no row is affordable at all. `sample` samples one angle's row and
+ * returns `null` for an invalid sampling (no row at that angle, for either
+ * path) or `'stopped'` for a cancelled one (not a property of the angle, so
+ * not shared).
+ *
+ * Two sample budgets, one per link path, exactly as the leftover walk has two
+ * work buckets. The at-layer candidate samples rows the raised plan never asks
+ * for (every grid angle an A-changing link crosses), and a shared total would
+ * let those attempts starve a later raised row, which would then fall back to
+ * the travel height. Each bucket decides and charges an angle on **its own
+ * first request**, so the raised bucket sees the same sequence of charges and
+ * refusals it did before the at-layer candidate existed. The sampled row itself
+ * is shared: it depends only on the angle, so one sampling serves both paths.
+ */
+export function linkRowBudget(
+  rowSamples: number | null,
+  sample: (key: number) => RotaryLinkRow | null | 'stopped',
+  totalSamples: number = MAX_LINK_TOTAL_SAMPLES,
+): (angleDeg: number, bucket?: RotaryLinkBucket) => RotaryLinkRow | null {
+  const sampledRows = new Map<number, RotaryLinkRow | null>()
+  const decisions = { raised: new Map<number, RotaryLinkRow | null>(), atLayer: new Map<number, RotaryLinkRow | null>() }
+  const totals = { raised: 0, atLayer: 0 }
+  return (angleDeg: number, bucket: RotaryLinkBucket = 'raised'): RotaryLinkRow | null => {
+    const key = ((angleDeg % 360) + 360) % 360
+    const linkCache = decisions[bucket]
+    const cached = linkCache.get(key)
+    if (cached !== undefined) return cached
+    if (rowSamples === null || totals[bucket] + rowSamples > totalSamples) {
+      linkCache.set(key, null)
+      return null
+    }
+    let row = sampledRows.get(key)
+    if (row === undefined) {
+      const sampled = sample(key)
+      if (sampled === 'stopped') {
+        linkCache.set(key, null)
+        return null
+      }
+      row = sampled
+      sampledRows.set(key, row)
+    }
+    if (row !== null) totals[bucket] += row.along.length
     linkCache.set(key, row)
     return row
   }
-  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
 }
 
 /**
