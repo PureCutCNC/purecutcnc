@@ -58,9 +58,18 @@
  *    A-changing path, keeping only the waypoint point checks -> block 4: the
  *    masked fixture emits the 14.5 -> 15.5 cut across the excluded slit at
  *    X14.87 again (4 A-changing links instead of 3);
- *  - remove the footprint-height lift from `linkAcrossAngle` (`height =
- *    max(tipHere, tipNext)`) -> block 5: the A-changing links ride below the
- *    ridge the body's window reaches, by more than the sampler's own cell.
+ *  - build block 5's mesh with the pre-rl-f `radiusAt(along, meshAngle - 90)`
+ *    mapping -> block 5's oracle-versus-ray-intersection assertion: the meshes
+ *    differ by more than half a millimetre at the twisted crest, which is what
+ *    the rl-e review mistook for a gouge.
+ *
+ * rl-f removed block 5's window-height assertion (rl-e's fix round 3). The
+ * check it made cannot fail: `linkRowAt`'s tips are already footprint-convolved
+ * `safeToolTipZAt` samples, and removing the window lift changes five links out
+ * of the 361 property cases. The lift stays in production as defence in depth
+ * and no test is required to fail without it; the links' safety is the rl-c
+ * protected-solid replay, which rl-f runs on this same corrected model
+ * (`drawTwistCase` in `squareAroundGenerator.property.test.ts`).
  */
 
 import assert from 'node:assert/strict'
@@ -121,6 +130,70 @@ function surface(
     }
   }
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * The outermost radius the mesh itself has along one ray in the bar's
+ * cross-section: the ray leaves the bar axis at `along` towards the mesh's own
+ * direction `angleDeg` (0 is the bar's +across, 90 its +up) and every triangle
+ * it crosses is intersected, the farthest hit winning.
+ *
+ * This reads the **fixture's mesh**, not the `radiusAt` function that built it,
+ * so it is what checks an angular mapping rather than restating it: a mesh
+ * whose rings were laid out with the wrong sign intersects a ray somewhere else
+ * than the model function claims (#1117 rl-f).
+ */
+function meshRadiusOnRay(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  along: number,
+  angleDeg: number,
+): number {
+  const positions = mesh.positions
+  const index = mesh.index
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const radians = angleDeg * Math.PI / 180
+  const originX = stock.axis === 'x' ? along : centre
+  const originY = stock.axis === 'x' ? centre : along
+  const originZ = pivot
+  const directionX = stock.axis === 'x' ? 0 : Math.cos(radians)
+  const directionY = stock.axis === 'x' ? Math.cos(radians) : 0
+  const directionZ = Math.sin(radians)
+  let farthest = Number.NaN
+  for (let triangle = 0; triangle < index.length; triangle += 3) {
+    const a = index[triangle] * 3
+    const b = index[triangle + 1] * 3
+    const c = index[triangle + 2] * 3
+    // Möller-Trumbore, in doubles over the mesh's own Float32 vertices.
+    const edge1X = positions[b] - positions[a]
+    const edge1Y = positions[b + 1] - positions[a + 1]
+    const edge1Z = positions[b + 2] - positions[a + 2]
+    const edge2X = positions[c] - positions[a]
+    const edge2Y = positions[c + 1] - positions[a + 1]
+    const edge2Z = positions[c + 2] - positions[a + 2]
+    const hX = directionY * edge2Z - directionZ * edge2Y
+    const hY = directionZ * edge2X - directionX * edge2Z
+    const hZ = directionX * edge2Y - directionY * edge2X
+    const determinant = edge1X * hX + edge1Y * hY + edge1Z * hZ
+    if (Math.abs(determinant) < 1e-12) continue
+    const inverse = 1 / determinant
+    const sX = originX - positions[a]
+    const sY = originY - positions[a + 1]
+    const sZ = originZ - positions[a + 2]
+    const u = (sX * hX + sY * hY + sZ * hZ) * inverse
+    if (u < -1e-9 || u > 1 + 1e-9) continue
+    const qX = sY * edge1Z - sZ * edge1Y
+    const qY = sZ * edge1X - sX * edge1Z
+    const qZ = sX * edge1Y - sY * edge1X
+    const v = (directionX * qX + directionY * qY + directionZ * qZ) * inverse
+    if (v < -1e-9 || u + v > 1 + 1e-9) continue
+    const distance = (edge2X * qX + edge2Y * qY + edge2Z * qZ) * inverse
+    // The model is star-shaped about the bar axis, so every hit is the same
+    // surface; the farthest one is the outermost solid.
+    if (distance > 0 && !(distance <= farthest)) farthest = distance
+  }
+  return farthest
 }
 
 const alongOf = (point: { x: number; y: number }): number => point.x
@@ -374,27 +447,36 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
 
 
 // ---------------------------------------------------------------------------
-// 5. #1117 rl-e correction 3: an A-changing link's height is the tallest
-//    material the **body's window** reaches, not the height its own ray finds.
+// 5. #1117 rl-f: the twisted-ridge fixture's angular mapping, checked against
+//    the mesh itself.
 //
-//    A flat's bottom face is a disc at the tip, so material a few degrees away
-//    that stands above the tip is cut by the body even when the link's own ray
-//    reads clean. `linkAcrossAngle` therefore sizes each step from the tallest
-//    grid tip inside `bodyReachDeg(layerRadius) + |delta|`, and this block pins
-//    that rule against an independently computed window on a generator case.
+//    A small twisted ridge: a V-lobe whose crest rotates six degrees per
+//    millimetre, so every ring's run end drifts and the transition is an
+//    A-changing link. A positive machine A turns the stock by +A about the bar
+//    axis (`turnStripTriangles`, `rotarySampling.ts`), so the direction the tool
+//    meets at A is the mesh's `90 - A`: the fixture builds its mesh with
+//    exactly that mapping, and the oracle-versus-mesh probes below catch a sign
+//    error coming back.
 //
-//    The fixture is a small twisted ridge: a V-lobe whose crest rotates six
-//    degrees per millimetre, so every ring's run end drifts and the transition
-//    is an A-changing link. The link joins two runs at a boundary that sits a
-//    fraction of a band under the crest; the crest itself is inside the body's
-//    window at the layer radius and outside the link's own ray. Without the
-//    lift the emitted steps fall back to the own rows and ride under the ridge.
+//    Before rl-f this block built the mesh with `radiusAt(along, meshAngle -
+//    90)`, which mirrors the ridge. The oracle then claimed 3.4909 mm where the
+//    mesh stood at 2.6805 mm (at X2.895 / A14.391), and the four links rl-e's
+//    review read as gouges were that mismatch -- every emitted A-changing
+//    segment passes the unchanged rl-c proof once the oracle is right.
 //
-//    This is the **rule**, not a safety minimum: the emitted tip must cover the
-//    window's tallest material up to the sampler's own cell (the only slack is
-//    the analytic-versus-grid reading, `2 * requestedCellSize`). An upper
-//    sampling-error bound cannot establish a fixed minimum clearance, which is
-//    why the property suite no longer asserts one.
+//    The fixture's own job is now only the geometry: the corrected model emits
+//    A-changing links, and its oracle *is* the mesh. The links' safety is the
+//    rl-c protected-solid replay, which rl-f runs on this same model as
+//    `drawTwistCase` in `squareAroundGenerator.property.test.ts`: the replay
+//    proves every link it emits (35 of them change A) with 0 mm protected-solid
+//    shortfall.
+//
+//    rl-e's fix round 3 asserted each link's height against the body's window
+//    read off this fixture. rl-f settled that the check cannot bite: the sampled
+//    pose is already `linkRowAt`'s footprint-convolved `safeToolTipZAt` tip, and
+//    removing the window lift from `linkAcrossAngle` changes five links out of
+//    the 361 property cases. The window assertion is gone; the lift stays in
+//    production as defence in depth, and no test is required to fail without it.
 // ---------------------------------------------------------------------------
 {
   const stock = roundStock(8, 6, 'x', { x: 0, y: 0 })
@@ -421,69 +503,53 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
     stepover: 0.5, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 0, alongEnd: 6,
     safeRadius: 12, requestedCellSize: 0.12, stepdown: 1, passDirection: 'around' as const,
   }
-  const mesh = surface(stock, (along, meshAngle) => radiusAt(along, meshAngle - 90), 0, 6, 120, 240)
-  const result = generateRotaryRough('rl-e-footprint', mesh, stock, flat, params, {})
+  // Machine A exposes mesh direction `90 - A`, so the mesh radius at a mesh
+  // direction is the Around-frame radius at `90 - meshDirection`. The pre-rl-f
+  // fixture used `meshAngle - 90` here, which mirrors the ridge.
+  const mesh = surface(stock, (along, meshAngle) => radiusAt(along, 90 - meshAngle), 0, 6, 120, 240)
+  // (1) The oracle is the mesh's own surface, not the function that built it.
+  // Every probe sits halfway between two mesh rings (so the ray meets a quad's
+  // interior) and on the crest and off it, where the mirrored mapping differs
+  // most. The residual is the fixture's own discretisation: half an angular
+  // facet (1.5 degrees at radius 3.5 gives 3e-4 mm) and the along chord of a
+  // 0.05 mm ring spacing. The mirrored mapping differs by a whole millimetre.
+  const probes = [
+    { along: 1.025, a: twist * 1.025 },
+    { along: 1.025, a: twist * 1.025 - 30 },
+    { along: 3.025, a: twist * 3.025 },
+    { along: 3.025, a: twist * 3.025 + 30 },
+    { along: 5.025, a: twist * 5.025 },
+  ]
+  let worstResidual = 0
+  let worstMirror = 0
+  for (const probe of probes) {
+    const oracle = radiusAt(probe.along, probe.a)
+    const measured = meshRadiusOnRay(mesh, stock, probe.along, 90 - probe.a)
+    const residual = Math.abs(measured - oracle)
+    worstResidual = Math.max(worstResidual, residual)
+    worstMirror = Math.max(worstMirror, Math.abs(radiusAt(probe.along, -probe.a) - oracle))
+    assert.ok(residual <= 2e-3,
+      `the twisted fixture's oracle and its mesh disagree at X${probe.along.toFixed(3)} `
+      + `A${probe.a.toFixed(3)}: the mesh's ray intersection reads ${measured.toFixed(4)} mm, the `
+      + `Around-frame model ${oracle.toFixed(4)} mm (${residual.toFixed(4)} mm apart, allowed 0.002; `
+      + `the mirrored reading would be ${radiusAt(probe.along, -probe.a).toFixed(4)} mm)`)
+  }
+  // The probes are only load-bearing if the mapping they check matters: the
+  // mirrored reading has to be far enough away to fail the assertion above.
+  assert.ok(worstMirror > 0.5,
+    `the probes distinguish the two angular mappings (${worstMirror.toFixed(3)} mm apart)`)
+  // (2) The fixture's own coverage: this model still makes a ring partial and
+  // its run boundary drift, so the generator emits A-changing links on it. The
+  // links themselves are proved against the reference's whole standing solid in
+  // the property suite's `drawTwistCase`, not here.
+  const result = generateRotaryRough('rl-f-twist', mesh, stock, flat, params, {})
   assert.deepEqual(result.warnings, [], 'the twisted-ridge rough warns about nothing')
   const links = diag(result.moves)
   assert.ok(links.length > 0,
     `the drifting boundary links across A (${links.length} diagonal cut moves)`)
-  const pivot = barPivotZ(stock)
-  const maxRadius = barMaxRadius(stock)
-  const cutterRadius = flat.radius
-  /** The widest angle at which the flat's body reaches material at `material`. */
-  const bodyReachDeg = (tip: number, material: number): number => {
-    if (!(tip > 0)) return 90
-    if (!(material > tip)) return 0
-    return Math.min(Math.atan(cutterRadius / tip), Math.acos(tip / material)) * 180 / Math.PI
-  }
-  const cell = params.requestedCellSize
-  let ownRayUnsafe = 0
-  let closest = Number.POSITIVE_INFINITY
-  let closestLabel = ''
-  for (const move of links) {
-    const fromAngle = move.from.a!
-    const toAngle = move.to.a!
-    const fromAlong = alongOf(move.from)
-    const toAlong = alongOf(move.to)
-    const tip = Math.max(move.from.z, move.to.z) - pivot
-    // The window the generator sizes from: the body's reach at the link's
-    // **lowest** height (one stepdown under the ring it joins), widened by the
-    // A change because the path visits every angle in between.
-    const layerRadius = Math.max(0, Math.min(move.from.z, move.to.z) - pivot - params.stepdown)
-    const span = bodyReachDeg(layerRadius, maxRadius) + Math.abs(toAngle - fromAngle)
-    let ownMax = Number.NEGATIVE_INFINITY
-    let windowMax = Number.NEGATIVE_INFINITY
-    const steps = 12
-    for (let s = 0; s <= steps; s++) {
-      const fraction = s / steps
-      const along = fromAlong + (toAlong - fromAlong) * fraction
-      const angle = fromAngle + (toAngle - fromAngle) * fraction
-      ownMax = Math.max(ownMax, radiusAt(along, angle))
-      for (let d = -Math.ceil(span / 0.5); d <= Math.ceil(span / 0.5); d++) {
-        windowMax = Math.max(windowMax, radiusAt(along, angle + d * 0.5))
-      }
-    }
-    if (windowMax > ownMax + cell) ownRayUnsafe++
-    const margin = tip - windowMax
-    if (margin < closest) {
-      closest = margin
-      closestLabel = `A${fromAngle.toFixed(1)}->${toAngle.toFixed(1)} along `
-        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`
-    }
-    assert.ok(margin >= -2 * cell,
-      `an A-changing link's tip covers the body window's tallest material at `
-      + `A${fromAngle.toFixed(1)}->${toAngle.toFixed(1)} along `
-      + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}: tip ${tip.toFixed(3)}, `
-      + `window ${windowMax.toFixed(3)}, own ray ${ownMax.toFixed(3)} `
-      + `(allowed ${(2 * cell).toFixed(3)} of sampling slack)`)
-  }
-  // The fixture is only load-bearing if the window really is above the link's
-  // own ray: at least one link must be sized by material its ray does not see.
-  assert.ok(ownRayUnsafe > 0,
-    `a link's window stands above its own ray (${ownRayUnsafe} of ${links.length})`)
-  console.log(`  rl-e footprint: ${links.length} A-changing links, `
-    + `${ownRayUnsafe} sized by material off their own ray, closest `
-    + `${closest.toFixed(3)} mm to the window (${closestLabel})`)
+  console.log(`  rl-f twisted ridge: ${probes.length} oracle/mesh probes agree to `
+    + `${worstResidual.toFixed(5)} mm (the mirrored mapping differs by ${worstMirror.toFixed(3)} mm), `
+    + `${links.length} A-changing links emitted`)
 }
 
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')

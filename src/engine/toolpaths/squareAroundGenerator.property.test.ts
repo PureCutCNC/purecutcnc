@@ -375,6 +375,11 @@ function box(
  * -- A0 is the mesh's +up direction, which is the angle the around rings start
  * and end on -- so the mesh and the case's `meshRadiusAt2` boundary are the same
  * function and the independent model read is not a second convention.
+ *
+ * The placement below is `A + 90`, the **mirror** of the mapping a turned stock
+ * actually has (see `twisted`). It is only interchangeable with it for a model
+ * that is **even** in A, which every `lobed` caller here is; a chiral model has
+ * to go through `twisted` (#1117 rl-f).
  */
 function lobed(
   stock: BarStock,
@@ -412,6 +417,36 @@ function lobed(
     }
   }
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * `lobed`, for a model that is **chiral** in A (#1117 rl-f): a twisted ridge
+ * whose crest moves with the along position, where the angular mapping is not
+ * interchangeable with its mirror.
+ *
+ * `lobed` places Around-frame A at the mesh's `A + 90` direction. A positive
+ * machine A turns the stock by +A about the bar axis (`turnStripTriangles`,
+ * `rotarySampling.ts`), so the direction the tool meets at A is the mesh's
+ * `90 - A`. Reading the model as `A -> -A` turns `lobed`'s `A + 90` placement
+ * into that `90 - A`: mesh direction `d` ends up holding `radiusAt(along,
+ * 90 - d)`, which is exactly the machine-frame surface, and the case's
+ * `meshRadiusAt2: radiusAt` oracle is then the mesh rather than its mirror.
+ *
+ * The rl-e fixture this replaces built its mesh with `radiusAt(along,
+ * meshAngle - 90)` -- `lobed`'s placement used as if it were this one -- which
+ * put the mirror image under the tool: the oracle claimed 3.4909 mm where the
+ * mesh stood at 2.6805 mm at X2.895 / A14.391, and four links that met the mesh
+ * were read as gouges.
+ */
+function twisted(
+  stock: BarStock,
+  radiusAt: (along: number, aDeg: number) => number,
+  alongFrom: number,
+  alongTo: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  return lobed(stock, (along, aDeg) => radiusAt(along, -aDeg), alongFrom, alongTo, steps, segments)
 }
 
 /**
@@ -1305,6 +1340,12 @@ interface Case {
    * `mm`, which is every case that predates this slice.
    */
   units?: Units
+  /**
+   * #1117 rl-f: this case exists for links that also change A. The replay
+   * asserts it emitted at least one, so the swept-footprint branch of the link
+   * proof cannot pass vacuously on it.
+   */
+  requiresAcrossAngle?: boolean
 }
 
 function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number, units: Units = 'mm'): NormalizedTool {
@@ -2316,6 +2357,80 @@ function drawLinkAcrossCase(cutter: 'ball_endmill' | 'flat_endmill' = 'ball_endm
 }
 
 /**
+ * #1117 rl-f: the corrected twisted ridge, replayed under the unchanged rl-c
+ * rules.
+ *
+ * A V-lobe whose crest rotates six degrees per millimetre. Every ring's run end
+ * drifts with the along position, so the transition between two rings' runs is
+ * an A-changing link; the model is **chiral** in A, which is why it goes through
+ * `twisted` and not `lobed` (the rl-e fixture's mistake). Its emitted links are
+ * proved by the generic at-layer replay, i.e. against the reference's whole
+ * standing solid across the body's swept footprint -- the same proof as every
+ * other link in this file, with no A-changing-specific rule of its own. In the
+ * seeded run this case proves 35 links across an A change and reports 0 mm of
+ * protected-solid shortfall.
+ *
+ * The window-height assertion rl-e's fix round 3 added to this fixture is gone:
+ * a link's sampled pose is already `linkRowAt`'s footprint-convolved
+ * `safeToolTipZAt` tip, and removing `linkAcrossAngle`'s window lift changes
+ * five links out of these 361 cases. That lift stays in production as defence in
+ * depth, and no test is required to fail without it (rl-f decision).
+ */
+function drawTwistCase(): Case {
+  const thickness = 8
+  const length = 6
+  const stock = roundStock(thickness, length, 'x', { x: 0, y: 0 })
+  const base = 2
+  const lobe = 1.5
+  const twist = 6
+  const halfWidth = 60
+  /** The model in the Around frame's own A: the crest is at A = `twist * along`. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= halfWidth) return base
+    const c = Math.cos(u * Math.PI / (2 * halfWidth))
+    return base + lobe * c * c
+  }
+  return {
+    label: `#1117 rl-f flat D1 round ${thickness}x${length} twisted ridge around rough ends 0`,
+    stock,
+    // Only the label and the revolved fallback read the profile; this model is
+    // the mesh and its own boundary below.
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: twisted(stock, radiusAt, 0, length, 120, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: 'flat_endmill',
+    diameter: 1,
+    stepdown: 1,
+    stepover: 0.5,
+    roughSpacing: 0.5,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.12,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+    // The fixture exists for its A-changing links: a run that stops emitting
+    // them on this model must fail rather than pass with the branch unproved.
+    requiresAcrossAngle: true,
+    // Keep the replay budget. The default estimate counts every ring as a full
+    // angular window and coarsens this case's stepover and layer until it emits
+    // two A-changing links; at 1.5M it stops at the grid's own cell ceiling
+    // (0.5 mm, one cutter radius) with the drawn 0.5 mm ring spacing and 1 mm
+    // layer, and emits 35 for under a second more replay.
+    maxReplayCells: 1_500_000,
+  }
+}
+
+/**
  * The matrix the link proof must cover (#1117): round and square, ball and
  * flat, axis X and Y, millimetres and inches, and a masked case. Every entry is
  * an around rough so the emitted links are the operation's own.
@@ -3183,13 +3298,10 @@ function trackMinimumMm(minimum: LinkMinimum, value: number, units: Units, label
 }
 
 const worstAtLayerLinkMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
-// #1117 rl-e correction 3: A-changing segments whose height is sized by the
-// tallest material in the body's window, and the closest one came to it. This is
-// a diagnostic and a coverage count; the rule's regression lives in
-// `rotaryAcrossAngleLinks.test.ts` (block 5).
-let footprintHeightChecks = 0
-let footprintHeightBites = 0
-const worstFootprintHeightMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+// #1117 rl-f: A-changing links proved **per case**, by label. `requiresAcrossAngle`
+// cases read this to assert their own coverage, and the seeded run's totals are
+// asserted separately below.
+const acrossAngleByCase = new Map<string, number>()
 const worstLinkModelSlack: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
 /** The largest shortfall of the protected solid from the model in a swept footprint, in mm. */
 let worstLinkSolidGap = 0
@@ -3374,7 +3486,10 @@ function proveAtLayerLink(
   if ((entry.units ?? 'mm') === 'mm') counts.mm++
   else counts.inch++
   if (entry.region !== undefined) counts.region++
-  if (toAngle !== fromAngle) counts.acrossAngle++
+  if (toAngle !== fromAngle) {
+    counts.acrossAngle++
+    acrossAngleByCase.set(entry.label, (acrossAngleByCase.get(entry.label) ?? 0) + 1)
+  }
 
   // Every value this proof compares and reports is normalised to millimetres
   // (#1117 rl-c correction, review finding 2): the set carries millimetre and
@@ -3524,69 +3639,6 @@ function proveAtLayerLink(
     }
   }
 
-  // #1117 rl-e correction 3: the **footprint-height** window, read as a
-  // diagnostic and a coverage count -- not asserted as a clearance.
-  //
-  // The at-layer candidate may not ride at the height its *own ray* finds while
-  // the cutter body reaches taller material a few degrees away: a ball's surface
-  // at an angular offset is at or above its tip, and a flat's bottom face is a
-  // disc, so both meet any material inside the body's angular reach that stands
-  // above the commanded tip. The generator sizes each A-changing sample from the
-  // **tallest material in the body's window**, widened by the A change because
-  // the sweep visits every angle in it.
-  //
-  // Two things follow, and the review's correction 3 is why they are separate:
-  // the window read below reports the closest an emitted tip came to the
-  // independent model's tallest material (the run prints it), while the **rule**
-  // is pinned by a dedicated generator fixture in
-  // `rotaryAcrossAngleLinks.test.ts` (block 5), whose emitted A-changing links
-  // ride below the ridge when the lift is removed. There is no clearance
-  // assertion here: an upper sampling-error bound cannot establish a minimum,
-  // and the conservative grid tip already covers most of the window on the
-  // seeded cases (measured: 0.0088 mm on the drifted lobe).
-  //
-  // Only an A-changing link is judged: the equal-angle candidate has no window
-  // widening and is outside this slice's correction.
-  if (dAngle !== 0) {
-    const segmentTip = Math.max(move.from.z, move.to.z) - pivot
-    // The window is the one the generator sizes the height from, not the body's
-    // reach at the tip: the candidate is checked against the window of its
-    // layer's **lowest** height (the layer radius, one stepdown under the ring
-    // cut this link joins), because that window is the widest it can ever need
-    // and the height it emits has to cover all of it. Reading only the physical
-    // reach at the tip would let a candidate sized from its own row pass while
-    // material a couple of degrees inside the layer window stands above it.
-    const layerRadius = Math.max(0, tipLow - entry.stepdown)
-    const reach = bodyAngularReachDeg(context.ball, cutterRadius, layerRadius, reference.maxMaterial)
-      + Math.abs(dAngle)
-    const half = Math.max(0, Math.ceil(reach / reference.angleDeg))
-    let windowMax = Number.NEGATIVE_INFINITY
-    let pathMax = Number.NEGATIVE_INFINITY
-    for (let s2 = 0; s2 <= samples; s2++) {
-      const fraction = s2 / samples
-      const along = fromAlong + span * fraction
-      const angle = fromAngle + dAngle * fraction
-      const own = linkModelRadiusAt(entry, along, angle)
-      if (own !== null && own > pathMax) pathMax = own
-      const baseBin = Math.floor(angle / reference.angleDeg)
-      for (let step = -half; step <= half; step++) {
-        const k = ((baseBin + step) % reference.angleBins + reference.angleBins) % reference.angleBins
-        const cellAngle = (k + 0.5) * reference.angleDeg
-        const model = linkModelRadiusAt(entry, along, cellAngle)
-        if (model !== null && model > windowMax) windowMax = model
-      }
-    }
-    if (windowMax > Number.NEGATIVE_INFINITY) {
-      footprintHeightChecks++
-      trackMinimumMm(worstFootprintHeightMargin, segmentTip - windowMax, units,
-        `${entry.label} ${angleLabel} along ${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`)
-      // The window's tallest material is above the link's *own path* there: the
-      // rule, not the ray, is what sizes this link. A run that stops producing
-      // such a link fails on the coverage assertion below instead of passing
-      // with the rule unexercised.
-      if (windowMax > pathMax + 1e-9) footprintHeightBites++
-    }
-  }
   // The retained ends: this link's own body footprint, outside the cut band.
   for (let i = first; i <= last; i++) {
     const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
@@ -3720,11 +3772,19 @@ const CASES = [
   // for no link at all and the suite passed with zero of them.
   fitEntry(drawLinkAcrossCase('ball_endmill')),
   // The same lobe with a **flat**: its body is a disc at the tip, so within its
-  // reach it clears nothing above the commanded height. That is the shape the
-  // footprint-height lift exists for -- a ball's own rise already clears a couple
-  // of tenths at the edge of its reach -- so this case is what keeps the lift (and
-  // the proof's swept window) load-bearing rather than decorative.
+  // reach it clears nothing above the commanded height. rl-e's fix round 3 had
+  // this case keep the footprint-height lift load-bearing; #1117 rl-f settled
+  // that the lift is redundant for sampled poses (the row tips are already
+  // `safeToolTipZAt` samples), so the flat stays for the **swept-footprint**
+  // proof, which is the branch that reads neighbouring rays and cavities.
   fitEntry(drawLinkAcrossCase('flat_endmill')),
+  // #1117 rl-f: the **chiral** twisted ridge. Every earlier A-changing case is a
+  // model even in A, where the mirrored angular mapping is the same geometry; on
+  // this one the coupling between the crest's along position and its angle makes
+  // the mapping load-bearing, and it is the model the rl-e review read as
+  // gouging. Its links go through the same proof as every other, and the case
+  // must emit A-changing links (`requiresAcrossAngle`).
+  fitEntry(drawTwistCase()),
 ]
 if (process.env.SQUARE_ESTIMATE_ONLY) {
   const ranked = CASES.map(({ entry, program }, seed) => ({
@@ -4681,11 +4741,7 @@ console.log(`  #1117 at-layer rough links: ${atLayerLinkCounts.total} proved `
   + `closest model tip ${worstLinkModelSlack.value.toFixed(4)} mm (${worstLinkModelSlack.label || 'none'}); `
   + `largest protected-solid shortfall ${worstLinkSolidGap.toFixed(4)} mm `
   + `(${worstLinkSolidGapLabel || 'none'}); ${linkFootprintCells} footprint cells read `
-  + `(${linkFootprintOffRay} off the link's own ray) and ${linkEndCells} retained-end cells kept; `
-  + `${footprintHeightChecks} A-changing samples sized by the body window's tallest material `
-  + `(${footprintHeightBites} of them above the link's own path), closest `
-  + `${worstFootprintHeightMargin.value.toFixed(4)} mm headroom `
-  + `(${worstFootprintHeightMargin.label || 'none'})`)
+  + `(${linkFootprintOffRay} off the link's own ray) and ${linkEndCells} retained-end cells kept`)
 console.log(`  #1117 corner turns: ${lowTurnChecks} low cutting turns (closest to the allowed `
   + `sampler lift at ${worstTurnMargin.value.toFixed(4)} mm margin, ${worstTurnMargin.label || 'none'}), `
   + `${cornerTurnChecks} at the corner envelope`)
@@ -4731,19 +4787,20 @@ assert.ok(atLayerLinkCounts.region > 0,
 // region-point samples) never ran. The lobe case above is the one that emits them.
 assert.ok(atLayerLinkCounts.acrossAngle > 0,
   `an at-layer link across an A change is proved (${atLayerLinkCounts.acrossAngle})`)
-// #1117 rl-e correction 3: the A-changing link's height must be sized from the
-// **tallest material the body's window reaches**, not from its own ray. The
-// seeded run cannot assert a clearance (review finding: an upper sampling-error
-// bound cannot establish a minimum, and the conservative grid tip covers most of
-// the window); the dedicated generator fixture in `rotaryAcrossAngleLinks.test.ts`
-// (block 5) pins the rule and fails without the lift. These two guards keep this
-// run's diagnostic honest: at least one A-changing sample has to be judged, and
-// at least one has to be sized by material the link's own path does not see --
-// otherwise the rule would pass vacuously on links whose own ray is the tallest.
-assert.ok(footprintHeightChecks > 0,
-  `an A-changing link's height is proved against the body window (${footprintHeightChecks})`)
-assert.ok(footprintHeightBites > 0,
-  `an A-changing link is sized by material off its own path (${footprintHeightBites})`)
+// #1117 rl-f: the corrected twisted ridge is a case of its own, because every
+// earlier A-changing case is a model even in A, where the mirrored angular
+// mapping is the same geometry -- on the chiral model the mapping is
+// load-bearing, and that is the model the rl-e review read as gouging. Its links
+// are proved by the same generic replay as every other (`proveAtLayerLink`, with
+// the `dAngle !== 0` swept-footprint branch); this asserts the case really
+// emitted A-changing links, so that branch cannot pass vacuously on it.
+for (const { entry } of CASES) {
+  if (!entry.requiresAcrossAngle) continue
+  const across = acrossAngleByCase.get(entry.label) ?? 0
+  assert.ok(across > 0,
+    `${entry.label}: the case emits at-layer links that change A (${across})`)
+  console.log(`  #1117 rl-f twisted ridge: ${across} at-layer links change A (${entry.label})`)
+}
 assert.ok(linkEndCells > 0,
   `the at-layer link's retained-end proof checked cells (${linkEndCells})`)
 // The corner-turn rule needs both shapes exercised: an arc at the layer (low)

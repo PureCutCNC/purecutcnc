@@ -2823,6 +2823,9 @@ function roughFromTargets(
       // rows' own tips, which is what the height has to clear.
       while (alongIndex + 1 < along.length && Math.abs(along[alongIndex + 1] - x) < Math.abs(along[alongIndex] - x)) alongIndex++
       let reachHeight = layerRadius
+      // #1117 rl-f: redundant with `safeToolTipZAt` for sampled poses -- `linkRowAt`
+      // already carries the footprint-convolved safe tip -- and kept as defence in
+      // depth between samples, which is not proven either way.
       for (const kk of windowRows) {
         const gridTip = tips[kk][alongIndex]
         if (Number.isFinite(gridTip) && gridTip > reachHeight) reachHeight = gridTip
