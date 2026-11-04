@@ -569,4 +569,55 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
   console.log(`  ca-d seam rows: ${seam.length} forward seam link cuts`)
 }
 
+// ---------------------------------------------------------------------------
+// 7. #1103 ca-d correction 2 (review P1): a forward sweep **wider than 180
+//    degrees** keeps its rows unwrapped in traversal order.
+//
+//    Shifting each row to the turn nearest the start angle is monotone only
+//    while the sweep stays inside half a turn. Past 180 degrees, adjacent rows
+//    fall on opposite sides of the rounding boundary and the later one is moved
+//    a whole turn back, so the sequence jumps from A190.3 to A-169.1. The
+//    emitter's monotone cursor (`linkAcrossAngle`) then stops at the jump and
+//    brackets the pose with rows it never crosses -- the square ring suite's
+//    A17967.115 -> A18235.385 link sampled A18145.385 -> A17788.846 that way.
+// ---------------------------------------------------------------------------
+{
+  // The square ring suite's grid, and a 249.4 degree forward step: 437 rows,
+  // inside the 1 024-row per-link budget, so the link is accepted and its rows
+  // are what the proof reads.
+  const grid = Array.from({ length: 630 }, (_, k) => 360 * k / 629)
+  const fromK = 18
+  const toK = 454
+  const fromA = grid[fromK]
+  const toA = grid[toK]
+  const delta = toA - fromA
+  const sweep = rotaryLinkRowSweep(grid, fromK, toK, fromA, delta)
+  assert.ok(sweep !== null, 'the wide forward sweep resolves')
+  assert.ok(delta > 180, `the regression sweep is wider than half a turn (${delta.toFixed(3)} deg)`)
+  assert.equal(sweep.rows.length, toK - fromK + 1, 'the sweep crosses the forward rows only')
+  assert.equal(sweep.rows[0], fromK, 'the sweep starts at the link\'s own row')
+  assert.equal(sweep.rows[sweep.rows.length - 1], toK, 'the sweep ends at the destination row')
+  for (let i = 1; i < sweep.angles.length; i++) {
+    assert.ok(sweep.angles[i] > sweep.angles[i - 1],
+      `the swept row angles stay monotone past 180 degrees (row ${i}: `
+      + `${sweep.angles[i - 1].toFixed(3)} -> ${sweep.angles[i].toFixed(3)})`)
+  }
+  assert.ok(Math.abs(sweep.angles[0] - fromA) < 1e-9
+    && Math.abs(sweep.angles[sweep.angles.length - 1] - toA) < 1e-9,
+    `the sweep spans the commanded A${fromA.toFixed(3)} -> A${toA.toFixed(3)} `
+    + `(rows A${sweep.angles[0].toFixed(3)} -> A${sweep.angles[sweep.angles.length - 1].toFixed(3)})`)
+  // The emitter's own monotone cursor, run over the sweep exactly as
+  // `linkAcrossAngle` runs it: at every pose the two bracketing rows must be the
+  // grid rows immediately below and above the commanded angle.
+  let cursor = 0
+  for (const fraction of [0.1, 0.25, 0.5, 0.75, 0.9, 0.99]) {
+    const pose = fromA + delta * fraction
+    while (cursor + 1 < sweep.rows.length && sweep.angles[cursor + 1] < pose) cursor++
+    assert.ok(sweep.angles[cursor] <= pose + 1e-9 && sweep.angles[cursor + 1] > pose - 1e-9,
+      `the cursor brackets the commanded pose A${pose.toFixed(3)} with rows `
+      + `A${sweep.angles[cursor].toFixed(3)}/A${sweep.angles[cursor + 1].toFixed(3)}`)
+  }
+  console.log(`  ca-d wide sweep: ${sweep.rows.length} rows monotone across ${delta.toFixed(3)} deg`)
+}
+
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')

@@ -919,8 +919,9 @@ const MAX_LINK_ACROSS_ROWS_PER_LINK = 1_024
  * rows hundreds of degrees from the pose and charges the whole circumference
  * against the per-link row budget. This helper instead walks in the commanded
  * direction `delta`, wrapping at the seam (row 0 is both A0 and A360), and
- * returns every row's angle shifted by whole turns so the result is monotone in
- * `delta` and bracketing a commanded pose reads the rows it actually crosses.
+ * returns every row's angle unwrapped **in traversal order** so the result is
+ * monotone in `delta` -- even for a sweep wider than 180 degrees -- and
+ * bracketing a commanded pose reads the rows it actually crosses.
  *
  * Exported for the seam-sampling regression in
  * `rotaryAcrossAngleLinks.test.ts`; the caller is `linkAcrossAngle`.
@@ -949,10 +950,25 @@ export function rotaryLinkRowSweep(
   // A guard, not a case: the canonical wrap reaches the target within one grid
   // turn for any pair of row indices.
   if (rows[rows.length - 1] !== target) return null
-  return {
-    rows,
-    angles: rows.map((row) => angles[row] + 360 * Math.round((fromA - angles[row]) / 360)),
+  // Unwrap each row **from the one before it**, not from the start angle (#1103
+  // ca-d correction 2, review P1). Shifting every row to the turn nearest
+  // `fromA` is monotone only while the sweep stays inside half a turn: past
+  // 180 degrees two adjacent rows sit on opposite sides of the rounding
+  // boundary and the later one is moved back a whole turn, so the returned
+  // angles jump backwards (the ring suite's accepted A17967.115 -> A18235.385
+  // link produced A18145.385 -> A17788.846). The monotone cursor that consumes
+  // these angles then stops early and brackets the pose with the wrong rows.
+  // Stepping each row's grid increment along the commanded direction keeps the
+  // sequence monotone by construction, however wide the sweep, and the grid
+  // seam (row 0 is both A0 and A360) is crossed as the short forward step it is.
+  const rowAngles: number[] = [angles[rows[0]] + 360 * Math.round((fromA - angles[rows[0]]) / 360)]
+  for (let i = 1; i < rows.length; i++) {
+    let stepDegrees = angles[rows[i]] - angles[rows[i - 1]]
+    if (step > 0 && stepDegrees <= 0) stepDegrees += 360
+    else if (step < 0 && stepDegrees >= 0) stepDegrees -= 360
+    rowAngles.push(rowAngles[i - 1] + stepDegrees)
   }
+  return { rows, angles: rowAngles }
 }
 
 // Bound emission as well as sampling: every layer revisits the entire sampled

@@ -2989,10 +2989,17 @@ function alongRadialBiteBound(ball: boolean, radius: number, stepdown: number, t
  *
  * The formula is the reference's own body contact for the near side of the
  * sphere (`centre * cos - sqrt(...)`), the shank's entry, and a flat's bottom
- * face; `tip` is the fallback when the ray is outside the body, since the
- * body's contact is never below its tip. Using the reference's standing
- * material and this contact cannot hide a bite: the measured bite is the
- * removal from the outermost solid down to the body's contact or above it.
+ * face. It is `bodyInterval`'s own contact, so the two cannot disagree about
+ * which rays the body reaches.
+ *
+ * **No intersection is `null`, never the tip** (#1103 ca-d correction 2, review
+ * P2). A ray the body misses entirely carries no contact, and returning the tip
+ * let `footprintStanding` credit that sample as material already removed: a
+ * Ø4 ball at tip 9 misses the ray 1.99 mm along its axis and 5 degrees off it,
+ * yet the descent checker then treated a 1.9 mm drop from the raw blank as a
+ * covered, later cut and accepted it against a 1 mm stepdown. `null` says the
+ * pass left nothing on this ray, so the cut stays a first cut and is judged by
+ * the one-stepdown rule.
  */
 function alongRayContact(
   ball: boolean,
@@ -3000,22 +3007,9 @@ function alongRayContact(
   tip: number,
   deltaDeg: number,
   dx: number,
-): number {
-  const delta = deltaDeg * Math.PI / 180
-  const cos = Math.cos(delta)
-  const sin = Math.sin(delta)
-  if (cos <= 0) return tip
-  const reachSq = radius * radius - dx * dx
-  if (reachSq < 0) return tip
-  if (!ball) return Math.max(tip, tip / cos)
-  const centre = tip + radius
-  const discriminant = reachSq - centre * centre * sin * sin
-  let contact = Number.POSITIVE_INFINITY
-  if (discriminant >= 0) contact = Math.max(0, centre * cos - Math.sqrt(discriminant))
-  const shankStart = centre / cos
-  const shankExit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
-  if (shankExit >= shankStart) contact = Math.min(contact, shankStart)
-  return Number.isFinite(contact) ? contact : tip
+): number | null {
+  const interval = bodyInterval(ball, radius, tip, deltaDeg * Math.PI / 180, dx)
+  return interval === null ? null : interval.contact
 }
 
 // ── the emitted motion's own layer descent (#1045 slice S) ────────────────
@@ -3172,7 +3166,11 @@ function assertStageDescent(
         // decides whether its body covered this ray.
         const reach = bodyAngularReachDeg(ball, cutterRadius, sample.tip, Math.max(raw, cutterRadius))
         if (delta > reach + 1e-9) continue
-        material = Math.min(material, alongRayContact(ball, cutterRadius, sample.tip, delta, Math.abs(sample.along - along)))
+        // No intersection means this pass left nothing on the ray (#1103 ca-d
+        // correction 2, review P2); `null` must not become a material height.
+        const contact = alongRayContact(ball, cutterRadius, sample.tip, delta, Math.abs(sample.along - along))
+        if (contact === null) continue
+        material = Math.min(material, contact)
       }
     }
     return material === Number.POSITIVE_INFINITY ? null : material
@@ -3327,6 +3325,73 @@ function assertStageDescent(
   return { samples, cuts, margin, marginLabel }
 }
 
+// #1103 ca-d correction 2 (review P2): the descent footprint may only credit a
+// pass whose cutter body actually intersects the ray.
+//
+// A Ø4 ball at tip 9 sits 1.99 mm along and 5 degrees away from a pose on a
+// 16 mm square blank. Its footprint reach admits the sample (10.48 degrees), but
+// its sphere and shank both miss the ray: `alongRayContact` used to return the
+// tip 9 there, so `footprintStanding` reported 9 mm of standing material and the
+// checker treated a 1.9 mm drop from the raw blank (10.21 -> 8.31) as a covered,
+// later cut. The allowed drop became one stepdown plus the cutter cap (1.81 mm)
+// and the motion passed a 1 mm stepdown. With the intersection required the
+// sample contributes nothing, the cut stays a **first** cut, and its 1.9 mm drop
+// against the 1.001 mm one-stepdown allowance is rejected -- which is the
+// regression: on the old code this `assert.throws` never fires.
+{
+  const stock = squareStock(16, 20, 'x', { x: 0, y: 0 })
+  const radius = 2
+  const ball = true
+  const stepdown = 1
+  const rawAt = (angle: number): number => rawStockSurface(stock, angle, radius, ball)
+  const previousTip = 9
+  const targetAngle = 35
+  const targetTip = rawAt(targetAngle) - 1.9
+  const entry: Case = {
+    label: 'descent footprint repro',
+    stock,
+    profile: [{ along: 0, radius: 0 }],
+    type: 'ball_endmill',
+    diameter: 2 * radius,
+    stepdown,
+    stepover: 1,
+    roughSpacing: 1,
+    finishSpacing: 1,
+    requestedCellSize: 0.2,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: 20,
+    defaultParams: false,
+    compact: false,
+  }
+  // The first pose cuts 0.55 mm below the blank on its own ray, so it is a
+  // recorded sample inside one stepdown. The second is the repro.
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: previousTip, a: 30 }, to: { x: 0, y: 0, z: previousTip, a: 30 } },
+    { kind: 'cut', from: { x: 1.99, y: 0, z: targetTip, a: targetAngle }, to: { x: 1.99, y: 0, z: targetTip, a: targetAngle } },
+  ]
+  assert.ok(rawAt(30) > previousTip && rawAt(30) - previousTip <= stepdown + 1e-9,
+    'the previous pose is a legal first cut on its own ray')
+  assert.ok(Math.abs(rawAt(targetAngle) - targetTip - 1.9) < 1e-9,
+    'the repro pose sits 1.9 mm below the raw blank')
+  // The reach test admits the sample, so only the intersection check can stop
+  // the false credit.
+  assert.ok(bodyAngularReachDeg(ball, radius, previousTip, Math.max(rawAt(targetAngle), radius)) > 5,
+    'the footprint reach test admits the repro sample (so the reach test cannot be the guard)')
+  assert.equal(bodyInterval(ball, radius, previousTip, 5 * Math.PI / 180, 1.99), null,
+    'the Ø4 ball at tip 9 misses the ray 1.99 mm along and 5 degrees off its axis')
+  assert.throws(
+    () => assertStageDescent(entry, 'footprint', moves, 'around', 0, ball, radius, stepdown, alongOf, 1),
+    /does not descend from the raw blank at along/,
+    'the 1.9 mm first cut is rejected instead of being credited to a pass that misses the ray',
+  )
+}
+
 /**
  * Whether a stage's verified descent covers the measured ray: some cut sample
  * lies inside this cutter body's footprint of it (along within one radius,
@@ -3412,8 +3477,13 @@ function descentCoversRay(
     return d > 180 ? 360 - d : d
   })()
   const cellDx = cell.along < 0.5 ? 0.5 - cell.along : cell.along > 1.5 ? cell.along - 1.5 : 0
-  const extendedBound = Math.max(oldBound,
-    cell.material - alongRayContact(true, radius, lowerTip, cellDelta, cellDx))
+  // The lower layer does reach this ray through the ball's shank, so the contact
+  // exists; `null` here would mean the formula and the reach test disagree.
+  const cellContact = alongRayContact(true, radius, lowerTip, cellDelta, cellDx)
+  assert.ok(cellContact !== null, 'the lower layer intersects the recorded worst cell')
+  const extendedBound = cellContact === null
+    ? oldBound
+    : Math.max(oldBound, cell.material - cellContact)
   assert.ok(extendedBound >= moveSurfaceWorst - 1e-12,
     `the standing-material bound ${extendedBound.toFixed(4)} covers the measured ${moveSurfaceWorst.toFixed(4)}`)
   console.log(`  slice-Q repro: ${reproBite.toFixed(4)} mm at the 24.25 deg ray; previous-layer bound `
@@ -4567,8 +4637,13 @@ for (const { entry, program } of CASES) {
             ? alongLo - moveSurfaceCell.along
             : moveSurfaceCell.along > alongHi ? moveSurfaceCell.along - alongHi : 0
           const reachedBound = alongRadialBiteBound(ball, cutterRadius, stepdown, tip)
-          const standingBound = moveSurfaceCell.material
-            - alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          // A body that misses the cell's ray left nothing there, so it cannot
+          // widen the allowance: the standing term is unavailable, not a whole
+          // tip of removal (#1103 ca-d correction 2, review P2).
+          const cellContact = alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          const standingBound = cellContact === null
+            ? Number.NEGATIVE_INFINITY
+            : moveSurfaceCell.material - cellContact
           // #1045 slice S: the standing-material term is only sound where the
           // stage's own emitted samples inside this cutter's footprint really
           // descended from the raw blank one stepdown at a time. A finish has
