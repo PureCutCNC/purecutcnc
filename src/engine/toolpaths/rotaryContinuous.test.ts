@@ -81,8 +81,15 @@ import {
 import type { ChiralModel } from '../../test/rotaryChiralReference'
 import {
   buildContinuousHelix, DEFAULT_CONTINUOUS_HELIX_BUDGET, MAX_HELIX_RASTER_WORK, MAX_HELIX_ROWS,
+  MAX_HELIX_SPLIT_DEPTH, ZERO_HELIX_SPEND, walkContinuousBand,
 } from './rotaryContinuous'
-import type { ContinuousHelix, ContinuousHelixInput } from './rotaryContinuous'
+import type {
+  ContinuousBandVisit,
+  ContinuousHelix,
+  ContinuousHelixFailure,
+  ContinuousHelixInput,
+  ContinuousHelixSpend,
+} from './rotaryContinuous'
 import { generateRotaryFinish } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
@@ -435,15 +442,25 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
       `the ${rounds}-round path still gouges ${partialWorst.worst} mm, past the 0.005 mm tolerance`)
     partialWorsts.push(partialWorst.worst)
   }
-  // The finding's regression: an unfinished refinement is exhaustion with no
-  // points, never a partly refined path with `exhausted: false`.
+  // The finding's regression: an unfinished refinement is no points and no
+  // path, never a partly refined path. Since #1103 slice ca-g it also reports
+  // **where** it could not finish (`failures`), which is what lets the caller
+  // cut rings there and helix the rest instead of giving the band up; it is a
+  // tolerance refusal, not a spent budget, so `exhausted` stays false.
   for (const rounds of [0, 1, 2, 3]) {
     const unfinished = build(SQUARE_PRISM, FLAT, { startAngle, budget: { rounds } })
-    assert.equal(unfinished.exhausted, true,
-      `a ${rounds}-round budget cannot finish this prism, so it reports exhaustion`)
+    assert.equal(unfinished.exhausted, false,
+      `a ${rounds}-round unresolved refinement is a tolerance refusal, not an exhausted budget`)
     assert.equal(unfinished.points.length, 0,
       `an unresolved refinement emits no points (${rounds} rounds), so the caller keeps rings`)
-    assert.ok(unfinished.samples > 0, `the exhausted attempt reports the work it did (${rounds} rounds)`)
+    assert.ok(unfinished.failures.length > 0,
+      `an unresolved refinement reports the spans it could not verify (${rounds} rounds)`)
+    for (const failure of unfinished.failures) {
+      assert.ok(failure.end >= failure.start, 'each reported span is ordered')
+      assert.ok(failure.start >= BAND.start - 1e-9 && failure.end <= BAND.end + 1e-9,
+        `a reported span stays inside the band (${failure.start}..${failure.end})`)
+    }
+    assert.ok(unfinished.samples > 0, `the unresolved attempt reports the work it did (${rounds} rounds)`)
   }
   console.log(`  refinement: ${coarse.length} -> ${refined.points.length} poses, `
     + `worst midpoint cut ${coarseWorst.worst.toFixed(4)} -> ${refinedWorst.worst.toFixed(4)} mm, `
@@ -632,6 +649,31 @@ function aReversals(moves: readonly ToolpathMove[]): number {
   return reversals
 }
 
+/**
+ * The commanded A the cut moves sweep at each along position (#1103 slice ca-g).
+ *
+ * A forward-only **ring** is one along position whose cut runs close a whole
+ * turn; a helix piece advances along while it turns, so its moves land at their
+ * own along positions and contribute a fraction of a turn each. The map is
+ * therefore how a test asks "is the ring beside this helix piece a **complete**
+ * ring?" -- the ca-b boundary rule that keeps a triangular strip from standing
+ * uncut at a seam.
+ */
+function turnPerAlong(moves: readonly ToolpathMove[], at: (point: ToolpathPoint) => number): Map<number, number> {
+  const turn = new Map<number, number>()
+  for (const move of moves) {
+    // Only a move that holds its along position turns *at* that position. A
+    // helix move advances while it turns, so it belongs to the stretch between
+    // two positions, not to a ring.
+    if (move.kind !== 'cut' || at(move.to) !== at(move.from)) continue
+    const delta = Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))
+    if (delta < 1e-9) continue
+    const along = Math.round(at(move.from) * 1e6) / 1e6
+    turn.set(along, (turn.get(along) ?? 0) + delta)
+  }
+  return turn
+}
+
 /** Is the commanded A of every move endpoint non-decreasing, in emission order? */
 function monotoneA(moves: readonly ToolpathMove[]): boolean {
   let last = Number.NEGATIVE_INFINITY
@@ -647,6 +689,7 @@ function monotoneA(moves: readonly ToolpathMove[]): boolean {
 
 let helixSeeds = 0
 let chiralHelixSeeds = 0
+let splitSeeds = 0
 let helixSegments = 0
 let helixSamples = 0
 let baseResult: ToolpathResult | undefined
@@ -734,6 +777,57 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
     if (move.kind === 'cut' && (move.from.a ?? 0) !== (move.to.a ?? 0) && at(move.from) !== at(move.to)) turningAlong++
   }
   if (turningAlong > 0) chiralHelixSeeds++
+  // #1103 slice ca-g: where the refinement refuses some segments of the band the
+  // band is **split** -- helices where the surface verifies, forward-only rings
+  // around the spans it does not -- so a seed can carry both kinds of motion in
+  // one path. Every ring the split leaves behind is a **complete** turn: the
+  // ring beside a helix piece is that piece's boundary ring (ca-b), which is what
+  // keeps a triangular strip from standing uncut at the seam.
+  const turnsAt = turnPerAlong(result.moves, at)
+  for (const [ringAlong, turn] of turnsAt) {
+    // Every along position the path turns at is a **complete** ring -- the
+    // boundary ring of a helix piece or a ring the split left behind. A partial
+    // ring here would be a strip standing uncut at a seam.
+    assert.ok(turn > 359.9,
+      `${label}: the ring at along ${ringAlong} closes a whole turn (it sweeps ${turn})`)
+  }
+  const completeRings = turnsAt.size
+  // The helix's pitch is at most the requested stepover, so a cut that turns
+  // while it advances moves at most `stepover / 360` per degree. A seam link
+  // holds its A instead (a cut at one angle, or a turn in place), so a move that
+  // sweeps a whole stepover across a wide A change is not a helix and not a
+  // link: it is a seam joined without the constant-A check.
+  const stepover = 2.5 * scale
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    const advanced = Math.abs(at(move.to) - at(move.from))
+    const turned = Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))
+    if (!(advanced > 1e-9) || !(turned > 1e-9)) continue
+    // A helix advances at most one requested stepover per revolution (ca-b), so a
+    // cut that turns while it advances cannot sweep a whole stepover across a
+    // wide A change: that shape is a seam link, and a seam link holds its A.
+    assert.ok(advanced <= stepover * turned / 360 + 1e-6,
+      `${label}: a cut that turns ${turned.toFixed(3)} deg advances at most `
+      + `${(stepover * turned / 360).toFixed(6)} (it advances ${advanced.toFixed(6)})`)
+  }
+  // Every ring opens on a **whole turn**: the A cursor advances by complete turns,
+  // so a piece the split emits opens where the forward lattice says it should. A
+  // seam joined with an A change of its own would open its boundary ring part-way
+  // round instead.
+  const opening = new Map<number, number>()
+  for (const move of result.moves) {
+    if (move.kind !== 'cut' || at(move.to) !== at(move.from)) continue
+    if (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) < 1e-9) continue
+    const along = Math.round(at(move.from) * 1e6) / 1e6
+    const from = move.from.a ?? 0
+    if (!opening.has(along) || from < opening.get(along)!) opening.set(along, from)
+  }
+  for (const [ringAlong, openAt] of opening) {
+    const within = ((openAt % 360) + 360) % 360
+    assert.ok(within < 1e-6 || within > 360 - 1e-6,
+      `${label}: the ring at along ${ringAlong} opens on a whole turn (it opens at ${openAt})`)
+  }
+  if (turningAlong > 0 && completeRings > 0) splitSeeds++
 }
 
 // ── a guaranteed helix, checked against the same swept reference ──────────
@@ -842,7 +936,217 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   assert.ok(!monotoneA(wrapped), 'and it breaks the monotone-A contract')
 }
 
+assert.ok(splitSeeds > 0,
+  `a refused band is split into helices and rings rather than given up (${splitSeeds} seeds)`)
 console.log(
-  `  finish integration: ${helixSeeds} chiral seeds (${chiralHelixSeeds} helixed), ${helixSegments} emitted segments `
-  + `(${helixSamples} swept-reference samples), zero reversals, both A mutations caught`,
+  `  finish integration: ${helixSeeds} chiral seeds (${chiralHelixSeeds} helixed, ${splitSeeds} split into `
+  + `helix and rings), ${helixSegments} emitted segments (${helixSamples} swept-reference samples), `
+  + 'zero reversals, both A mutations caught',
 )
+
+// ---------------------------------------------------------------------------
+// 9. #1103 slice ca-g: a band that cannot be verified everywhere is split into
+//    helices where it verifies and forward-only rings where it does not.
+//
+//    The walk is driven with **synthetic attempts** here, so each rule it has
+//    to keep is checked on its own:
+//
+//    - where the rings go. A failing span marks the ring positions that bracket
+//      it, and the runs between them get their own helix, so the band comes out
+//      helix - rings - helix with a **complete** ring on each side of a seam.
+//      A splitter that marked only the rings strictly inside a span narrower
+//      than one ring interval would mark nothing and give the whole band up;
+//      that is the "split without the boundary rings" mutation, and the ring
+//      list below is what catches it;
+//    - what a non-tolerance refusal does. A spent budget, cancellation, no
+//      model under the tool, no material at a roughing layer and a case the
+//      builder does not cover all keep the whole band's rings, exactly as before
+//      this slice: nothing is split where there is nothing to split around;
+//    - the band's one work budget. Every attempt is handed what the band has
+//      already spent, so a split cannot spend the cap again per piece; a mutation
+//      that hands each attempt a fresh budget is caught by the exact spends.
+// ---------------------------------------------------------------------------
+
+/** A synthetic attempt's result: verified, or refused with these failing spans. */
+function fakeHelix(
+  turns: number,
+  work: number,
+  failures: readonly ContinuousHelixFailure[] = [],
+  flags: Partial<Pick<ContinuousHelix, 'exhausted' | 'stopped' | 'uncovered' | 'ineligible'>> = {},
+): ContinuousHelix {
+  const verified = failures.length === 0 && Object.keys(flags).length === 0
+  return {
+    points: verified
+      ? [{ x: 0, y: 0, z: PIVOT + 6, a: 0 }, { x: 1, y: 0, z: PIVOT + 6, a: 360 }]
+      : [],
+    turns,
+    pitch: 1,
+    samples: 10,
+    rows: 5,
+    rasterWork: work,
+    reusedRows: 0,
+    exhausted: flags.exhausted === true,
+    stopped: flags.stopped === true,
+    uncovered: flags.uncovered === true,
+    ineligible: flags.ineligible === true,
+    failures,
+  }
+}
+
+interface WalkRecord {
+  /** `helix:<from>-<to>` and `ring:<index>`, in the order the walk emitted them. */
+  readonly order: string[]
+  readonly helices: string[]
+  readonly rings: number[]
+  readonly spends: ContinuousHelixSpend[]
+  readonly result: ReturnType<typeof walkContinuousBand>
+}
+
+function walkBand(
+  along: readonly number[],
+  attempt: ContinuousBandVisit['attempt'],
+  extra: Partial<ContinuousBandVisit> = {},
+  fromRing = 0,
+  toRing = along.length - 1,
+): WalkRecord {
+  const order: string[] = []
+  const helices: string[] = []
+  const rings: number[] = []
+  const spends: ContinuousHelixSpend[] = []
+  const result = walkContinuousBand({
+    along,
+    attempt: (from, to, spent) => {
+      spends.push(spent)
+      return attempt(from, to, spent)
+    },
+    emitHelix: (helix) => {
+      order.push(`helix:${helix.turns}`)
+      helices.push(`${helix.turns}`)
+    },
+    emitRing: (ring) => {
+      order.push(`ring:${ring}`)
+      rings.push(ring)
+    },
+    ...extra,
+  }, fromRing, toRing)
+  return { order, helices, rings, spends, result }
+}
+
+// ── a middle feature: helix - rings - helix, on complete boundary rings ────
+{
+  const along = [0, 2, 4, 6, 8, 10, 12, 14]
+  // One narrow span, between the rings at 6 and 10: the rings that bracket it
+  // are 6 and 10, and both must be cut as rings.
+  const feature: ContinuousHelixFailure = { start: 7.5, end: 8.5 }
+  const record = walkBand(along, (from, to) => (
+    along[from] <= feature.start && along[to] >= feature.end
+      ? fakeHelix(1, 10, [feature])
+      : fakeHelix(to - from, 10)
+  ))
+  assert.deepEqual(record.order, ['helix:2', 'ring:3', 'ring:4', 'ring:5', 'helix:1'],
+    `the band is cut helix - rings - helix around the failing span (got ${record.order.join(', ')})`)
+  assert.deepEqual(record.rings, [3, 4, 5],
+    'the rings are the ring positions covering the span, bracketing rings included')
+  // The bracketing rings are what makes the seams complete rings: without them
+  // the whole band would fall back to rings, so the helix pieces and their
+  // complete boundary rings are the boundary rule that keeps a strip from
+  // standing uncut at a seam.
+  assert.equal(record.helices.length, 2, 'both runs of the band get their own helix')
+  assert.deepEqual(record.spends.map((spent) => spent.work), [0, 10, 20],
+    `every attempt is handed what the band already spent (got ${record.spends.map((s) => s.work).join(', ')})`)
+  assert.equal(record.result.stopped, false, 'a split band is not cancellation')
+
+  // A span that brackets **no** ring interval -- the synthetic case a mutation
+  // would produce by not expanding to the bracketing rings -- marks every ring
+  // and must fall back to rings instead of looping.
+  const wide = walkBand(along, () => fakeHelix(1, 10, [{ start: 0, end: 14 }]))
+  assert.equal(wide.helices.length, 0, 'a span covering every ring cannot be split any further')
+  assert.deepEqual(wide.rings, [0, 1, 2, 3, 4, 5, 6, 7], 'the whole band keeps its rings')
+  console.log(`  ca-g split: helix - rings ${record.rings.join(',')} - helix, `
+    + `${record.spends.map((s) => s.work).join('/')} triangles shared`)
+}
+
+// ── the refusals that are not about tolerance keep the whole band's rings ──
+{
+  const along = [0, 2, 4, 6, 8, 10]
+  const band = [0, 1, 2, 3, 4, 5]
+  const cases: { label: string; flags: Partial<ContinuousHelix> }[] = [
+    { label: 'a spent budget', flags: { exhausted: true } },
+    { label: 'no model under the tool', flags: { uncovered: true } },
+    { label: 'no material at this layer', flags: { ineligible: true } },
+  ]
+  for (const { label, flags } of cases) {
+    const record = walkBand(along, () => fakeHelix(1, 10, [], flags))
+    assert.equal(record.helices.length, 0, `${label} splits nothing`)
+    assert.deepEqual(record.rings, band, `${label} keeps every ring of the band`)
+  }
+  // Cancellation stops the walk with nothing emitted: the caller drops the
+  // operation's motion.
+  const stopped = walkBand(along, () => fakeHelix(1, 10, [], { stopped: true }))
+  assert.equal(stopped.result.stopped, true, 'a cancelled attempt stops the walk')
+  assert.deepEqual(stopped.rings, [], 'a cancelled walk emits no rings')
+
+  // A case the builder does not cover is `null`, and still cuts the band rings.
+  const notCovered = walkBand(along, () => null)
+  assert.equal(notCovered.helices.length, 0, 'a case outside the module keeps rings')
+  assert.deepEqual(notCovered.rings, band, 'and keeps every ring of the band')
+
+  // The caller can refuse a verified helix -- the region test. That is not a
+  // tolerance refusal either, so the range keeps its rings and is not split.
+  const regionRefused = walkBand(along, () => fakeHelix(3, 10), { accept: () => false })
+  assert.equal(regionRefused.helices.length, 0, 'a helix the caller will not cut keeps rings')
+  assert.deepEqual(regionRefused.rings, band, 'the whole range keeps its rings')
+  console.log('  ca-g refusals: cancelled / spent / uncovered / ineligible / uncovered case all keep rings')
+}
+
+// ── the recursion is bounded, and a real budget stops the split ────────────
+{
+  // Sixteen rings, so a middle failure still leaves a piece long enough to
+  // refuse again: the surface whose failures keep landing in the same place.
+  const along = Array.from({ length: 16 }, (_, i) => 2 * i)
+  const selfSimilar = (from: number, to: number): ContinuousHelix => {
+    const mid = (along[from] + along[to]) / 2
+    return fakeHelix(1, 1, [{ start: mid - 0.5, end: mid + 0.5 }])
+  }
+  const depthZero = walkBand(along, selfSimilar, { maxDepth: 0 })
+  assert.equal(depthZero.helices.length, 0, 'a zero-depth cap splits nothing')
+  assert.deepEqual(depthZero.rings, along.map((_, i) => i), 'a zero-depth cap cuts the band as rings')
+  assert.equal(depthZero.spends.length, 1, 'a zero-depth cap makes one attempt')
+  // One level marks the two rings around the middle and attempts the two runs
+  // beside them: the parent plus two pieces, and each of those pieces is at its
+  // own cap. That is the split the failure is for, and the cap is what stops it
+  // from going deeper.
+  const depthOne = walkBand(along, selfSimilar, { maxDepth: 1 })
+  assert.equal(depthOne.spends.length, 3, `one level is the parent and its two runs (${depthOne.spends.length})`)
+  assert.deepEqual(depthOne.rings.filter((ring) => ring === 7 || ring === 8), [7, 8],
+    'one level cuts the two rings around the middle as rings')
+  assert.equal(MAX_HELIX_SPLIT_DEPTH, 3, 'the depth cap is the documented three levels')
+  const defaulted = walkBand(along, selfSimilar, { maxDepth: undefined })
+  assert.ok(defaulted.spends.length > depthOne.spends.length,
+    `the default cap goes deeper than one level (${defaulted.spends.length} attempts)`)
+  assert.ok(defaulted.spends.length <= 2 ** (MAX_HELIX_SPLIT_DEPTH + 1),
+    `the default cap stops the recursion (${defaulted.spends.length} attempts)`)
+  assert.ok(defaulted.rings.length > 0, 'whatever the split cannot verify is cut as rings')
+
+  // A band budget that is already spent refuses every attempt, so the band is
+  // rings. The real builder is what enforces it: a mutation that ignores
+  // `spent` returns a path here and the test fails with a helix.
+  const spentOut = walkBand(
+    [BAND.start, BAND.start + 2, BAND.start + 4, BAND.start + 6],
+    (from, to, spent) => build(RIDGE, FLAT, {
+      band: { start: BAND.start + 2 * from, end: BAND.start + 2 * to },
+      startAngle: 0,
+      spent,
+    }),
+    { spent: { samples: 0, rows: 0, work: MAX_HELIX_RASTER_WORK } },
+  )
+  assert.equal(spentOut.helices.length, 0,
+    'a band whose work budget is spent keeps its rings (the split shares the cap)')
+  assert.deepEqual(spentOut.rings, [0, 1, 2, 3], 'every ring of the spent band is cut')
+  const broke = build(RIDGE, FLAT, { spent: { samples: 0, rows: 0, work: MAX_HELIX_RASTER_WORK } })
+  assert.equal(broke.exhausted, true, 'the builder charges the band\'s earlier attempts against its cap')
+  assert.equal(broke.points.length, 0, 'a band over its shared budget emits no points')
+  const free = build(RIDGE, FLAT, { spent: ZERO_HELIX_SPEND })
+  assert.ok(free.points.length > 1, 'the same band with its budget unspent is a helix')
+  console.log(`  ca-g budget: ${defaulted.spends.length} bounded attempts (0/1/2/deep caps), a spent band is rings, an unspent one is a helix`)
+}

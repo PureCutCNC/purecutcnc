@@ -315,3 +315,93 @@ and no phrase that can stand in for one.
   count includes its A-changing at-layer links, so the ca-d report compares
   the per-layer link counts as well as the totals.
 - The along rows (3 and 0 reversals) must not move at all.
+
+## ca-g: a refused band keeps the parts that fit
+
+ca-g stops treating a helix band as all-or-nothing. When the attempt's refinement
+is still unresolved on some segments after its eight rounds, the builder reports
+the along spans of those segments, and `walkContinuousBand` splits the band there:
+the ring positions covering each span (plus the ring on each side, so every helix
+piece begins and ends on a **complete** ring) are cut as forward-only rings, and
+each run between them gets its own helix attempt. Only a **tolerance** refusal
+reports spans; a spent budget, cancellation, a pose with no model and a roughing
+pose with no material at its layer still cost the band its helix. Every attempt of
+one band is charged against that band's one `MAX_HELIX_RASTER_WORK`, so a split
+cannot spend the speculation cap again per piece, and every seam is linked by the
+caller's existing rule (#1093 on the finish, #1117 on the rough).
+
+### What changed on the benchmark rows
+
+Measured in one session with `work/ca-g-probe.ts` (scratch, gitignored), the ca-a
+protocol of **one warm-up and three timed serial runs** per case, one process at a
+time. The base side is the unchanged ca-f tree at `c964676c`. "Cutting length" is
+the emitted cut motion: a ring move is the arc it sweeps, a helix move is
+`hypot(axial, arc)`, a link is its axial length. "Links" is the cut moves that
+change the along position at one commanded A, and the runs they form.
+
+| case | ca-f moves | ca-g moves | ca-f helix share | ca-g helix share | ca-f links | ca-g links | ca-f rapids | ca-g rapids | ca-f gen ms | ca-g gen ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| busto-round op0015 finish | 54231 | 54231 | 0.0% | 0.0% | 180 | 180 | 2 | 2 | 29863 | 30760 |
+| busto-round op0025 rough | 22513 | 22364 | 44.1% | 46.9% | 126 | 113 | 176 | 176 | 31685 | 32303 |
+| busto-rect op0022 finish | 79088 | 79088 | 0.0% | 0.0% | 173 | 173 | 2 | 2 | 33891 | 33239 |
+| square op0028 around | 8791 | 8791 | 10.3% | 10.3% | 0 | 0 | 32 | 32 | 56 | 58 |
+| square op0029 around | 13394 | 13394 | 0.0% | 0.0% | 47 | 47 | 2 | 2 | 72 | 78 |
+| busto-round op0025, one deep layer | 22182 | 22182 | 0.0% | 0.0% | 96 | 96 | 2 | 2 | 28530 | 28375 |
+
+A reversals are **0** on every row of both trees.
+
+Only `busto-round op0025` changed in this table, and it improved: its layers hold
+more than one band each, and the bands that used to fall back to rings now split,
+so the helix share rises 44.1% -> 46.9%, the ring share falls 55.6% -> 52.9%, 149
+moves and 13 constant-A links disappear. Every other row is **byte-identical**;
+their moves hashes are unchanged:
+
+| case | moves sha256 (ca-f and ca-g) |
+| --- | --- |
+| busto-round op0015 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| busto-rect op0022 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` |
+| square op0028 around | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` |
+| square op0029 around | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` |
+| square op0028 along | `6189e3247e067f7b5d17290137e785504f274c753339a26719c562a55b796e14` |
+| square op0029 along | `8ed7b1a7fd8a0eead29d0afa1d4c1f9c07a8c2aeff923e3a0bc476b98c2892d5` |
+| busto-round op0025, one deep layer | `acff808a120d00b4a841901c4abb638253aa310a5cfe9122cab107d38ae21fab` |
+
+`busto-round op0025` moved to `c2c4a338ef866fc237a7faff38b7aab16556627049b021a494ab4795a0f43b86`
+(the row whose helix share changed).
+
+### Why op0015 and the single-deep-layer rough stay rings
+
+Both are refused by the **work cap**, not by the tolerance one, so there are no
+failing spans to split around -- and this is a measurement, not a reading of the
+code. With `MAX_HELIX_RASTER_WORK` raised to 400 M for one experiment (nothing
+committed), the same band on `busto-round op0015` reaches 8 rounds with 172 M
+candidate triangles spent and 12 of 39664 segments still unresolved, after which
+the split produces five pieces that cost another 227 M; the single-deep-layer
+`op0025` band reaches 8 rounds at 75 M with 8 of 8142 unresolved, and its four
+pieces cost another 70 M. Verifying the finish's band at all is therefore ~14 s of
+raster on top of a 27.6 s base generation, i.e. ~1.5x on its own, before any
+split. At the 24 M cap the first attempt spends the band's whole budget and the
+caller keeps its rings, which is exactly what ca-e's correction round 2 specified:
+the speculation may cost seconds, not a minute.
+
+So on these two surfaces the split has nothing to spend. It pays where a band's
+whole verification fits inside the cap, which is where a few spots fail rather
+than the surface as a whole -- and the committed fixtures are that case: the eight
+chiral finish seeds in `rotaryContinuous.test.ts` used to give every band up (3426
+moves on the first seed, no turning cut at all) and now split into a helix piece
+and the rings around the failing spans (2578 moves), and the ca-f seam-groove
+fixture's first layer goes from 203 ring cuts to 46 helix and 93 ring cuts (478
+moves before, 385 after, and one raised link fewer).
+
+### Generation against the ca-a base
+
+The ca-g medians above against the ca-a row of the first table, on the rows that
+changed or could have: `op0015` 30760 / 27558 = 1.12x (ca-e's re-measure of the
+base; the ca-a row's own median is 26754, giving 1.15x), `op0025` 32303 / 29497 =
+1.10x, `op0022` 33239 / 32253 = 1.03x, and the two square rows 58 / 47 = 1.23x
+and 78 / 62 = 1.26x. The square rows are 30-90 ms generations, where the whole
+difference is timer noise: the same-session pair on identical output is 56 -> 58
+and 72 -> 78, and the two trees' hash-identical output proves the motion did not
+change. Every row is at or under 1.2x the **same-session** base; the two
+sub-100 ms rows cannot resolve 1.2x at all, which is what the ca-a method already
+says about its 2-3 ms postings.

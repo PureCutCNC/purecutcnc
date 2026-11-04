@@ -40,8 +40,12 @@ import type {
   RotarySamplingPrep,
   RotarySamplingWorkspace,
 } from './rotarySampling'
-import { buildContinuousHelix } from './rotaryContinuous'
-import type { ContinuousHelix, ContinuousHelixLayer } from './rotaryContinuous'
+import { buildContinuousHelix, walkContinuousBand } from './rotaryContinuous'
+import type {
+  ContinuousBandInput,
+  ContinuousHelix,
+  ContinuousHelixSpend,
+} from './rotaryContinuous'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
@@ -2117,80 +2121,69 @@ function finishRefusal(
 }
 
 /**
- * The continuous helix covering one eligible finish band (#1103 slice ca-c).
+ * The continuous helix's operation-wide input for the finish (#1103 slices ca-c
+ * and ca-g).
  *
  * It runs on the prep the ring grid was sampled with -- the same mesh, the
  * stock-to-leave-enlarged tool, the retained-wall metadata, the requested cell
  * size and the one shared workspace -- so the helix reads exactly the surface
  * the rings would and pays no second cross-section, strip plan or raster. `null`
  * when the targets carry no prep (a refusal/cancellation never reaches here),
- * and the caller keeps its forward-only rings for the band when the builder
- * refuses the case, runs out of budget (`exhausted`) or finds a pose with no
- * model under the tool (`uncovered`).
+ * and the band walk then keeps every ring of the band.
+ *
+ * The band, the A cursor and the band's shared spend are left to each attempt:
+ * slice ca-g splits a band that cannot be verified everywhere, and each piece
+ * opens at the A cursor of the moment it is emitted.
  */
-function continuousHelixFor(
+function continuousFinishInput(
   sampling: RotaryTargets,
   params: RotaryFinishParams,
   tool: NormalizedTool,
   warnings: ToolpathWarning[],
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
-  start: number,
-  end: number,
-  startAngle: number,
-): ContinuousHelix | null {
+): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
-  return buildContinuousHelix({
+  return {
     prep,
     tool,
-    band: { start, end },
     stepover: params.stepover,
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
-    startAngle,
     warnings,
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
-  })
+  }
 }
 
 /**
- * The continuous helix covering one eligible rough band of one layer (#1103
- * slice ca-d).
+ * The continuous helix's operation-wide input for one roughing layer (#1103
+ * slices ca-d and ca-g).
  *
- * It runs on the same prep the ring grid was sampled with -- same mesh, tool,
- * cell size, retained-wall metadata and shared workspace -- and adds the layer's
- * own two rules through {@link ContinuousHelixLayer}: every pose is floored at
+ * Same prep as the ring grid -- same mesh, tool, cell size, retained-wall
+ * metadata and shared workspace -- with the layer's own two rules supplied per
+ * attempt through {@link ContinuousHelixLayer}: every pose is floored at
  * `radius` and a pose with no material above `previousRadius` refuses the band.
  * `null` when the targets carry no prep (a refusal/cancellation never reaches
- * here); the caller keeps forward-only rings for the band when the builder
- * refuses the case, runs out of budget, finds a pose with no model under the
- * tool, or finds a pose with no material standing at this layer.
+ * here), and the band walk then keeps every ring of the band.
  */
-function continuousHelixForRough(
+function continuousRoughInput(
   sampling: RotaryTargets,
   params: RotaryRoughParams,
   tool: NormalizedTool,
   warnings: ToolpathWarning[],
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
-  start: number,
-  end: number,
-  startAngle: number,
-  layer: ContinuousHelixLayer,
-): ContinuousHelix | null {
+): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
-  return buildContinuousHelix({
+  return {
     prep,
     tool,
-    band: { start, end },
     stepover: params.stepover,
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
-    startAngle,
-    layer,
     warnings,
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
-  })
+  }
 }
 
 /**
@@ -2320,6 +2313,11 @@ function finishFromTargets(
     // ran out -- keeps its rings, now forward-only, with the emitter's safe
     // transition between them.
     //
+    // #1103 slice ca-g splits a band the attempt could not verify everywhere:
+    // the rings around the unverifiable spans, a helix on each run between them,
+    // all of it charged against the band's one work budget and linked through
+    // these same rules (`walkContinuousBand`).
+    //
     // Only a full ring whose last angle is A360 and whose next ring starts at
     // A0 of the next turn keeps #1093's surface link: those two commands are
     // numerically equal, which is exactly the link's constant-A precondition. A
@@ -2398,6 +2396,7 @@ function finishFromTargets(
       previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
       angleBase += 360
     }
+    const finishBand = continuousFinishInput(sampling, params, tool, warnings, hooks)
     let ring = 0
     while (ring < along.length) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
@@ -2408,33 +2407,40 @@ function finishFromTargets(
         // into a pitch, and its two complete end rings would otherwise add a
         // full turn over no advance at all.
         if (band > ring) {
-          const helix = continuousHelixFor(
-            sampling, params, tool, warnings, hooks,
-            along[ring], along[band], angleBase,
-          )
-          if (helix?.stopped === true) return { operationId, moves: [], warnings: [], bounds: null }
-          if (helix !== null && helix.points.length > 1 && !helix.exhausted && !helix.uncovered
-            && (region === null || continuousPathInsideRegion(region, stock, helix.points, angleBase))) {
-            const emitted = emitRotaryRuns(
-              moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
-              safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink,
-            )
-            here = emitted.here
-            previousEndedAtEnd = emitted.endedAtEnd
-            angleBase += 360 * (helix.turns + 2)
-            ring = band + 1
-            continue
-          }
-          // The helix was refused for this **band** (a budget ran out, a pose
-          // had no model, the region trims it): the whole band keeps its
-          // forward-only rings. Falling back one ring at a time would re-attempt
-          // the same refusal for every later band start -- on a sculpted part
-          // that is one full helix build per ring -- so the band is consumed
-          // here, not just the first ring of it.
-          for (let k = ring; k <= band; k++) {
-            if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
-            emitRing(k)
-          }
+          // #1103 slice ca-g: the band is no longer helix-or-nothing. A band the
+          // helix can verify everywhere is one helix; a band it cannot verify
+          // **everywhere** is split at the unverifiable spans -- rings there,
+          // helices on the runs between them -- and only the refusals that say
+          // nothing about where to split (a spent budget, cancellation, no model
+          // under the tool, the region) keep the whole band's rings. The walk
+          // charges every attempt against one shared budget, so the split cannot
+          // cost more speculative work than the single attempt did.
+          const walked = walkContinuousBand({
+            along,
+            attempt: (from: number, to: number, spent: ContinuousHelixSpend): ContinuousHelix | null =>
+              finishBand === null ? null : buildContinuousHelix({
+                ...finishBand,
+                band: { start: along[from], end: along[to] },
+                startAngle: angleBase,
+                spent,
+              }),
+            // A region that trims the piece keeps that range's rings: it is not
+            // a tolerance refusal, so the walk does not split around it.
+            accept: (helix) => region === null
+              || continuousPathInsideRegion(region, stock, helix.points, angleBase),
+            emitHelix: (helix) => {
+              const emitted = emitRotaryRuns(
+                moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
+                safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink,
+              )
+              here = emitted.here
+              previousEndedAtEnd = emitted.endedAtEnd
+              angleBase += 360 * (helix.turns + 2)
+            },
+            emitRing,
+            ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
+          }, ring, band)
+          if (walked.stopped) return { operationId, moves: [], warnings: [], bounds: null }
           ring = band + 1
           continue
         }
@@ -2519,7 +2525,12 @@ function finishFromTargets(
  * a ridge that falls between two ring positions is followed rather than
  * interpolated. A band the helix refuses -- a budget that runs out, a pose with
  * no model, a partial ring, a region that trims the band, a square blank --
- * keeps its rings, now forward-only.
+ * keeps its rings, now forward-only. Since #1103 slice ca-g a band is no longer
+ * helix-or-nothing: when the attempt's refinement is still unresolved on some
+ * segments it reports where, and the band is cut as helices on the runs that do
+ * verify with forward-only rings around the spans that do not
+ * (`walkContinuousBand`). Only a tolerance refusal says where to split; the
+ * other refusals above still cost the whole band its helix.
  *
  * A full ring's end (`A = 360k`) and the next ring's start (`A = 360(k+1)`) are
  * the same **commanded** angle, which is exactly #1093's constant-A
@@ -3691,6 +3702,7 @@ function roughFromTargets(
     // starts at the smallest whole-turn representative of its own first angle
     // that is at or ahead of this (#1103 ca-d fix 1): see `unitBase`.
     let lastCommandedA: number | undefined
+    const roughBand = continuousRoughInput(sampling, params, tool, warnings, hooks)
     for (let layer = 1; layer <= layers; layer++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
@@ -3819,47 +3831,50 @@ function roughFromTargets(
           // turn into a pitch, and its two complete end rings would otherwise
           // add a full turn over no advance at all.
           if (band > ringIndex) {
-            // A helix opens on a whole turn at its band's start (physical A0),
-            // so its forward-equivalent base is `unitBase(0)`.
-            const helixBase = unitBase(0)
-            const helix = continuousHelixForRough(
-              sampling, params, tool, warnings, hooks,
-              along[ringIndex], along[band], helixBase,
-              { radius: layerRadius, previousRadius },
-            )
-            if (helix?.stopped === true) return { operationId, moves: [], warnings: [], bounds: null }
-            if (helix !== null && helix.points.length > 1 && !helix.exhausted && !helix.uncovered
-              && !helix.ineligible
-              && (region === null || continuousPathInsideRegion(region, stock, helix.points, angleBase))) {
+            // #1103 slice ca-g: split a band the helix cannot verify everywhere,
+            // exactly as the finish does, one layer at a time. Only a tolerance
+            // refusal says where to split; a spent budget, cancellation, no
+            // material standing at this layer and the region keep the whole
+            // band's rings, so the layer's air skip is never relaxed.
+            const walked = walkContinuousBand({
+              along,
+              attempt: (from: number, to: number, spent: ContinuousHelixSpend): ContinuousHelix | null =>
+                roughBand === null ? null : buildContinuousHelix({
+                  ...roughBand,
+                  band: { start: along[from], end: along[to] },
+                  // A helix opens on a whole turn at its band's start (physical
+                  // A0), so its forward-equivalent base is `unitBase(0)`.
+                  startAngle: unitBase(0),
+                  layer: { radius: layerRadius, previousRadius },
+                  spent,
+                }),
+              accept: (helix) => region === null
+                || continuousPathInsideRegion(region, stock, helix.points, angleBase),
               // The helix is one run of this layer's cuts. The link into it is
               // the ring boundary's, on the same rules: the band's first ring is
               // a whole ring, so a still-standing predecessor may link at it.
-              const helixLink = ringIndex === 0 || !previousRingEmitted
-                ? layerLink
-                : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
-                  unitLink(from, to, true)
-              const emitted = emitRotaryRuns(
-                moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
-                safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, helixLink, ringIndex > 0,
-              )
-              here = emitted.here
-              previousEndedAtEnd = emitted.endedAtEnd
-              previousRingSplit = false
-              previousRingEmitted = true
-              angleBase = helixBase
-              lastCommandedA = helix.points[helix.points.length - 1].a
-              ringIndex = band + 1
-              continue
-            }
-            // The helix was refused for this **band** (a budget ran out, a pose
-            // with no material, a region that trims it): the whole band keeps
-            // its forward-only rings, exactly as the finish does. Falling back
-            // one ring at a time would re-attempt the same refusal for every
-            // later band start.
-            for (let k = ringIndex; k <= band; k++) {
-              if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
-              emitRing(k)
-            }
+              emitHelix: (helix) => {
+                const helixBase = unitBase(0)
+                const linkFromPrevious = previousRingEmitted
+                const helixLink = linkFromPrevious
+                  ? (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null =>
+                    unitLink(from, to, true)
+                  : layerLink
+                const emitted = emitRotaryRuns(
+                  moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
+                  safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, helixLink, linkFromPrevious,
+                )
+                here = emitted.here
+                previousEndedAtEnd = emitted.endedAtEnd
+                previousRingSplit = false
+                previousRingEmitted = true
+                angleBase = helixBase
+                lastCommandedA = helix.points[helix.points.length - 1].a
+              },
+              emitRing,
+              ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
+            }, ringIndex, band)
+            if (walked.stopped) return { operationId, moves: [], warnings: [], bounds: null }
             ringIndex = band + 1
             continue
           }

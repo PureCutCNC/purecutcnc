@@ -1112,17 +1112,72 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
     'no raised link joins the forward-only rings after the helix')
   const links = result.moves.filter(isAlongLink)
   const afterShoulder = links.filter((move) => alongOf(move.from) >= shoulder - 1e-6)
-  assert.ok(afterShoulder.length >= 6,
+  // The count is the number of ring-to-ring boundaries that still exist, not a
+  // constant: #1103 slice ca-g splits layer 1's band -- which used to be all
+  // rings because one shoulder segment could not be verified -- into a helix
+  // over its first rings plus the rings around the shoulder, so one boundary
+  // that used to be a ring link is now a helix boundary (measured on this
+  // fixture: nine rapids and 478 moves before, four rapids and 385 after, with
+  // no raised link either way).
+  assert.ok(afterShoulder.length >= 5,
     `every ring after the helix links to its neighbour (${afterShoulder.length} links)`)
-  // The first ring after the helix is entered by a **link**, not a retract: the
-  // move that reaches it is the at-layer cut and the ring's first cut continues
-  // from exactly where it left the tool. That is #1117's at-layer boundary.
-  const firstRing = result.moves.findIndex((move) => move.kind === 'cut' && alongOf(move.from) > shoulder)
-  assert.ok(firstRing > 1, 'the rough cuts rings past the shoulder')
-  const entering = result.moves[firstRing - 1]
-  assert.ok(isAlongLink(entering), 'the ring after the helix is entered by an at-layer link')
-  assert.equal(angleOf(entering.to), angleOf(result.moves[firstRing].from),
-    'the link leaves the tool at the ring\'s own first cut angle')
+  // The ring after a helix is entered by a **link**, not a retract: every move
+  // between the helix piece's end boundary ring and the next ring's first cut is
+  // a feed that holds that ring's exact A, so the tool never rises. That is
+  // #1117's at-layer boundary, and it is what a link that skipped its own angle
+  // or height rule would break. A layer ends with a rapid back along the bar, so
+  // the layers are the stretches between those traverses.
+  const layerStarts = [0]
+  for (let i = 1; i < result.moves.length; i++) {
+    if (result.moves[i].kind === 'rapid' && alongOf(result.moves[i].to) < alongOf(result.moves[i].from) - 1e-12) {
+      layerStarts.push(i + 1)
+    }
+  }
+  layerStarts.push(result.moves.length)
+  let seamChecked = 0
+  for (let layer = 0; layer + 1 < layerStarts.length; layer++) {
+    const layerMoves = result.moves.slice(layerStarts[layer], layerStarts[layer + 1])
+    let lastHelixMove = -1
+    for (let i = 0; i < layerMoves.length; i++) {
+      const move = layerMoves[i]
+      if (move.kind === 'cut' && alongOf(move.to) !== alongOf(move.from)
+        && angleOf(move.to) !== angleOf(move.from)) lastHelixMove = i
+    }
+    if (lastHelixMove <= 0) continue
+    const helixEndAlong = Math.max(...layerMoves.slice(0, lastHelixMove + 1).map((move) => alongOf(move.to)))
+    // The helix piece closes on its own complete boundary ring at that along
+    // position; the ring past it is the next along position the path cuts.
+    let boundaryEnd = lastHelixMove
+    for (let i = lastHelixMove + 1; i < layerMoves.length; i++) {
+      if (Math.abs(alongOf(layerMoves[i].to) - helixEndAlong) > 1e-9
+        || Math.abs(alongOf(layerMoves[i].from) - helixEndAlong) > 1e-9) break
+      boundaryEnd = i
+    }
+    let firstRing = -1
+    for (let i = boundaryEnd + 1; i < layerMoves.length; i++) {
+      const move = layerMoves[i]
+      if (move.kind !== 'cut') break
+      if (alongOf(move.from) > helixEndAlong + 1e-9
+        && alongOf(move.to) === alongOf(move.from)
+        && angleOf(move.to) !== angleOf(move.from)) {
+        firstRing = i
+        break
+      }
+    }
+    if (firstRing < 0) continue
+    const seam = layerMoves.slice(boundaryEnd + 1, firstRing)
+    assert.ok(seam.length > 0, `layer ${layer + 1}: a link joins the helix piece to the ring after it`)
+    for (const move of seam) {
+      assert.equal(move.kind, 'cut',
+        `layer ${layer + 1}: the ring after the helix is entered by a stay-down link, not a retract`)
+      assert.equal(angleOf(move.from), angleOf(move.to),
+        `layer ${layer + 1}: the link holds the ring first cut angle through every leg`)
+    }
+    assert.equal(angleOf(layerMoves[firstRing].from), angleOf(seam[seam.length - 1].to),
+      `layer ${layer + 1}: the ring first cut continues from exactly where the link left the tool`)
+    seamChecked++
+  }
+  assert.ok(seamChecked > 0, 'a helix piece bounded by rings was checked for its at-layer seam')
   // Those rings are **split**: their two runs wrap the seam, and the join
   // between the runs is an A move at the travel height, not a cut.
   assert.ok(result.moves.some((move) => move.kind === 'cut'

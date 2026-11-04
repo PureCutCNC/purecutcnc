@@ -102,6 +102,35 @@
  * would be cutting air the ring path does without, and the caller keeps rings.
  * The layer's gate is what the ring sample's `tip < previousRadius` is, so a
  * band the helix covers cuts exactly the material that layer's rings would.
+ *
+ * ## A band that cannot be verified everywhere is split, not refused (ca-g)
+ *
+ * A band is all-or-nothing above: one segment the refinement cannot bring inside
+ * the surface tolerance refuses the whole band, and the caller cuts every ring
+ * of it forward-only (busto-round's finish and its single-deep-layer rough: 29
+ * unverifiable segments of 1706 turn a whole part's finish into rings, so A
+ * stops at every link).
+ *
+ * {@link walkContinuousBand} is the alternative. When an attempt is refused
+ * because segments are **still unresolved after the last refinement round** --
+ * not because it was cancelled, not because the caller's region trims it, not
+ * because a roughing pose has no material standing -- it reports the along spans
+ * of those segments ({@link ContinuousHelix.failures}). The walk splits there:
+ * the ring positions covering each failing span (plus the ring on each side, so
+ * every helix piece begins and ends on a **complete** ring, the ca-b boundary
+ * rule that keeps a triangular strip from standing uncut at a seam) become
+ * forward-only rings, and each remaining run of at least two rings gets its own
+ * helix attempt. An attempt may fail again, so the split recurses to
+ * {@link MAX_HELIX_SPLIT_DEPTH}; past it, and once the band's shared work budget
+ * ({@link ContinuousHelixBudget.work}, charged across every attempt of the band
+ * through {@link ContinuousHelixInput.spent}) or the cancellation hook says so,
+ * the remaining rings are cut as rings.
+ *
+ * Every link between a helix piece and the rings beside it is the caller's
+ * existing one (#1093 surface-following on the finish, #1117 at-layer on the
+ * rough) -- this module never invents a link. Commanded A still only grows: a
+ * piece opens where the caller's A cursor stands, so the caller advances its
+ * cursor by the piece's own turns.
  */
 
 import { barCentre, barMaxRadius, barPivotZ } from '../../types/barStock'
@@ -181,6 +210,50 @@ export interface ContinuousHelixLayer {
   readonly previousRadius: number
 }
 
+/**
+ * The along span of one stretch of a band whose helix segments could not be
+ * verified (#1103 slice ca-g).
+ *
+ * It is the `along` range covered by a segment that was **still unresolved when
+ * the last refinement round was spent**. {@link walkContinuousBand} turns that
+ * span into the ring positions to cut as forward-only rings; the helix never
+ * cuts there on the strength of a move whose between-sample error was never
+ * confirmed.
+ */
+export interface ContinuousHelixFailure {
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * The work earlier attempts of the same band already spent (#1103 slice ca-g).
+ *
+ * {@link walkContinuousBand} hands this to every attempt it makes, so one band's
+ * splits -- and the attempts inside those splits -- share a single
+ * {@link ContinuousHelixBudget} instead of each getting a fresh one. Without it
+ * a refusal that splits into a dozen sub-bands would spend a dozen times the
+ * speculative work the ca-e cap exists to bound.
+ */
+export interface ContinuousHelixSpend {
+  readonly samples: number
+  readonly rows: number
+  readonly work: number
+}
+
+/** Nothing spent yet: the seed for a band's first attempt. */
+export const ZERO_HELIX_SPEND: ContinuousHelixSpend = { samples: 0, rows: 0, work: 0 }
+
+/**
+ * The most times one refused band may be split before the rest is cut as rings
+ * (#1103 slice ca-g).
+ *
+ * Each split marks at least the two rings bracketing a failing span, so every
+ * recursion is on a strictly shorter band and terminates on its own; this cap is
+ * the second bound, for a surface whose failures keep landing in the same place
+ * and would otherwise pay an attempt per ring.
+ */
+export const MAX_HELIX_SPLIT_DEPTH = 3
+
 /** The most angle rows (height maps) one helix may build. */
 export const MAX_HELIX_ROWS = 65_536
 
@@ -250,6 +323,12 @@ export interface ContinuousHelixInput {
   readonly warnings: ToolpathWarning[]
   readonly shouldStop?: () => boolean
   readonly budget?: Partial<ContinuousHelixBudget>
+  /**
+   * The work earlier attempts of this band already spent (#1103 slice ca-g).
+   * Every budget check adds it, so the attempts a split makes share one cap.
+   * Absent on a first attempt; {@link walkContinuousBand} supplies it.
+   */
+  readonly spent?: ContinuousHelixSpend
 }
 
 export interface ContinuousHelix {
@@ -291,6 +370,17 @@ export interface ContinuousHelix {
    * skips it and would cut air the helix cannot -- the caller keeps rings.
    */
   readonly ineligible: boolean
+  /**
+   * The along spans whose segments were still unresolved when the last
+   * refinement round was spent (#1103 slice ca-g), merged and in path order.
+   * Non-empty exactly when the refusal is a **tolerance** one -- `points` is
+   * empty and the caller may split the band at these spans instead of cutting
+   * all of it as rings ({@link walkContinuousBand}). Every other refusal (a
+   * budget, cancellation, no model, no material at this layer, a case this
+   * module does not cover) leaves it empty, because there is nothing to split
+   * around.
+   */
+  readonly failures: readonly ContinuousHelixFailure[]
 }
 
 /**
@@ -342,7 +432,7 @@ interface HelixSampling {
 }
 
 /** What a sampling/budget step decided. */
-type HelixStatus = 'ok' | 'stopped' | 'exhausted' | 'ineligible'
+type HelixStatus = 'ok' | 'stopped' | 'exhausted' | 'ineligible' | 'unresolved'
 
 /**
  * The between-sample tolerance of one helix segment, in the operation's units.
@@ -472,14 +562,17 @@ function sampleHelixRows(
   const prep = input.prep
   const startAngle = input.startAngle ?? 0
   const maxRadius = barMaxRadius(prep.stock)
+  const spent = input.spent ?? ZERO_HELIX_SPEND
   for (const row of rows) {
     if (input.shouldStop?.() === true) return 'stopped'
-    if (sampling.rows + 1 > budget.rows) return 'exhausted'
-    if (sampling.samples + row.along.length > budget.samples) return 'exhausted'
+    if (spent.rows + sampling.rows + 1 > budget.rows) return 'exhausted'
+    if (spent.samples + sampling.samples + row.along.length > budget.samples) return 'exhausted'
     // #1103 ca-e correction round 2: the raster work is charged after the row
     // (it is only known once the map is built), so the check is here, before the
     // next one. A refused attempt may overshoot by its last row, never by a round.
-    if (sampling.work > budget.work) return 'exhausted'
+    // #1103 slice ca-g: `spent` is what the band's earlier attempts already used,
+    // so a split cannot spend the cap again per piece.
+    if (spent.work + sampling.work > budget.work) return 'exhausted'
     const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
       along: row.along,
       requestedCellSize: prep.requestedCellSize,
@@ -561,10 +654,15 @@ function assignTips(nodes: readonly HelixNode[], rows: readonly HelixRow[], phas
  *
  * Returns `uncovered` if a sampled pose has no model under the tool. A path
  * whose refinement is still unresolved when the round limit is spent is
- * **`exhausted`, never `ok`**: every round halves the segment again, so a chain
+ * **`unresolved`, never `ok`**: every round halves the segment again, so a chain
  * that still holds an unchecked segment is a move whose between-sample error was
  * never confirmed, and emitting it would cut below the operation's tolerance.
  * The caller's fallback to rings is then the same one the sampling budgets use.
+ * #1103 slice ca-g keeps the answer `unresolved` distinct from `exhausted` and
+ * reports **where** those segments are ({@link ContinuousHelixFailure}), so the
+ * caller can cut rings there and helix the rest of the band instead of giving
+ * the whole band up. Cancellation, a spent budget and a pose with no model stay
+ * whole-band refusals: there is nothing to split around them.
  */
 function refineHelix(
   chain: readonly HelixSegment[],
@@ -620,12 +718,37 @@ function refineHelix(
   // Every round is spent. A chain that still holds an unchecked segment was
   // still splitting -- its last round created children that no later round
   // measured -- so the path it would produce is unresolved, not safe. The phase
-  // grid has no finer step than this budget allows, so the only honest answer is
-  // exhaustion with no points and the caller's ring fallback.
-  if (current.some((segment) => !segment.checked)) {
-    return { status: 'exhausted', uncovered: false, chain: current }
+  // grid has no finer step than this budget allows, so those segments are
+  // reported (**`unresolved`**) with no points, and the caller either splits the
+  // band around them or keeps its rings.
+  const unresolved = current.filter((segment) => !segment.checked)
+  if (unresolved.length > 0) {
+    return { status: 'unresolved', uncovered: false, chain: current }
   }
   return { status: 'ok', uncovered: false, chain: current }
+}
+
+/**
+ * The along spans a refused refinement could not verify, merged in path order.
+ *
+ * An unchecked segment's own ends bracket the stretch of the bar its straight
+ * move would have cut, and adjacent unchecked segments overlap or touch, so the
+ * caller gets a short list of disjoint spans rather than one per segment.
+ */
+function unresolvedSpans(chain: readonly HelixSegment[]): ContinuousHelixFailure[] {
+  const spans: { start: number; end: number }[] = []
+  for (const segment of chain) {
+    if (segment.checked) continue
+    const start = Math.min(segment.left.along, segment.right.along)
+    const end = Math.max(segment.left.along, segment.right.along)
+    const last = spans[spans.length - 1]
+    if (last !== undefined && start <= last.end + 1e-9) {
+      if (end > last.end) last.end = end
+      continue
+    }
+    spans.push({ start, end })
+  }
+  return spans.sort((a, b) => a.start - b.start)
 }
 
 /** A refused/empty result carrying the work already done. */
@@ -634,6 +757,7 @@ function emptyHelix(
   pitch: number,
   sampling: HelixSampling,
   flags: Partial<Pick<ContinuousHelix, 'exhausted' | 'stopped' | 'uncovered' | 'ineligible'>>,
+  failures: readonly ContinuousHelixFailure[] = [],
 ): ContinuousHelix {
   return {
     points: [],
@@ -647,6 +771,7 @@ function emptyHelix(
     stopped: flags.stopped === true,
     uncovered: flags.uncovered === true,
     ineligible: flags.ineligible === true,
+    failures,
   }
 }
 
@@ -692,9 +817,12 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   if (!Number.isFinite(turns) || turns < 1 || turns > MAX_ROTARY_SAMPLES) return null
   const pitch = length / turns
   const sampling: HelixSampling = { samples: 0, rows: 0, reused: 0, work: 0 }
+  const spent = input.spent ?? ZERO_HELIX_SPEND
   // Refuse before allocating the grid when the initial poses alone are over
   // budget: `intervals x (turns + 2)` is the whole first pass.
-  if (intervals * (turns + 2) > budget.samples || intervals > budget.rows) {
+  if (spent.samples + intervals * (turns + 2) > budget.samples
+    || spent.rows + intervals > budget.rows
+    || spent.work > budget.work) {
     return emptyHelix(turns, pitch, sampling, { exhausted: true })
   }
   const nodes = initialNodes(band, turns, intervals, startAngle)
@@ -715,6 +843,9 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   if (refined.status === 'stopped') return emptyHelix(turns, pitch, sampling, { stopped: true })
   if (refined.status === 'exhausted') return emptyHelix(turns, pitch, sampling, { exhausted: true })
   if (refined.status === 'ineligible') return emptyHelix(turns, pitch, sampling, { ineligible: true })
+  if (refined.status === 'unresolved') {
+    return emptyHelix(turns, pitch, sampling, {}, unresolvedSpans(refined.chain))
+  }
   if (refined.uncovered) return emptyHelix(turns, pitch, sampling, { uncovered: true })
   const path: HelixNode[] = [refined.chain[0].left]
   for (const segment of refined.chain) path.push(segment.right)
@@ -735,5 +866,162 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
     stopped: false,
     uncovered: false,
     ineligible: false,
+    failures: [],
   }
 }
+
+/**
+ * The ring positions a set of failing along spans covers (#1103 slice ca-g).
+ *
+ * A span is bracketed by the ring grid's own positions: `lo` is the last ring at
+ * or before the span's start and `hi` is the first ring at or after its end, and
+ * every ring between them is marked. Marking both brackets and not only the
+ * rings strictly inside the span is what keeps the **ca-b boundary rule** at a
+ * seam: a failing segment narrower than one ring interval would otherwise mark
+ * no ring at all and the split would make no progress, and a sub-band's helix
+ * would be bounded by a ring the failing motion had already crossed. With the
+ * bracket marked, every helix piece opens and closes on a **complete** ring that
+ * the ring path itself cuts, so no triangular strip is left standing between a
+ * piece and the rings beside it.
+ */
+function failingRings(
+  failures: readonly ContinuousHelixFailure[],
+  along: readonly number[],
+  fromRing: number,
+  toRing: number,
+): Set<number> {
+  const marked = new Set<number>()
+  for (const failure of failures) {
+    let lo = fromRing
+    for (let k = fromRing; k <= toRing; k++) if (along[k] <= failure.start + 1e-9) lo = k
+    let hi = toRing
+    for (let k = toRing; k >= fromRing; k--) if (along[k] >= failure.end - 1e-9) hi = k
+    for (let k = lo; k <= hi; k++) marked.add(k)
+  }
+  return marked
+}
+
+/**
+ * One caller's account of what to do with a band (#1103 slice ca-g).
+ *
+ * The callbacks are the caller's own emitters, so the A cursor, the ring
+ * bookkeeping and every link stay exactly where they already live: this walk
+ * decides only *which* rings become helices and which are cut as rings, and the
+ * caller advances its cursor as it emits.
+ */
+export interface ContinuousBandVisit {
+  /** The ring grid's along positions, in increasing order. */
+  readonly along: readonly number[]
+  /**
+   * Build one helix over the ring range, charging the band's shared spend.
+   * `null` means the case is not this module's (a square blank, a degenerate
+   * band): the whole range is cut as rings and nothing is split.
+   */
+  readonly attempt: (fromRing: number, toRing: number, spent: ContinuousHelixSpend) => ContinuousHelix | null
+  /**
+   * Whether the caller will cut this verified helix -- the region test, in
+   * practice. `false` keeps that range's rings, and is **not** a tolerance
+   * refusal, so the walk does not split there.
+   */
+  readonly accept?: (helix: ContinuousHelix) => boolean
+  /** Emit a verified helix; the caller advances its A cursor. */
+  readonly emitHelix: (helix: ContinuousHelix) => void
+  /** Emit one forward-only ring at its index. */
+  readonly emitRing: (ring: number) => void
+  readonly shouldStop?: () => boolean
+  /** The split cap for **this** band; {@link MAX_HELIX_SPLIT_DEPTH} by default. */
+  readonly maxDepth?: number
+  /** Work an earlier band already spent, if the caller shares one cap across bands. */
+  readonly spent?: ContinuousHelixSpend
+}
+
+export interface ContinuousBandResult {
+  /** The operation was cancelled while walking: the caller emits no motion. */
+  readonly stopped: boolean
+  /** The band's spend after every attempt, splits included. */
+  readonly spent: ContinuousHelixSpend
+}
+
+/**
+ * Cut one ring band as helices where they verify and forward-only rings where
+ * they do not (#1103 slice ca-g).
+ *
+ * The band is attempted as one helix. A verified helix is emitted and the walk
+ * ends. A refusal with **failing spans** (a tolerance refusal -- see
+ * {@link ContinuousHelix.failures}) is split: the rings covering each span are
+ * cut as rings, every remaining run of two or more rings is attempted as its own
+ * helix, and the split recurses up to `maxDepth`. Any other refusal -- a spent
+ * budget, cancellation, no model under the tool, no material at a roughing
+ * layer, a case this module does not cover, the caller's region -- keeps that
+ * range's rings, so nothing here can relax a rule the caller relies on.
+ */
+export function walkContinuousBand(
+  visit: ContinuousBandVisit,
+  fromRing: number,
+  toRing: number,
+): ContinuousBandResult {
+  const { along } = visit
+  const maxDepth = visit.maxDepth ?? MAX_HELIX_SPLIT_DEPTH
+  const spend = {
+    samples: visit.spent?.samples ?? 0,
+    rows: visit.spent?.rows ?? 0,
+    work: visit.spent?.work ?? 0,
+  }
+  let stopped = false
+
+  const rings = (from: number, to: number): void => {
+    for (let k = from; k <= to; k++) {
+      if (visit.shouldStop?.() === true) { stopped = true; return }
+      visit.emitRing(k)
+    }
+  }
+
+  const walk = (from: number, to: number, depth: number): void => {
+    if (stopped) return
+    if (!(to > from)) { rings(from, to); return }
+    const helix = visit.attempt(from, to, { ...spend })
+    if (helix === null) { rings(from, to); return }
+    spend.samples += helix.samples
+    spend.rows += helix.rows
+    spend.work += helix.rasterWork
+    if (helix.stopped) { stopped = true; return }
+    if (helix.points.length > 1 && !helix.exhausted && !helix.uncovered && !helix.ineligible
+      && (visit.accept === undefined || visit.accept(helix))) {
+      if (visit.shouldStop?.() === true) { stopped = true; return }
+      visit.emitHelix(helix)
+      return
+    }
+    // Only a tolerance refusal says where it failed; everything else is a
+    // whole-range ring fallback, exactly as before this slice.
+    if (helix.failures.length === 0 || depth >= maxDepth) { rings(from, to); return }
+    const marked = failingRings(helix.failures, along, from, to)
+    // No progress is possible when the failing spans cover every ring: the
+    // split would attempt the same band forever. Cut the range as rings.
+    if (marked.size === 0 || marked.size >= to - from + 1) { rings(from, to); return }
+    let k = from
+    while (k <= to) {
+      if (stopped) return
+      if (marked.has(k)) {
+        let end = k
+        while (end + 1 <= to && marked.has(end + 1)) end++
+        rings(k, end)
+        k = end + 1
+        continue
+      }
+      let end = k
+      while (end + 1 <= to && !marked.has(end + 1)) end++
+      walk(k, end, depth + 1)
+      k = end + 1
+    }
+  }
+
+  walk(fromRing, toRing, 0)
+  return { stopped, spent: { ...spend } }
+}
+
+/**
+ * The band-independent half of {@link ContinuousHelixInput}: what a caller
+ * prepares once per operation, leaving the band, the A cursor and the band's
+ * shared spend to each attempt ({@link walkContinuousBand}).
+ */
+export type ContinuousBandInput = Omit<ContinuousHelixInput, 'band' | 'startAngle' | 'spent'>
