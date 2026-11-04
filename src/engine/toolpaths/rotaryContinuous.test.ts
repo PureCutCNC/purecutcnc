@@ -68,10 +68,22 @@ import { roundStock } from '../../types/project'
 import type { BarStock, RoundStock } from '../../types/project'
 import { createRotarySamplingPrep, sampleRotaryModel } from '../toolpaths/rotarySampling'
 import type { RotarySamplingPrep } from '../toolpaths/rotarySampling'
+import {
+  CHIRAL_ALLOWANCE_MM,
+  CHIRAL_BAR_RADIUS,
+  CHIRAL_FROM,
+  CHIRAL_SEEDS,
+  CHIRAL_TO,
+  CHIRAL_VERTICES,
+  chiralMesh,
+  chiralSupport,
+} from '../../test/rotaryChiralReference'
+import type { ChiralModel } from '../../test/rotaryChiralReference'
 import { buildContinuousHelix, MAX_HELIX_ROWS } from './rotaryContinuous'
 import type { ContinuousHelix, ContinuousHelixInput } from './rotaryContinuous'
+import { generateRotaryFinish } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
-import type { NormalizedTool, ToolpathPoint } from './types'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
 const STOCK: RoundStock = roundStock(20, 60)
@@ -554,3 +566,252 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
 }
 
 console.log('  rotaryContinuous: helix shape, ridge, refinement, pitch, rings, budgets and pull-in verified')
+
+// ---------------------------------------------------------------------------
+// 8. #1103 slice ca-c: the around finish's integration.
+//
+//    `generateRotaryFinish` cuts an uninterrupted, fully covered round band with
+//    one helix (see `finishFromTargets`), and everything else with forward-only
+//    rings. The checks walk the **emitted** motion after run merging:
+//
+//    - every cut segment of the helix is sampled along its own combined
+//      `(along, A)` path against the chiral swept reference ca-a built. A move
+//      that interpolated ring heights, or took the wrong sign in along or A,
+//      would stand below that reference;
+//    - A never reverses inside a band, and it is never wrapped modulo 360;
+//    - the planted mutations are caught: restoring the ring alternation, and
+//      wrapping the commanded A, both make the reversal detector fire.
+//
+//    The excluded-region mutation lives in `rotaryRegion.test.ts`, next to the
+//    region masks it needs.
+// ---------------------------------------------------------------------------
+
+/** A sign changes in consecutive turning cut moves. */
+function aReversals(moves: readonly ToolpathMove[]): number {
+  let reversals = 0
+  let last = 0
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const delta = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(delta) < 1e-12) continue
+    const sign = Math.sign(delta)
+    if (last !== 0 && sign !== last) reversals++
+    last = sign
+  }
+  return reversals
+}
+
+/** Is the commanded A of every move endpoint non-decreasing, in emission order? */
+function monotoneA(moves: readonly ToolpathMove[]): boolean {
+  let last = Number.NEGATIVE_INFINITY
+  for (const move of moves) {
+    for (const point of [move.from, move.to]) {
+      if (point.a === undefined) continue
+      if (point.a < last - 1e-9) return false
+      last = point.a
+    }
+  }
+  return true
+}
+
+let helixSeeds = 0
+let chiralHelixSeeds = 0
+let helixSegments = 0
+let helixSamples = 0
+let baseResult: ToolpathResult | undefined
+console.log('Testing the around finish helix against the seeded swept reference...')
+for (const { axis, units, type } of CHIRAL_SEEDS) {
+  const scale = units === 'mm' ? 1 : 1 / 25.4
+  const label = `${axis}-${units}-${type}`
+  const allowance = CHIRAL_ALLOWANCE_MM * scale
+  const stock = roundStock(CHIRAL_BAR_RADIUS * 2 * scale, 20 * scale, axis, { x: 0, y: 0 })
+  const model: ChiralModel = {
+    vertices: CHIRAL_VERTICES.map(([across, up]) => [across * scale, up * scale] as const),
+    from: CHIRAL_FROM * scale,
+    to: CHIRAL_TO * scale,
+    scale0: 0.55,
+    scale1: 1.25,
+    twist0: 0,
+    twist1: 40,
+  }
+  const tool: NormalizedTool = {
+    ...BALL,
+    id: `helix-${label}`,
+    name: `helix-${label}`,
+    type,
+    sourceUnits: units,
+    units,
+    radius: 1 * scale,
+    diameter: 2 * scale,
+  }
+  const at = (point: ToolpathPoint): number => (axis === 'x' ? point.x : point.y)
+  const pivot = barPivotZ(stock)
+  const result = generateRotaryFinish(`helix-${label}`, chiralMesh(stock, model, 40), stock, tool, {
+    stepover: 2.5 * scale,
+    sampleSpacing: 1.5 * scale,
+    stockToLeave: 0,
+    alongStart: 5 * scale,
+    alongEnd: 15 * scale,
+    safeRadius: 30 * scale,
+    requestedCellSize: 0.2 * scale,
+    passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], `${label}: the chiral finish has no warning`)
+  // A is one-way whether the band came out as a helix or as forward-only rings:
+  // no reversal and no rewind anywhere. (On this tapered, twisted model the
+  // refinement refuses some bands -- the plan's ring fallback -- so the section
+  // below does not insist every seed is a helix; it checks every segment the
+  // generator did emit.)
+  assert.equal(aReversals(result.moves), 0, `${label}: A never reverses inside the band`)
+  assert.ok(monotoneA(result.moves), `${label}: the commanded A never rewinds`)
+  // The cutter body stays inside the cut band: its one-radius pull-in at each
+  // retained end survives whichever motion was chosen.
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    for (const point of [move.from, move.to]) {
+      const along = at(point)
+      assert.ok(along - tool.radius >= 5 * scale - 1e-9 && along + tool.radius <= 15 * scale + 1e-9,
+        `${label}: the cutter body at along ${along.toFixed(4)} enters a retained end of the band`)
+    }
+    // Every emitted segment, after merging, against the independent reference.
+    const fromAlong = at(move.from)
+    const toAlong = at(move.to)
+    const fromAngle = move.from.a ?? 0
+    const toAngle = move.to.a ?? 0
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    for (let step = 0; step <= 3; step++) {
+      const f = step / 3
+      const supportValue = chiralSupport(
+        model,
+        fromAlong + (toAlong - fromAlong) * f,
+        fromAngle + (toAngle - fromAngle) * f,
+        tool,
+      )
+      const tip = fromTip + (toTip - fromTip) * f
+      helixSamples++
+      assert.ok(tip >= supportValue - allowance,
+        `${label}: ${move.kind} at along ${(fromAlong + (toAlong - fromAlong) * f).toFixed(4)} `
+        + `A${(fromAngle + (toAngle - fromAngle) * f).toFixed(2)} f=${f} tip ${tip.toFixed(4)} is below `
+        + `the swept reference ${supportValue.toFixed(4)} by more than ${allowance.toFixed(4)}`)
+    }
+    helixSegments++
+  }
+  helixSeeds++
+  let turningAlong = 0
+  for (const move of result.moves) {
+    if (move.kind === 'cut' && (move.from.a ?? 0) !== (move.to.a ?? 0) && at(move.from) !== at(move.to)) turningAlong++
+  }
+  if (turningAlong > 0) chiralHelixSeeds++
+}
+
+// ── a guaranteed helix, checked against the same swept reference ──────────
+//
+// The chiral model above is a triangle with sharp edges: its band refuses
+// refinement after the eight rounds (the plan's ring fallback), so it proves the
+// swept reference on every emitted ring segment but not on a helix. A gentler
+// chiral section -- a narrower taper and twist -- converges, and its helix is the
+// one case where the independent reference judges **diagonal** moves on a model
+// whose support depends on A as well as on the along position. `baseResult` is
+// this path: the mutations at the end of the section are planted on a real
+// helix, not on a ring fallback.
+{
+  const model: ChiralModel = {
+    vertices: CHIRAL_VERTICES.map(([across, up]) => [across, up] as const),
+    from: CHIRAL_FROM,
+    to: CHIRAL_TO,
+    scale0: 0.8,
+    scale1: 1.15,
+    twist0: 0,
+    twist1: 20,
+  }
+  const stock = roundStock(CHIRAL_BAR_RADIUS * 2, 20, 'x', { x: 0, y: 0 })
+  const tool: NormalizedTool = {
+    ...BALL, id: 'helix-chiral', name: 'helix-chiral', type: 'ball_endmill',
+    sourceUnits: 'mm', units: 'mm', radius: 1, diameter: 2,
+  }
+  const pivot = barPivotZ(stock)
+  const result = generateRotaryFinish('helix-chiral', chiralMesh(stock, model, 40), stock, tool, {
+    stepover: 2.5, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 6, alongEnd: 14,
+    safeRadius: 30, requestedCellSize: 0.2, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the gentle chiral finish has no warning')
+  baseResult = result
+  assert.equal(aReversals(result.moves), 0, 'the gentle chiral band has no A reversal')
+  assert.ok(monotoneA(result.moves), 'the gentle chiral band is monotone in A')
+  let turningAlong = 0
+  let maxA = Number.NEGATIVE_INFINITY
+  let checked = 0
+  const allowance = CHIRAL_ALLOWANCE_MM
+  for (const move of result.moves) {
+    maxA = Math.max(maxA, move.to.a ?? maxA)
+    if (move.kind !== 'cut') continue
+    if ((move.from.a ?? 0) !== (move.to.a ?? 0) && alongOf(move.from) !== alongOf(move.to)) turningAlong++
+    const fromAlong = alongOf(move.from)
+    const toAlong = alongOf(move.to)
+    const fromAngle = move.from.a ?? 0
+    const toAngle = move.to.a ?? 0
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    for (let step = 0; step <= 3; step++) {
+      const f = step / 3
+      const supportValue = chiralSupport(
+        model,
+        fromAlong + (toAlong - fromAlong) * f,
+        fromAngle + (toAngle - fromAngle) * f,
+        tool,
+      )
+      const tip = fromTip + (toTip - fromTip) * f
+      checked++
+      assert.ok(tip >= supportValue - allowance,
+        `helix: cut at along ${(fromAlong + (toAlong - fromAlong) * f).toFixed(4)} `
+        + `A${(fromAngle + (toAngle - fromAngle) * f).toFixed(2)} f=${f} tip ${tip.toFixed(4)} is below `
+        + `the swept reference ${supportValue.toFixed(4)} by more than ${allowance}`)
+    }
+  }
+  assert.ok(turningAlong > 0, 'the gentle chiral band is a helix (some turning cut advances along)')
+  assert.ok(maxA > 360, `commanded A passes one turn and is not wrapped (it ends at ${maxA})`)
+  assert.equal(result.moves.filter((move) => move.kind === 'plunge').length, 1,
+    'a continuous band plunges once')
+  assert.equal(result.moves.filter((move) => move.kind === 'rapid').length, 2,
+    'and retracts only at its two ends')
+  console.log(`  chiral helix: ${result.moves.length} moves, ${checked} swept-reference samples, A to ${maxA}`)
+}
+
+// ── the mutations this section catches ────────────────────────────────────
+{
+  assert.ok(baseResult !== undefined, 'the seed loop produced a base helix')
+  const base = baseResult.moves
+  assert.equal(aReversals(base), 0, 'the real helix has no reversal')
+  assert.ok(monotoneA(base), 'the real helix is monotone in A')
+
+  // 1. Restore the old ring alternation: every other turn runs backwards again.
+  const alternate = (a: number): number => {
+    const turn = Math.floor(a / 360)
+    const within = a - 360 * turn
+    return turn % 2 === 0 ? a : 360 * turn + (360 - within)
+  }
+  const rewound = base.map((move) => ({
+    ...move,
+    from: { ...move.from, a: alternate(move.from.a ?? 0) },
+    to: { ...move.to, a: alternate(move.to.a ?? 0) },
+  }))
+  assert.ok(aReversals(rewound) > 0,
+    'restoring the ring alternation is caught: the reversal count fires')
+
+  // 2. Wrap the commanded A modulo 360. The reversal detector fires as soon as
+  //    a turn closes and the next one starts at zero again.
+  const wrapped = base.map((move) => ({
+    ...move,
+    from: { ...move.from, a: ((move.from.a ?? 0) % 360 + 360) % 360 },
+    to: { ...move.to, a: ((move.to.a ?? 0) % 360 + 360) % 360 },
+  }))
+  assert.ok(aReversals(wrapped) > 0,
+    'wrapping the commanded A modulo 360 is caught: the wrap reads as a reversal')
+  assert.ok(!monotoneA(wrapped), 'and it breaks the monotone-A contract')
+}
+
+console.log(
+  `  finish integration: ${helixSeeds} chiral seeds (${chiralHelixSeeds} helixed), ${helixSegments} emitted segments `
+  + `(${helixSamples} swept-reference samples), zero reversals, both A mutations caught`,
+)

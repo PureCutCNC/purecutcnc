@@ -981,14 +981,20 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     } as const
     const finish = generateRotaryFinish('finish', mesh, stock, BALL, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, BALL, { ...params, stockToLeave: 0 }, {})
+    // #1103 slice ca-c re-recorded the around row on purpose: a square blank's
+    // rings are now forward-only (A grows one turn per ring and is never
+    // rewound), so both of its programs moved. The along rows are the base
+    // commit's bytes exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'b7fea12dcc3c98c5' : 'ee7c8534a72873d6',
+      direction === 'along' ? 'b7fea12dcc3c98c5' : '72f137fc45863d75',
       `finish ${direction}: zero stock to leave is byte-identical`)
     // Recaptured for #1095: square around is unchanged (its stub never entered
     // the sampling mesh); square along carries the un-thickened wall now, so
     // its old value (which lifted the outermost pass to ~4.42) moved.
+    // Recaptured for #1103 slice ca-c: the square around finish's rings are
+    // forward-only, so its positive-leave program moved with the zero-leave one.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'cda89c07cab2130f' : '46ba23d5a6192237',
+      direction === 'along' ? 'cda89c07cab2130f' : 'a852fb9c5b0432f8',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + BALL.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

@@ -40,6 +40,8 @@ import type {
   RotarySamplingPrep,
   RotarySamplingWorkspace,
 } from './rotarySampling'
+import { buildContinuousHelix } from './rotaryContinuous'
+import type { ContinuousHelix } from './rotaryContinuous'
 import { rotaryTravelZ, squareBlankRetainedStub, squareBlankSectionExit, squareRotaryStubContactFloor, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
@@ -468,6 +470,52 @@ export function rotaryRegionSlopeContains(
   return stock.axis === 'x'
     ? mask.containsSegment({ x: fromAlong, y: fromAcross }, { x: toAlong, y: toAcross })
     : mask.containsSegment({ x: fromAcross, y: fromAlong }, { x: toAcross, y: toAlong })
+}
+
+/**
+ * A commanded A wrapped into one turn, in `(-180, 180]`, for a region test.
+ *
+ * The sheet's across coordinate is affine in the **physical** angle, and the
+ * mask repeats one circumference each way, so a move is tested on the turn it
+ * is actually swept on. `(-180, 180]` puts the A0/A360 seam at the turn's ends
+ * rather than inside it: a segment that crosses the seam reads as, say,
+ * `-1.4 -> 0`, the short way round, instead of `358.6 -> 360` (or worse, a
+ * `359.9999` from an inexact division being floored to the wrong turn).
+ */
+function turnAngle(commanded: number): number {
+  const wrapped = commanded - 360 * Math.round(commanded / 360)
+  return wrapped === -180 ? 180 : wrapped
+}
+
+/**
+ * Is every move of a continuous path inside the operation's region (#1103
+ * slice ca-c)?
+ *
+ * A helix is one straight move in `(along, A)` per segment, so the mask's own
+ * boundary test decides the **whole swept path** of each segment -- the same
+ * rule `rotaryRegionSlopeContains` already applies to the rough's A-changing
+ * links. A mask without a boundary test (`null`) cannot prove a band, and the
+ * caller keeps rings there. This is what lets a region that excludes nothing
+ * (the whole sheet) keep the region-free motion, while a region that trims part
+ * of the band is refused and its rings stay forward-only.
+ */
+function continuousPathInsideRegion(
+  mask: RotaryRegionMask,
+  stock: BarStock,
+  points: readonly ToolpathPoint[],
+  startAngle: number,
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const from = points[i - 1]
+    const to = points[i]
+    const fromAngle = turnAngle((from.a ?? startAngle) - startAngle)
+    const toAngle = fromAngle + ((to.a ?? startAngle) - (from.a ?? startAngle))
+    const inside = rotaryRegionSlopeContains(
+      mask, stock, alongCoordinate(stock, from), fromAngle, alongCoordinate(stock, to), toAngle,
+    )
+    if (inside !== true) return false
+  }
+  return true
 }
 
 /**
@@ -1427,18 +1475,32 @@ interface RotaryTargets {
    * at-layer candidate's rows never draw on the raised link's budget.
    */
   linkRowAt: (angleDeg: number, bucket?: RotaryLinkBucket) => RotaryLinkRow | null
+  /**
+   * The operation's sampling prep and the material it left on the model, so the
+   * around finish can build a continuous helix on the **same** mesh, stock,
+   * tool, cell size and workspace the rings were sampled with (#1103 slice
+   * ca-c). `null` when the operation refused or was cancelled before sampling.
+   */
+  prep: RotarySamplingPrep | null
+  stockToLeave: number
   stopped: boolean
   refusal: ToolpathWarningCode | null
 }
 
 /** The "refused before emitting" shape every caller returns. */
 function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
-  return { angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null, stopped: false, refusal: code }
+  return {
+    angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
+    prep: null, stockToLeave: 0, stopped: false, refusal: code,
+  }
 }
 
 /** The "cancelled" shape; the caller emits no motion and no warnings. */
 function targetStopped(angles: number[], along: number[]): RotaryTargets {
-  return { angles, along, tips: [], stubFloor: null, linkRowAt: () => null, stopped: true, refusal: null }
+  return {
+    angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
+    prep: null, stockToLeave: 0, stopped: true, refusal: null,
+  }
 }
 
 /**
@@ -1789,7 +1851,10 @@ function completeRotaryTargets(
     }
     return { along: linkAlong, tips: linkTips }
   })
-  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
+  return {
+    angles, along, tips, stubFloor, linkRowAt, prep: plan.prep,
+    stockToLeave: plan.stockToLeave, stopped: false, refusal: null,
+  }
 }
 
 /**
@@ -1964,6 +2029,43 @@ function finishRefusal(
 }
 
 /**
+ * The continuous helix covering one eligible finish band (#1103 slice ca-c).
+ *
+ * It runs on the prep the ring grid was sampled with -- the same mesh, the
+ * stock-to-leave-enlarged tool, the retained-wall metadata, the requested cell
+ * size and the one shared workspace -- so the helix reads exactly the surface
+ * the rings would and pays no second cross-section, strip plan or raster. `null`
+ * when the targets carry no prep (a refusal/cancellation never reaches here),
+ * and the caller keeps its forward-only rings for the band when the builder
+ * refuses the case, runs out of budget (`exhausted`) or finds a pose with no
+ * model under the tool (`uncovered`).
+ */
+function continuousHelixFor(
+  sampling: RotaryTargets,
+  params: RotaryFinishParams,
+  tool: NormalizedTool,
+  warnings: ToolpathWarning[],
+  hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
+  start: number,
+  end: number,
+  startAngle: number,
+): ContinuousHelix | null {
+  const prep = sampling.prep
+  if (prep === null) return null
+  return buildContinuousHelix({
+    prep,
+    tool,
+    band: { start, end },
+    stepover: params.stepover,
+    sampleSpacing: params.sampleSpacing,
+    stockToLeave: sampling.stockToLeave,
+    startAngle,
+    warnings,
+    ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
+  })
+}
+
+/**
  * The finish's motion from sampled targets (#1115 slice p-d1).
  *
  * Both drivers end here, so the emission -- and therefore the moves, the
@@ -2052,9 +2154,10 @@ function finishFromTargets(
     // was only ever asked at the samples. The mask's own boundary geometry
     // decides the segment; `null` means a hand-built mask with point membership
     // only, which keeps the sample check below.
+    const linkAngle = turnAngle(from.a)
     if (region !== null && insideRegion !== null) {
-      if (!insideRegion(fromAlong, from.a) || !insideRegion(toAlong, from.a)) return null
-      if (rotaryRegionSegmentContains(region, stock, fromAlong, toAlong, from.a) === false) return null
+      if (!insideRegion(fromAlong, linkAngle) || !insideRegion(toAlong, linkAngle)) return null
+      if (rotaryRegionSegmentContains(region, stock, fromAlong, toAlong, linkAngle) === false) return null
     }
     const points: RotaryLinkStep[] = []
     for (let i = 0; i < linkRow.along.length; i++) {
@@ -2062,7 +2165,7 @@ function finishFromTargets(
       if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
       // A point-only mask still gets the old per-sample test; an exact segment
       // test above already subsumes it.
-      if (insideRegion !== null && !insideRegion(x, from.a)) return null
+      if (insideRegion !== null && !insideRegion(x, linkAngle)) return null
       const tip = linkRow.tips[i]
       if (!Number.isFinite(tip)) return null
       points.push({ to: point(x, tip, from.a), kind: 'cut' })
@@ -2074,16 +2177,37 @@ function finishFromTargets(
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
   if (params.passDirection === 'around') {
-    // One ring per along position (#1045 slice A): the angle sweeps the whole
-    // turn, so the along coordinate never changes inside a ring. Rings alternate
-    // direction, which keeps A within [0, 360] for the operation and makes each
-    // ring start where the last ended. Every point reads its own angle row, `k`,
-    // at the ring's own along index -- a reversed ring uses its reversed `k` for
-    // the along position, the angle and the tip alike.
+    // #1103 slice ca-c: A never reverses. Every ring turns the same way, and the
+    // next ring continues from the angle the last one reached instead of
+    // rewinding -- A grows by 360 per ring (or by the helix's own turns) and is
+    // never wrapped modulo 360; the A range is the controller's job (#1091).
+    //
+    // A **continuous helix** replaces the rings wherever a whole band of rings
+    // can be cut without interruption: every sample of the ring is the model
+    // under the tool, and the operation's region (when it has one) contains the
+    // whole band. `buildContinuousHelix` samples the actual combined (along, A)
+    // poses and closes the band with a complete ring at each axial end, so the
+    // band is one run with no stop. Everything else -- a partial ring, a model
+    // gap, a region that trims the ring, a square blank, a helix whose budget
+    // ran out -- keeps its rings, now forward-only, with the emitter's safe
+    // transition between them.
+    //
+    // Only a full ring whose last angle is A360 and whose next ring starts at
+    // A0 of the next turn keeps #1093's surface link: those two commands are
+    // numerically equal, which is exactly the link's constant-A precondition. A
+    // region-clipped ring, or one the model splits, ends at an interior angle
+    // and its next ring starts at the other boundary of the arc -- a full turn
+    // apart -- so it falls back to the existing travel-height transition.
     const last = angles.length - 1
+    interface AroundRing {
+      /** The ring's cut points at the sampled angles, shifted by the A cursor at emission. */
+      readonly runs: RotaryRun[]
+      /** Every sample is the model under the tool, and the region contains them all. */
+      readonly eligible: boolean
+    }
+    const rings: AroundRing[] = []
     for (let ring = 0; ring < along.length; ring++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
-      const forward = ring % 2 === 0
       const samples: (ToolpathPoint | null)[] = []
       // #1096 slice D: the region's own membership on this ring, counted apart
       // from the model's `NaN` samples, so a ring the *region boundary* trimmed
@@ -2093,11 +2217,12 @@ function finishFromTargets(
       let regionEnd = -1
       let regionGap = false
       let inRegion = false
+      let allCovered = true
       for (let step = 0; step <= last; step++) {
-        const k = forward ? step : last - step
-        const tip = sampling.tips[k][ring]
+        const tip = sampling.tips[step][ring]
         const finite = Number.isFinite(tip)
-        const inside = insideRegion === null || insideRegion(along[ring], angles[k])
+        const inside = insideRegion === null || insideRegion(along[ring], angles[step])
+        if (!finite || !inside) allCovered = false
         if (inside) {
           if (!inRegion) {
             regionPieces++
@@ -2109,31 +2234,85 @@ function finishFromTargets(
         } else {
           inRegion = false
         }
-        samples.push(finite && inside ? point(along[ring], tip, angles[k]) : null)
+        samples.push(finite && inside ? point(along[ring], tip, angles[step]) : null)
       }
       const runs = ringRuns(samples)
       // A ring the region cuts to **one** contiguous interior arc, with no model
       // gap inside that arc, is the ring trimmed to the region -- not a split
       // ring. Mark its run as both the start and the end of the pass it cuts:
-      // the reversed next ring begins at the same boundary angle, so the
-      // existing `followLink` feeds across it instead of retracting, exactly as
-      // two full rings link at A0/A360. `followLink` still refuses the link when
-      // the two boundary angles do not match exactly or the path leaves the
-      // region, so a boundary that moves between rings falls back. A region that
-      // wraps the A0/A360 seam arrives as **two** pieces (the arc is split by
-      // the ring's own ends) and is deliberately left with today's retract, as
-      // is a ring split by a model gap.
+      // the next forward ring also starts at the arc's first boundary angle, one
+      // full turn later, so the emitter attempts the surface link and the
+      // constant-A check refuses it unless the arc happens to close the turn. A
+      // region that wraps the A0/A360 seam arrives as **two** pieces (the arc is
+      // split by the ring's own ends) and is deliberately left with today's
+      // retract, as is a ring split by a model gap.
       if (regionPieces === 1 && !regionGap && runs.length === 1
         && regionStart > 0 && regionEnd < last) {
         runs[0] = { ...runs[0], atStart: true, atEnd: true }
       }
+      rings.push({ runs, eligible: allCovered })
+    }
+    // The A cursor: the commanded angle every point of the next unit is built
+    // from. A ring advances it by one turn, a helix by its own complete turns.
+    let angleBase = 0
+    // One forward-only ring at the cursor's angle. A split ring is partial arcs:
+    // its last run can still reach the ring end, but the issue's contract is
+    // that a split ring retracts rather than feeding to the next ring. Only a
+    // ring that emitted one run may link -- a region-clipped ring's single run
+    // is marked above, so it may.
+    const emitRing = (index: number): void => {
+      const runs = rings[index].runs.map((run) => ({
+        ...run,
+        points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
+      }))
       const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
       here = emitted.here
-      // A split ring is partial arcs: its last run can still reach the ring end,
-      // but the issue's contract is that a split ring retracts rather than
-      // feeding to the next ring. Only a ring that emitted one run may link --
-      // a region-clipped ring's single run is marked above, so it may.
       previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
+      angleBase += 360
+    }
+    let ring = 0
+    while (ring < along.length) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+      if (rings[ring].eligible) {
+        let band = ring
+        while (band + 1 < along.length && rings[band + 1].eligible) band++
+        // A band of one ring is just a ring: a helix needs an axial step to turn
+        // into a pitch, and its two complete end rings would otherwise add a
+        // full turn over no advance at all.
+        if (band > ring) {
+          const helix = continuousHelixFor(
+            sampling, params, tool, warnings, hooks,
+            along[ring], along[band], angleBase,
+          )
+          if (helix?.stopped === true) return { operationId, moves: [], warnings: [], bounds: null }
+          if (helix !== null && helix.points.length > 1 && !helix.exhausted && !helix.uncovered
+            && (region === null || continuousPathInsideRegion(region, stock, helix.points, angleBase))) {
+            const emitted = emitRotaryRuns(
+              moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
+              safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink,
+            )
+            here = emitted.here
+            previousEndedAtEnd = emitted.endedAtEnd
+            angleBase += 360 * (helix.turns + 2)
+            ring = band + 1
+            continue
+          }
+          // The helix was refused for this **band** (a budget ran out, a pose
+          // had no model, the region trims it): the whole band keeps its
+          // forward-only rings. Falling back one ring at a time would re-attempt
+          // the same refusal for every later band start -- on a sculpted part
+          // that is one full helix build per ring -- so the band is consumed
+          // here, not just the first ring of it.
+          for (let k = ring; k <= band; k++) {
+            if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+            emitRing(k)
+          }
+          ring = band + 1
+          continue
+        }
+      }
+      emitRing(ring)
+      ring++
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
@@ -2199,21 +2378,36 @@ function finishFromTargets(
  *
  * With `passDirection: 'around'` (#1045 slice A) the pass runs round the bar
  * instead: one **ring** per along position, the angle sweeping the whole turn,
- * then a step along. Rings alternate direction so A stays within [0, 360] and
- * each ring starts where the previous one ended. A full ring's end and the next
- * ring's start are the same physical angle, so #1093 links them with a feed
- * along the bar that follows the model at that angle through a sample row no
- * coarser than the ring spacing or a quarter of the tool radius; only a split
- * ring or a gap in the reachable surface retracts. A **region** (#1096 slice D)
- * trims every ring to the same interior arc: the ring's piece ends at the
- * region boundary angle, the reversed next ring's piece starts there, and the
- * same surface link joins them -- a region-clipped ring is not a split ring. A
- * ring the model leaves as a separate piece inside the region, a ring the
- * region cuts into several angular pieces, or a region whose arc wraps the
- * A0/A360 seam (it arrives as two pieces, one at each end of the ring) retracts
- * as before. A `NaN` sample
- * is still not cut, the layer links are the same emitter's, and the steep-step
- * rule measures their surface distance along the arc rather than across X/Y. A saved operation
+ * then a step along. Since #1103 slice ca-c A never reverses: every ring turns
+ * the same way and the next ring continues from the angle the last one reached,
+ * so commanded A grows by one turn per ring and is never wrapped modulo 360
+ * (#1091 -- the controller owns the A range). A band of rings whose every
+ * sample is the model under the tool (and whose region, if the operation has
+ * one, contains the whole band) is cut by one **continuous helix**
+ * (`buildContinuousHelix`): a one-way turn that advances along the bar with a
+ * pitch no larger than the stepover, closed by a complete ring at each axial
+ * end. Its poses are sampled at the actual combined `(along, A)` position, and
+ * every segment is refined against the operation's between-sample tolerance, so
+ * a ridge that falls between two ring positions is followed rather than
+ * interpolated. A band the helix refuses -- a budget that runs out, a pose with
+ * no model, a partial ring, a region that trims the band, a square blank --
+ * keeps its rings, now forward-only.
+ *
+ * A full ring's end (`A = 360k`) and the next ring's start (`A = 360(k+1)`) are
+ * the same **commanded** angle, which is exactly #1093's constant-A
+ * precondition, so those rings still link with a feed along the bar that follows
+ * the model at that angle through a sample row no coarser than the ring spacing
+ * or a quarter of the tool radius. A ring the model splits into runs, or the
+ * region trims to an interior arc, ends at an angle whose next occurrence is a
+ * full turn away, so the exact-A link no longer applies and the emitter's
+ * travel-height transition handles it (the plan's "safe gaps" for partial
+ * rings). A **region** (#1096 slice D) that contains the whole band keeps the
+ * helix: every segment's swept path is proved against the mask's own boundary
+ * test, the same rule the rough's A-changing links use. A region that trims the
+ * band, a ring the model leaves as several pieces, and an arc wrapping the
+ * A0/A360 seam all retract as before. A `NaN` sample is still not cut, the
+ * layer links are the same emitter's, and the steep-step rule measures their
+ * surface distance along the arc rather than across X/Y. A saved operation
  * without the field keeps the along motion above byte for byte -- the shape of
  * the motion, not its band: the slice-D retained-end pull applies to both modes
  * and is a safety fix.
@@ -2221,11 +2415,12 @@ function finishFromTargets(
  * A **square** blank supports around mode too (#1045 slice C). Each sample is
  * already floored at its own exact retained-stub contact by `rotaryTargets`
  * (the C2-F6 floor), so a ring near a stubbed end cannot cut the square that
- * holds the part. Rings are separate runs -- the emitter retracts to the travel
- * height between them -- so, unlike an along grid, no cut chord spans two ring
- * positions and the stub's steep along profile needs no shoulder refinement
- * here; the along *step* is the operation's own `stepover`, and the stub's
- * angular profile is resolved by `sampleSpacing`.
+ * holds the part. A square blank cannot be helixed (its corners are not a
+ * surface of revolution and its retained-corner floor belongs to the ring path),
+ * so its rings stay rings, forward-only with the emitter's travel-height
+ * transition where the exact-A link does not hold; the along *step* is the
+ * operation's own `stepover`, and the stub's angular profile is resolved by
+ * `sampleSpacing`.
  *
  * A finish only follows the model. It emits no clearing layers and reads no
  * other operation: its motion is the model-following passes below, in along and

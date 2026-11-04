@@ -4114,11 +4114,15 @@ for (const { entry, program } of CASES) {
     // distance is the nearest band's.
     const outside = (along: number, angle: number): number => {
       let distance = Number.POSITIVE_INFINITY
+      // #1103 slice ca-c: an around pass carries A past one turn (it never
+      // reverses), and the region is a property of the bar's surface, so the
+      // distance is measured on A modulo one turn.
+      const physical = ((angle % 360) + 360) % 360
       for (const rect of regionList(entry.region!)) {
         const alongOut = Math.max(0, rect.alongFrom - along, along - rect.alongTo)
         let angleOut = Number.POSITIVE_INFINITY
         for (let turn = -1; turn <= 1; turn++) {
-          const shifted = angle + turn * 360
+          const shifted = physical + turn * 360
           angleOut = Math.min(angleOut, Math.max(0,
             angleOf(rect.acrossFrom) - shifted, shifted - angleOf(rect.acrossTo)))
         }
@@ -4163,7 +4167,10 @@ for (const { entry, program } of CASES) {
         if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) continue
         if (alongOf(move.from) !== alongOf(move.to)) continue
         const mid = { along: alongOf(move.from), angle: (move.from.a + move.to.a) / 2 }
-        if (mask.containsPoint(at(mid.along, mid.angle))) continue
+        // The mask repeats one circumference each way, so a commanded A past one
+        // turn is tested on its physical angle (#1103 slice ca-c).
+        const physicalMid = ((mid.angle % 360) + 360) % 360
+        if (mask.containsPoint(at(mid.along, physicalMid))) continue
         // The A midpoint of a merged cut that wraps A0/A360 is not its physical
         // midpoint; only a gap turn crosses the region this way, and one that
         // does must already be in air.

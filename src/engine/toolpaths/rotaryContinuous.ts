@@ -89,8 +89,11 @@
  *   and its retained-corner floor belongs to the ring path (#1045 slice C), so
  *   a square blank is **not applicable** (`null`) and the caller keeps rings.
  *
- * This slice builds the path only: `rotaryModel.ts` does not call it yet
- * (ca-c/ca-d wire it in for the around finish and rough).
+ * #1103 slice ca-c wires it into `generateRotaryFinish`: a maximal run of
+ * fully-covered rings of a round bar (and, when the operation has a region, a
+ * band whose every segment the mask's boundary test proves) is emitted as one
+ * helix, and any band the builder refuses keeps forward-only rings. Slice ca-d
+ * will use it for the around rough.
  */
 
 import { barCentre, barMaxRadius, barPivotZ } from '../../types/barStock'

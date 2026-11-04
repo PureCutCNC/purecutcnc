@@ -127,6 +127,18 @@ import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import {
+  CHIRAL_ALLOWANCE_MM,
+  CHIRAL_BAR_RADIUS,
+  CHIRAL_FROM,
+  CHIRAL_SEEDS,
+  CHIRAL_TO,
+  CHIRAL_VERTICES,
+  chiralMesh,
+  chiralSupport,
+  diagonalGouge,
+} from '../../test/rotaryChiralReference'
+import type { ChiralModel, DiagonalPath } from '../../test/rotaryChiralReference'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
@@ -347,8 +359,9 @@ for (const testCase of DIGEST_CASES) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Ring shape: one along coordinate per ring, A inside [0, 360], and
-//    consecutive rings running in opposite angle directions.
+// 2. Continuous A (#1103 slice ca-c): an uninterrupted band is one helix, and
+//    where a band cannot be helixed its rings keep turning the same way.
+//    Commanded A grows one turn per ring (never rewound, never wrapped).
 // ---------------------------------------------------------------------------
 
 interface Ring {
@@ -407,40 +420,78 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 }
 
 {
+  // `RING_MESH` is a surface of revolution under every angle, so the whole band
+  // is one uninterrupted helix: A never reverses, and the two complete
+  // boundary rings are the only turning cuts that keep their along coordinate.
   const result = generateRotaryFinish('rings', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around' }, {})
   assert.deepEqual(result.warnings, [], 'the around finish has no warning')
+  const turning: ToolpathMove[] = []
+  let reversals = 0
+  let lastSign = 0
   for (const move of result.moves) {
     for (const point of [move.from, move.to]) {
-      const a = angleOf(point)
-      assert.ok(a >= 0 && a <= 360, `A ${a} is inside [0, 360]`)
-      if (move.kind === 'cut' && !isAlongLink(move)) {
-        assert.equal(alongOf(point), alongOf(move.from), 'every ring cut point keeps its ring’s along coordinate')
-      }
+      assert.ok(angleOf(point) >= 0, `commanded A never goes negative (${angleOf(point)})`)
       assert.ok(point.z >= barPivotZ(RING_STOCK) - 1e-9, 'no point cuts below the pivot')
+    }
+    if (move.kind !== 'cut') continue
+    const delta = angleOf(move.to) - angleOf(move.from)
+    if (Math.abs(delta) < 1e-12) continue
+    turning.push(move)
+    const sign = Math.sign(delta)
+    if (lastSign !== 0 && sign !== lastSign) reversals++
+    lastSign = sign
+  }
+  assert.equal(reversals, 0, 'A never reverses: every turning cut advances A')
+  assert.equal(lastSign, 1, 'the band turns A forward throughout')
+  // 20 mm at a 2 mm stepover is ten revolutions of advance; the helix closes
+  // both ends with a complete ring, so A spans twelve turns and is not wrapped.
+  // This is the whole point of the slice: the base output ended at A360 after
+  // reversing 10 times, this one ends at A4320 turning one way.
+  const maxA = Math.max(...result.moves.map((move) => angleOf(move.to)))
+  approx(maxA, 360 * 12, 'the helix spans one turn per revolution plus its two end rings')
+  assert.equal(result.moves.filter((move) => move.kind === 'rapid').length, 2,
+    'a continuous band retracts only for the opening positioning move and the final retract')
+  assert.equal(result.moves.filter((move) => move.kind === 'plunge').length, 1,
+    'and plunges once, at its first cut')
+  // A turning cut at a fixed along coordinate is one of the two complete
+  // boundary rings; everything between them advances along as it turns.
+  const boundaries = [...new Set(turning
+    .filter((move) => alongOf(move.from) === alongOf(move.to))
+    .map((move) => alongOf(move.from)))].sort((a, b) => a - b)
+  assert.deepEqual(boundaries, [RING_PARAMS.alongStart, RING_PARAMS.alongEnd],
+    'the helix opens and closes with a complete ring at each axial end')
+  // The angular grid is the same slice-D cap the rings used (the helix measures
+  // 12 turns, so the check counts one turn's samples between the A0/A360 ends).
+  const angularIntervals = aroundAngleIntervals(20, RING_PARAMS.sampleSpacing)
+  const firstRing = turning.filter((move) => alongOf(move.from) === RING_PARAMS.alongStart)
+  assert.ok(firstRing.length <= angularIntervals,
+    `a boundary ring sweeps no more than the capped angle count (${firstRing.length} <= ${angularIntervals})`)
+  assert.ok(firstRing.length >= 1, 'and it still turns')
+}
+
+{
+  // A square blank cannot be helixed (its corners are not a surface of
+  // revolution), so its rings are the fallback -- and they too keep A moving:
+  // every ring turns forward and the next starts exactly one turn later, so
+  // ring i runs A(360i)..A(360(i+1)).
+  const SQUARE_RING_STOCK = squareStock(40, 20, 'x', { x: 10, y: 7 })
+  const result = generateRotaryFinish('rings-square', RING_MESH, SQUARE_RING_STOCK, FLAT, {
+    ...RING_PARAMS, passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], 'the square around finish has no warning')
+  for (const move of result.moves) {
+    for (const point of [move.from, move.to]) {
+      assert.ok(point.z >= barPivotZ(SQUARE_RING_STOCK) - 1e-9, 'no point cuts below the pivot')
     }
   }
   const rings = cutRings(result.moves)
   // `stepover` is the along step: 20 mm over 2 mm makes 11 rings, one per along
-  // position, and a finish now adds no clearing layer (2026-10-22 decision).
-  // The angular step is `sampleSpacing` round the bar's circumference, capped by
-  // slice D.
+  // position, and a finish adds no clearing layer (2026-10-22 decision).
   assert.equal(rings.length, 11, 'one finish ring per along position, `stepover` apart')
-  // 141 samples per ring under the slice-D angle cap (both ends of the turn).
-  // Slice G's merge drops the interior points of a run that is straight in
-  // (along, A, Z), so a ring's emitted points are that grid or fewer; the run
-  // still starts and ends on the grid's own angles, and `rotaryMerge.test.ts`
-  // proves the dropped points are on the emitted line within tolerance.
-  const angularIntervals = aroundAngleIntervals(20, RING_PARAMS.sampleSpacing)
-  assert.ok(rings[0].angles.length <= angularIntervals * 2,
-    'a ring sweeps no more points than the capped angle count')
-  assert.ok(rings[0].angles.length >= 2, 'and it still turns')
-  // One pass of 11 rings, alternating direction so A stays in [0, 360].
   for (let i = 0; i < rings.length; i++) {
-    const forward = i % 2 === 0
-    const direction = ringDirection(rings[i])
-    assert.equal(direction, forward ? 1 : -1, `ring ${i} runs ${forward ? 'forward' : 'reversed'}`)
-    assert.equal(rings[i].angles[0], forward ? 0 : 360, `ring ${i} starts where its pass's previous ring ended`)
-    assert.equal(rings[i].angles[rings[i].angles.length - 1], forward ? 360 : 0, `ring ${i} closes the turn`)
+    assert.equal(ringDirection(rings[i]), 1, `ring ${i} turns forward, never back`)
+    assert.equal(rings[i].angles[0], 360 * i, `ring ${i} starts one turn after the last one ended`)
+    assert.equal(rings[i].angles[rings[i].angles.length - 1], 360 * (i + 1), `ring ${i} closes its own turn`)
   }
 }
 
@@ -511,21 +562,38 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   assert.ok(highest <= 5 + params.requestedCellSize + 0.05,
     `the finish starts at the model, not the raw bar (highest ${highest.toFixed(3)})`)
   assert.ok(highest > 1, 'and it does cut a real depth of the standing bar')
-  assert.equal(cutRings(result.moves).length, 11, 'one model-following ring per along position')
+  // #1103 slice ca-c: a surface of revolution is one eligible band, so the
+  // passes are one continuous helix. A one-way turn that advances along on
+  // every revolution is what proves there is no second clearing pass at any
+  // along position (and no stop between rings).
+  const turning = result.moves.filter((move) => move.kind === 'cut' && angleOf(move.from) !== angleOf(move.to))
+  assert.ok(turning.length > 0, 'the finish turns A')
+  const alongAt = turning.map((move) => alongOf(move.from))
+  assert.ok(Math.min(...alongAt) < 2 && Math.max(...alongAt) > 18, 'the helix covers the whole band')
+  for (let i = 1; i < turning.length; i++) {
+    assert.ok(angleOf(turning[i].to) > angleOf(turning[i].from), 'every revolution advances A forward')
+  }
 }
 
 // ---------------------------------------------------------------------------
-// 2c. #1093: full rings are linked by a feed along the bar, not by a
-//     retract + rapid + plunge, and the finish link follows the model.
+// 2c. #1093 links hold where their exact constant-A precondition still does.
 //
-//     The rejection this block guards is the old motion: one retract and one
-//     plunge per ring (92 and 184 on the bust bench). A finish assumes no
-//     rough, so the link must stay on the model surface at the shared ring-end
-//     angle -- far below the bar's 21 mm travel height on this fixture.
+//     A full ring ends at A(360k) and the next forward ring starts at
+//     A(360(k+1)) -- the same commanded angle -- so the surface link still
+//     joins them, exactly as it joined the alternating rings at A0/A360 before
+//     #1103 slice ca-c. An uninterrupted round band is now one helix with no
+//     ring boundary at all, so this fixture uses the square blank, where the
+//     rings are the fallback. The rejection this block guards is the old
+//     motion: one retract and one plunge per ring. A finish assumes no rough,
+//     so the link must stay on the model surface at the shared ring-end angle
+//     -- far below the travel height.
 // ---------------------------------------------------------------------------
 
 {
-  const result = generateRotaryFinish('links', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around' }, {})
+  const SQUARE_RING_STOCK = squareStock(40, 20, 'x', { x: 10, y: 7 })
+  const result = generateRotaryFinish('links', RING_MESH, SQUARE_RING_STOCK, FLAT, {
+    ...RING_PARAMS, passDirection: 'around',
+  }, {})
   assert.deepEqual(result.warnings, [], 'the linked finish has no warning')
   const rapid = result.moves.filter((move) => move.kind === 'rapid')
   const plunges = result.moves.filter((move) => move.kind === 'plunge')
@@ -534,9 +602,9 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   const links = result.moves.filter(isAlongLink)
   // One feed link between each of the eleven rings; a steep shoulder splits a
   // link into its horizontal legs, so a boundary can contribute more than one.
-  assert.ok(links.length >= 10 && links.length <= 20,
+  assert.ok(links.length >= 10 && links.length <= 24,
     `ten ring boundaries are linked by feed moves (got ${links.length})`)
-  const pivot = barPivotZ(RING_STOCK)
+  const pivot = barPivotZ(SQUARE_RING_STOCK)
   for (const link of links) {
     assert.ok(angleOf(link.from) === angleOf(link.to), 'the link keeps the rings\' shared angle')
     assert.ok(link.to.x > link.from.x, 'the link runs along the bar in ring order')
@@ -556,16 +624,17 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 }
 
 // ---------------------------------------------------------------------------
-// 2c-bis. #1093 review finding: the finish link row used to be sampled at the
-//     ring spacing (or the caller's angular `sampleSpacing`, capped). A ridge
-//     narrower than the ring spacing, at the midpoint between two rings, was
-//     therefore invisible: the link ran straight through it at the surrounding
-//     surface height. This is the reviewer's counter-example -- a Ø200 bar, a
-//     Ø1 ball, a 0.2 mm ridge 19.82 mm above a 60.18 mm cylinder -- and the
-//     link must now sample at `tool.radius / 4` and climb over the ridge.
+// 2c-bis. The continuous helix resolves a ridge between ring positions.
+//
+//     #1093's review counter-example, reused for #1103 slice ca-c: a Ø200 bar,
+//     a Ø1 ball, a 0.2 mm ridge 19.82 mm above a 60.18 mm cylinder, with the
+//     ridge at the midpoint of rings 6 and 7 -- more than one cutter radius
+//     from either, so no ring's own sample can see it. The helix's combined
+//     (along, A) samples are 0.015 mm apart along the bar, so its emitted path
+//     has to climb the ridge instead of interpolating between the ring heights.
 // ---------------------------------------------------------------------------
 
-console.log('Testing that a finish link resolves a ridge between two rings...')
+console.log('Testing that a continuous helix resolves a ridge between two rings...')
 {
   const stock = roundStock(200, 30, 'x', { x: 0, y: 0 })
   const ball: NormalizedTool = {
@@ -574,10 +643,10 @@ console.log('Testing that a finish link resolves a ridge between two rings...')
   }
   const base = 60.18
   const peak = 80
-  // The retained ends pull the ring grid one cutter radius inside the band, so
-  // it is 5.5 + 19i/13: the ridge sits at the midpoint of rings 6 and 7
+  // The retained ends pull the band one cutter radius inside it, so the ring
+  // grid is 5.5 + 19i/13: the ridge sits at the midpoint of rings 6 and 7
   // (14.2692 and 15.7308), 0.73 mm from either -- more than the 0.5 mm cutter
-  // radius, so neither ring's footprint reaches it.
+  // radius, so neither ring's own footprint reaches it.
   const ridgeFrom = 14.9
   const ridgeTo = 15.1
   const model = revolved(stock, [
@@ -589,42 +658,51 @@ console.log('Testing that a finish link resolves a ridge between two rings...')
     { along: 25, radius: base },
   ], 128)
   const finish = generateRotaryFinish('ridge-link', model, stock, ball, {
-    // The coarser the caller's angular spacing, the coarser the old link row --
-    // 1.49 mm at this `stepover`, which misses the 0.2 mm ridge entirely.
     stepover: 1.49, sampleSpacing: 2, stockToLeave: 0, alongStart: 5, alongEnd: 25,
     safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around',
   }, {})
   // A Ø200 bar's height map is reduced to its budget; that is a resolution
-  // advisory, not a refusal, and the ridge below still resolves at the link
-  // row's own 0.125 mm spacing.
+  // advisory, not a refusal, and the ridge below still resolves.
   assert.ok(finish.warnings.every((warning) => warning.code === 'surfaceHeightMapReduced'),
-    'the ridge-link finish carries only the height-map resolution advisory')
+    'the ridge finish carries only the height-map resolution advisory')
+  // A surface of revolution is one eligible band, so there are no ring
+  // boundaries left to link: the whole band turns one way.
+  let reversals = 0
+  let lastSign = 0
+  for (const move of finish.moves) {
+    if (move.kind !== 'cut') continue
+    const delta = angleOf(move.to) - angleOf(move.from)
+    if (Math.abs(delta) < 1e-12) continue
+    const sign = Math.sign(delta)
+    if (lastSign !== 0 && sign !== lastSign) reversals++
+    lastSign = sign
+  }
+  assert.equal(reversals, 0, 'the ridge band is one continuous helix')
   const pivot = barPivotZ(stock)
-  const links = finish.moves.filter(isAlongLink)
-  assert.ok(links.length >= 10, `the ridge still links its full rings (${links.length})`)
-  // Every link segment that crosses the ridge's flat top must sit on it. The
-  // segment, not its endpoints: a merge collapses the run to its two ends, so
-  // an endpoint filter would miss the very point the link crosses. The sampler's
-  // conservative cell bound can lift a sample by at most its 0.05 mm cell; the
-  // tip must never be at the surrounding 60.18 mm cylinder.
+  // Every emitted cut segment that crosses the ridge's flat top must sit on it.
+  // The segment, not its endpoints: a merge collapses the run to its two ends,
+  // so an endpoint filter would miss the very point the link crosses. The
+  // sampler's conservative cell bound can lift a sample by at most its 0.05 mm
+  // cell; the tip must never be at the surrounding 60.18 mm cylinder.
   let crossed = 0
   let lowest = Number.POSITIVE_INFINITY
-  for (const link of links) {
-    const a = link.from.x
-    const b = link.to.x
+  for (const move of finish.moves) {
+    if (move.kind !== 'cut') continue
+    const a = alongOf(move.from)
+    const b = alongOf(move.to)
     if (!(b > a)) continue
     const lo = Math.max(a, ridgeFrom)
     const hi = Math.min(b, ridgeTo)
     if (hi <= lo) continue
     crossed++
     for (const x of [lo, hi]) {
-      const tip = link.from.z + (link.to.z - link.from.z) * (x - a) / (b - a) - pivot
+      const tip = move.from.z + (move.to.z - move.from.z) * (x - a) / (b - a) - pivot
       if (tip < lowest) lowest = tip
     }
   }
-  assert.ok(crossed > 0, 'the link row samples the ridge at all')
+  assert.ok(crossed > 0, 'the helix samples the ridge at all')
   assert.ok(lowest >= peak - 0.06,
-    `the finish link climbs over the ridge instead of cutting through it (lowest tip ${lowest.toFixed(4)}, model ${peak})`)
+    `the helix climbs over the ridge instead of cutting through it (lowest tip ${lowest.toFixed(4)}, model ${peak})`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,216 +1233,6 @@ function propertyAllowance(tool: NormalizedTool): number {
 //        (an endpoint-only sample cannot see it).
 // ---------------------------------------------------------------------------
 
-interface ChiralModel {
-  /** The section at the model's start, in (across, up) from the bar axis. */
-  readonly vertices: readonly (readonly [number, number])[]
-  readonly from: number
-  readonly to: number
-  readonly scale0: number
-  readonly scale1: number
-  readonly twist0: number
-  readonly twist1: number
-}
-
-/** The model's section at one along position: scaled and turned about the axis. */
-function chiralSection(model: ChiralModel, along: number): Array<readonly [number, number]> {
-  const t = Math.max(0, Math.min(1, (along - model.from) / (model.to - model.from)))
-  const scale = model.scale0 + (model.scale1 - model.scale0) * t
-  const twist = (model.twist0 + (model.twist1 - model.twist0) * t) * Math.PI / 180
-  const cos = Math.cos(twist)
-  const sin = Math.sin(twist)
-  return model.vertices.map(([across, up]) => [
-    scale * (across * cos - up * sin),
-    scale * (across * sin + up * cos),
-  ] as const)
-}
-
-/**
- * The best tip the `tool` can reach against one section edge at an axial offset
- * `dx`: `max over the edge of q - r + sqrt(r^2 - p^2 - dx^2)`, which is concave
- * on the edge's feasible interval, so a ternary search is exact.
- */
-function ballEdgeSupport(
-  p0: number,
-  q0: number,
-  p1: number,
-  q1: number,
-  radius: number,
-  dx: number,
-): number {
-  const reachSq = radius * radius - dx * dx
-  if (!(reachSq > 0)) return Number.NEGATIVE_INFINITY
-  const reach = Math.sqrt(reachSq)
-  const dp = p1 - p0
-  let lo = 0
-  let hi = 1
-  if (Math.abs(dp) < 1e-12) {
-    if (Math.abs(p0) > reach) return Number.NEGATIVE_INFINITY
-  } else {
-    const a = (-reach - p0) / dp
-    const b = (reach - p0) / dp
-    lo = Math.max(0, Math.min(a, b))
-    hi = Math.min(1, Math.max(a, b))
-    if (hi < lo) return Number.NEGATIVE_INFINITY
-  }
-  const value = (lambda: number): number => {
-    const p = p0 + dp * lambda
-    const disc = reachSq - p * p
-    if (disc < 0) return Number.NEGATIVE_INFINITY
-    return q0 + (q1 - q0) * lambda - radius + Math.sqrt(disc)
-  }
-  let left = lo
-  let right = hi
-  for (let step = 0; step < 40; step++) {
-    const third = (right - left) / 3
-    const m1 = left + third
-    const m2 = right - third
-    if (value(m1) < value(m2)) left = m1
-    else right = m2
-  }
-  return Math.max(value(lo), value(hi), value((left + right) / 2))
-}
-
-/**
- * The lowest safe tool tip at one pose on the chiral model, from the section
- * alone.
- *
- * The cutter body spans its whole axial footprint (`along +/- r`) and its whole
- * cross-section reach (`|p| <= sqrt(r^2 - dx^2)`), so the support is the
- * maximum over that footprint. A flat tool's bottom face is a plane, so the
- * maximum is on the section's boundary inside the reach strip; a ball's lower
- * surface is a sphere, and the maximum on each edge is a concave one-dimensional
- * search. `tipOnly` reduces the reference to the vertical ray under the tool's
- * own axis, which is the mutation that ignores the body's reach.
- */
-function chiralSupport(
-  model: ChiralModel,
-  along: number,
-  angleDeg: number,
-  tool: NormalizedTool,
-  tipOnly = false,
-): number {
-  const radius = tool.radius
-  const ball = tool.type === 'ball_endmill'
-  const angle = angleDeg * Math.PI / 180
-  const alongSamples = tipOnly ? 0 : 8
-  let best = Number.NEGATIVE_INFINITY
-  for (let sample = 0; sample <= alongSamples; sample++) {
-    const x = tipOnly ? along : along - radius + (2 * radius * sample) / alongSamples
-    const dx = x - along
-    const reach = Math.sqrt(Math.max(0, radius * radius - dx * dx))
-    if (!tipOnly && !(reach > 0)) continue
-    const t = Math.max(0, Math.min(1, (x - model.from) / (model.to - model.from)))
-    const scale = model.scale0 + (model.scale1 - model.scale0) * t
-    const twist = (model.twist0 + (model.twist1 - model.twist0) * t) * Math.PI / 180
-    // Both the section's own turn and the stock's commanded turn are rotations
-    // about the bar axis, so they compose.
-    const phi = twist + angle
-    const cos = Math.cos(phi)
-    const sin = Math.sin(phi)
-    const p: number[] = []
-    const q: number[] = []
-    for (const [across, up] of model.vertices) {
-      p.push(scale * (across * cos - up * sin))
-      q.push(scale * (across * sin + up * cos))
-    }
-    if (tipOnly) {
-      for (let i = 0; i < p.length; i++) {
-        if (Math.abs(p[i]) <= 1e-9) best = Math.max(best, q[i])
-        const j = (i + 1) % p.length
-        const dp = p[j] - p[i]
-        if (Math.abs(dp) < 1e-12) continue
-        const lambda = -p[i] / dp
-        if (lambda < 0 || lambda > 1) continue
-        best = Math.max(best, q[i] + (q[j] - q[i]) * lambda)
-      }
-      continue
-    }
-    if (!ball) {
-      for (let i = 0; i < p.length; i++) {
-        if (Math.abs(p[i]) <= reach + 1e-12) best = Math.max(best, q[i])
-        const j = (i + 1) % p.length
-        const dp = p[j] - p[i]
-        if (Math.abs(dp) < 1e-12) continue
-        for (const boundary of [-reach, reach]) {
-          const lambda = (boundary - p[i]) / dp
-          if (lambda < 0 || lambda > 1) continue
-          best = Math.max(best, q[i] + (q[j] - q[i]) * lambda)
-        }
-      }
-      continue
-    }
-    for (let i = 0; i < p.length; i++) {
-      const j = (i + 1) % p.length
-      best = Math.max(best, ballEdgeSupport(p[i], q[i], p[j], q[j], radius, dx))
-    }
-  }
-  return best
-}
-
-/** A commanded diagonal path, parameterised by the emitted fraction. */
-interface DiagonalPath {
-  along(f: number): number
-  angle(f: number): number
-  /** The tool tip, measured from the bar's pivot. */
-  tip(f: number): number
-}
-
-/** The deepest gouge (`support - tip`) along the actual combined path. */
-function diagonalGouge(
-  model: ChiralModel,
-  tool: NormalizedTool,
-  path: DiagonalPath,
-  samples = 24,
-  tipOnly = false,
-): number {
-  let worst = Number.NEGATIVE_INFINITY
-  for (let step = 0; step <= samples; step++) {
-    const f = step / samples
-    const support = chiralSupport(model, path.along(f), path.angle(f), tool, tipOnly)
-    worst = Math.max(worst, support - path.tip(f))
-  }
-  return worst
-}
-
-/** The chiral model extruded along the bar, with both end caps. */
-function chiralMesh(stock: BarStock, model: ChiralModel, steps: number): RotaryModelMesh {
-  const centre = barCentre(stock)
-  const pivot = barPivotZ(stock)
-  const positions: number[] = []
-  const index: number[] = []
-  const n = model.vertices.length
-  for (let s = 0; s <= steps; s++) {
-    const along = model.from + (model.to - model.from) * s / steps
-    for (const [across, up] of chiralSection(model, along)) {
-      if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
-      else positions.push(centre + across, along, pivot + up)
-    }
-  }
-  for (let s = 0; s < steps; s++) {
-    for (let j = 0; j < n; j++) {
-      const j2 = (j + 1) % n
-      const a = s * n + j
-      const b = s * n + j2
-      const c = (s + 1) * n + j2
-      const d = (s + 1) * n + j
-      index.push(a, b, c, a, c, d)
-    }
-  }
-  for (let i = 1; i + 1 < n; i++) {
-    index.push(0, i + 1, i, steps * n, steps * n + i, steps * n + i + 1)
-  }
-  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
-}
-
-/** A 20 mm bar with a chiral triangle whose taper and twist move with along. */
-const CHIRAL_VERTICES = [[-3, -1], [3, -3], [3.6, 3.6]] as const
-const CHIRAL_BAR_RADIUS = 10
-const CHIRAL_FROM = 4
-const CHIRAL_TO = 16
-const CHIRAL_ALLOWANCE_MM = 0.02
-const CHIRAL_SEEDS = (['x', 'y'] as const).flatMap((axis) => (['mm', 'inch'] as const).flatMap((units) =>
-  (['ball_endmill', 'flat_endmill'] as const).map((type) => ({ axis, units, type }))))
 
 let chiralMutationsCaught = 0
 let chiralChecks = 0
@@ -1605,9 +1473,19 @@ const HEX_SECTION = Array.from({ length: 6 }, (_, i): readonly [number, number] 
     assert.equal(point.z, barPivotZ(HEX_STOCK) + expected,
       `hex tip at along ${alongOf(point)} A ${angleOf(point)} is the sampler’s own value`)
   }
-  const rings = cutRings(result.moves)
-  const directions = rings.map(ringDirection)
-  assert.ok(directions.includes(1) && directions.includes(-1), 'both ring directions are measured')
+  // The hex prism contains the axis, so every angle has model and the whole
+  // band is one continuous helix: the emitted tips are exercised on the helix's
+  // own combined (along, A) poses, one-way and never rewound (#1103 slice ca-c).
+  let lastSign = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    const delta = angleOf(move.to) - angleOf(move.from)
+    if (Math.abs(delta) < 1e-12) continue
+    const sign = Math.sign(delta)
+    assert.equal(sign, 1, `the helix only ever advances A (A${angleOf(move.from)} -> A${angleOf(move.to)})`)
+    lastSign = sign
+  }
+  assert.equal(lastSign, 1, 'the hex band turns A')
 }
 
 // ---------------------------------------------------------------------------
@@ -1684,8 +1562,11 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
     { ...params, passDirection: 'around' }, {})
   assert.ok(along.moves.length > 0 && around.moves.length > 0, 'both directions cut')
   assert.notDeepEqual(around.moves, along.moves, 'around and along produce different motion')
-  assert.ok(around.moves.every((move) => angleOf(move.from) >= 0 && angleOf(move.to) <= 360),
-    'the around motion stays within one turn')
+  // #1103 slice ca-c: an around pass turns one way and A grows across the
+  // operation; it is never wrapped back into one turn.
+  assert.ok(around.moves.every((move) => angleOf(move.from) >= 0), 'commanded A never goes negative')
+  const lastA = Math.max(...around.moves.map((move) => angleOf(move.to)))
+  assert.ok(lastA > 360, `the around motion carries A past one turn (it ends at A${lastA.toFixed(1)})`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1742,7 +1623,16 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   assert.ok(lines.slice(turning).some((line) => /A-?\d/.test(line)), 'the turning motion carries A words')
   const aWords = lines.flatMap((line) => [...line.matchAll(/A(-?\d+(?:\.\d+)?)/g)].map((match) => Number(match[1])))
   assert.ok(aWords.length > 0, 'the posted program carries A words')
-  for (const a of aWords) assert.ok(a >= 0 && a <= 360, `posted A ${a} is inside [0, 360]`)
+  // #1103 slice ca-c: A is one-way and grows across the operation. It is never
+  // wrapped modulo 360, and there is no closing unwind (#1091 -- the controller
+  // owns the A range). This is the posted-text half of that contract.
+  for (const a of aWords) assert.ok(a >= 0, `posted A ${a} is not negative`)
+  for (let i = 1; i < aWords.length; i++) {
+    assert.ok(aWords[i] >= aWords[i - 1] - 1e-9,
+      `posted A is never rewound (${aWords[i - 1]} -> ${aWords[i]})`)
+  }
+  assert.ok(Math.max(...aWords) > 360,
+    `the program turns A past one revolution (it reaches A${Math.max(...aWords).toFixed(3)})`)
 }
 
 // ---------------------------------------------------------------------------
