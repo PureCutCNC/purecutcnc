@@ -60,7 +60,14 @@ slice; the along finish is captured beside it.
 | square-to-round-test-01.camj | op0028 | rotary rough (along) | 1104 | 26 | 3 | 29, 24, 26 | 26 | `5dcd2d44b3557a9b7878e13636967fcee8a8e2aac4def3fe848002fab89c6486` | `0a408a5beae64f8bed026b1bd30593afc98740f0ba6e98d5c4ce49427aaef5fa` |
 | square-to-round-test-01.camj | op0029 | rotary finish (along) | 448 | 2 | 0 | 24, 32, 24 | 24 | `963ebbb91b0845332fbf40fe96f7262547b0ba6f740e68d7429ba92bda82c098` | `2eceac974d0e18b59ec3a9396d6dd23088cee76434c6c824fa3d090bda808989` |
 
-## Candidate columns (ca-e)
+## Candidate columns (ca-e, re-measured by ca-f)
+
+**ca-f update:** the busto-round `op0025` row is the ca-f capture (moves 22513,
+rapids 176, generation 31022 ms, export 59 ms), measured with this protocol on
+a quiet machine; the ca-e values it replaces were 22669 moves, 291 rapids,
+30772 ms and 72 ms. Every other row is byte-identical to the ca-e capture (the
+moves hashes in "What ca-f measured" below), so those rows keep their ca-e
+numbers.
 
 ca-e re-measured both trees in one session on a quiet machine, **serially**,
 with **one warm-up and five timed runs** per case. The ca-a rows above keep
@@ -84,7 +91,7 @@ export times are pure posting.
 
 | fixture | op | candidate moves | candidate rapids | candidate A reversals | candidate median gen ms | candidate median export ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| busto-round-stock.camj | op0025 | 22669 | 291 | 0 | 30772 | 72 |
+| busto-round-stock.camj | op0025 | 22513 | 176 | 0 | 31022 | 59 |
 | busto-round-stock.camj | op0015 | 54231 | 2 | 0 | 29627 | 170 |
 | busto-rect-stock.camj | op0021 | 32866 | 74 | 0 | 41023 | 40972 |
 | busto-rect-stock.camj | op0022 | 79088 | 2 | 0 | 32839 | 32965 |
@@ -101,7 +108,7 @@ control on the measurement itself.
 
 | case | base median gen ms | candidate median gen ms | gen ratio | base median export ms | candidate median export ms | export ratio |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| busto-round op0025 | 29497 | 30772 | 1.04 | 74 | 72 | 0.97 |
+| busto-round op0025 | 29497 | 31022 | 1.05 | 74 | 59 | 0.80 |
 | busto-round op0015 | 27558 | 29627 | 1.08 | 163 | 170 | 1.04 |
 | busto-rect op0021 | 39874 | 41023 | 1.03 | 39738 | 40972 | 1.03 |
 | busto-rect op0022 | 32253 | 32839 | 1.02 | 32602 | 32965 | 1.01 |
@@ -152,6 +159,76 @@ goes 7 -> 0 (finish) and 15 -> 0 (rough).
   (date normalised) with the same move counts the ca-a table records: 1104
   (op0028) and 448 (op0029). The cylinder's along rough and finish controls,
   and a non-rotary program, are pinned by hash in `rotaryOutput.test.ts`.
+
+## What ca-f measured: the post-helix ring links
+
+ca-f restores #1117's at-layer ring link on a round bar wherever its **same-A**
+condition still holds once every ring turns forward. The refusal it found was
+the `previousRingSplit` bookkeeping, not the angle: on a round bar without a
+region the split-ring gate refused the boundary before any geometry was
+checked. With the gate left in place only under a region, the at-layer
+candidate's own walk decides, and a boundary it cannot prove keeps the raised
+link exactly as before (a wide A change on a round bar, a model gap, a region
+without a boundary test).
+
+Measured on `busto-round-stock.camj` `op0025` with `work/rl-e-probe.ts`, one
+generation per tree, one process at a time:
+
+| layer | ca-a base boundaries | ca-f boundaries |
+| --- | ---: | ---: |
+| 1 | 40 | 4 |
+| 2 | 36 | 8 |
+| 3 | 35 | 9 |
+| 4 | 34 | 28 |
+| 5 | 33 | 27 |
+| 6 | 30 | 40 |
+| 7 | 12 | 18 |
+| 8 | 1 | 12 |
+| 9 | 0 | 10 |
+| 10 | 0 | 10 |
+| 11 | 0 | 5 |
+| **total** | **221** | **171** |
+
+The total is below the base's 221 by construction, not by loss: **90 of the
+base's boundaries collapse into the three continuous helices** (the base's
+layers 1-3 hold 111 boundaries; ca-f keeps 18 ring links there plus one helix
+group per layer, 21 in all). Outside the helical bands ca-f keeps **150**
+boundaries against the base's 110 (layers 4-8: 125 vs 110; layers 9-11: 25 vs
+0), so every boundary that still exists in a ring band is linked: 221 - 90 + 40
+= 171. Rapics fall from 291 to **176** (base 261), A reversals stay **0**, and
+the emitted moves go 22669 -> 22513.
+
+**75 in-layer boundaries keep the raised link**, all by the #1117 wide A-change
+bound on a round bar (`MAX_LINK_ACROSS_DEG`). Forward-only traversal changes
+what the boundary is: the base linked the two rings' shared *high* boundary
+(a 2-5 degree drift, #1117 rl-e), while a forward-only ring can only enter the
+next ring at that ring's own first cut, which is the far side of its gap -- a
+45-81 degree sweep on this model. A wide-sweep variant that let the link follow
+the model over the gap was measured and rejected: the standing material the
+swept cutter meets on layer 7 is **0.083-0.380 in above the layer radius**
+(76 sampled link rows) against a 0.075 in stepdown, i.e. material this layer
+does not remove, and the variant also cost generation time (36408 ms measured on
+it against 31022 ms for the slice kept, same machine). Those boundaries keep the
+pre-slice raised link.
+
+Byte-identical controls, verified by comparing the `moves` SHA-256 of the same
+generation before and after this slice, in one session:
+
+| fixture | op | moves sha256 (ca-f and before it) |
+| --- | --- | --- |
+| busto-round-stock.camj | op0025 | `30e6d72da4f354a6f8fdf33a2f426e055bbb0b74245d99c50085b9566be29be0` (was `980d7ced58e55298320fe15bab4b4ae4dc86340d0aa6115c0bf786780158c23c`) |
+| busto-round-stock.camj | op0015 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| busto-rect-stock.camj | op0021 | `c84617e2cbb3f4faa469498c53514812a05413e44cd4a4c35f0d20c1af53ba9d` |
+| busto-rect-stock.camj | op0022 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` |
+| square-to-round-test-01.camj | op0028 (around) | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` |
+| square-to-round-test-01.camj | op0029 (around) | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` |
+| square-to-round-test-01.camj | op0028 (along) | `6189e3247e067f7b5d17290137e785504f274c753339a26719c562a55b796e14` |
+| square-to-round-test-01.camj | op0029 (along) | `8ed7b1a7fd8a0eead29d0afa1d4c1f9c07a8c2aeff923e3a0bc476b98c2892d5` |
+
+Generation went 30611 -> 31022 ms on `op0025` (five timed serial runs after one
+warm-up, same session; 1.01x, and 1.05x the base's 29497 ms) and the round row's
+export 57 -> 59 ms. The square blanks, the finishes and the along controls are
+untouched: their moves hashes above are identical to the pre-slice generation.
 
 ## Correction round 1 (review P1): shared height maps
 

@@ -746,8 +746,11 @@ console.log('Testing that a continuous helix resolves a ridge between two rings.
 //      - the inclusive boundary scan removed (strict interior filter restored)
 //        -> the fine-step gap block: with the row and ring grids coincident a
 //        cutting link enters the span where the row has no model;
-//      - the split-ring eligibility removed -> the split-ring block: the twenty
-//        low links between the second layer's split rings return.
+//      - the round bar's wide A-change bound removed -> the split-ring block: the
+//        twenty low links between the second layer's split rings return, crossing
+//        the lobe the layer does not remove (its sweep is far past the 45 degree
+//        drift bound). #1103 ca-f moved the split-ring gate to the region case
+//        only, so this fixture is now held by the wide bound instead.
 // ---------------------------------------------------------------------------
 
 /** The first layer-boundary retract of an around rough: a rapid back along the bar. */
@@ -1013,12 +1016,140 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   // #1103 slice ca-d: every ring turns forward, so a split ring's boundary is a
   // safe gap rather than an at-layer link. No low link may join the split rings,
   // and each boundary retracts and plunges again.
+  //
+  // #1103 slice ca-f: the split-ring **gate** no longer decides this on a round
+  // bar without a region (see the seam-groove block below); the boundary here is
+  // refused by the wide A-change bound instead. These rings' gaps are the tall
+  // lobe itself -- the two runs are separated by the sector the layer does not
+  // remove -- so the transition between them sweeps across that lobe, a forward
+  // A change far past `MAX_LINK_ACROSS_DEG`. The assertion is unchanged and now
+  // pins that bound rather than the eligibility rule.
   assert.equal(result.moves.filter(isAlongLink).length, 0,
     'no at-layer link joins the split rings')
   const plunges = result.moves.filter((move) => move.kind === 'plunge')
   assert.ok(plunges.length > 10,
     `every split-ring boundary retracts and plunges (${plunges.length} plunges)`)
   assert.ok(pivot > 0)
+}
+
+{
+  // #1103 slice ca-f: a round rough's ring-to-ring link after a helix.
+  //
+  // The bar is radius 7 up to a shoulder at along 8, so layer 2 cuts whole rings
+  // there and the band is one continuous helix (ca-d). Past the shoulder a tall
+  // (radius 9) sector stands above layer 1's floor, so every ring there cuts two
+  // runs that **wrap the A0/A360 seam**: the ring's first run starts at A0 and
+  // its last run ends at A360, and the sector drifts a few degrees per ring.
+  // The previous ring's last cut and the next ring's first cut are therefore the
+  // same commanded A, which is #1117's at-layer link; before this slice the
+  // split-ring bookkeeping refused exactly that boundary on a round bar without
+  // a region, so every ring after the helix retracted and plunged again.
+  //
+  // Mutations each fail here (both measured):
+  //  - the split-ring gate restored for a region-less round bar -> the five
+  //    raised links come back and the post-shoulder link count falls from six to
+  //    three;
+  //  - an extra 360 on the forward-equivalent A of any ring (`unitBase`) -> the
+  //    boundary is no longer the same A, falls to the wide A-change bound and
+  //    keeps the raised link (nine rapids, seven groups on this fixture).
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const pivot = barPivotZ(stock)
+  const shoulder = 8
+  const segments = 360
+  const DEG = Math.PI / 180
+  const radiusAt = (x: number, across: number): number => {
+    if (x <= shoulder + 1e-9) return 7
+    let off = ((across - (180 + 4 * (x - shoulder))) % 360 + 360) % 360
+    if (off > 180) off = 360 - off
+    return Math.abs(off) <= 20 ? 9 : 7
+  }
+  const centre = barCentre(stock)
+  const alongs: number[] = []
+  for (let x = 0; x < 16 - 1e-9; x += 0.25) alongs.push(x)
+  alongs.push(16)
+  const rings: number[] = []
+  for (const x of alongs) {
+    rings.push(x)
+    // A duplicated along position makes the tall sector a vertical wall.
+    if (Math.abs(x - shoulder) < 1e-9) rings.push(x)
+  }
+  const positions: number[] = []
+  const index: number[] = []
+  for (const x of rings) {
+    for (let j = 0; j < segments; j++) {
+      const theta = 360 * j / segments
+      const r = radiusAt(x, 90 - theta)
+      positions.push(x, centre + r * Math.cos(theta * DEG), pivot + r * Math.sin(theta * DEG))
+    }
+  }
+  for (let s = 0; s + 1 < rings.length; s++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = s * segments + j
+      const b = s * segments + j2
+      const c = (s + 1) * segments + j2
+      const d = (s + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  const model: RotaryModelMesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 16,
+    safeRadius: 30, requestedCellSize: 0.1, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('ca-f-forward-ring-links', model, stock, BALL, { ...params, stepdown: 2 }, {})
+  assert.deepEqual(result.warnings, [], 'the seam-groove rough warns about nothing')
+  // The band before the shoulder is a continuous helix: a cut that changes A and
+  // the along position at once, well before any ring boundary.
+  assert.ok(result.moves.some((move) => move.kind === 'cut'
+    && alongOf(move.to) > alongOf(move.from)
+    && angleOf(move.to) !== angleOf(move.from)
+    && alongOf(move.to) < shoulder),
+    'layer 2 helixes the whole-ring band before the shoulder')
+  // No raised link between the rings: every boundary after the helix is a
+  // stay-down feed at the layer instead of a retract/rapid/plunge.
+  assert.equal(result.moves.filter(isAirLink).length, 0,
+    'no raised link joins the forward-only rings after the helix')
+  const links = result.moves.filter(isAlongLink)
+  const afterShoulder = links.filter((move) => alongOf(move.from) >= shoulder - 1e-6)
+  assert.ok(afterShoulder.length >= 6,
+    `every ring after the helix links to its neighbour (${afterShoulder.length} links)`)
+  // The first ring after the helix is entered by a **link**, not a retract: the
+  // move that reaches it is the at-layer cut and the ring's first cut continues
+  // from exactly where it left the tool. That is #1117's at-layer boundary.
+  const firstRing = result.moves.findIndex((move) => move.kind === 'cut' && alongOf(move.from) > shoulder)
+  assert.ok(firstRing > 1, 'the rough cuts rings past the shoulder')
+  const entering = result.moves[firstRing - 1]
+  assert.ok(isAlongLink(entering), 'the ring after the helix is entered by an at-layer link')
+  assert.equal(angleOf(entering.to), angleOf(result.moves[firstRing].from),
+    'the link leaves the tool at the ring\'s own first cut angle')
+  // Those rings are **split**: their two runs wrap the seam, and the join
+  // between the runs is an A move at the travel height, not a cut.
+  assert.ok(result.moves.some((move) => move.kind === 'cut'
+    && alongOf(move.from) >= shoulder - 1e-6
+    && alongOf(move.to) === alongOf(move.from)
+    && angleOf(move.to) !== angleOf(move.from)
+    && move.from.z - pivot > 8),
+    'each ring after the helix is split by the tall sector')
+  // The links stay within one band of the layer: the at-layer candidate may ride
+  // at the previous layer's floor (radius 8), never higher.
+  for (const move of afterShoulder) {
+    assert.ok(move.from.z - pivot <= 8 + 1e-6 && move.to.z - pivot <= 8 + 1e-6,
+      `an at-layer link stays at or below the previous layer's floor (${(Math.max(move.from.z, move.to.z) - pivot).toFixed(3)})`)
+  }
+  // A keeps moving forward over all of it.
+  let reversals = 0
+  let lastDirection = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    const delta = (move.to.a ?? 0) - (move.from.a ?? 0)
+    const direction = Math.sign(delta)
+    if (direction !== 0) {
+      if (lastDirection !== 0 && direction !== lastDirection) reversals++
+      lastDirection = direction
+    }
+  }
+  assert.equal(reversals, 0, 'the rough never reverses A')
 }
 
 // ---------------------------------------------------------------------------

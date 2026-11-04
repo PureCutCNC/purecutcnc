@@ -3723,24 +3723,40 @@ function roughFromTargets(
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
       // #1117 review (P2): the at-layer candidate joins two **adjoining rings**
-      // of this layer, so both must be eligible. A split ring is a ring whose
-      // cut runs are separated by angular sectors this layer does not remove; on
-      // a round bar or with a region its first/last run can share an angle with
-      // the neighbouring ring while the transition itself is not an end-to-end
-      // ring link, so the raised link is the fallback there. A square blank's
-      // arcs are the exception the caller below spells out.
+      // of this layer, so under a **region** both must be eligible. A split ring
+      // is a ring whose cut runs are separated by angular sectors the mask (or
+      // the model) does not remove; the mask's own split can leave a first/last
+      // run that shares an angle with the neighbouring ring while the transition
+      // itself is not an end-to-end ring link, so the raised link is the
+      // fallback there. #1103 slice ca-f leaves that rule exactly as it was: a
+      // region's rings are the mask's arcs, and none of the forward-only ring
+      // work below re-proves them.
+      //
+      // Without a region the candidate's own proof decides, split ring or not.
+      // Every ring turns forward now, so the point the previous ring left is its
+      // last run's end and this ring's first point is its first run's start --
+      // the boundary the forward path really crosses -- and #1117's material
+      // walk proves the transition on the facts. The old gate refused that on a
+      // **round** bar too, which lost #1117's same-A links as soon as a helix
+      // took the whole-ring bands and left only the split rings behind it
+      // (busto-round op0025, #1103 ca-f); a square blank had already been
+      // released from the gate for the same reason (#1117 square links). A
+      // boundary the geometry cannot prove -- a wide A change on a round bar
+      // (`MAX_LINK_ACROSS_DEG`), a lobe between the runs, a region without a
+      // boundary test -- still keeps the raised link.
       let previousRingSplit = false
       let previousRingEmitted = false
       const layerLink = raisedLinkPlan(layer)
       /**
        * The link into a unit at `from`: the raised plan is always computed first
        * (#1117 fix 2's accounting) and the at-layer candidate overlays it only
-       * where the boundary is provable. `previousRingSplit` gates the square
-       * arcs' A-changing transition; a region keeps the strict rule.
+       * where the boundary is provable. `previousRingSplit` gates the transition
+       * only under a region; without one the candidate's own walk proves it,
+       * split ring or not (#1103 ca-f, see `previousRingSplit`).
        */
       const unitLink = (from: ToolpathPoint, to: ToolpathPoint, split: boolean): readonly RotaryLinkStep[] | null => {
         const raised = layerLink(from, to)
-        const splitBlocked = (previousRingSplit || split) && !(square && region === null)
+        const splitBlocked = (previousRingSplit || split) && region !== null
         if (splitBlocked) return raised
         return linkAtLayer(layer, layerRadius, alongCoordinate(stock, from), from, to, 1) ?? raised
       }

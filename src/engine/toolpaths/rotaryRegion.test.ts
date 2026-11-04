@@ -1012,7 +1012,12 @@ const NO_REGION_HASHES: Record<string, string> = {
   // more of its ring-to-ring links at the layer -- 29 equal-angle links became
   // 46 and the raised links fell from 31 to 18. The raised form is unchanged
   // wherever it is still emitted.
-  'round/rotary_rough/around': 'moves=bfa25c1f25a3d506 warnings= gcode=63e012f2b265d738',
+  // #1103 slice ca-f re-recorded this row: on a round bar without a region the
+  // at-layer candidate now proves a split ring's boundary instead of the
+  // split-ring eligibility rule refusing it outright, so #1117's same-A links
+  // between the rings a helix leaves behind stay down. The links' heights and
+  // material bounds are unchanged.
+  'round/rotary_rough/around': 'moves=5adeff002c5c2b0b warnings= gcode=3a2c646cf4a291a2',
   'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
