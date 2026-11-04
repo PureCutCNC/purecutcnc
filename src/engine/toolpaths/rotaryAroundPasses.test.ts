@@ -1510,13 +1510,13 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   const shortTo = { along: 9.6 * scale, angle: 38 }
   const shortFromTip = chiralSupport(model, shortFrom.along, shortFrom.angle, tool) + margin
   const shortToTip = chiralSupport(model, shortTo.along, shortTo.angle, tool) + margin
-  const shortPath = (dip = 0): DiagonalPath => ({
+  const shortPath: DiagonalPath = {
     along: (f) => shortFrom.along + (shortTo.along - shortFrom.along) * f,
     angle: (f) => shortFrom.angle + (shortTo.angle - shortFrom.angle) * f,
-    tip: (f) => shortFromTip + (shortToTip - shortFromTip) * f - dip * Math.sin(Math.PI * f),
-  })
-  assert.ok(diagonalGouge(model, tool, shortPath()) <= tolerance,
-    `${label}: the safe diagonal is accepted (${diagonalGouge(model, tool, shortPath()).toFixed(4)})`)
+    tip: (f) => shortFromTip + (shortToTip - shortFromTip) * f,
+  }
+  assert.ok(diagonalGouge(model, tool, shortPath) <= tolerance,
+    `${label}: the safe diagonal is accepted (${diagonalGouge(model, tool, shortPath).toFixed(4)})`)
 
   // The tip-only mutation: the body reaches material the axis ray does not.
   const tipOnlyAt = { along: 10 * scale, angle: 30 }
@@ -1537,14 +1537,28 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
     `${label}: the tip-only reference would accept it (${tipOnlyGouge.toFixed(4)})`)
   chiralMutationsCaught += 1
 
-  // An interior gouge with both endpoints safe: an endpoint-only sample cannot
-  // see it, and the actual combined path does.
-  const interior = diagonalGouge(model, tool, shortPath(0.4 * scale))
-  const endpointsOnly = diagonalGouge(model, tool, shortPath(0.4 * scale), 1)
-  assert.ok(interior > tolerance,
-    `${label}: the interior gouge is caught (${interior.toFixed(4)})`)
-  assert.ok(endpointsOnly <= tolerance,
-    `${label}: an endpoint-only sample misses it (${endpointsOnly.toFixed(4)})`)
+  // An interior gouge on a move a generator actually emits. A linear move
+  // interpolates along, A and Z linearly between its endpoints, so this path is
+  // straight in all three coordinates: no curved dip, just the chord between
+  // two poses, each `margin` above the reference at its own end. The chiral
+  // section turns with the along position, so its support rises above that
+  // chord in the middle: an endpoint-only sample sees two safe poses and misses
+  // the material between them, while the actual combined path finds it.
+  const gougeFrom = { along: 10 * scale, angle: 0 }
+  const gougeTo = { along: 11.5 * scale, angle: 30 }
+  const gougeFromTip = chiralSupport(model, gougeFrom.along, gougeFrom.angle, tool) + margin
+  const gougeToTip = chiralSupport(model, gougeTo.along, gougeTo.angle, tool) + margin
+  const straightGougePath: DiagonalPath = {
+    along: (f) => gougeFrom.along + (gougeTo.along - gougeFrom.along) * f,
+    angle: (f) => gougeFrom.angle + (gougeTo.angle - gougeFrom.angle) * f,
+    tip: (f) => gougeFromTip + (gougeToTip - gougeFromTip) * f,
+  }
+  const straightInterior = diagonalGouge(model, tool, straightGougePath)
+  const straightEndpoints = diagonalGouge(model, tool, straightGougePath, 1)
+  assert.ok(straightInterior > 0.3 * scale,
+    `${label}: the straight diagonal's interior gouge is caught (${straightInterior.toFixed(4)})`)
+  assert.ok(straightEndpoints <= tolerance,
+    `${label}: an endpoint-only sample misses the straight diagonal's gouge (${straightEndpoints.toFixed(4)})`)
   chiralMutationsCaught += 1
 }
 assert.equal(chiralMutationsCaught, CHIRAL_SEEDS.length * 4,

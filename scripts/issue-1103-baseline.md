@@ -11,10 +11,15 @@ directory (`busto-round-stock.camj`, `busto-rect-stock.camj`,
 
 ## Method
 
-- One warm-up generation, then **three timed generations, serially**. The
-  numbers in `generation ms (runs)` are those three runs in order; `median` is
-  their median. Only `computeOperationToolpath` is inside the timer — loading,
-  posting and simulation are not.
+- **Protocol (machine-checked by `src/engine/toolpaths/rotaryBaseline.test.ts`):** warm-ups: 1, timed runs: 3, serial: true.
+  One warm-up generation, then **three timed generations, serially**, and
+  nothing generated in between. The numbers in `generation ms (runs)` are those
+  three runs in order; `median` is their median. Only
+  `computeOperationToolpath` is inside the timer — loading, posting and
+  simulation are not. The timings were recaptured for the ca-a review's
+  protocol correction: the first capture ran an extra, discarded generation
+  after the warm-up, so those numbers were measured two generations warm.
+  Every moves and posted hash is unchanged by the recapture.
 - **Moves** are the emitted `ToolpathResult.moves` (all kinds); **rapids** are
   the `rapid` moves; **A reversals** are sign changes between consecutive
   **cutting** moves whose commanded A changes. A constant-A link, a rapid or a
@@ -37,12 +42,12 @@ Single process at a time; no other benchmark or test pool ran beside these.
 
 | fixture | op | kind | moves | rapids | A reversals | generation ms (runs) | median ms | moves sha256 | posted sha256 |
 | --- | --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
-| busto-round-stock.camj | op0025 | rotary rough | 24322 | 261 | 396 | 31268, 31641, 30918 | 31268 | `e3e6fac3933b5cbd6a80291a907b2b1ed6b2885b34deb4de0e133b17b594497f` | `8f5b2be88911d82bb209f9394cd79e1a70af73961643056b2f0e20d7b9a0f9d3` |
-| busto-round-stock.camj | op0015 | rotary finish | 54202 | 2 | 91 | 28031, 27420, 26946 | 27420 | `6dadf5b0272201aedcde039ecbe7a0c2275a13b502fa80ff262bae786eef06c8` | `509a03cd7c1e9d17906cea097893977818ae14ff60a6492203a1395e67c27610` |
-| busto-rect-stock.camj | op0021 | rotary rough | 32848 | 76 | 601 | 39295, 39972, 39527 | 39527 | `57a282f112ac6474b165b7231fa0d6f9693fdd4ce51524b8a26f995090b33a6b` | `8625b962021eff511a6f58828866f9984f807264c17c4f91550dfa2afb0ad77b` |
-| busto-rect-stock.camj | op0022 | rotary finish | 79103 | 2 | 85 | 33178, 32705, 32471 | 32705 | `f5cdb444f7160a52df36eb0de9e6e7d261edd3de616d4237f785568bcfddcefe` | `952897b26c68c65f474afdd1ac1c508ccc8c1b02b6726b9681bbc0a8a51ce747` |
-| square-to-round-test-01.camj | op0028 | rotary rough | 8744 | 32 | 191 | 48, 48, 47 | 48 | `df4bd09eec57e8ccc7ef3dad4052f20766feb8a8ec93f2aecdd081ad19868b87` | `969b087c9b84af5943471fc51fb34ce989d8d291ee307283f7792ef444963563` |
-| square-to-round-test-01.camj | op0029 | rotary finish | 13394 | 2 | 47 | 65, 61, 61 | 61 | `171529c1bb6ccc4751eb4fe9cf3cc7739895554322022e04df29338f41eef7ff` | `206bb63f05f0078de61c264586a6ad7bd0d4a5b96161e20b813d2db2eb14ff2f` |
+| busto-round-stock.camj | op0025 | rotary rough | 24322 | 261 | 396 | 28869, 29137, 29071 | 29071 | `e3e6fac3933b5cbd6a80291a907b2b1ed6b2885b34deb4de0e133b17b594497f` | `8f5b2be88911d82bb209f9394cd79e1a70af73961643056b2f0e20d7b9a0f9d3` |
+| busto-round-stock.camj | op0015 | rotary finish | 54202 | 2 | 91 | 26671, 26754, 27038 | 26754 | `6dadf5b0272201aedcde039ecbe7a0c2275a13b502fa80ff262bae786eef06c8` | `509a03cd7c1e9d17906cea097893977818ae14ff60a6492203a1395e67c27610` |
+| busto-rect-stock.camj | op0021 | rotary rough | 32848 | 76 | 601 | 39279, 39040, 38957 | 39040 | `57a282f112ac6474b165b7231fa0d6f9693fdd4ce51524b8a26f995090b33a6b` | `8625b962021eff511a6f58828866f9984f807264c17c4f91550dfa2afb0ad77b` |
+| busto-rect-stock.camj | op0022 | rotary finish | 79103 | 2 | 85 | 32545, 32381, 32201 | 32381 | `f5cdb444f7160a52df36eb0de9e6e7d261edd3de616d4237f785568bcfddcefe` | `952897b26c68c65f474afdd1ac1c508ccc8c1b02b6726b9681bbc0a8a51ce747` |
+| square-to-round-test-01.camj | op0028 | rotary rough | 8744 | 32 | 191 | 60, 50, 47 | 50 | `df4bd09eec57e8ccc7ef3dad4052f20766feb8a8ec93f2aecdd081ad19868b87` | `969b087c9b84af5943471fc51fb34ce989d8d291ee307283f7792ef444963563` |
+| square-to-round-test-01.camj | op0029 | rotary finish | 13394 | 2 | 47 | 70, 59, 59 | 59 | `171529c1bb6ccc4751eb4fe9cf3cc7739895554322022e04df29338f41eef7ff` | `206bb63f05f0078de61c264586a6ad7bd0d4a5b96161e20b813d2db2eb14ff2f` |
 
 ## Byte-identical controls (along-the-bar mode, unchanged by #1103)
 
@@ -52,8 +57,8 @@ slice; the along finish is captured beside it.
 
 | fixture | op | kind | moves | rapids | A reversals | generation ms (runs) | median ms | moves sha256 | posted sha256 |
 | --- | --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
-| square-to-round-test-01.camj | op0028 | rotary rough (along) | 1104 | 26 | 3 | 23, 26, 25 | 25 | `5dcd2d44b3557a9b7878e13636967fcee8a8e2aac4def3fe848002fab89c6486` | `0a408a5beae64f8bed026b1bd30593afc98740f0ba6e98d5c4ce49427aaef5fa` |
-| square-to-round-test-01.camj | op0029 | rotary finish (along) | 448 | 2 | 0 | 23, 23, 24 | 23 | `963ebbb91b0845332fbf40fe96f7262547b0ba6f740e68d7429ba92bda82c098` | `2eceac974d0e18b59ec3a9396d6dd23088cee76434c6c824fa3d090bda808989` |
+| square-to-round-test-01.camj | op0028 | rotary rough (along) | 1104 | 26 | 3 | 29, 24, 26 | 26 | `5dcd2d44b3557a9b7878e13636967fcee8a8e2aac4def3fe848002fab89c6486` | `0a408a5beae64f8bed026b1bd30593afc98740f0ba6e98d5c4ce49427aaef5fa` |
+| square-to-round-test-01.camj | op0029 | rotary finish (along) | 448 | 2 | 0 | 24, 32, 24 | 24 | `963ebbb91b0845332fbf40fe96f7262547b0ba6f740e68d7429ba92bda82c098` | `2eceac974d0e18b59ec3a9396d6dd23088cee76434c6c824fa3d090bda808989` |
 
 ## Candidate columns (ca-e)
 
