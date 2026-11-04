@@ -110,7 +110,11 @@
  * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
  * this suite exists to catch (and far inside both the around allowance and the
  * along stage's exact-geometry radial bound). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
- * is pinned by hand-computed unit cases before the seeded run. Every ray keeps
+ * is pinned by hand-computed unit cases before the seeded run. #1103 slice ca-a
+ * adds the diagonal case: a move whose along sweep crosses the cell only in its
+ * interior, with both endpoints outside the cutter's axial footprint, so an
+ * endpoint-only reference would remove nothing and the swept one cuts the cell
+ * to the bottom face. Every ray keeps
  * all occupied intervals, including cavities below an unchanged outer surface.
  * Engagement sums newly removed material over the whole swept move; interior
  * material counts against the same bound and retained ends must keep every span.
@@ -1234,6 +1238,48 @@ console.log('Testing the continuous reference against hand-computed values...')
 // seeded run always follows them; an environment variable must not be able to
 // skip the 300 programs CI is meant to check.
 interiorWorst.depth = 0
+
+// ---------------------------------------------------------------------------
+// #1103 slice ca-a: diagonal moves sample the actual combined path.
+//
+// A diagonal cut changes the along position and A together. The move below
+// crosses the reference cell in along only in its **interior**: at the start
+// and at the end the cutter's axial footprint is 1.5 mm away from the cell,
+// outside its 0.6 mm radius, so an endpoint-only sweep removes nothing. Between
+// them the body is over the cell while A is within the flat's angular reach,
+// and the cell is cut to the bottom face's own contact. This is the property a
+// helix depends on (slice ca-c): the reference must walk the commanded path,
+// not swap in one endpoint's pose.
+// ---------------------------------------------------------------------------
+{
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const reference = singleCellReference(10, 0)
+  const k = 10 // cell angle 5.25 deg
+  reference.material[k] = 9.95
+  const engagement = referenceMove(reference, {
+    kind: 'cut',
+    from: { x: 8.5, y: 10, z: 2, a: 0 },
+    to: { x: 11.5, y: 10, z: 2, a: 10 },
+  }, 0, 0.6, false, alongOf, 0, 10)
+  assert.ok(reference.material[k] < 2.01 && reference.material[k] > 1.99,
+    `diagonal combined path: material ${reference.material[k].toFixed(4)}, expected the 2.0 mm bottom face`)
+  assert.ok(engagement > 7.9,
+    `diagonal combined path: engagement ${engagement.toFixed(4)} is the cell's full removal`)
+  // Both endpoints' own poses leave the cell untouched: the removal above can
+  // only have come from an interior sample.
+  const endpoints = singleCellReference(10, 0)
+  endpoints.material[k] = 9.95
+  for (const pose of [
+    { x: 8.5, a: 0 }, { x: 11.5, a: 10 },
+  ]) {
+    referenceMove(endpoints, {
+      kind: 'cut', from: { x: pose.x, y: 10, z: 2, a: pose.a },
+      to: { x: pose.x, y: 10, z: 2, a: pose.a },
+    }, 0, 0.6, false, alongOf, pose.a, pose.a)
+  }
+  assert.equal(endpoints.material[k], 9.95, 'neither endpoint pose reaches the cell')
+  console.log('  diagonal combined-path repro: the interior sweep reaches a cell both endpoints miss')
+}
 
 // ── the seeded cases ──────────────────────────────────────────────────────
 

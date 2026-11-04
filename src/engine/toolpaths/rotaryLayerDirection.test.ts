@@ -35,13 +35,26 @@
  * max A past 360; running both layers in the same direction breaks the
  * alternation; inserting an extra full turn between layers breaks both the
  * [0, 360] bound and the cut-set identity.
+ *
+ * #1103 slice ca-a adds the byte-identical controls: the whole emitted motion
+ * stream and the real posted program (bundled grbl plus an own-drive rotary
+ * block, only the generation date normalised) for the round and square along
+ * rough. A later slice that moves this path -- which #1103 must leave untouched
+ * -- fails on either digest, not only on the cut set.
  */
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { roundStock } from '../../types/project'
-import type { BarStock } from '../../types/project'
+import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
+import type { BarStock, Project, SketchFeature, Tool } from '../../types/project'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
+import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
+import { runPostProcessor } from '../gcode/postprocessor'
+import { validateMachineDefinition } from '../gcode/types'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { normalizeToolForProject } from './geometry'
 import { generateRotaryRough } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove } from './types'
@@ -170,6 +183,131 @@ function layerRuns(
   return runs
 }
 
+/**
+ * The byte-identical controls (#1103 slice ca-a): the along rough's generated
+ * motion and posted G-code, normalising only the generation date.
+ *
+ * `rotaryLayerDirection.test.ts` already pins the set of cut points; these two
+ * digests pin the whole motion stream and the real posted program, so a later
+ * slice that changes a path it must not touch -- along rough, engrave, the
+ * square rough case -- fails here instead of silently moving the output.
+ *
+ * The program is posted through the bundled grbl definition plus a rotary block
+ * about the stock's own axis, the documented baseline machine: the fixtures
+ * name no machine of their own.
+ */
+const CONTROL_TOOL: Tool = {
+  ...defaultTool('mm', 1),
+  id: 'flat-4', name: '4 mm flat', units: 'mm',
+  type: 'flat_endmill', diameter: 4,
+}
+
+function controlProject(stock: BarStock, tool: Tool): Project {
+  const project = newProject('Layer direction control', 'mm')
+  project.meta.created = project.meta.modified = '2026-01-01T00:00:00.000Z'
+  project.meta.projectType = 'rotary'
+  project.meta.maxTravelZ = 40
+  project.stock = stock
+  project.origin = { name: 'Origin', x: 0, y: 0, z: stock.thickness, visible: true }
+  project.tools = [tool]
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const half = 4
+  const positions: number[] = []
+  for (const along of [12, 48]) {
+    for (const [across, up] of [[-half, -half], [half, -half], [half, half], [-half, half]] as const) {
+      if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+      else positions.push(centre + across, along, pivot + up)
+    }
+  }
+  const index = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 5, 4, 0, 1, 5, 1, 6, 5, 1, 2, 6, 2, 7, 6, 2, 3, 7, 3, 4, 7, 3, 0, 4]
+  const mesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
+  project.modelAssets = {
+    asset: serializeImportedMesh({ ...mesh, bounds: computeMeshBounds(mesh.positions) }, 'stl'),
+  }
+  const profile = stock.axis === 'x'
+    ? rectProfile(12, centre - half, 48, centre + half)
+    : rectProfile(centre - half, 12, centre + half, 48)
+  const model: SketchFeature = {
+    id: 'model', name: 'Model', kind: 'stl', operation: 'model', authoringFace: 'top', folderId: null,
+    sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' },
+    z_top: pivot + half, z_bottom: pivot - half, visible: true, locked: false,
+  }
+  const withModel = projectWithFeatures(project, [model])
+  withModel.setups.push({
+    ...withModel.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: stock.axis ?? 'x', angleDeg: 0 },
+  })
+  withModel.activeSetupId = 'around'
+  withModel.operations = [{
+    ...defaultOperationForTarget(withModel, 'rotary_rough', 'rough', { source: 'features', featureIds: [model.id] }, 0),
+    setupId: 'around',
+    rotaryPassDirection: 'along',
+    toolRef: tool.id,
+    feed: 600,
+    plungeFeed: 200,
+    rpm: 12000,
+    stepdown: PARAMS.stepdown,
+    stepover: PARAMS.stepover,
+  }]
+  return withModel
+}
+
+/** SHA-256 of the whole emitted motion stream. */
+function motionDigest(moves: readonly ToolpathMove[]): string {
+  return createHash('sha256').update(JSON.stringify(moves)).digest('hex')
+}
+
+/** SHA-256 of the posted program, with only the generation date normalised. */
+function postedDigest(stock: BarStock, moves: readonly ToolpathMove[]): string {
+  const project = controlProject(stock, CONTROL_TOOL)
+  const operation = project.operations[0]
+  const raw = BUNDLED_DEFINITIONS.find((definition) => definition.id === 'grbl')
+  assert.ok(raw, 'the bundled grbl definition exists')
+  const definition = validateMachineDefinition({
+    ...structuredClone(raw),
+    rotary: { about: stock.axis ?? 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+  const posted = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(CONTROL_TOOL, project),
+      toolpath: { operationId: operation.id, moves: [...moves], warnings: [], bounds: null },
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.deepEqual(posted.warnings, [], `${stock.shape} along rough: the control program posts without a refusal`)
+  const normalised = posted.gcode.replace(
+    /(Generated by PureCutCNC on )\d{4}-\d{2}-\d{2}/,
+    '$1<date>',
+  )
+  return createHash('sha256').update(normalised).digest('hex')
+}
+
+const RECORDED_CONTROLS: Record<string, { moves: string; posted: string }> = {
+  round: {
+    moves: '8217669293bc0c8583e6aa33245cf69ae28d874937faa5a240bf5c29c5a55374',
+    posted: '0724c318d1c197c3b71b466e100a128013263c3118f46c617a2d03617a33520a',
+  },
+  square: {
+    moves: '35a780fd9a0af6e16e6cfec23bbcc266b16d27db237ce0765fb621dcbb3d0589',
+    posted: '655382c60e4b83adb021b2528db1e86648114e5d60a6d5184a50c4e85f637ae3',
+  },
+}
+
+function checkControls(label: string, stock: BarStock, moves: readonly ToolpathMove[]): void {
+  const actual = { moves: motionDigest(moves), posted: postedDigest(stock, moves) }
+  const recorded = RECORDED_CONTROLS[label]
+  assert.equal(actual.moves, recorded.moves, `${label}: the along rough's motion is byte-identical`)
+  assert.equal(actual.posted, recorded.posted, `${label}: the along rough's posted program is byte-identical`)
+}
+
 /** Run the generator and all the #1098 invariants on one fixture. */
 function checkFixture(label: string, stock: BarStock, expectedCuts: string): void {
   const mesh = lathe(stock)
@@ -210,6 +348,9 @@ function checkFixture(label: string, stock: BarStock, expectedCuts: string): voi
         `${label}: layer ${i + 1} starts where layer ${i} ended (${runs[i].first})`)
     }
   }
+
+  // 4. The whole motion stream and the posted program (#1103 slice ca-a).
+  checkControls(label, stock, result.moves)
 }
 
 checkFixture('round', roundStock(40, 60), '29a416445e5a41cb233e44aaa984ca0dc66133715dfc8886325d5270a72bfc43')

@@ -55,6 +55,19 @@
  * cell. Both around and along mode are checked, because along mode gouged too
  * at unfavourable sample spacings (see the retained-end block).
  *
+ * #1103 slice ca-a adds block 3b: a chiral, tapered bar whose section scales and
+ * turns with the along position. Its independent reference computes the lowest
+ * safe tip of the solid cutter body inside its axial footprint at one pose, from
+ * the analytic section and never from the sampler, and it seeds both stock axes,
+ * mm and inch, ball and flat cutters and retained ends. Diagonal moves are
+ * sampled at the emitted fraction with `along(f)` and `angle(f)` interpolated
+ * together. Four mutations are proved caught on every seed: an axial sign error,
+ * an A sign error, a tip-only reference that ignores the body's off-axis reach,
+ * and an interior dip whose endpoints are safe.
+ *
+ * Block 13 pins the wrapped 2D engrave path (moves and posted program), which is
+ * not a rotary generator output and must stay byte-identical.
+ *
  * Mutations checked (each must fail here):
  *  - the arc term dropped from the steep-step spacing -> the hex prism gains
  *    purely vertical cut moves;
@@ -106,13 +119,16 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { roundStock } from '../../types/project'
-import type { BarStock, Operation, RoundStock } from '../../types/project'
+import { defaultTool, newProject, roundStock } from '../../types/project'
+import type { BarStock, Operation, Project, RoundStock, SketchFeature, Tool } from '../../types/project'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
+import { projectWithFeatures } from '../../test/projectFixtures'
 import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import { generateRotaryFinish, generateRotaryRough, sampleRotaryModel } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
@@ -1110,6 +1126,433 @@ function propertyAllowance(tool: NormalizedTool): number {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. The swept cutter/material reference on a chiral, tapered bar: diagonal
+//     moves, where the along position and A change together.
+//
+//     The reference above (section 3) is the analytic drop-cutter of a solid of
+//     revolution, so its material is the same at every A and a diagonal move is
+//     judged by its along coordinate alone. The model below is not a surface of
+//     revolution: a triangle that scales and turns as it is extruded along the
+//     bar, so the material a cutter can reach at one pose depends on the along
+//     position **and** on A. Its reference support is computed from the analytic
+//     section -- the highest material a solid cutter body reaches inside its
+//     axial footprint at that pose, including the off-axis reach and the ball's
+//     shank -- and never from `sampleRotaryModel` or the mesh the generator
+//     reads. The path is sampled at the emitted fraction: `along(f)` and
+//     `angle(f)` are both interpolated, so a move that changes them together is
+//     judged along the path it commands, never by swapping in one endpoint's
+//     value.
+//
+//     Seeds cover both stock axes, mm and inch, ball and flat cutters, retained
+//     ends (the cut band is inset from the model's ends) and the asymmetric
+//     section. Four mutations are proved caught for every seed:
+//      - an axial sign error on a diagonal move (the commanded along direction
+//        reversed while the tips stay with their poses);
+//      - an A sign error on a diagonal move;
+//      - the reference reduced to the tip-only ray under the tool axis, which
+//        misses material the cutter body reaches off-axis;
+//      - an interior gouge on a diagonal move, with both endpoints safe
+//        (an endpoint-only sample cannot see it).
+// ---------------------------------------------------------------------------
+
+interface ChiralModel {
+  /** The section at the model's start, in (across, up) from the bar axis. */
+  readonly vertices: readonly (readonly [number, number])[]
+  readonly from: number
+  readonly to: number
+  readonly scale0: number
+  readonly scale1: number
+  readonly twist0: number
+  readonly twist1: number
+}
+
+/** The model's section at one along position: scaled and turned about the axis. */
+function chiralSection(model: ChiralModel, along: number): Array<readonly [number, number]> {
+  const t = Math.max(0, Math.min(1, (along - model.from) / (model.to - model.from)))
+  const scale = model.scale0 + (model.scale1 - model.scale0) * t
+  const twist = (model.twist0 + (model.twist1 - model.twist0) * t) * Math.PI / 180
+  const cos = Math.cos(twist)
+  const sin = Math.sin(twist)
+  return model.vertices.map(([across, up]) => [
+    scale * (across * cos - up * sin),
+    scale * (across * sin + up * cos),
+  ] as const)
+}
+
+/**
+ * The best tip the `tool` can reach against one section edge at an axial offset
+ * `dx`: `max over the edge of q - r + sqrt(r^2 - p^2 - dx^2)`, which is concave
+ * on the edge's feasible interval, so a ternary search is exact.
+ */
+function ballEdgeSupport(
+  p0: number,
+  q0: number,
+  p1: number,
+  q1: number,
+  radius: number,
+  dx: number,
+): number {
+  const reachSq = radius * radius - dx * dx
+  if (!(reachSq > 0)) return Number.NEGATIVE_INFINITY
+  const reach = Math.sqrt(reachSq)
+  const dp = p1 - p0
+  let lo = 0
+  let hi = 1
+  if (Math.abs(dp) < 1e-12) {
+    if (Math.abs(p0) > reach) return Number.NEGATIVE_INFINITY
+  } else {
+    const a = (-reach - p0) / dp
+    const b = (reach - p0) / dp
+    lo = Math.max(0, Math.min(a, b))
+    hi = Math.min(1, Math.max(a, b))
+    if (hi < lo) return Number.NEGATIVE_INFINITY
+  }
+  const value = (lambda: number): number => {
+    const p = p0 + dp * lambda
+    const disc = reachSq - p * p
+    if (disc < 0) return Number.NEGATIVE_INFINITY
+    return q0 + (q1 - q0) * lambda - radius + Math.sqrt(disc)
+  }
+  let left = lo
+  let right = hi
+  for (let step = 0; step < 40; step++) {
+    const third = (right - left) / 3
+    const m1 = left + third
+    const m2 = right - third
+    if (value(m1) < value(m2)) left = m1
+    else right = m2
+  }
+  return Math.max(value(lo), value(hi), value((left + right) / 2))
+}
+
+/**
+ * The lowest safe tool tip at one pose on the chiral model, from the section
+ * alone.
+ *
+ * The cutter body spans its whole axial footprint (`along +/- r`) and its whole
+ * cross-section reach (`|p| <= sqrt(r^2 - dx^2)`), so the support is the
+ * maximum over that footprint. A flat tool's bottom face is a plane, so the
+ * maximum is on the section's boundary inside the reach strip; a ball's lower
+ * surface is a sphere, and the maximum on each edge is a concave one-dimensional
+ * search. `tipOnly` reduces the reference to the vertical ray under the tool's
+ * own axis, which is the mutation that ignores the body's reach.
+ */
+function chiralSupport(
+  model: ChiralModel,
+  along: number,
+  angleDeg: number,
+  tool: NormalizedTool,
+  tipOnly = false,
+): number {
+  const radius = tool.radius
+  const ball = tool.type === 'ball_endmill'
+  const angle = angleDeg * Math.PI / 180
+  const alongSamples = tipOnly ? 0 : 8
+  let best = Number.NEGATIVE_INFINITY
+  for (let sample = 0; sample <= alongSamples; sample++) {
+    const x = tipOnly ? along : along - radius + (2 * radius * sample) / alongSamples
+    const dx = x - along
+    const reach = Math.sqrt(Math.max(0, radius * radius - dx * dx))
+    if (!tipOnly && !(reach > 0)) continue
+    const t = Math.max(0, Math.min(1, (x - model.from) / (model.to - model.from)))
+    const scale = model.scale0 + (model.scale1 - model.scale0) * t
+    const twist = (model.twist0 + (model.twist1 - model.twist0) * t) * Math.PI / 180
+    // Both the section's own turn and the stock's commanded turn are rotations
+    // about the bar axis, so they compose.
+    const phi = twist + angle
+    const cos = Math.cos(phi)
+    const sin = Math.sin(phi)
+    const p: number[] = []
+    const q: number[] = []
+    for (const [across, up] of model.vertices) {
+      p.push(scale * (across * cos - up * sin))
+      q.push(scale * (across * sin + up * cos))
+    }
+    if (tipOnly) {
+      for (let i = 0; i < p.length; i++) {
+        if (Math.abs(p[i]) <= 1e-9) best = Math.max(best, q[i])
+        const j = (i + 1) % p.length
+        const dp = p[j] - p[i]
+        if (Math.abs(dp) < 1e-12) continue
+        const lambda = -p[i] / dp
+        if (lambda < 0 || lambda > 1) continue
+        best = Math.max(best, q[i] + (q[j] - q[i]) * lambda)
+      }
+      continue
+    }
+    if (!ball) {
+      for (let i = 0; i < p.length; i++) {
+        if (Math.abs(p[i]) <= reach + 1e-12) best = Math.max(best, q[i])
+        const j = (i + 1) % p.length
+        const dp = p[j] - p[i]
+        if (Math.abs(dp) < 1e-12) continue
+        for (const boundary of [-reach, reach]) {
+          const lambda = (boundary - p[i]) / dp
+          if (lambda < 0 || lambda > 1) continue
+          best = Math.max(best, q[i] + (q[j] - q[i]) * lambda)
+        }
+      }
+      continue
+    }
+    for (let i = 0; i < p.length; i++) {
+      const j = (i + 1) % p.length
+      best = Math.max(best, ballEdgeSupport(p[i], q[i], p[j], q[j], radius, dx))
+    }
+  }
+  return best
+}
+
+/** A commanded diagonal path, parameterised by the emitted fraction. */
+interface DiagonalPath {
+  along(f: number): number
+  angle(f: number): number
+  /** The tool tip, measured from the bar's pivot. */
+  tip(f: number): number
+}
+
+/** The deepest gouge (`support - tip`) along the actual combined path. */
+function diagonalGouge(
+  model: ChiralModel,
+  tool: NormalizedTool,
+  path: DiagonalPath,
+  samples = 24,
+  tipOnly = false,
+): number {
+  let worst = Number.NEGATIVE_INFINITY
+  for (let step = 0; step <= samples; step++) {
+    const f = step / samples
+    const support = chiralSupport(model, path.along(f), path.angle(f), tool, tipOnly)
+    worst = Math.max(worst, support - path.tip(f))
+  }
+  return worst
+}
+
+/** The chiral model extruded along the bar, with both end caps. */
+function chiralMesh(stock: BarStock, model: ChiralModel, steps: number): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  const n = model.vertices.length
+  for (let s = 0; s <= steps; s++) {
+    const along = model.from + (model.to - model.from) * s / steps
+    for (const [across, up] of chiralSection(model, along)) {
+      if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+      else positions.push(centre + across, along, pivot + up)
+    }
+  }
+  for (let s = 0; s < steps; s++) {
+    for (let j = 0; j < n; j++) {
+      const j2 = (j + 1) % n
+      const a = s * n + j
+      const b = s * n + j2
+      const c = (s + 1) * n + j2
+      const d = (s + 1) * n + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  for (let i = 1; i + 1 < n; i++) {
+    index.push(0, i + 1, i, steps * n, steps * n + i, steps * n + i + 1)
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/** A 20 mm bar with a chiral triangle whose taper and twist move with along. */
+const CHIRAL_VERTICES = [[-3, -1], [3, -3], [3.6, 3.6]] as const
+const CHIRAL_BAR_RADIUS = 10
+const CHIRAL_FROM = 4
+const CHIRAL_TO = 16
+const CHIRAL_ALLOWANCE_MM = 0.02
+const CHIRAL_SEEDS = (['x', 'y'] as const).flatMap((axis) => (['mm', 'inch'] as const).flatMap((units) =>
+  (['ball_endmill', 'flat_endmill'] as const).map((type) => ({ axis, units, type }))))
+
+let chiralMutationsCaught = 0
+let chiralChecks = 0
+/** Closest the generator came to the reference over all seeds (positive = slack). */
+let chiralClosest = Number.POSITIVE_INFINITY
+console.log('Testing the chiral diagonal reference across axes, units and cutters...')
+for (const { axis, units, type } of CHIRAL_SEEDS) {
+  const scale = units === 'mm' ? 1 : 1 / 25.4
+  const label = `${axis}-${units}-${type}`
+  const allowance = CHIRAL_ALLOWANCE_MM * scale
+  const stock = roundStock(CHIRAL_BAR_RADIUS * 2 * scale, 20 * scale, axis, { x: 0, y: 0 })
+  const model: ChiralModel = {
+    vertices: CHIRAL_VERTICES.map(([across, up]) => [across * scale, up * scale] as const),
+    from: CHIRAL_FROM * scale,
+    to: CHIRAL_TO * scale,
+    scale0: 0.55,
+    scale1: 1.25,
+    twist0: 0,
+    twist1: 40,
+  }
+  const tool: NormalizedTool = {
+    ...BALL,
+    id: `chiral-${label}`,
+    name: `chiral-${label}`,
+    type,
+    sourceUnits: units,
+    units,
+    radius: 1 * scale,
+    diameter: 2 * scale,
+  }
+  const at = (point: ToolpathPoint): number => (axis === 'x' ? point.x : point.y)
+  const pivot = barPivotZ(stock)
+
+  // The reference must actually depend on both coordinates, or the mutations
+  // below would pass for the wrong reason.
+  const alongA = chiralSupport(model, 8 * scale, 30, tool)
+  const alongB = chiralSupport(model, 12 * scale, 30, tool)
+  const angleA = chiralSupport(model, 10 * scale, 20, tool)
+  const angleB = chiralSupport(model, 10 * scale, 110, tool)
+  assert.ok(Math.abs(alongB - alongA) > 0.3 * scale,
+    `${label}: the support moves with the along position (${alongA.toFixed(3)} vs ${alongB.toFixed(3)})`)
+  assert.ok(Math.abs(angleB - angleA) > 0.3 * scale,
+    `${label}: the support moves with A (${angleA.toFixed(3)} vs ${angleB.toFixed(3)})`)
+
+  const result = generateRotaryFinish(`chiral-${label}`, chiralMesh(stock, model, 40), stock, tool, {
+    stepover: 2.5 * scale,
+    sampleSpacing: 1.5 * scale,
+    stockToLeave: 0,
+    alongStart: 5 * scale,
+    alongEnd: 15 * scale,
+    safeRadius: 30 * scale,
+    requestedCellSize: 0.2 * scale,
+    passDirection: 'around',
+  }, {})
+  assert.deepEqual(result.warnings, [], `${label}: the chiral finish has no warning`)
+  assert.ok(result.moves.length > 0, `${label}: the chiral finish emits motion`)
+  const travel = barMaxRadius(stock) + scale
+  for (const move of result.moves) {
+    if (move.kind !== 'cut' && move.from.a !== move.to.a) {
+      for (const point of [move.from, move.to]) {
+        assert.ok(point.z - pivot >= travel - 1e-9,
+          `${label}: a non-cut turning move travels below the travel height (${(point.z - pivot).toFixed(4)})`)
+      }
+    }
+    if (move.kind !== 'cut') continue
+    // The cut band is inset from the model's ends, so the material outside it
+    // is retained: no cutting pose's body may reach past the band.
+    for (const point of [move.from, move.to]) {
+      const along = at(point)
+      assert.ok(along - tool.radius >= 5 * scale - 1e-9 && along + tool.radius <= 15 * scale + 1e-9,
+        `${label}: the cutter body at along ${along.toFixed(4)} enters a retained end of the band`)
+    }
+    for (let step = 0; step <= 4; step++) {
+      const f = step / 4
+      const along = at(move.from) + (at(move.to) - at(move.from)) * f
+      const angle = (move.from.a ?? 0) + ((move.to.a ?? 0) - (move.from.a ?? 0)) * f
+      const tip = move.from.z + (move.to.z - move.from.z) * f - pivot
+      const support = chiralSupport(model, along, angle, tool)
+      chiralChecks++
+      chiralClosest = Math.min(chiralClosest, (tip - support) / scale)
+      assert.ok(tip >= support - allowance,
+        `${label}: ${move.kind} at along ${along.toFixed(4)} A${angle.toFixed(2)} f=${f} tip ${tip.toFixed(4)} `
+        + `is below the chiral reference ${support.toFixed(4)} by more than ${allowance.toFixed(4)}`)
+    }
+  }
+
+  // ── the four mutations ──────────────────────────────────────────────────
+  const margin = 0.25 * scale
+  const tolerance = allowance
+  /**
+   * A commanded diagonal from one pose to another, lifted by its own chord sag
+   * so the correct path is safe, plus the two sign mutations: the along
+   * coordinates swapped and the A coordinates swapped, with the tips left on
+   * their original fractions.
+   */
+  const signMutations = (
+    fromAlong: number,
+    fromAngle: number,
+    toAlong: number,
+    toAngle: number,
+  ): { correct: number; axialSign: number; angleSign: number } => {
+    const startSupport = chiralSupport(model, fromAlong, fromAngle, tool)
+    const endSupport = chiralSupport(model, toAlong, toAngle, tool)
+    const chord: DiagonalPath = {
+      along: (f) => fromAlong + (toAlong - fromAlong) * f,
+      angle: (f) => fromAngle + (toAngle - fromAngle) * f,
+      tip: (f) => startSupport + (endSupport - startSupport) * f,
+    }
+    const lift = Math.max(0, diagonalGouge(model, tool, chord)) + 0.05 * scale
+    const tip = (f: number): number => startSupport + (endSupport - startSupport) * f + lift
+    return {
+      correct: diagonalGouge(model, tool, { ...chord, tip }),
+      axialSign: diagonalGouge(model, tool, {
+        along: (f) => toAlong + (fromAlong - toAlong) * f,
+        angle: (f) => fromAngle + (toAngle - fromAngle) * f,
+        tip,
+      }),
+      angleSign: diagonalGouge(model, tool, {
+        along: (f) => fromAlong + (toAlong - fromAlong) * f,
+        angle: (f) => toAngle + (fromAngle - toAngle) * f,
+        tip,
+      }),
+    }
+  }
+  // One move is along-dominated, the other A-dominated, so each sign error is
+  // caught where its own coordinate drives the support.
+  const axialCase = signMutations(8 * scale, 10, 10 * scale, 14)
+  assert.ok(axialCase.correct <= tolerance,
+    `${label}: the along-dominated diagonal's own path is safe (${axialCase.correct.toFixed(4)})`)
+  assert.ok(axialCase.axialSign > tolerance,
+    `${label}: the axial sign error is caught (worst ${axialCase.axialSign.toFixed(4)} against ${tolerance.toFixed(4)})`)
+  const angleCase = signMutations(8 * scale, 10, 8.4 * scale, 20)
+  assert.ok(angleCase.correct <= tolerance,
+    `${label}: the A-dominated diagonal's own path is safe (${angleCase.correct.toFixed(4)})`)
+  assert.ok(angleCase.angleSign > tolerance,
+    `${label}: the A sign error is caught (worst ${angleCase.angleSign.toFixed(4)} against ${tolerance.toFixed(4)})`)
+  chiralMutationsCaught += 2
+
+  // A short, safe diagonal: every sample is the reference plus a margin. The
+  // straight tip chord between its endpoints is inside the margin on this
+  // segment, so a correct generator move is accepted.
+  const shortFrom = { along: 9 * scale, angle: 30 }
+  const shortTo = { along: 9.6 * scale, angle: 38 }
+  const shortFromTip = chiralSupport(model, shortFrom.along, shortFrom.angle, tool) + margin
+  const shortToTip = chiralSupport(model, shortTo.along, shortTo.angle, tool) + margin
+  const shortPath = (dip = 0): DiagonalPath => ({
+    along: (f) => shortFrom.along + (shortTo.along - shortFrom.along) * f,
+    angle: (f) => shortFrom.angle + (shortTo.angle - shortFrom.angle) * f,
+    tip: (f) => shortFromTip + (shortToTip - shortFromTip) * f - dip * Math.sin(Math.PI * f),
+  })
+  assert.ok(diagonalGouge(model, tool, shortPath()) <= tolerance,
+    `${label}: the safe diagonal is accepted (${diagonalGouge(model, tool, shortPath()).toFixed(4)})`)
+
+  // The tip-only mutation: the body reaches material the axis ray does not.
+  const tipOnlyAt = { along: 10 * scale, angle: 30 }
+  const fullSupport = chiralSupport(model, tipOnlyAt.along, tipOnlyAt.angle, tool)
+  const axisSupport = chiralSupport(model, tipOnlyAt.along, tipOnlyAt.angle, tool, true)
+  assert.ok(fullSupport - axisSupport > 0.3 * scale,
+    `${label}: the cutter body reaches ${(fullSupport - axisSupport).toFixed(4)} above the axis ray`)
+  const tipOnlyPath: DiagonalPath = {
+    along: (f) => tipOnlyAt.along + 0.3 * scale * f,
+    angle: (f) => tipOnlyAt.angle + 3 * f,
+    tip: () => axisSupport + margin,
+  }
+  const bodyGouge = diagonalGouge(model, tool, tipOnlyPath)
+  const tipOnlyGouge = diagonalGouge(model, tool, tipOnlyPath, 24, true)
+  assert.ok(bodyGouge > tolerance,
+    `${label}: the full reference catches the axis-ray-only pose (${bodyGouge.toFixed(4)})`)
+  assert.ok(tipOnlyGouge <= tolerance,
+    `${label}: the tip-only reference would accept it (${tipOnlyGouge.toFixed(4)})`)
+  chiralMutationsCaught += 1
+
+  // An interior gouge with both endpoints safe: an endpoint-only sample cannot
+  // see it, and the actual combined path does.
+  const interior = diagonalGouge(model, tool, shortPath(0.4 * scale))
+  const endpointsOnly = diagonalGouge(model, tool, shortPath(0.4 * scale), 1)
+  assert.ok(interior > tolerance,
+    `${label}: the interior gouge is caught (${interior.toFixed(4)})`)
+  assert.ok(endpointsOnly <= tolerance,
+    `${label}: an endpoint-only sample misses it (${endpointsOnly.toFixed(4)})`)
+  chiralMutationsCaught += 1
+}
+assert.equal(chiralMutationsCaught, CHIRAL_SEEDS.length * 4,
+  `${chiralMutationsCaught} mutation checks were caught across ${CHIRAL_SEEDS.length} seeds`)
+console.log(`  chiral diagonal reference: ${CHIRAL_SEEDS.length} seeds, ${chiralChecks} emitted samples, `
+  + `${chiralMutationsCaught} mutations caught, closest emitted sample ${chiralClosest.toFixed(4)} mm above the reference`)
+
+// ---------------------------------------------------------------------------
 // 4. Angle-asymmetric index discipline: every emitted tip is the sampler's own
 //    value at that point's (along, angle), on forward and reversed rings.
 // ---------------------------------------------------------------------------
@@ -1735,6 +2178,110 @@ console.log('Testing the angle cap in inch units...')
   assert.ok(arc <= cap * (1 + 1e-9),
     `the inch angle step ${arc.toFixed(5)} in of arc is at or below the converted cap ${cap.toFixed(5)} in`)
   console.log(`  inch step ${step.toFixed(4)} deg = ${arc.toFixed(5)} in of arc, cap ${cap.toFixed(5)} in`)
+}
+
+// ---------------------------------------------------------------------------
+// 13. Engrave control (#1103 slice ca-a).
+//
+//     A wrapped 2D Follow line on the Around sheet is not a rotary generator
+//     path: it is the unrolled 2D pipeline re-wrapped, and this issue must not
+//     touch it. Its generated motion and posted program are pinned here so a
+//     later slice that changes the wrapping, the rotary frame or the post
+//     emitter fails instead of silently moving an engrave.
+//
+//     The fixture is built by hand (the round bar a bar project always has, a
+//     guide drawn on the Around face and a V-bit), so the control does not
+//     depend on a user file. Programs are posted through the bundled grbl
+//     definition plus an own-drive rotary block, with only the generation date
+//     normalised.
+// ---------------------------------------------------------------------------
+{
+  const stock = roundStock(20, 60, 'x', { x: 0, y: 0 })
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const base = newProject('Engrave control', 'mm')
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.projectType = 'rotary'
+  base.meta.maxTravelZ = 25
+  base.stock = stock
+  base.origin = { name: 'Origin', x: 0, y: 0, z: stock.thickness, visible: true }
+  const tool: Tool = {
+    ...defaultTool('mm', 1),
+    id: 'vbit', name: '60 degree V-bit', type: 'v_bit', diameter: 2, vBitAngle: 60, units: 'mm',
+  }
+  base.tools = [tool]
+  const guide: SketchFeature = {
+    id: 'guide', name: 'Guide', kind: 'polygon', operation: 'line', authoringFace: 'around', folderId: null,
+    sketch: {
+      profile: {
+        start: { x: 8, y: centre - 20 },
+        segments: [
+          { type: 'line', to: { x: 16, y: centre + 20 } },
+          { type: 'line', to: { x: 24, y: centre - 20 } },
+          { type: 'line', to: { x: 32, y: centre + 20 } },
+          { type: 'line', to: { x: 40, y: centre - 20 } },
+          { type: 'line', to: { x: 50, y: centre } },
+        ],
+        closed: false,
+      },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
+    },
+    z_top: pivot + 8, z_bottom: pivot + 7.5, visible: true, locked: false,
+  }
+  const project: Project = projectWithFeatures(base, [guide])
+  project.setups.push({
+    ...project.setups[0],
+    id: 'around',
+    name: 'Around',
+    kind: 'around',
+    orientation: { axis: 'x', angleDeg: 0 },
+  })
+  project.activeSetupId = 'around'
+  const operation: Operation = {
+    ...defaultOperationForTarget(project, 'follow_line', 'finish', { source: 'features', featureIds: [guide.id] }, 0),
+    setupId: 'around',
+    toolRef: 'vbit',
+    carveDepth: 0.5,
+    stepdown: 0.5,
+    feed: 600,
+    plungeFeed: 200,
+    rpm: 16000,
+  }
+  project.operations = [operation]
+  const envelope = computeOperationToolpath(project, operation)
+  assert.ok(envelope, 'the wrapped engrave generates')
+  const moves = envelope.result.moves
+  assert.deepEqual(envelope.result.warnings, [], 'the wrapped engrave has no warning')
+  assert.ok(moves.some((move) => move.from.a !== undefined || move.to.a !== undefined),
+    'the wrapped engrave carries A')
+  const raw = BUNDLED_DEFINITIONS.find((definition) => definition.id === 'grbl')
+  assert.ok(raw, 'the bundled grbl definition exists')
+  const definition = validateMachineDefinition({
+    ...structuredClone(raw),
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+  const posted = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(tool, project),
+      toolpath: envelope.result,
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.deepEqual(posted.warnings, [], 'the wrapped engrave program posts without a refusal')
+  assert.ok(/\bA-?\d/.test(posted.gcode), 'the engrave program carries A words')
+  assert.ok(posted.gcode.includes('G93'), 'the engrave program selects inverse-time feed')
+  const movesHash = digest(moves)
+  const postedHash = createHash('sha256')
+    .update(posted.gcode.replace(/(Generated by PureCutCNC on )\d{4}-\d{2}-\d{2}/, '$1<date>'))
+    .digest('hex')
+  assert.equal(movesHash, '403cf195253577fa89e466126de2d61e982de6f2336e29ba8b3cbb0c12ceb9fa',
+    'the wrapped engrave motion is byte-identical')
+  assert.equal(postedHash, '1532647609ec5a4a53d9b42e8f77d7aca64eb676e6859a479bec8f795cd6408f',
+    'the wrapped engrave posted program is byte-identical')
+  console.log(`  engrave control: ${moves.length} moves, ${posted.stats.lineCount} program lines`)
 }
 
 console.log('rotary around passes tests passed')
