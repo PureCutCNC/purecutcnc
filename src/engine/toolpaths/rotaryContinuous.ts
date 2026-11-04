@@ -92,8 +92,16 @@
  * #1103 slice ca-c wires it into `generateRotaryFinish`: a maximal run of
  * fully-covered rings of a round bar (and, when the operation has a region, a
  * band whose every segment the mask's boundary test proves) is emitted as one
- * helix, and any band the builder refuses keeps forward-only rings. Slice ca-d
- * will use it for the around rough.
+ * helix, and any band the builder refuses keeps forward-only rings.
+ *
+ * Slice ca-d uses it for the around **rough**, one layer at a time: the caller
+ * passes {@link ContinuousHelixLayer}, so every pose is clamped to the layer's
+ * own depth (`max(tip, layer.radius)`, the clamp a ring sample takes) and a pose
+ * with **no material standing at this layer** (`tip >= previousRadius`) refuses
+ * the band -- the layer's rings skip such a sample, so a helix that kept going
+ * would be cutting air the ring path does without, and the caller keeps rings.
+ * The layer's gate is what the ring sample's `tip < previousRadius` is, so a
+ * band the helix covers cuts exactly the material that layer's rings would.
  */
 
 import { barCentre, barMaxRadius, barPivotZ } from '../../types/barStock'
@@ -144,6 +152,27 @@ export interface ContinuousHelixBudget {
   readonly rounds: number
 }
 
+/**
+ * The depth of one roughing layer (#1103 slice ca-d).
+ *
+ * A rough cuts a layer at a time, and a layer's ring samples are the model
+ * clamped up to the layer's radius and cut only where material still stands
+ * below the layer above (`tip < previousRadius`; a sample at or above it is
+ * air the layer skips). A rough helix takes exactly the same two rules, so it
+ * removes the same material the rings would over the band it covers:
+ *
+ * - `radius` is the layer's own radius; every sampled pose is floored there, so
+ *   the helix can never dive to the model through the layer (the ring clamp);
+ * - `previousRadius` is what the layer above cut to. A pose whose model stands
+ *   at or above it has no material for this layer, which makes the band **not
+ *   uninterrupted** (`ineligible`), and the caller keeps rings so its air skip
+ *   stays exactly as it was.
+ */
+export interface ContinuousHelixLayer {
+  readonly radius: number
+  readonly previousRadius: number
+}
+
 /** The most angle rows (height maps) one helix may build. */
 export const MAX_HELIX_ROWS = 65_536
 
@@ -176,6 +205,11 @@ export interface ContinuousHelixInput {
   readonly sampleSpacing: number
   /** Material left on the model, added back to every sampled tip. */
   readonly stockToLeave: number
+  /**
+   * The roughing layer to cut (#1103 slice ca-d); absent for a finish, whose
+   * path cuts to the model itself. See {@link ContinuousHelixLayer}.
+   */
+  readonly layer?: ContinuousHelixLayer
   /** The commanded A of the first boundary ring's first point. Default 0. */
   readonly startAngle?: number
   /** The operation's warnings; the sampler's height-map warnings are merged here. */
@@ -204,6 +238,12 @@ export interface ContinuousHelix {
   readonly stopped: boolean
   /** A sampled pose had no model under the tool: the caller keeps rings. */
   readonly uncovered: boolean
+  /**
+   * A roughing pose had no material standing at this layer (#1103 slice ca-d):
+   * its model is at or above what the layer above cut to, so the ring path
+   * skips it and would cut air the helix cannot -- the caller keeps rings.
+   */
+  readonly ineligible: boolean
 }
 
 /**
@@ -228,8 +268,13 @@ interface HelixRow {
   readonly along: number[]
   /** `along` value -> index into `along`; the same value is one sample. */
   readonly index: Map<number, number>
-  /** The sampled row, once it has been read. */
+  /** The sampled row, once it has been read: the effective cut height per pose. */
   tips?: Float32Array
+  /**
+   * A pose on this row has no material standing at the roughing layer this
+   * helix cuts (#1103 slice ca-d), so the band is not uninterrupted.
+   */
+  ineligible?: boolean
 }
 
 /** A straight move between two neighbouring poses and its one bisection. */
@@ -247,7 +292,7 @@ interface HelixSampling {
 }
 
 /** What a sampling/budget step decided. */
-type HelixStatus = 'ok' | 'stopped' | 'exhausted'
+type HelixStatus = 'ok' | 'stopped' | 'exhausted' | 'ineligible'
 
 /**
  * The between-sample tolerance of one helix segment, in the operation's units.
@@ -400,16 +445,35 @@ function sampleHelixRows(
     // The row arrives lifted by the angle's conservative cell rise, exactly as
     // the ring grid reads it; every finite value takes the operation's stock
     // offset and the clamp the ring path applies (`completeRotaryTargets`).
+    // A roughing layer (#1103 slice ca-d) adds the two rules the ring sample
+    // takes there: a pose with no material standing (`tip >= previousRadius`)
+    // is air this layer skips, which makes the band not uninterrupted, and a
+    // pose that does cut is floored at the layer's radius so the helix never
+    // dives through the layer to the model.
+    const layer = input.layer
     const raw = sampled.tipRadius[0]
     const tips = new Float32Array(raw.length)
+    let ineligible = false
     for (let i = 0; i < raw.length; i++) {
-      tips[i] = Number.isFinite(raw[i])
-        ? Math.min(Math.max(raw[i] + input.stockToLeave, 0), maxRadius)
-        : NaN
+      if (!Number.isFinite(raw[i])) {
+        tips[i] = NaN
+        continue
+      }
+      let tip = Math.min(Math.max(raw[i] + input.stockToLeave, 0), maxRadius)
+      if (layer !== undefined) {
+        if (!(tip < layer.previousRadius)) {
+          ineligible = true
+          continue
+        }
+        tip = Math.max(tip, layer.radius)
+      }
+      tips[i] = tip
     }
     row.tips = tips
+    row.ineligible = ineligible
     sampling.samples += row.along.length
     sampling.rows++
+    if (ineligible) return 'ineligible'
   }
   return 'ok'
 }
@@ -510,7 +574,7 @@ function emptyHelix(
   turns: number,
   pitch: number,
   sampling: HelixSampling,
-  flags: Partial<Pick<ContinuousHelix, 'exhausted' | 'stopped' | 'uncovered'>>,
+  flags: Partial<Pick<ContinuousHelix, 'exhausted' | 'stopped' | 'uncovered' | 'ineligible'>>,
 ): ContinuousHelix {
   return {
     points: [],
@@ -521,6 +585,7 @@ function emptyHelix(
     exhausted: flags.exhausted === true,
     stopped: flags.stopped === true,
     uncovered: flags.uncovered === true,
+    ineligible: flags.ineligible === true,
   }
 }
 
@@ -574,6 +639,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   const initial = sampleHelixRows(rows, input, phaseScale, sampling, budget)
   if (initial === 'stopped') return emptyHelix(turns, pitch, sampling, { stopped: true })
   if (initial === 'exhausted') return emptyHelix(turns, pitch, sampling, { exhausted: true })
+  if (initial === 'ineligible') return emptyHelix(turns, pitch, sampling, { ineligible: true })
   assignTips(nodes, rows, phaseScale)
   if (nodes.some((node) => !Number.isFinite(node.tip))) {
     return emptyHelix(turns, pitch, sampling, { uncovered: true })
@@ -585,6 +651,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   const refined = refineHelix(chain, input, turns, phaseScale, sampling, budget)
   if (refined.status === 'stopped') return emptyHelix(turns, pitch, sampling, { stopped: true })
   if (refined.status === 'exhausted') return emptyHelix(turns, pitch, sampling, { exhausted: true })
+  if (refined.status === 'ineligible') return emptyHelix(turns, pitch, sampling, { ineligible: true })
   if (refined.uncovered) return emptyHelix(turns, pitch, sampling, { uncovered: true })
   const path: HelixNode[] = [refined.chain[0].left]
   for (const segment of refined.chain) path.push(segment.right)
@@ -602,5 +669,6 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
     exhausted: false,
     stopped: false,
     uncovered: false,
+    ineligible: false,
   }
 }

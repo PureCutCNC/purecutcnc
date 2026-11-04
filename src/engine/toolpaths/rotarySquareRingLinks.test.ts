@@ -43,6 +43,7 @@
 
 import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import { squareRotaryTouchRadius } from './squareRotaryStock'
 import type { BarStock } from '../../types/project'
 import { generateRotaryRough, linkRowBudget } from './rotaryModel'
 import type { RotaryLinkRow, RotaryModelMesh } from './rotaryModel'
@@ -126,7 +127,12 @@ function lobeRadiusAt(length: number, twist: number): (along: number, aDeg: numb
 const alongOf = (point: ToolpathMove['from']): number => point.x
 /** An at-layer link: a cut that moves along the bar (ring cuts keep along fixed). */
 const isAtLayerLink = (move: ToolpathMove): boolean => move.kind === 'cut' && alongOf(move.to) > alongOf(move.from) + 1e-12
-const isSeam = (angle: number | undefined): boolean => angle === 0 || angle === 360
+/** A commanded angle on the physical seam: a whole turn, however many turns in. */
+const isSeam = (angle: number | undefined): boolean => {
+  if (angle === undefined) return false
+  const wrapped = ((angle % 360) + 360) % 360
+  return wrapped < 1e-9 || 360 - wrapped < 1e-9
+}
 
 /** The layers of an around rough: each ends with the rapid back along the bar. */
 function layersOf(moves: readonly ToolpathMove[]): ToolpathMove[][] {
@@ -175,16 +181,30 @@ console.log('Testing that a square blank links whole and model-split rings at th
     assert.equal(link.to.a, link.from.a, 'a whole-ring link keeps its angle')
     assert.ok(link.from.z - pivot <= barMaxRadius(stock), 'a whole-ring link is a cut below the blank')
   }
-  // Rings the model splits link at their shared run boundary and across the
-  // few degrees a drifting run end moves.
-  assert.ok(split.length > 0, `model-split rings link at a shared run angle (${split.length})`)
+  // #1103 slice ca-d: every ring turns A the same way now, so a ring's first
+  // cut is its arc's leading boundary and the next ring's start is a full turn
+  // further on. A transition that shares an angle is therefore only ever the
+  // **seam** (`whole` above); a model-split ring's boundary is an A-changing
+  // transition, and `split` (an equal-angle link off the seam) is gone.
+  assert.equal(split.length, 0,
+    `no equal-angle link is off the seam once A is one-way (${split.length})`)
+  // A drift the proof still covers (at most 45 deg) links across the A change.
   assert.ok(across.length > 0, `adjacent model-split rings link across an A change (${across.length})`)
   for (const link of across) {
     const drift = Math.abs((link.to.a ?? 0) - (link.from.a ?? 0))
-    assert.ok(drift <= 45 + 1e-9, `an A-changing link sweeps at most 45 deg (${drift.toFixed(2)})`)
+    if (drift <= 45 + 1e-9) continue
+    // Wider than the drift proof: only a square blank's gate **air sector** may
+    // keep the link, and then it rides at the layer through the middle of the
+    // gap (the blank stands below it there). See #1103 slice ca-d.
+    const middle = ((link.from.a ?? 0) + (link.to.a ?? 0)) / 2
+    const wrapped = ((middle % 360) + 360) % 360
+    const height = Math.min(link.from.z, link.to.z) - pivot
+    assert.ok(squareRotaryTouchRadius(stock, wrapped, BALL2.radius, BALL2.type) < height + 1e-6,
+      `a wide A-changing link rides the gate's air sector (${squareRotaryTouchRadius(stock, wrapped, BALL2.radius, BALL2.type).toFixed(3)} at A${wrapped.toFixed(1)} vs ${height.toFixed(3)})`)
   }
-  // A transition wider than 45 deg is a different shape (a run end jumping
-  // round the bar) and keeps the pre-#1117 retract, as on busto-rect layer 15.
+  // A wider transition is a run end jumping round the bar: on the gate's air
+  // sector the square-only wide rule keeps the link at the layer, and anywhere
+  // else (a model protrusion, a region) the transition keeps its retract.
   const wideTurns = rough.moves.filter((move) => move.kind === 'rapid'
     && alongOf(move.to) > alongOf(move.from) + 1e-9
     && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 45)
@@ -203,8 +223,8 @@ console.log('Testing that a square blank links whole and model-split rings at th
   }
   // Pinned on the fixture so any change in what qualifies is a visible diff.
   assert.equal(whole.length, 63, `whole-ring links (${whole.length})`)
-  assert.equal(split.length, 17, `split-ring equal-angle links (${split.length})`)
-  assert.equal(across.length, 16, `A-changing links (${across.length})`)
+  assert.equal(across.length, 18, `A-changing links (${across.length})`)
+  assert.equal(wideTurns.length, 11, `wide transitions that keep their retract (${wideTurns.length})`)
   console.log(`  ${whole.length} whole-ring, ${split.length} split-ring and ${across.length} A-changing links; `
     + `${wideTurns.length} wide turns and ${skips.length} skipped-ring transitions keep their retract`)
 }
@@ -214,10 +234,11 @@ console.log('Testing that a square blank links whole and model-split rings at th
 //    a boundary keeps the raised plan, which is computed first and charged to
 //    its own bucket, so the fallback is the motion the operation had before the
 //    at-layer candidate existed. This is #1093's long square bar at half the
-//    stepdown: the at-layer budget runs out on layer 5. Layers 1-3 are corner
-//    arcs, layer 4 is the first whole ring (refused outright before this slice),
-//    and layers 5-9 keep the raised links and retracts they had before it --
-//    measured identical to the pre-slice output move for move.
+//    stepdown. Layers 1-3 are corner arcs (air links since #1103 slice ca-d, so
+//    they spend no at-layer row at all), layer 4 is the first whole ring, and
+//    the budget now runs out on layer 8: layers 8-9 keep the raised links and
+//    retracts they had before it. Re-measured for ca-d; every layer before the
+//    fallback links all 392 of its boundaries at the layer.
 // ---------------------------------------------------------------------------
 
 console.log('Testing that a spent at-layer budget falls back to the unchanged raised plan...')
@@ -235,29 +256,37 @@ console.log('Testing that a spent at-layer budget falls back to the unchanged ra
   const raised = layers.map((layer) => layer.filter((move) => move.kind === 'rapid'
     && move.from.a === move.to.a && move.from.z === move.to.z && alongOf(move.to) > alongOf(move.from)).length)
   const plunges = layers.map((layer) => layer.filter((move) => move.kind === 'plunge').length)
-  assert.deepEqual(atLayer, [392, 392, 392, 392, 0, 0, 0, 0, 0],
+  assert.deepEqual(atLayer, [392, 392, 392, 392, 392, 393, 353, 0, 0],
     `the at-layer links stop where their budget is spent (${atLayer.join(',')})`)
-  assert.deepEqual(raised.slice(4), [392, 392, 351, 228, 104],
+  assert.deepEqual(raised.slice(4), [0, 0, 0, 228, 104],
     `past the at-layer budget the raised links are the pre-slice ones (${raised.join(',')})`)
-  assert.deepEqual(plunges, [4, 4, 4, 1, 197, 393, 353, 229, 105],
+  assert.deepEqual(plunges, [4, 4, 4, 1, 1, 1, 1, 1, 105],
     `and so are the retracts the raised budget leaves (${plunges.join(',')})`)
-  // Layer 4 is a whole ring: its boundaries are A0/A360, refused before.
-  assert.ok(layers[3].filter(isAtLayerLink).every((move) => isSeam(move.from.a)),
-    'the first whole-ring layer links at A0/A360')
+  // #1103 slice ca-d: A is one-way, so a whole ring's boundary is still the
+  // **seam** (A = 360k), just not only A0/A360 any more. The first whole-ring
+  // layer links all 392 of its boundaries at those seam angles.
+  const seamLayer = layers[3].filter(isAtLayerLink)
+  assert.equal(seamLayer.length, 392, `the first whole-ring layer links its boundaries (${seamLayer.length})`)
+  assert.ok(seamLayer.every((move) => isSeam(move.from.a)),
+    'a whole-ring layer links at the seam of its own turn')
   console.log(`  at-layer links per layer ${atLayer.join(',')}; raised ${raised.join(',')}`)
 }
 
 // ---------------------------------------------------------------------------
-// 3. A dense angular grid. An A-changing link samples one model row per grid
-//    angle it crosses, and the per-link cap on those rows used to be 64. On a
-//    fine grid a drift well inside 45 deg crosses more than that (busto-rect's
-//    adaptive grid, ~0.17 deg near A0, needed 72-165 rows), and the cap refused
-//    a link the proof would accept. Block 1's model with the crest turning
-//    60 deg/mm, a 0.1 mm sample spacing and a 0.1 mm cell: the cap of 256 lets
-//    drifts up to ~14 deg link; with 64 only drifts under ~7.4 deg do.
+// 3. A dense angular grid.
+//
+//    #1117's per-link row cap (256) bounded the **drift** path, which samples
+//    one model row per grid angle a transition crosses. #1103 slice ca-d turns
+//    every ring the same way, so a square blank's ring-to-ring transition is
+//    the seam gap between its last corner arc and the next ring's first: the
+//    touch gate proves that sector air at the layer, the transition is one
+//    straight cut, and it draws **no** model row at all. On a fine grid that is
+//    exactly the case the cap used to refuse, so it now links without touching
+//    the row budget. The drift path's own cap is covered on a round bar by
+//    `rotaryAcrossAngleLinks.test.ts`.
 // ---------------------------------------------------------------------------
 
-console.log('Testing that a fine angular grid does not cap a short A-changing link...')
+console.log('Testing that a fine angular grid links the gate gap without sampling a row...')
 {
   const side = 14
   const length = 8
@@ -267,13 +296,17 @@ console.log('Testing that a fine angular grid does not cap a short A-changing li
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.1, stepdown: 1.5, passDirection: 'around',
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
-  const across = rough.moves.filter(isAtLayerLink).filter((move) => move.from.a !== move.to.a)
-  const drifts = across.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)))
-  const widest = Math.max(0, ...drifts)
-  assert.ok(widest > 10, `an A-changing link across more than 64 fine grid rows links (widest ${widest.toFixed(2)} deg)`)
-  assert.ok(widest <= 45 + 1e-9, 'and still within 45 deg')
-  assert.equal(across.length, 17, `A-changing links on the dense grid (${across.length})`)
-  console.log(`  ${across.length} A-changing links, widest ${widest.toFixed(2)} deg`)
+  const links = rough.moves.filter(isAtLayerLink)
+  const across = links.filter((move) => move.from.a !== move.to.a)
+  const widest = Math.max(0, ...across.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))))
+  assert.ok(widest > 45,
+    `the gate-gap links are wider than the drift bound (widest ${widest.toFixed(2)} deg)`)
+  // Every one of them is a single straight move: no interior waypoint, so no
+  // row samples were needed to prove it.
+  const single = across.filter((move) => move.kind === 'cut')
+  assert.equal(single.length, across.length, 'the gate-gap links are single cuts')
+  assert.equal(across.length, 16, `gate-gap links on the dense grid (${across.length})`)
+  console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, no sampled row`)
 }
 
 // ---------------------------------------------------------------------------

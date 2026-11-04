@@ -2293,8 +2293,11 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // earlier layer actually left (the lowest pass over the ring positions)
     // rather than an upper bound on it, so this fixture's layers past the first
     // keep their links at the layer too. The along program did not move.
+    // Recaptured for #1103 slice ca-d: the around rough's full rings are an
+    // edge-clamped helix per layer and its partial rings turn A forward with
+    // safe gaps. The along program still does not move.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '3066ffca34b19d29' : '19428cbf978287a4',
+      direction === 'along' ? '3066ffca34b19d29' : '9ab4b867712f5393',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)

@@ -3135,6 +3135,7 @@ function assertStageDescent(
         + `drop ${drop.toFixed(4)} against ${allowed.toFixed(4)}`
     }
     if (drop > allowed + 1e-9) {
+
       assert.ok(false,
         `${entry.label}: the emitted ${label} does not descend from the raw blank at along `
         + `${along.toFixed(3)} A${angle.toFixed(3)}: ${first ? 'the first cut is' : 'one cut drops'} `

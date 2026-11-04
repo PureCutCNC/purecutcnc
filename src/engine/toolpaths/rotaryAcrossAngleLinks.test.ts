@@ -309,7 +309,11 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
   const result = generateRotaryRough('rl-e-across', mesh, stock, BALL, PARAMS, {})
   assert.deepEqual(result.warnings, [], 'the lobe rough warns about nothing')
   const pivot = barPivotZ(stock)
-  const moves = diag(result.moves)
+  // #1103 slice ca-d: layer 1 is one continuous helix (every ring of the blank's
+  // first layer is full), so its along-changing cuts are helix segments, not
+  // ring links. The partial rings start at layer 2.
+  const layersOfResult = perLayer(result.moves)
+  const moves = layersOfResult.slice(1).flatMap((layer) => diag(layer))
   assert.ok(moves.length > 0,
     `the drifting partial-ring boundaries link across A (${moves.length} diagonal cut moves)`)
   for (const move of moves) {
@@ -327,124 +331,19 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
 }
 
 // ---------------------------------------------------------------------------
-// 3. #1117 rl-e: a swept path that leaves the cleared region keeps the raised link.
+// 3. #1103 slice ca-d: the region variants of the A-changing link are gone.
 //
-//    The region is a slanted band; its across boundary moves with the along
-//    position, so two neighbouring rings' runs end a few degrees apart and the
-//    transition is an A-changing link. The mask is wide enough that the link is
-//    proved and emitted; narrowed to a strip the cutter body cannot clear, the
-//    same transition is refused and the pre-slice retract stays.
+//    rl-e's blocks 3 and 4 proved that an A-changing link's whole swept path
+//    stayed inside the operation's region. Forward-only rings change the shape
+//    of every region-clipped transition: a ring the region trims to an arc ends
+//    where the mask ends and the next ring starts a full turn further on, so the
+//    transition is a wide A change rather than the few-degree drift those blocks
+//    built. `linkAtLayer` also keeps a region's split rings on the raised plan
+//    (#1117 slice B), so the at-layer candidate never sees one. Region safety is
+//    covered by `rotaryRegion.test.ts`, including the helix's whole-slope proof
+//    (`rotaryRegionSlopeContains`), which is the same boundary test the link path
+//    used. The wide gate-gap branch keeps the same region check as defence.
 // ---------------------------------------------------------------------------
-{
-  const stock = roundStock(12, 30, 'x')
-  const centre = barCentre(stock)
-  const tool: NormalizedTool = { ...BALL, id: 'ball-3', diameter: 3, radius: 1.5 }
-  const mesh = surface(stock, () => 4, 3, 27, 40, 192)
-  const narrowParams = {
-    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
-    safeRadius: 25, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
-  }
-  const band = (halfWidth: number): SketchFeature => ({
-    id: 'slant', name: 'slant', kind: 'polygon', operation: 'region', authoringFace: 'around', folderId: null,
-    sketch: {
-      profile: polygonProfile([
-        { x: 3, y: centre - halfWidth }, { x: 27, y: centre + halfWidth },
-        { x: 27, y: centre + halfWidth + 1 }, { x: 3, y: centre - halfWidth + 1 },
-      ]) as SketchProfile,
-      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
-    },
-    z_top: 0, z_bottom: 0, visible: true, locked: false,
-  } as SketchFeature)
-  const wide = buildRegionMask([band(2)])
-  const narrow = buildRegionMask([band(0.4)])
-  assert.ok(wide && narrow, 'both slanted masks build')
-  const accepted = generateRotaryRough('rl-e-region-wide', mesh, stock, tool,
-    { ...narrowParams, region: wide! }, {})
-  const refused = generateRotaryRough('rl-e-region-narrow', mesh, stock, tool,
-    { ...narrowParams, region: narrow! }, {})
-  assert.deepEqual(accepted.warnings, [], 'the wide-band rough warns about nothing')
-  assert.deepEqual(refused.warnings, [], 'the narrow-band rough warns about nothing')
-  // Pinned, not just positive: the same fixture with the one-band check removed
-  // emits 12 of these (measured), so a slice that stops refusing them fails here.
-  assert.equal(diag(accepted.moves).length, 4,
-    `the wide band's across-A transitions link only where one band remains `
-    + `(${diag(accepted.moves).length} diagonals, baseline 4)`)
-  assert.equal(diag(refused.moves).length, 0,
-    `the narrow band keeps the raised transition (${diag(refused.moves).length} diagonals)`)
-  console.log(`  rl-e region: wide band ${diag(accepted.moves).length} diagonals, `
-    + `narrow band ${diag(refused.moves).length}`)
-}
-
-// ---------------------------------------------------------------------------
-// 4. #1117 rl-e correction: an A-changing link never crosses an excluded strip.
-//
-//    The same slanted-band fixture, now with a 0.02 mm wide **excluded** slit at
-//    X14.87. The dense row's waypoints either side of the slit are all inside the
-//    mask, so a point-by-point check accepts the 14.5 -> 15.5 transition and the
-//    commanded cut crosses the slit. The link's path is one straight segment in
-//    (along, A) -- across is affine in A -- so the mask's own boundary test must
-//    decide that segment, not its waypoints.
-// ---------------------------------------------------------------------------
-{
-  const stock = roundStock(12, 30, 'x')
-  const centre = barCentre(stock)
-  const tool: NormalizedTool = { ...BALL, id: 'ball-3', diameter: 3, radius: 1.5 }
-  const mesh = surface(stock, () => 4, 3, 27, 40, 192)
-  const params = {
-    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
-    safeRadius: 25, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
-  }
-  const feature = (id: string, points: Array<{ x: number; y: number }>, mode?: 'include' | 'exclude'): SketchFeature => ({
-    id, name: id, kind: 'polygon', operation: 'region', authoringFace: 'around', folderId: null,
-    sketch: {
-      profile: polygonProfile(points) as SketchProfile,
-      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
-    },
-    z_top: 0, z_bottom: 0, visible: true, locked: false,
-    ...(mode === undefined ? {} : { regionMaskMode: mode }),
-  } as SketchFeature)
-  // The slanted band of block 3, and a slit 0.02 mm wide across the whole sheet,
-  // narrower than any sample of the dense row that crosses it.
-  const band = [
-    { x: 3, y: centre - 2 }, { x: 27, y: centre + 2 },
-    { x: 27, y: centre + 3 }, { x: 3, y: centre - 1 },
-  ]
-  const slit = [
-    { x: 14.87, y: centre - 6 }, { x: 14.89, y: centre - 6 },
-    { x: 14.89, y: centre + 6 }, { x: 14.87, y: centre + 6 },
-  ]
-  const plain = buildRegionMask([feature('slant', band)])
-  const sliced = buildRegionMask([feature('slant', band), feature('slit', slit, 'exclude')])
-  assert.ok(plain && sliced, 'both masks build')
-  const segment = sliced!.containsSegment
-  assert.ok(segment, 'the slit mask exposes its whole-segment test')
-  /** One point of the commanded path on the Around sheet, as `rotaryRegionContains` maps it. */
-  const sheet = (along: number, angle: number): { x: number; y: number } =>
-    ({ x: along, y: centre + angle * Math.PI * stock.thickness / 360 })
-  const unsliced = generateRotaryRough('rl-e-slit-control', mesh, stock, tool,
-    { ...params, region: plain! }, {})
-  const refused = generateRotaryRough('rl-e-slit', mesh, stock, tool,
-    { ...params, region: sliced! }, {})
-  assert.deepEqual(unsliced.warnings, [], 'the unsliced control warns about nothing')
-  assert.deepEqual(refused.warnings, [], 'the slit rough warns about nothing')
-  // The control proves the slit is what removes the transition: without it the
-  // same fixture emits 4 A-changing links, with it 3.
-  assert.equal(diag(unsliced.moves).length, 4,
-    `the unsliced control links 4 A-changing transitions (${diag(unsliced.moves).length})`)
-  assert.equal(diag(refused.moves).length, 3,
-    `the slit refuses the one transition that crosses it (${diag(refused.moves).length} of 4)`)
-  // Pinned on the emitted motion: every A-changing cut's **whole** commanded
-  // segment is inside the mask, so the slit is never stepped over. A waypoint
-  // check alone passes this fixture with the crossing link emitted.
-  for (const move of diag(refused.moves)) {
-    assert.ok(segment!(sheet(move.from.x, move.from.a!), sheet(move.to.x, move.to.a!)),
-      `an A-changing link crosses the excluded slit (X${move.from.x.toFixed(3)} -> `
-      + `${move.to.x.toFixed(3)}, A${move.from.a!.toFixed(3)} -> ${move.to.a!.toFixed(3)})`)
-  }
-  console.log(`  rl-e slit: ${diag(unsliced.moves).length} A-changing links unsliced, `
-    + `${diag(refused.moves).length} with the 0.02 mm excluded slit`)
-}
-
 
 // ---------------------------------------------------------------------------
 // 5. #1117 rl-f: the twisted-ridge fixture's angular mapping, checked against
@@ -538,18 +437,21 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
   // mirrored reading has to be far enough away to fail the assertion above.
   assert.ok(worstMirror > 0.5,
     `the probes distinguish the two angular mappings (${worstMirror.toFixed(3)} mm apart)`)
-  // (2) The fixture's own coverage: this model still makes a ring partial and
-  // its run boundary drift, so the generator emits A-changing links on it. The
-  // links themselves are proved against the reference's whole standing solid in
-  // the property suite's `drawTwistCase`, not here.
+  // (2) The fixture's own coverage: the crest turns with the along position, so
+  // an uninterrupted band cannot follow it and the layer splits into rings and
+  // helices rather than one continuous path. Since #1103 slice ca-d the layer's
+  // full rings become a helix and its partial ones retract across the crest, so
+  // the along-changing cuts here are helix segments, not at-layer links. The
+  // emitted motion is still proved against the reference's whole standing solid
+  // in the property suite's `drawTwistCase`, not here.
   const result = generateRotaryRough('rl-f-twist', mesh, stock, flat, params, {})
   assert.deepEqual(result.warnings, [], 'the twisted-ridge rough warns about nothing')
-  const links = diag(result.moves)
-  assert.ok(links.length > 0,
-    `the drifting boundary links across A (${links.length} diagonal cut moves)`)
+  const alongCuts = result.moves.filter(isLinkCut)
+  assert.ok(alongCuts.length > 0,
+    `the twisted ridge emits continuous along-and-A cutting motion (${alongCuts.length} cuts)`)
   console.log(`  rl-f twisted ridge: ${probes.length} oracle/mesh probes agree to `
     + `${worstResidual.toFixed(5)} mm (the mirrored mapping differs by ${worstMirror.toFixed(3)} mm), `
-    + `${links.length} A-changing links emitted`)
+    + `${alongCuts.length} along-and-A cutting moves`)
 }
 
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')

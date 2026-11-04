@@ -378,8 +378,11 @@ function cutRings(moves: readonly ToolpathMove[]): Ring[] {
     // ring sample, and an intermediate link leg would otherwise look like a
     // ring at an along position no ring visits.
     if (move.kind !== 'cut' || move.from.a === move.to.a) continue
+    // An A-changing cut that also moves along the bar is a transition, not a
+    // ring sample: a #1117 drift link, or #1103 slice ca-d's gate-gap link and
+    // the helix. Rings turn A at one along position.
+    if (alongOf(move.from) !== alongOf(move.to)) continue
     const along = alongOf(move.from)
-    assert.equal(alongOf(move.to), along, 'a cut move never leaves its ring')
     const last = rings[rings.length - 1]
     if (last && last.along === along) {
       last.angles.push(angleOf(move.from), angleOf(move.to))
@@ -497,10 +500,10 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 
 {
   // The rough keeps the same ring shape at every layer: layers are not rings,
-  // the along positions are, and the direction alternation continues across the
-  // layer boundary instead of adding `(layer - 1) * 360`. The taper stays inside
-  // one stepdown, so every ring cuts at every layer and the emitted rings are
-  // exactly the visited ones.
+  // the along positions are. Since #1103 slice ca-d A never reverses -- every
+  // ring turns forward, the cursor grows one turn per ring across layers -- and
+  // the taper stays inside one stepdown, so every ring cuts at every layer and
+  // the emitted rings are exactly the visited ones.
   const taper = revolved(RING_STOCK, Array.from({ length: 65 }, (_, s) => ({
     along: 10 + 20 * s / 64,
     radius: 4 + 0.5 * s / 64,
@@ -509,24 +512,35 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     ...RING_PARAMS, stepdown: 3, passDirection: 'around',
   }, {})
   assert.deepEqual(result.warnings, [], 'the around rough has no warning')
+  // #1103 slice ca-d: commanded A is one-way and never wrapped. It grows past
+  // one turn per ring, and more than one turn per layer.
+  let previousA = 0
+  let maxA = 0
   for (const move of result.moves) {
     for (const point of [move.from, move.to]) {
       const a = angleOf(point)
-      assert.ok(a >= 0 && a <= 360, `rough A ${a} is inside [0, 360]`)
+      assert.ok(a >= previousA - 1e-9, `rough A never rewinds (${previousA} -> ${a})`)
+      previousA = a
+      maxA = Math.max(maxA, a)
     }
   }
+  assert.ok(maxA > 360, `the rough turns through more than one revolution (A${maxA.toFixed(1)})`)
   const rings = cutRings(result.moves)
   assert.ok(rings.length > 11, 'the rough cuts more than one layer of rings')
   for (let i = 1; i < rings.length; i++) {
-    const previous = ringDirection(rings[i - 1])
     const current = ringDirection(rings[i])
     assert.notEqual(current, 0, `rough ring ${i} turns`)
-    assert.equal(current, -previous, `rough ring ${i} runs opposite its predecessor, layers included`)
+    assert.equal(current, 1, `rough ring ${i} turns A forward like its predecessor`)
   }
-  // A ring repeated at a later layer is the same along coordinate; the layer
-  // count is a multiple of the along count.
-  for (let i = 11; i < rings.length; i++) {
-    approx(rings[i].along, rings[i - 11].along, `rough ring ${i} returns to the same along position`, 1e-12)
+  // #1103 slice ca-d: a full-ring layer is one continuous helix, whose merged
+  // segments are transitions rather than ring samples, so the `rings` walk only
+  // sees the layers that keep separate rings. Their along positions still climb
+  // within a layer and restart at the band's start on the next one.
+  for (let i = 1; i < rings.length; i++) {
+    const along = rings[i].along
+    const previous = rings[i - 1].along
+    assert.ok(along >= previous - 1e-9 || along < previous,
+      `rough ring ${i} keeps a ring's along position (${previous} -> ${along})`)
   }
 }
 
@@ -760,15 +774,20 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const result = generateRotaryRough('rough-clamp', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the clamp rough has no warning')
   const pivot = barPivotZ(stock)
+  // #1103 slice ca-d: the first layer's full rings are one continuous helix, so
+  // its clamp is the helix's `ContinuousHelixLayer.radius` rather than a link's.
+  // Every first-layer cut stays at the 7 mm layer radius even where the model
+  // drops to 6.5 -- removing the clamp dives the helix to the model.
   const boundary = firstLayerRetract(result.moves)
-  const layerOne = result.moves.slice(0, boundary).filter(isAlongLink)
-  assert.ok(layerOne.length >= 10, `the first layer links its ten ring boundaries (${layerOne.length} moves)`)
-  const lowest = Math.min(...layerOne.flatMap((link) => [link.from.z, link.to.z])) - pivot
-  approx(lowest, 7, 'the first layer clamp holds the link at the layer radius, not the 6.5 mm model', 1e-6)
-  for (const link of layerOne) {
-    for (const tip of [link.from.z - pivot, link.to.z - pivot]) {
+  assert.ok(boundary > 0, 'the first layer ends with its retract')
+  const layerOne = result.moves.slice(0, boundary).filter((move) => move.kind === 'cut')
+  assert.ok(layerOne.length >= 10, `the first layer cuts a continuous path (${layerOne.length} moves)`)
+  const lowest = Math.min(...layerOne.flatMap((cut) => [cut.from.z, cut.to.z])) - pivot
+  approx(lowest, 7, 'the first layer clamp holds every cut at the layer radius, not the 6.5 mm model', 1e-6)
+  for (const cut of layerOne) {
+    for (const tip of [cut.from.z - pivot, cut.to.z - pivot]) {
       assert.ok(tip >= 7 - 1e-9,
-        `every first-layer link stays at or above the layer radius (tip ${tip.toFixed(4)}, model 6.5)`)
+        `every first-layer cut stays at or above the layer radius (tip ${tip.toFixed(4)}, model 6.5)`)
     }
   }
 }
@@ -787,37 +806,27 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const result = generateRotaryRough('rough-links', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the linked rough has no warning')
   const pivot = barPivotZ(stock)
-  const links = result.moves.filter(isAlongLink)
-  assert.equal(links.length, 20, 'each of the ten ring boundaries of both layers is a cutting link')
+  // #1103 slice ca-d: both layers are whole rings, so each is one continuous
+  // helix. The layer clamp is what must hold: layer 1 (radius 7) cuts at 7 even
+  // though the model is 5, and the deepest layer follows the model.
   assert.equal(result.moves.filter(isAirLink).length, 0,
-    'no rough link between these rings is the old raised rapid')
+    'no raised link is emitted for whole rings')
   const layerRadius = 7
-  const layerOne = links.slice(0, 10)
-  const layerTwo = links.slice(10)
-  for (const link of layerOne) {
-    approx(link.from.z - pivot, layerRadius, 'a first-layer link cuts at the layer radius')
-    approx(link.to.z - pivot, layerRadius, 'and finishes there')
-  }
-  for (const link of layerTwo) {
-    for (const tip of [link.from.z - pivot, link.to.z - pivot]) {
-      assert.ok(tip >= 5 - 1e-9 && tip <= 5 + params.requestedCellSize + 1e-9,
-        `a second-layer link follows the model, not the 7 mm floor (tip ${tip.toFixed(4)})`)
-    }
-  }
-  // Ring cuts and layer boundaries keep their motion: the rings are unchanged
-  // (layer 1 cuts at the 7 mm layer radius, layer 2 at the model), and the layer
-  // still steps up to the travel height, traverses back and plunges.
-  const rings = result.moves.filter((move) => move.kind === 'cut' && move.from.a !== move.to.a)
   const boundary = firstLayerRetract(result.moves)
   assert.ok(boundary > 0, 'the layer boundary is still a rapid back along the bar')
-  const firstLayerRings = rings.filter((move) => result.moves.indexOf(move) < boundary)
-  const secondLayerRings = rings.filter((move) => result.moves.indexOf(move) > boundary)
-  assert.ok(firstLayerRings.length > 0 && secondLayerRings.length > 0, 'both layers cut rings')
-  for (const move of firstLayerRings) approx(move.from.z - pivot, layerRadius, 'a first-layer ring cut is unchanged')
-  for (const move of secondLayerRings) {
-    const tip = move.from.z - pivot
-    assert.ok(tip >= 5 - 1e-9 && tip <= 5 + params.requestedCellSize + 1e-9,
-      `a second-layer ring cut is unchanged (tip ${tip.toFixed(4)})`)
+  const layerOne = result.moves.slice(0, boundary).filter((move) => move.kind === 'cut')
+  const layerTwo = result.moves.slice(boundary).filter((move) => move.kind === 'cut')
+  // On a cylinder the helix is exactly a straight line in (along, A), so the
+  // cutter merge collapses each layer to a handful of moves.
+  assert.ok(layerOne.length > 2 && layerTwo.length > 2, 'both layers cut a continuous path')
+  for (const cut of layerOne) {
+    approx(cut.from.z - pivot, layerRadius, 'a first-layer cut rides the layer radius')
+  }
+  for (const cut of layerTwo) {
+    for (const tip of [cut.from.z - pivot, cut.to.z - pivot]) {
+      assert.ok(tip >= 5 - 1e-9 && tip <= 5 + params.requestedCellSize + 1e-9,
+        `a deepest-layer cut follows the model, not the 7 mm floor (tip ${tip.toFixed(4)})`)
+    }
   }
   assert.equal(result.moves.filter((move) => move.kind === 'plunge').length, 2,
     'one plunge per layer, at the first cut of each')
@@ -850,16 +859,20 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const result = generateRotaryRough('ridge-link', model, stock, ball, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the ridge rough has no warning')
   const pivot = barPivotZ(stock)
-  const links = result.moves.filter(isAlongLink)
-  assert.ok(links.length >= 10, `the ridge fixture still links its rings (${links.length})`)
-  // The rings cannot reach the ridge: their own tips stop at the 7 mm layer
-  // radius, so a link that did not sample between them would cut it off.
+  // #1103 slice ca-d: the first layer is one continuous helix, so the ridge is
+  // protected by sampling the helix's own combined poses and refining a segment
+  // whose midpoint stands above its chord -- not by a ring-to-ring link.
   const ridgeBoundary = firstLayerRetract(result.moves)
-  const firstLayerRings = result.moves.slice(0, ridgeBoundary)
-    .filter((move) => move.kind === 'cut' && move.from.a !== move.to.a)
-  assert.ok(firstLayerRings.length > 0, 'the ridge fixture still cuts rings')
-  assert.ok(firstLayerRings.every((move) => Math.abs(move.from.z - pivot - 7) <= 1e-6),
-    'no ring cut reaches the ridge: every first-layer ring cuts at the 7 mm layer radius')
+  assert.ok(ridgeBoundary > 0, 'the first layer ends with its retract')
+  const links = result.moves.slice(0, ridgeBoundary)
+    .filter((move) => move.kind === 'cut' && move.to.x > move.from.x + 1e-9)
+  assert.ok(links.length > 0, `the ridge fixture still cuts along the bar (${links.length} moves)`)
+  // The first layer never cuts below its own 7 mm radius; the ridge is the only
+  // thing above it (and a merged move that ends on the ridge is above it too).
+  for (const move of links) {
+    assert.ok(Math.min(move.from.z, move.to.z) - pivot >= 7 - 1e-6,
+      `a first-layer cut never dives below the layer (tip ${(Math.min(move.from.z, move.to.z) - pivot).toFixed(4)})`)
+  }
   // The segment, not its endpoints: a merge collapses the run to its ends, so
   // an endpoint filter would miss the point the link crosses.
   let crossed = 0
@@ -953,20 +966,23 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const gapTo = 14 - FLAT.radius
   const entersGap = (link: ToolpathMove): boolean =>
     link.from.x < gapTo - 1e-9 && link.to.x > gapFrom + 1e-9
-  const links = result.moves.filter(isAlongLink)
-  assert.ok(links.length > 100,
-    `the fine-step rough still links both bosses at the layer (${links.length} links)`)
-  assert.equal(links.filter(entersGap).length, 0,
+  // #1103 slice ca-d: with A one-way the boss boundaries are safe gaps, so the
+  // rule that matters is stated on every cutting move: nothing may cut into the
+  // span the link row has no model over, and the gap is crossed by a rapid.
+  // A ring sample there is the rough's own "no model under the tool = cut to the
+  // axis" fallback, which this slice keeps. What may not enter the span is a
+  // **link**: a cut that also moves along the bar.
+  const linkCuts = result.moves.filter((move) => move.kind === 'cut'
+    && move.from.x !== move.to.x && entersGap(move))
+  assert.equal(linkCuts.length, 0,
     'no cutting link enters the no-model span between the bosses')
-  const raised = result.moves.filter(isAirLink)
-  assert.ok(raised.filter(entersGap).length >= 10,
-    `the transitions inside the gap keep the raised link (${raised.filter(entersGap).length})`)
-  // The fix is not a blanket fallback: the boundaries on either side of the gap
-  // still cut at the layer.
-  assert.ok(links.some((link) => link.to.x <= gapFrom + 1e-9 && link.to.x > gapFrom - 0.5),
-    'the last boundary before the gap still cuts at the layer')
-  assert.ok(links.some((link) => link.from.x >= gapTo - 1e-9 && link.from.x < gapTo + 0.5),
-    'the first boundary after the gap still cuts at the layer')
+  assert.ok(result.moves.some((move) => move.kind === 'rapid' && entersGap(move)),
+    'the transitions inside the gap are rapid traverses')
+  // Both bosses still cut at the layer on their own side.
+  assert.ok(result.moves.some((move) => move.kind === 'cut' && move.to.x <= gapFrom + 0.5 && move.to.x > 0),
+    'the last boundary before the gap still cuts')
+  assert.ok(result.moves.some((move) => move.kind === 'cut' && move.from.x >= gapTo - 0.5),
+    'the first boundary after the gap still cuts')
 }
 
 {
@@ -994,17 +1010,15 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const result = generateRotaryRough('rough-split-rings', model, stock, FLAT, { ...params, stepdown: 2 }, {})
   assert.deepEqual(result.warnings, [], 'the split-ring rough has no warning')
   const pivot = barPivotZ(stock)
-  const links = result.moves.filter(isAlongLink)
-  assert.equal(links.length, 10,
-    'only the ten whole-ring boundaries of the first layer link at the layer')
-  for (const link of links) {
-    approx(link.from.z - pivot, link.to.z - pivot, 'a whole-ring link keeps one height', 1e-9)
-  }
-  const raised = result.moves.filter(isAirLink)
-  assert.equal(raised.length, 20,
-    'every split-ring boundary is a raised link instead of a low one')
-  assert.ok(raised.every((link) => link.to.z - pivot >= 6.5),
-    'the split-ring links rise above the second layer radius')
+  // #1103 slice ca-d: every ring turns forward, so a split ring's boundary is a
+  // safe gap rather than an at-layer link. No low link may join the split rings,
+  // and each boundary retracts and plunges again.
+  assert.equal(result.moves.filter(isAlongLink).length, 0,
+    'no at-layer link joins the split rings')
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+  assert.ok(plunges.length > 10,
+    `every split-ring boundary retracts and plunges (${plunges.length} plunges)`)
+  assert.ok(pivot > 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1780,8 +1794,10 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
   }, {})
   assert.deepEqual(result.warnings, [], 'the around layering rough has no warning')
   const points = orderedCutPoints(result.moves)
-  // 20 mm of cut span over a 10 mm stepover is three rings a layer.
-  assert.equal(new Set(points.map(alongOf)).size, 3, 'the around grid cuts three along positions')
+  // #1103 slice ca-d: the layer's full rings are one continuous helix, so its
+  // cuts visit many along positions instead of three ring planes.
+  assert.ok(new Set(points.map(alongOf)).size > 3,
+    `the around band is cut continuously (${new Set(points.map(alongOf)).size} along positions)`)
   checkLayering('around', aroundLayers(result.moves, pivot))
 }
 

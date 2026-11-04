@@ -349,19 +349,24 @@ for (const shape of ['round', 'square'] as const) {
   const tool = normalizeToolForProject(project.tools.find((entry) => entry.id === operation.toolRef)!, project)
   const blankZ = (angle: number): number => pivot
     + squareRotaryTouchRadius(stock, angle, tool.radius, tool.type)
+  // #1103 slice ca-d: A advances one turn per ring, so a transition between two
+  // region bands is a **safe gap** (retract, turn, plunge) rather than the
+  // constant-A raised traverse #1093 emitted between equal angles. What matters
+  // is unchanged: whatever crosses the untouched stock at X15 does it at or
+  // above the blank's top, never through it.
   let crossings = 0
   for (const move of result.moves) {
-    if (move.kind !== 'rapid') continue
-    if (move.from.a === undefined || move.from.a !== move.to.a) continue
+    if (move.from.a === undefined || move.to.a === undefined) continue
     const from = alongOf(stock, move.from)
     const to = alongOf(stock, move.to)
-    // The link between the two bands crosses the untouched gap at X15.
+    // The gap between the two bands is at X15.
     if (!(Math.min(from, to) <= 15 && Math.max(from, to) >= 15)) continue
     crossings++
-    const blank = blankZ(move.from.a)
+    const physical = (a: number): number => ((a % 360) + 360) % 360
+    const blank = Math.max(blankZ(physical(move.from.a)), blankZ(physical(move.to.a)))
     assert.ok(move.from.z >= blank - 1e-6 && move.to.z >= blank - 1e-6,
-      `a link crossing the gap at X15, A${move.from.a.toFixed(2)} runs at `
-      + `Z${Math.min(move.from.z, move.to.z).toFixed(4)}, inside the uncut blank `
+      `a ${move.kind} crossing the gap at X15, A${move.from.a.toFixed(2)}->${move.to.a.toFixed(2)} `
+      + `runs at Z${Math.min(move.from.z, move.to.z).toFixed(4)}, inside the uncut blank `
       + `(top ${blank.toFixed(4)})`)
   }
   assert.ok(crossings > 0,
@@ -861,21 +866,17 @@ const ROUND_FINISH_PARAMS = {
     'lowering a transition\'s shoulder clearance is caught')
 }
 
-// ── a rough link inside a region cuts at the layer ────────────────────────
+// ── a region-trimmed rough ring makes a safe gap (#1103 slice ca-d) ──────
 
-// #1117 slice B: the rough's ring-to-ring link is a cut at one angle, so a
-// region limits it the same way it limits a ring: the whole **along span** must
-// be inside the mask, and the material outside the mask is the uncut blank. A
-// ring trimmed to one contiguous arc shares its boundary angle with the
-// neighbouring ring, so the link stays at the layer inside the region. At the
-// second layer the same link would put the cutter body into blank that no layer
-// has touched (there is no ring on the boundary angle to lower it), so it keeps
-// the raised form.
+// #1117 kept a region-trimmed ring's transition at the layer because both rings
+// shared a commanded angle. With A one-way that angle is a full turn apart, so
+// the transition is a **safe gap** -- retract, turn, plunge at the travel
+// height -- and the property that matters is unchanged: no cutting move leaves
+// the mask, and nothing crosses the untouched stock below the blank.
 {
   const stock = roundStock(12, 30, 'x')
   const centre = barCentre(stock)
   const circumference = Math.PI * stock.thickness
-  const pivot = barPivotZ(stock)
   const travelZ = rotaryTravelZ(stock, 'mm')
   const mesh = cylinderMesh(stock, 4, 3, 27)
   const params = {
@@ -893,44 +894,26 @@ const ROUND_FINISH_PARAMS = {
     ...params, region: productionMask(stock, arc),
   }, {})
   assert.deepEqual(result.warnings, [], 'the region rough has no warning')
-  const links = ringLinks(result)
-  const raised = result.moves.filter((move) => move.kind === 'rapid'
-    && move.from.a !== undefined && move.from.a === move.to.a
-    && alongOf(stock, move.to) > alongOf(stock, move.from))
-  assert.ok(links.length > 0, `the trimmed rings link at the layer (${links.length} links)`)
-  assert.ok(raised.length > 0,
-    `the second layer keeps the raised link at the region boundary (${raised.length})`)
-  const layerRadius = 5
-  for (const link of links) {
-    const tip = link.from.z - pivot
-    assert.ok(tip >= layerRadius - 1e-6 && tip <= layerRadius + params.requestedCellSize + 1e-6,
-      `a region link cuts at the first layer's radius (tip ${tip.toFixed(4)}), not deeper`)
-    assert.equal(link.to.z, link.from.z, 'and keeps one height along the bar')
-    for (const point of [link.from, link.to]) {
+  // No ring-to-ring at-layer link survives the trimmed boundary.
+  assert.equal(ringLinks(result).length, 0,
+    'a region-trimmed ring transition is a safe gap, not an at-layer link')
+  // Every cutting move of the rough stays inside the mask.
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    if (Math.min(move.from.z, move.to.z) >= travelZ - 1e-6) continue
+    for (const point of [move.from, move.to]) {
       assert.ok(insideSheetRect(stock, arc, alongOf(stock, point), point.a ?? 0),
-        `a region link stays inside the mask (X${alongOf(stock, point).toFixed(3)} A${(point.a ?? 0).toFixed(3)})`)
-    }
-    // The *whole* span, not only its endpoints: the link is one straight cut.
-    const from = alongOf(stock, link.from)
-    const to = alongOf(stock, link.to)
-    for (let step = 1; step < 8; step++) {
-      const x = from + (to - from) * step / 8
-      assert.ok(insideSheetRect(stock, arc, x, link.from.a ?? 0),
-        `the link span stays inside the mask at X${x.toFixed(3)}`)
+        `a region cut stays inside the mask (X${alongOf(stock, point).toFixed(3)} A${(point.a ?? 0).toFixed(3)})`)
     }
   }
-  // The mutation this block rejects: treating outside-region stock as removed
-  // (or dropping the cutter-body window that sees it) makes the second layer's
-  // boundary link a cut at the untouched blank, at roughly the 4 mm model.
-  assert.ok(links.every((link) => link.from.z - pivot >= layerRadius - 1e-6),
-    'no region link cuts into the uncut blank outside the mask')
-  assert.ok(raised.every((move) => Math.min(move.from.z, move.to.z) - pivot >= layerRadius + 1 - 1e-6),
-    'the raised links clear the material this layer left by the 1 mm link clearance')
+  // The gap is turned at the travel height, above the blank.
+  assert.ok(result.moves.some((move) => move.kind === 'rapid'
+    && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a
+    && Math.min(move.from.z, move.to.z) >= travelZ - 1e-6),
+    'the trimmed boundary turns at the travel height')
 
-  // Two along bands on the same round bar: inside a band the rings link at the
-  // layer, and the gap between them is crossed only by the raised rapid. This
-  // is the round-bar counterpart of the square gap block above (a square blank
-  // keeps the raised link at every gate-split transition).
+  // Two along bands on the same round bar: the gap between them is crossed by a
+  // rapid at the travel height, and nothing cutting covers it.
   const band = (alongMin: number, alongMax: number): SketchFeature => regionFeature(stock, `band-${alongMin}`, {
     alongMin, alongMax,
     acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
@@ -943,16 +926,6 @@ const ROUND_FINISH_PARAMS = {
     ...params, region: bandsMask,
   }, {})
   assert.deepEqual(bands.warnings, [], 'the two-band rough has no warning')
-  const bandLinks = ringLinks(bands)
-  assert.ok(bandLinks.length > 0, `the rings inside a band link at the layer (${bandLinks.length})`)
-  for (const link of bandLinks) {
-    const from = alongOf(stock, link.from)
-    const to = alongOf(stock, link.to)
-    assert.ok(Math.max(from, to) <= 8 + 1e-9 || Math.min(from, to) >= 20 - 1e-9,
-      `a band link stays inside one band (${from.toFixed(2)} -> ${to.toFixed(2)})`)
-    assert.ok(Math.min(link.from.z, link.to.z) < travelZ - 1e-6,
-      'a band link is a cut at the layer')
-  }
   const gapCrossings = bands.moves.filter((move) => {
     if (move.kind === 'rapid') return false
     const from = alongOf(stock, move.from)
@@ -963,23 +936,23 @@ const ROUND_FINISH_PARAMS = {
     'nothing cutting crosses the gap between the two bands')
   assert.ok(bands.moves.some((move) => move.kind === 'rapid'
     && Math.min(alongOf(stock, move.from), alongOf(stock, move.to)) < 14
-    && Math.max(alongOf(stock, move.from), alongOf(stock, move.to)) > 14),
-    'the raised link crosses the gap instead')
-  console.log(`  region links: ${links.length} at the layer, ${raised.length} raised, `
-    + `${bandLinks.length} band links, ${ringCount(result)} rings`)
+    && Math.max(alongOf(stock, move.from), alongOf(stock, move.to)) > 14
+    && Math.min(move.from.z, move.to.z) >= travelZ - 1e-6),
+    'the gap is crossed by a rapid at the travel height')
+  assert.ok(ringCount(bands) > 0, 'the bands still ring')
+  console.log(`  region gaps: ${ringCount(result)} rings trimmed, `
+    + `${ringCount(bands)} rings in two bands, no at-layer link across either gap`)
 }
 
 // ── a rough link cannot cross a narrow excluded strip ─────────────────────
 
-// The finish's strip repro, on the rough: the cutter-centre span 4.5 -> 5.5
-// covers an excluded strip 0.02 mm wide, and no pair of dense samples falls
-// inside it. The mask's own segment test decides the whole span, so the link
-// keeps the raised form instead of cutting the strip.
+// The finish's strip repro, on the rough: an excluded strip 0.02 mm wide falls
+// between two dense samples. No cutting move may cover it -- the strip is
+// uncut stock, not a surface a link may ride -- and the rough retracts across.
 {
   const stock = roundStock(12, 30, 'x')
   const centre = barCentre(stock)
   const circumference = Math.PI * stock.thickness
-  const travelZ = rotaryTravelZ(stock, 'mm')
   const mesh = cylinderMesh(stock, 4, 3, 27)
   const params = {
     stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
@@ -1008,125 +981,11 @@ const ROUND_FINISH_PARAMS = {
   const cutCrossings = result.moves.filter((move) => move.kind !== 'rapid' && crossesStrip(move))
   assert.equal(cutCrossings.length, 0,
     'no cutting move covers the excluded strip; the rough retracts across it')
-  const raisedCrossings = result.moves.filter((move) => move.kind === 'rapid' && crossesStrip(move))
-  assert.ok(raisedCrossings.length > 0, 'the raised link crosses the strip instead')
-  // The control: the link either side of the strip still cuts at the layer, so
-  // the refusal is the strip's, not a blanket fallback.
-  const links = ringLinks(result)
-  assert.ok(links.length > 0, `the strip's neighbours still link at the layer (${links.length})`)
-  for (const move of links) {
-    assert.ok(Math.min(move.from.z, move.to.z) < travelZ - 1e-6,
-      'a link beside the strip is a cut, not a raised traverse')
-  }
-  console.log(`  strip: ${raisedCrossings.length} raised crossings, ${links.length} layer links beside it`)
-}
-
-// ── a seam-wrapping region trims the rings at the seam angle ──────────────
-
-// #1117 slice B on the seam: a region drawn at the sheet's left edge covers
-// A180..A180+span, so the trimmed ring ends there and the between-ring link
-// uses that seam boundary angle -- reachable only through the mask's
-// one-circumference repeat. Without the mask the same fixture links at A0/A360.
-{
-  const stock = roundStock(12, 30, 'x')
-  const centre = barCentre(stock)
-  const circumference = Math.PI * stock.thickness
-  const mesh = cylinderMesh(stock, 4, 3, 27)
-  const params = {
-    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
-    safeRadius: 25, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
-  }
-  const leftEdge = centre - circumference / 2
-  const span = 3
-  const seamRect: SheetRect = {
-    alongMin: 0, alongMax: 30, acrossMin: leftEdge, acrossMax: leftEdge + span,
-  }
-  const seamAngle = 180 + span * 360 / circumference
-  const result = generateRotaryRough('region-seam', mesh, stock, ROUND_FINISH_TOOL, {
-    ...params, region: productionMask(stock, seamRect),
-  }, {})
-  assert.deepEqual(result.warnings, [], 'the seam rough has no warning')
-  const links = ringLinks(result)
-  assert.ok(links.length > 0, `the seam-trimmed rings link at the layer (${links.length} links)`)
-  for (const link of links) {
-    const angle = link.from.a ?? 0
-    assert.ok(angle > 180 - 1e-6 && angle < seamAngle + 1e-6,
-      `a seam link uses the seam band's boundary (A${angle.toFixed(3)} in A180..A${seamAngle.toFixed(3)})`)
-    for (const point of [link.from, link.to]) {
-      assert.ok(insideSheetRect(stock, seamRect, alongOf(stock, point), point.a ?? 0),
-        'a seam link stays inside the wrapped mask')
-    }
-  }
-  // The control: the same operation without a region links at the ring's own
-  // ends, so the seam angle above came from the mask.
-  const free = generateRotaryRough('region-seam-free', mesh, stock, ROUND_FINISH_TOOL, params, {})
-  assert.deepEqual(free.warnings, [], 'the region-free control has no warning')
-  const freeAngles = ringLinks(free).map((link) => link.from.a ?? 0)
-  assert.ok(freeAngles.some((angle) => Math.abs(angle) <= 1e-9 || Math.abs(angle - 360) <= 1e-9),
-    'the region-free control links at A0/A360')
-  assert.ok(freeAngles.every((angle) => angle > 180 - 1e-6 && angle < seamAngle + 1e-6) === false,
-    'so the seam is what moves the link angle')
-  console.log(`  seam: ${links.length} links in A180..A${seamAngle.toFixed(2)}`)
-}
-
-// ── a slanted region edge links its runs on the swept path ────────────────
-
-// #1117 slice B kept **exactly equal** commanded A on both rings, so a slanted
-// region band -- whose across boundary moves with the along position, leaving
-// two neighbouring rings' runs a few degrees apart -- kept the old retract.
-// #1117 rl-e is the slice that proves that transition instead: the link's whole
-// swept path (a slope in along and A) must pass the at-layer rules and stay
-// inside the mask, and then it is a cutting link like any other. This fixture is
-// the case the old refusal was written for, so it is the one that must now move.
-{
-  const stock = roundStock(12, 30, 'x')
-  const centre = barCentre(stock)
-  const mesh = cylinderMesh(stock, 4, 3, 27)
-  const params = {
-    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 3, alongEnd: 27,
-    safeRadius: 25, requestedCellSize: 0.5, stepdown: 1, passDirection: 'around' as const,
-  }
-  // A parallelogram: the lower boundary runs from centre - 2 at X3 to
-  // centre + 1 at X27, the upper one from centre + 2 to centre + 5.
-  const slant = buildRegionMask([profileRegionFeature('slant', polygonProfile([
-    { x: 3, y: centre - 2 }, { x: 27, y: centre + 1 },
-    { x: 27, y: centre + 5 }, { x: 3, y: centre + 2 },
-  ]))])
-  assert.ok(slant, 'the slanted mask builds')
-  const result = generateRotaryRough('region-slant', mesh, stock, ROUND_FINISH_TOOL, {
-    ...params, region: slant,
-  }, {})
-  assert.deepEqual(result.warnings, [], 'the slanted rough has no warning')
-  // Lanes where two rings do share the boundary angle still link at the layer.
-  assert.ok(ringLinks(result).length > 0, 'the slanted band still links its equal-angle transitions')
-  // #1117 rl-e: the A-changing transition is a diagonal cut at the layer. A ring
-  // cut turns A at one along position and an equal-angle link runs along the bar
-  // at one angle, so a cut that changes both is this link and nothing else.
-  const diagonal = result.moves.filter((move) => move.kind === 'cut'
-    && move.from.a !== undefined && move.to.a !== undefined
-    && move.from.a !== move.to.a && alongOf(stock, move.from) !== alongOf(stock, move.to))
-  assert.ok(diagonal.length > 0,
-    `the A-changing transition links at the layer (${diagonal.length} diagonal cuts)`)
-  for (const move of diagonal) {
-    // The proof that admitted it: every pose of the slope is inside the mask,
-    // sampled here far finer than the generator's own dense row.
-    for (let step = 0; step <= 32; step++) {
-      const t = step / 32
-      const along = alongOf(stock, move.from) + (alongOf(stock, move.to) - alongOf(stock, move.from)) * t
-      const angle = move.from.a! + (move.to.a! - move.from.a!) * t
-      assert.ok(rotaryRegionContains(slant, stock, along, angle),
-        `an A-changing link leaves the region at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
-    }
-    // And it is a layer link, not the travel-height traverse.
-    assert.ok(Math.max(move.from.z, move.to.z) < rotaryTravelZ(stock, 'mm') - 1e-6,
-      'the A-changing link stays at the layer')
-  }
-  // The transitions that cannot be proved still retract at the travel height.
-  assert.ok(result.moves.some((move) => move.kind === 'rapid'
-    && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a
-    && Math.min(move.from.z, move.to.z) >= rotaryTravelZ(stock, 'mm') - 1e-6),
-    'the slanted transition retracts at the travel height')
-  console.log(`  slant: ${ringLinks(result).length} equal-angle links, ${diagonal.length} diagonal cuts`)
+  assert.ok(result.moves.some((move) => move.kind === 'rapid' && crossesStrip(move)),
+    'a rapid crosses the strip instead')
+  assert.ok(cuttingMoves(result, rotaryTravelZ(stock, 'mm')).length > 0,
+    'the band beside the strip still cuts')
+  console.log(`  strip: no cutting move covers the excluded strip; the rough retracts across`)
 }
 
 // ── no region: byte-identical output ──────────────────────────────────────
@@ -1153,7 +1012,7 @@ const NO_REGION_HASHES: Record<string, string> = {
   // more of its ring-to-ring links at the layer -- 29 equal-angle links became
   // 46 and the raised links fell from 31 to 18. The raised form is unchanged
   // wherever it is still emitted.
-  'round/rotary_rough/around': 'moves=3e60f391315f97bf warnings= gcode=3fe65d95fa34c3f2',
+  'round/rotary_rough/around': 'moves=bfa25c1f25a3d506 warnings= gcode=63e012f2b265d738',
   'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
@@ -1165,7 +1024,7 @@ const NO_REGION_HASHES: Record<string, string> = {
   // blank's whole rings (below its inscribed radius) now link at the layer
   // instead of only its corner arcs. 33 raised links became at-layer cuts;
   // every other move is byte-identical to the previous recording.
-  'square/rotary_rough/around': 'moves=5c5e53752aee749e warnings= gcode=ef20cc7e63adae10',
+  'square/rotary_rough/around': 'moves=da1d6236c7b106f1 warnings= gcode=536d7fb8b229b50c',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=755a66621cb1363c',
   'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=2d9890f36714171b',
 }
