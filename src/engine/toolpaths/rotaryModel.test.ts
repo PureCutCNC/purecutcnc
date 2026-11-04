@@ -2286,9 +2286,15 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // 0.09 mm lift. Every interior position is unchanged and the along pass
     // never had the lift (its sampler has no cell pad). Recaptured for #1098:
     // along layers alternate direction, so the along program's order changes;
-    // around is untouched.
+    // around is untouched. Recaptured for #1117: the around rough links
+    // adjacent rings as cutting feeds at the current layer instead of rising
+    // over them, so the around program's links move while its ring cuts do not.
+    // Recaptured again for #1117 rl-e: the at-layer leftover is now what an
+    // earlier layer actually left (the lowest pass over the ring positions)
+    // rather than an upper bound on it, so this fixture's layers past the first
+    // keep their links at the layer too. The along program did not move.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '3066ffca34b19d29' : 'cc4b7b7ebb3238bd',
+      direction === 'along' ? '3066ffca34b19d29' : '19428cbf978287a4',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)

@@ -458,11 +458,256 @@ console.log('Testing the operation-level link-window budget...')
     && move.from.a === move.to.a && move.from.z === move.to.z
     && move.to.x > move.from.x
     && move.from.z - pivot < barMaxRadius(stock) + 1 - 1e-9
+  // #1117 (square links): a boundary is linked either by the raised traverse
+  // or, where it qualifies, by the at-layer cut that replaces it.
+  const atLayerLink = (move: ToolpathMove): boolean => move.kind === 'cut'
+    && move.from.a !== undefined && move.from.a === move.to.a && move.to.x > move.from.x + 1e-12
   const beforeFallback = result.moves.slice(0, result.moves.indexOf(firstFallback))
-    .filter(linkMove).length
+    .filter((move) => linkMove(move) || atLayerLink(move)).length
   assert.ok(beforeFallback > 100,
     `links run before the budget is spent, so the fallback is past it (${beforeFallback} links)`)
   assert.ok(result.moves.some(linkMove), 'the operation still links its easy rings')
+  // #1117 fix 1 (P2) baseline regression: the at-layer candidate is an
+  // **attempt** tried at each boundary, and it has to be charged to its own
+  // operation budget. When it spent the raised link's budget instead, 176 of
+  // this fixture's raised links were starved and fell back one step further, to
+  // the travel height -- the second A0 traverse from x=4 to x=5 dropped from the
+  // baseline z=36.284268390 to z=49.284271247. The baseline has 960 raised
+  // traverses (constant-z rapids below the travel height) and 288 plunges; the
+  // shared budget left 784 and 464. The assertions below lock that baseline.
+  //
+  // #1117 (square links): the whole rings below the blank's inscribed radius
+  // now link at the layer too, so 784 of those 960 raised traverses became
+  // at-layer cuts (392 equal-angle cuts before, 1177 now). Diffed against the
+  // pre-change output, every other move -- the 176 remaining raised traverses
+  // and all 288 plunges -- is identical, so the raised budget is still exactly
+  // the baseline's.
+  assert.equal(plunges.length, 288,
+    `the raised-link budget is untouched by the at-layer attempts (${plunges.length} plunges)`)
+  const raisedTraverses = result.moves.filter(linkMove)
+  assert.equal(raisedTraverses.length, 176,
+    `every link that does not qualify keeps its baseline raised traverse (${raisedTraverses.length})`)
+  assert.equal(result.moves.filter(atLayerLink).length, 1177,
+    'the replaced boundaries are at-layer cuts')
+  const a0FirstBoundary = result.moves.filter((move) => move.from.a === 0
+    && Math.abs(move.from.x - 4) < 1e-9 && Math.abs(move.to.x - 5) < 1e-9)
+  assert.equal(a0FirstBoundary.length, 2,
+    `two A0 boundaries from x=4 to x=5 (${a0FirstBoundary.length})`)
+  assert.ok(atLayerLink(a0FirstBoundary[0]), 'the first, a whole ring, now links at the layer')
+  assert.ok(linkMove(a0FirstBoundary[1]) && Math.abs(a0FirstBoundary[1].from.z - 36.284268390) < 1e-9,
+    `the second keeps the baseline raised height (${a0FirstBoundary[1].from.z})`)
+}
+
+// ---------------------------------------------------------------------------
+// 3c-2. #1117 fix 2 (P2): an **accepted** at-layer link still has to pay the
+//     raised link's budget.
+//
+//     The baseline charged the raised walk at every eligible ring boundary. A
+//     winning candidate replaces the walk's **output**, so with fix 1 alone it
+//     skipped the charge too: the raised bucket was under-spent, and a later
+//     boundary whose candidate was **rejected** found material the baseline had
+//     already refused to walk. This fixture is the mixed case -- 4 mm flat
+//     cutter, stepdown 2: the first layers accept corner-arc links, and past the
+//     operation budget the later boundaries must keep the baseline's
+//     travel-height fallback. Without the fix, 784 fallback plans changed: A0
+//     X5->X6 at layer 5 read z=41.191374123 instead of the baseline travel-height
+//     z=49.284271247, and 784 within-layer plunges disappeared (2002 -> 1218).
+//
+//     Mutation caught: skip the raised walk when `linkAtLayer` accepts, i.e.
+//     `linkAtLayer(...) ?? layerLink(...)` in the ring loop.
+// ---------------------------------------------------------------------------
+
+/** A rough ring-to-ring link: a cut at one angle that changes the along coordinate. */
+const isAlongLink = (move: ToolpathMove): boolean => move.kind === 'cut'
+  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
+  && move.from.x !== move.to.x
+/** The raised form of the same link: its constant-height traverse is a rapid. */
+const isRaisedAlongLink = (move: ToolpathMove): boolean => move.kind === 'rapid'
+  && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
+  && move.from.x !== move.to.x
+
+console.log('Testing that accepted at-layer links keep the raised-link budget history...')
+{
+  const stock = squareStock(40, 400, 'x', { x: 0, y: 0 })
+  const model = revolved(stock, [{ along: 2, radius: 6 }, { along: 398, radius: 14 }], 96)
+  const pivot = barPivotZ(stock)
+  const result = generateRotaryRough('window-budget-mixed', model, stock, FLAT, {
+    stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 2, alongEnd: 398,
+    safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.5, stepdown: 2,
+    passDirection: 'around',
+  }, {})
+  // The mix itself: accepted at-layer cuts and budget-refused raised fallbacks
+  // in one operation. Either one alone cannot expose the accounting bug.
+  const accepted = result.moves.filter(isAlongLink)
+  const raised = result.moves.filter(isRaisedAlongLink)
+  assert.ok(accepted.length > 0,
+    `the fixture accepts at-layer links (${accepted.length})`)
+  assert.ok(raised.length > 0,
+    `and still emits raised fallbacks (${raised.length})`)
+  // The accepted links may not refund the raised budget: the retracts the
+  // baseline spent it on are still there, one plunge per refused boundary.
+  const plunges = result.moves.filter((move) => move.kind === 'plunge')
+  assert.equal(plunges.length, 2002,
+    `the accepted links do not refund the raised budget (${plunges.length} plunges, baseline 2002)`)
+  // The boundary the review named: A0 X5->X6 falls past the budget, so every
+  // copy of it retracts and traverses at the travel height -- exactly the
+  // baseline plan. With the accepted links uncharged, one copy found a leftover
+  // at z=41.191374123 instead of the travel height z=49.284271247.
+  const travelTip = barMaxRadius(stock) + 1
+  const a0Fallbacks = raised.filter((move) => move.from.a === 0
+    && Math.abs(move.from.x - 5) < 1e-9 && Math.abs(move.to.x - 6) < 1e-9)
+  assert.equal(a0Fallbacks.length, 4,
+    `every A0 X5->X6 boundary keeps its raised fallback (${a0Fallbacks.length})`)
+  for (const move of a0Fallbacks) {
+    assert.ok(Math.abs(move.from.z - pivot - travelTip) < 1e-9,
+      `a refused A0 X5->X6 boundary keeps the baseline travel height (${(move.from.z - pivot).toFixed(9)} vs ${travelTip.toFixed(9)})`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3d. #1117 slice B: square corner arcs link at the layer.
+//
+//     A square around ring is a set of short arcs at the blank's corners, so
+//     every ring is "split" and the old rule kept a raised link at every
+//     boundary. Neighbouring rings alternate direction and share the arc's
+//     touch-gate boundary angle exactly, so that transition *is* where both
+//     rings already cut: the link can stay at `max(model, layer radius)` and
+//     remove the one band this layer removes, the first layer included (nothing
+//     is assumed cleared in front of it). An A-changing transition between two
+//     arcs of one ring still turns at the blank's corner envelope. A layer whose
+//     ring is a single whole turn (below the blank's inscribed radius) links at
+//     A0/A360 too (#1117 square links): it used to keep the raised link, because
+//     the candidate required a gate boundary, and it now takes at most one
+//     stepdown from what the earlier layers left over the cutter body's window.
+//
+//     Mutations each fail here:
+//      - the exact-angle check bypassed -> the A-changing arc turn becomes a
+//        cutting link at the layer instead of a turn at the corner envelope;
+//      - the touch-gate boundary rule restored as a refusal -> the whole-ring
+//        layers (3-5) keep their raised links.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that the square around rough links its corner arcs at the layer...')
+{
+  const pivot = barPivotZ(SQUARE)
+  const maxRadius = barMaxRadius(SQUARE)
+  const stepdown = 2
+  const rough = generateRotaryRough('corner-links', SQUARE_MODEL, SQUARE, FLAT, {
+    ...SQUARE_BASE, stepdown, passDirection: 'around',
+  }, {})
+  assert.deepEqual(rough.warnings, [], 'the corner-link rough has no warning')
+  const links = rough.moves.filter(isAlongLink)
+  const raised = rough.moves.filter(isRaisedAlongLink)
+  const atSeam = (link: ToolpathMove): boolean => {
+    const angle = angleOf(link.from)
+    return Math.abs(angle) <= 1e-9 || Math.abs(angle - 360) <= 1e-9
+  }
+  // Two layers still have a radius above the blank's inscribed radius (10 mm),
+  // so the touch gate keeps arcs at them; seven pulled-in rings give six
+  // boundaries. Every one shares the arc boundary angle, so every one links.
+  const arcLayers = 2
+  const boundaries = 6
+  const arcLinks = links.filter((link) => !atSeam(link))
+  assert.equal(arcLinks.length, arcLayers * boundaries,
+    `every corner-arc boundary links at the layer (${arcLinks.length} of ${arcLayers * boundaries})`)
+  const layerRadius = [maxRadius - stepdown, maxRadius - 2 * stepdown]
+  for (const link of arcLinks) {
+    const height = link.from.z - pivot
+    assert.ok(layerRadius.some((radius) => Math.abs(height - radius) <= 1e-6),
+      `a corner link stays at its layer's radius (${height.toFixed(4)} is one of ${layerRadius.map((r) => r.toFixed(3)).join('/')})`)
+    assert.equal(link.to.z, link.from.z, 'a corner link keeps one height along the bar')
+    const angle = angleOf(link.from)
+    // It is a cut, not a raised traverse: the blank at the link's own ray is at
+    // or above its height, so the link removes material there.
+    assert.ok(height <= squareRotaryTouchRadius(SQUARE, angle, FLAT.radius, FLAT.type) + 0.06,
+      `the link at A${angle.toFixed(2)} stays under the blank material at its own ray`)
+  }
+  for (const link of links) {
+    // The retained band is where the ring cuts are: the link never leaves it.
+    assert.ok(link.from.x >= SQUARE_BASE.alongStart + FLAT.radius - 1e-9
+      && link.to.x <= SQUARE_BASE.alongEnd - FLAT.radius + 1e-9,
+      `the link ${link.from.x.toFixed(3)}->${link.to.x.toFixed(3)} stays inside the pulled-in band`)
+  }
+  // The **first** layer links too (nothing is assumed cleared in front of it):
+  // its six links are all at the blank's first band boundary.
+  const firstLayer = links.filter((link) => Math.abs(link.from.z - pivot - layerRadius[0]) <= 1e-6)
+  assert.equal(firstLayer.length, boundaries,
+    `the first layer links every corner boundary (${firstLayer.length})`)
+
+  // #1117 (square links): layers 3-5 have a radius at or below the inscribed
+  // radius, so the gate does not split the ring: it is one whole turn, and its
+  // boundary is the ring's own end at A0/A360. Those transitions now link at
+  // the layer. Each removes at most one stepdown of the blank the earlier layers
+  // left over the flat's whole window: here the material at an angle is the
+  // blank's touch radius, lowered to every earlier layer radius below it (the
+  // 1.5 mm rings are closer than the 4 mm cutter, so a layer that cut an angle
+  // cut it along the whole band).
+  const wholeRingLayers = [3, 4, 5].map((layer) => Math.max(maxRadius - layer * stepdown, 0))
+  const faceLinks = links.filter(atSeam)
+  assert.equal(faceLinks.length, 3 * boundaries,
+    `the three whole-ring layers link at A0/A360 (${faceLinks.length} of ${3 * boundaries})`)
+  for (const link of faceLinks) {
+    const height = link.from.z - pivot
+    // The link cuts at `max(model, layer radius)`: its layer is the deepest one
+    // at or below its height (layer 5 is clamped by the 5 mm model).
+    const layer = wholeRingLayers.findIndex((radius, index) => radius <= height + 1e-6
+      && (index === 0 || wholeRingLayers[index - 1] > height + 1e-6)) + 3
+    assert.ok(layer >= 3 && (Math.abs(height - wholeRingLayers[layer - 3]) <= 1e-6 || height >= ROUND_RADIUS - 1e-6),
+      `a whole-ring link cuts at its layer's radius or on the model (${height.toFixed(4)})`)
+    const reach = Math.atan(FLAT.radius / height) * 180 / Math.PI
+    for (let offset = -reach; offset <= reach + 1e-9; offset += reach / 20) {
+      let material = squareRotaryTouchRadius(SQUARE, offset, FLAT.radius, FLAT.type)
+      for (let earlier = 1; earlier < layer; earlier++) {
+        const radius = maxRadius - earlier * stepdown
+        if (radius < material) material = radius
+      }
+      assert.ok(material - height <= stepdown + 1e-6,
+        `the whole-ring link at layer ${layer} meets ${material.toFixed(4)} at A${offset.toFixed(2)}, `
+        + `more than one stepdown over ${height.toFixed(4)}`)
+    }
+  }
+  const raisedBelowTravel = raised.filter((link) => link.from.z - pivot < TRAVEL_TIP - 1e-6)
+  assert.equal(raisedBelowTravel.length, 0,
+    `no whole-ring boundary keeps a raised link (${raisedBelowTravel.length})`)
+
+  // The A-changing transition between two arcs of one ring is a turn at the
+  // blank's corner envelope, never a cutting link at the layer. Its span
+  // crosses the blank's face, where the material is lower than the layer: a low
+  // turn there would swing the cutter through the corner instead of clearing
+  // it. So a low A-changing cut may only turn through angles whose blank
+  // material still reaches its height (a corner arc); everything else turns at
+  // the travel height.
+  const turns = rough.moves.filter((move) => move.kind === 'cut'
+    && move.from.a !== undefined && move.to.a !== undefined
+    && move.from.a !== move.to.a && move.from.x === move.to.x)
+  const spanAngles = (from: number, to: number): number[] => {
+    // The swept direction, not the short way round: a ring arc cut runs from one
+    // boundary to the other, and a turn runs from where the run stopped.
+    const delta = to - from
+    const count = Math.max(2, Math.ceil(Math.abs(delta) / 2))
+    return Array.from({ length: count + 1 }, (_, index) => from + delta * index / count)
+  }
+  let lowTurns = 0
+  let highTurns = 0
+  for (const move of turns) {
+    const low = Math.min(move.from.z, move.to.z) - pivot
+    const height = Math.max(move.from.z, move.to.z) - pivot
+    if (low >= TRAVEL_TIP - 1e-6) {
+      highTurns++
+      continue
+    }
+    lowTurns++
+    for (const angle of spanAngles(angleOf(move.from), angleOf(move.to))) {
+      assert.ok(height <= squareRotaryTouchRadius(SQUARE, angle, FLAT.radius, FLAT.type) + 0.06,
+        `a low A-changing cut at A${angleOf(move.from).toFixed(2)}->${angleOf(move.to).toFixed(2)} `
+        + `turns through A${angle.toFixed(2)}, where the blank stands at only `
+        + `${squareRotaryTouchRadius(SQUARE, angle, FLAT.radius, FLAT.type).toFixed(4)} and the cut is at ${height.toFixed(4)}`)
+    }
+  }
+  assert.ok(highTurns > 0, `the fixture exercises turns at the corner envelope (${highTurns})`)
+  assert.ok(lowTurns > 0, `and low turns through a corner arc (${lowTurns})`)
+  console.log(`  ${links.length} layer links, ${raisedBelowTravel.length} raised, `
+    + `${highTurns} turns at the corner envelope, ${lowTurns} arc turns at the layer`)
 }
 
 // ---------------------------------------------------------------------------
@@ -792,8 +1037,12 @@ console.log('Testing the retained-square shoulders on both ring directions...')
     ...SQUARE_BASE, passDirection: 'around',
   }, {})
   const pulled = { start: SQUARE_BASE.alongStart + FLAT.radius, end: SQUARE_BASE.alongEnd - FLAT.radius }
+  const pivot = barPivotZ(SQUARE)
   let forwardRings = 0
   let reversedRings = 0
+  // #1117: the rough's at-layer links are cuts too, so the stub-floor walk below
+  // must include them; this count proves the fixture actually contains them.
+  let atLayerLinks = 0
   for (const [label, result] of [['rough', rough], ['finish', finish]] as const) {
     let previousDirection = 0
     let previousAlong = Number.NaN
@@ -808,6 +1057,8 @@ console.log('Testing the retained-square shoulders on both ring directions...')
         previousAlong = along
       }
       if (previousDirection === 0 && direction !== 0) previousDirection = direction
+      if (move.from.a === move.to.a && move.from.x !== move.to.x
+        && Math.max(move.from.z, move.to.z) - pivot < TRAVEL_TIP - 1e-6) atLayerLinks++
       for (const point of [move.from, move.to]) {
         const tip = tipOf(point)
         if (tip >= TRAVEL_TIP - 1e-9) continue
@@ -829,7 +1080,10 @@ console.log('Testing the retained-square shoulders on both ring directions...')
   }
   assert.ok(forwardRings > 0, 'forward rings were measured')
   assert.ok(reversedRings > 0, 'reversed rings were measured')
-  console.log(`  forward rings ${forwardRings}, reversed rings ${reversedRings}`)
+  assert.ok(atLayerLinks > 0,
+    `the stub-floor walk covers the at-layer links (${atLayerLinks} links measured)`)
+  console.log(`  forward rings ${forwardRings}, reversed rings ${reversedRings}, `
+    + `${atLayerLinks} at-layer links checked against the retained stub`)
 }
 
 // ---------------------------------------------------------------------------

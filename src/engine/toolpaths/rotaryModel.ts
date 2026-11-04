@@ -355,10 +355,16 @@ interface RotaryRun {
  * square blank -- floored at the retained stub's exact contact); `NaN` still
  * means "no model under the tool".
  */
-interface RotaryLinkRow {
+export interface RotaryLinkRow {
   readonly along: readonly number[]
   readonly tips: readonly number[]
 }
+
+/**
+ * The link path a budget belongs to (#1117 fix 1): the raised link, whose
+ * accounting must match the pre-#1117 operation, or the at-layer candidate.
+ */
+export type RotaryLinkBucket = 'raised' | 'atLayer'
 
 /**
  * One commanded leg of a ring-to-ring link (#1093). The finish's surface-
@@ -430,6 +436,38 @@ export function rotaryRegionSegmentContains(
   return stock.axis === 'x'
     ? mask.containsSegment({ x: fromAlong, y: across }, { x: toAlong, y: across })
     : mask.containsSegment({ x: across, y: fromAlong }, { x: across, y: toAlong })
+}
+
+/**
+ * Is an A-changing link's **whole swept path** inside the operation's region
+ * (#1117 rl-e correction, review finding 1)?
+ *
+ * The link is one commanded straight move in `(along, A)`. The sheet's across
+ * coordinate is affine in A -- `centre + a * pi * thickness / 360` -- so that
+ * move is one straight segment on the sheet: the path's angle at every along
+ * position lies exactly on the segment from `(fromAlong, across(fromAngle))` to
+ * `(toAlong, across(toAngle))`. The mask's boundary test therefore decides the
+ * whole path at once, and can see an excluded strip narrower than the sample
+ * spacing that a point-by-point check of the emitted waypoints steps over.
+ *
+ * `null` means the mask has no boundary test, and the caller keeps its
+ * per-sample point check.
+ */
+export function rotaryRegionSlopeContains(
+  mask: RotaryRegionMask,
+  stock: BarStock,
+  fromAlong: number,
+  fromAngle: number,
+  toAlong: number,
+  toAngle: number,
+): boolean | null {
+  if (mask.containsSegment === undefined) return null
+  const acrossAt = (angleDeg: number): number => barCentre(stock) + angleDeg * Math.PI * stock.thickness / 360
+  const fromAcross = acrossAt(fromAngle)
+  const toAcross = acrossAt(toAngle)
+  return stock.axis === 'x'
+    ? mask.containsSegment({ x: fromAlong, y: fromAcross }, { x: toAlong, y: toAcross })
+    : mask.containsSegment({ x: fromAcross, y: fromAlong }, { x: toAcross, y: toAlong })
 }
 
 /**
@@ -762,8 +800,57 @@ const MAX_LINK_WORK = 4_000_000
  * per-call `MAX_LINK_WORK` cannot. Past it the remaining links retract through
  * the old travel path, so a long, fine job stays finite instead of running a
  * quadratic pass for every ring.
+ *
+ * #1117 fix 1 (P2): **each** link path gets its own budget -- the raised link
+ * and the at-layer candidate. The at-layer candidate can be rejected after its
+ * walk, and the raised link is the fallback for every boundary it does not win;
+ * charging both to one counter let a rejected attempt starve a later raised
+ * link, which then dropped to the travel height instead of the raised height the
+ * baseline gave it.
+ *
+ * #1117 fix 2 (P2): the raised bucket also has to advance for an **accepted**
+ * at-layer link. The candidate is an addition to the link plan, not a
+ * replacement for the raised plan's accounting: the baseline (`805abe6a`)
+ * charged the raised walk at every eligible boundary, so skipping it wherever
+ * the candidate won left the bucket under-spent and a later rejected boundary
+ * found material the baseline had already refused to walk. The fix computes the
+ * raised plan first, at every eligible boundary, and only then overrides the
+ * **emitted** steps with the at-layer candidate; the raised walk's charge and
+ * cache entries therefore reproduce the baseline exactly, wherever the boundary
+ * lands. The candidate's own bucket and cache keys stay separate, so it can
+ * never spend what the raised plan needs.
  */
 const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
+
+/**
+ * The widest A change an at-layer link may sweep (#1117 rl-e).
+ *
+ * An A-changing link is the partial-ring case: one ring's run ends where the
+ * material crosses this layer's radius, and the next ring's run starts at the
+ * angle that crossing has moved to. A few degrees of drift is that case. A wide
+ * change is a different transition -- a lobe boundary jumping most of the bar --
+ * and nothing proves it; past this bound the raised link stays, exactly as it
+ * would today.
+ */
+const MAX_LINK_ACROSS_DEG = 45
+
+/**
+ * The most model rows one around operation may sample for A-changing links
+ * (#1117 rl-e). Each candidate needs a link row per grid angle its path
+ * crosses, and the rows are not shared between boundaries the way a full ring's
+ * single shared angle is. Past the budget the remaining candidates keep the
+ * raised link, which is the pre-slice behaviour, so a long job cannot turn the
+ * link plan into an unbounded number of model passes; the per-candidate cap
+ * keeps one wide drift from spending the whole budget.
+ */
+const MAX_LINK_ACROSS_ROWS = 512
+// #1117 (square links): half of the operation budget, 256 rows. 64 refused
+// valid short drifts on busto-rect's adaptive grid, which refines to about
+// 0.17 deg near A0: drifts of 12-28 deg inside `MAX_LINK_ACROSS_DEG` crossed
+// 72, 97, 138 and 165 rows. 256 admits a 45 deg drift on any grid of 0.18 deg
+// or coarser, while one candidate still cannot take more than half of the
+// operation's rows (rows already sampled by another candidate cost nothing).
+const MAX_LINK_ACROSS_ROWS_PER_LINK = MAX_LINK_ACROSS_ROWS / 2
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
 // grid, even when the touch gate ultimately skips it (#1045 slice N). Both this
@@ -1334,8 +1421,12 @@ interface RotaryTargets {
    * floor where a stub overlaps (#1016 C2-F6b).
    */
   stubFloor: number[][] | null
-  /** The dense link row at a ring link's shared angle, around mode only. */
-  linkRowAt: (angleDeg: number) => RotaryLinkRow | null
+  /**
+   * The dense link row at a ring link's shared angle, around mode only. The
+   * bucket names the link path whose sample budget pays for it (#1117): the
+   * at-layer candidate's rows never draw on the raised link's budget.
+   */
+  linkRowAt: (angleDeg: number, bucket?: RotaryLinkBucket) => RotaryLinkRow | null
   stopped: boolean
   refusal: ToolpathWarningCode | null
 }
@@ -1632,33 +1723,27 @@ function completeRotaryTargets(
   // a mode without rings, or a work budget that cannot afford a row this fine
   // -- the caller then keeps the old retract/rapid/plunge rather than sampling
   // a coarser, unsafe row.
-  const linkCache = new Map<number, RotaryLinkRow | null>()
-  let linkSampleTotal = 0
-  const linkRowAt = (angleDeg: number): RotaryLinkRow | null => {
-    const key = ((angleDeg % 360) + 360) % 360
-    const cached = linkCache.get(key)
-    if (cached !== undefined) return cached
-    if (params.passDirection !== 'around' || along.length <= 1) {
-      linkCache.set(key, null)
-      return null
-    }
-    const spacing = Math.min(
-      aroundArcStep(stock, params, tool.units),
-      params.stepover,
-      tool.radius / 4,
-    )
-    const span = along[along.length - 1] - along[0]
-    const intervals = span > 0 ? Math.ceil(span / Math.max(spacing, 1e-9)) : 0
-    if (!Number.isFinite(intervals) || intervals <= 0 || intervals + 1 > MAX_LINK_SAMPLES
-      || linkSampleTotal + intervals + 1 > MAX_LINK_TOTAL_SAMPLES
-      // The row is walked once per ring boundary, and the rough's leftover walk
-      // is row x along; cap that product and retract instead of running a
-      // quadratic pass on a long bar with a small cutter.
-      || (intervals + 1) * along.length > MAX_LINK_WORK) {
-      linkCache.set(key, null)
-      return null
-    }
-    const linkAlong = Array.from({ length: intervals + 1 }, (_, i) => along[0] + span * i / intervals)
+  //
+  // #1117 (square links): one sample budget per link path; see
+  // `linkRowBudget`.
+  const linkSpacing = Math.min(
+    aroundArcStep(stock, params, tool.units),
+    params.stepover,
+    tool.radius / 4,
+  )
+  const linkSpan = along[along.length - 1] - along[0]
+  const linkIntervals = linkSpan > 0 ? Math.ceil(linkSpan / Math.max(linkSpacing, 1e-9)) : 0
+  // Every row has the same along grid, so whether a row is affordable at all
+  // is one answer for the operation. The row is walked once per ring boundary,
+  // and the rough's leftover walk is row x along; cap that product and retract
+  // instead of running a quadratic pass on a long bar with a small cutter.
+  const linkRowSamples = params.passDirection !== 'around' || along.length <= 1
+    || !Number.isFinite(linkIntervals) || linkIntervals <= 0 || linkIntervals + 1 > MAX_LINK_SAMPLES
+    || (linkIntervals + 1) * along.length > MAX_LINK_WORK
+    ? null
+    : linkIntervals + 1
+  const linkRowAt = linkRowBudget(linkRowSamples, (key) => {
+    const linkAlong = Array.from({ length: linkIntervals + 1 }, (_, i) => along[0] + linkSpan * i / linkIntervals)
     const sampled = sampleRotaryModelWithWorkspace(
       samplingMesh,
       stock,
@@ -1676,11 +1761,8 @@ function completeRotaryTargets(
       warnings,
       workspace,
     )
-    if (!sampled.valid || sampled.stopped) {
-      linkCache.set(key, null)
-      return null
-    }
-    linkSampleTotal += linkAlong.length
+    if (sampled.stopped) return 'stopped'
+    if (!sampled.valid) return null
     const raw = sampled.tipRadius[0]
     const linkTips = Array.from(raw, (tip) =>
       Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
@@ -1705,11 +1787,61 @@ function completeRotaryTargets(
         }
       }
     }
-    const row: RotaryLinkRow = { along: linkAlong, tips: linkTips }
+    return { along: linkAlong, tips: linkTips }
+  })
+  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
+}
+
+/**
+ * The link-row cache and its sample budgets (#1093, #1117 square links),
+ * apart from the model sampling so the accounting can be tested on its own.
+ *
+ * `rowSamples` is the sample count every row of this operation has, or `null`
+ * when no row is affordable at all. `sample` samples one angle's row and
+ * returns `null` for an invalid sampling (no row at that angle, for either
+ * path) or `'stopped'` for a cancelled one (not a property of the angle, so
+ * not shared).
+ *
+ * Two sample budgets, one per link path, exactly as the leftover walk has two
+ * work buckets. The at-layer candidate samples rows the raised plan never asks
+ * for (every grid angle an A-changing link crosses), and a shared total would
+ * let those attempts starve a later raised row, which would then fall back to
+ * the travel height. Each bucket decides and charges an angle on **its own
+ * first request**, so the raised bucket sees the same sequence of charges and
+ * refusals it did before the at-layer candidate existed. The sampled row itself
+ * is shared: it depends only on the angle, so one sampling serves both paths.
+ */
+export function linkRowBudget(
+  rowSamples: number | null,
+  sample: (key: number) => RotaryLinkRow | null | 'stopped',
+  totalSamples: number = MAX_LINK_TOTAL_SAMPLES,
+): (angleDeg: number, bucket?: RotaryLinkBucket) => RotaryLinkRow | null {
+  const sampledRows = new Map<number, RotaryLinkRow | null>()
+  const decisions = { raised: new Map<number, RotaryLinkRow | null>(), atLayer: new Map<number, RotaryLinkRow | null>() }
+  const totals = { raised: 0, atLayer: 0 }
+  return (angleDeg: number, bucket: RotaryLinkBucket = 'raised'): RotaryLinkRow | null => {
+    const key = ((angleDeg % 360) + 360) % 360
+    const linkCache = decisions[bucket]
+    const cached = linkCache.get(key)
+    if (cached !== undefined) return cached
+    if (rowSamples === null || totals[bucket] + rowSamples > totalSamples) {
+      linkCache.set(key, null)
+      return null
+    }
+    let row = sampledRows.get(key)
+    if (row === undefined) {
+      const sampled = sample(key)
+      if (sampled === 'stopped') {
+        linkCache.set(key, null)
+        return null
+      }
+      row = sampled
+      sampledRows.set(key, row)
+    }
+    if (row !== null) totals[bucket] += row.along.length
     linkCache.set(key, row)
     return row
   }
-  return { angles, along, tips, stubFloor, linkRowAt, stopped: false, refusal: null }
 }
 
 /**
@@ -2342,7 +2474,28 @@ function roughFromTargets(
     return -1
   }
   const leftoverCache = new Map<string, number[]>()
-  let linkWindowWork = 0
+  // #1117 fix 1 (P2): two operation budgets, not one. The at-layer candidate is
+  // an **attempt**: it may be rejected after its walk, and the raised link that
+  // replaces it has to be the link the operation would have emitted without the
+  // attempt -- the handoff requires every link that does not qualify to stay
+  // byte-identical. Sharing one counter with the raised link let a rejected
+  // attempt consume the budget the fallback needed, so a later raised link ran
+  // out of budget, `linkLeftoverAt` returned `[]`, and the boundary fell back
+  // further, to the travel height. Each bucket also gets its own cache entries:
+  // a shared entry would skip the raised link's own charge and change which
+  // links get its budget, so the fallback would still drift from the baseline.
+  //
+  // #1117 fix 2 (P2): the raised charge must also happen when the candidate
+  // **wins**. The caller therefore computes the raised plan first and overlays
+  // the at-layer steps on top of it, so `raised` collects the same sequence of
+  // charges and cache hits the baseline did over the whole operation. An
+  // accepted candidate is an overlay, never a skipped charge.
+  const linkWindowWork = { raised: 0, atLayer: 0 }
+  // #1117 rl-e: the model rows the A-changing candidates have sampled, against
+  // `MAX_LINK_ACROSS_ROWS`. Only an A-changing attempt draws on it, so an
+  // equal-angle link keeps the row budget and the cache entries it had.
+  let linkAcrossRows = 0
+  const linkAcrossSampled = new Set<number>()
   /**
    * The widest angle off its axis at which the cutter body can meet any
    * material at all (#1093). A ball's sphere and shank stay inside the cylinder
@@ -2373,7 +2526,114 @@ function roughFromTargets(
     if (!windowRows.includes(k)) windowRows.push(k)
     return windowRows
   }
-  const linkLeftoverAt = (row: RotaryLinkRow, angleDeg: number, layer: number, reachDeg = 0): number[] => {
+  // #1117 (square links): the at-layer walk's per-row envelope, cached by angle
+  // row and layer. A row's envelope -- the lowest contact any earlier layer
+  // made over each along sample, starting from the blank at that angle -- does
+  // not depend on which window asked for it, and a square blank's whole rings
+  // and an A-changing link's widened reach ask for many overlapping windows. So
+  // each row is walked once per layer and every window takes the maximum of the
+  // envelopes it covers. Only rows walked for the first time are charged.
+  const rowEnvelopes = new Map<string, number[]>()
+  /**
+   * The at-layer leftover without a region (#1117 rl-e): per row, the minimum
+   * over its cutting positions of `cutTip + rise`, starting from `blankAt`;
+   * over the window, the maximum of those rows. Same value the rl-e walk
+   * computed; the work is charged per newly walked row against the at-layer
+   * bucket, never the raised one. The result is keyed by the link row and the
+   * window's row **count** -- for one link row the window only grows with the
+   * reach, so the count names the row set, including a window that wraps the
+   * 0/360 seam, where the first/last index pair does not.
+   */
+  const atLayerLeftover = (
+    row: RotaryLinkRow,
+    k: number,
+    layer: number,
+    windowed: boolean,
+    windowRows: readonly number[],
+  ): number[] => {
+    const key = `${k}:${layer}:n${windowRows.length}:atLayerEnvelope`
+    const cached = leftoverCache.get(key)
+    if (cached) return cached
+    const fresh = windowRows.filter((kk) => !rowEnvelopes.has(`${kk}:${layer}`))
+    const work = row.along.length * along.length * fresh.length
+    if (windowed) {
+      // The per-call cap bounds what one link may walk; the operation budget
+      // bounds the sum, and its refusal is cached so the link does not retry.
+      if (work > MAX_LINK_WORK) return []
+      if (linkWindowWork.atLayer + work > MAX_LINK_WINDOW_WORK) {
+        leftoverCache.set(key, [])
+        return []
+      }
+      linkWindowWork.atLayer += work
+    }
+    // #1117 rl-e: the at-layer test asks what an earlier layer actually
+    // **left** standing, not how high it could have left it. The raised link
+    // needs the opposite -- an upper bound, so it clears everything -- and
+    // taking the maximum over the ring positions that reached x is exactly
+    // that bound. It is the wrong question here: with a ball, the ring one
+    // radius away contributes `cutTip + radius`, so the "leftover" never falls
+    // below the bar radius, and on a bar much larger than the model every
+    // candidate past the first layer is refused against the uncut blank
+    // (measured on busto-round layer 2: leftover 1.000 in while the layer cut
+    // the whole ring to 0.925 in, allowance 0.0966 in).
+    //
+    // A pass leaves the **lowest** of its own contact at x: material above a
+    // lower pass is gone, and the ball's rise only matters where no nearer
+    // pass cut deeper. So each angle row's own envelope is the minimum over
+    // its cutting positions of `cutTip + rise`, starting from what stood
+    // before the first layer (`blankAt` -- the uncut blank on a round bar, the
+    // gate's touch radius on a square one, so a row no layer cuts keeps all of
+    // it, exactly as the region walk below does). The cutter body's window
+    // then takes the **highest** of those per-row envelopes: it reaches every
+    // row, so it must clear the tallest thing any of them leaves.
+    //
+    // The raised bucket keeps the maximum-of-contacts computation below, byte
+    // for byte, so every link it decides is unchanged. The two buckets already
+    // have separate cache keys (#1117 fix 1).
+    const radius = tool.radius
+    const ball = tool.type === 'ball_endmill'
+    for (const kk of fresh) {
+      const blank = square ? squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type) : maxRadius
+      const surface = new Array<number>(row.along.length).fill(blank)
+      const rowTips = tips[kk]
+      for (let j = 1; j < layer; j++) {
+        const layerRadius = Math.max(lowest, maxRadius - j * params.stepdown)
+        const previousRadius = maxRadius - (j - 1) * params.stepdown
+        if (square && !(layerRadius < blank)) continue
+        for (let p = 0; p < along.length; p++) {
+          // No cut at this layer at p: the material keeps whatever stood
+          // before it, so this pass lowers nothing at x.
+          if (!(rowTips[p] < previousRadius)) continue
+          const cutTip = Math.max(rowTips[p], layerRadius)
+          for (let i = 0; i < row.along.length; i++) {
+            const dx = row.along[i] - along[p]
+            if (Math.abs(dx) > radius) continue
+            const rise = ball ? radius - Math.sqrt(Math.max(0, radius * radius - dx * dx)) : 0
+            const contact = cutTip + rise
+            if (contact < surface[i]) surface[i] = contact
+          }
+        }
+      }
+      rowEnvelopes.set(`${kk}:${layer}`, surface)
+    }
+    const remaining = new Array<number>(row.along.length).fill(Number.NEGATIVE_INFINITY)
+    for (const kk of windowRows) {
+      const surface = rowEnvelopes.get(`${kk}:${layer}`)
+      if (!surface) return []
+      for (let i = 0; i < row.along.length; i++) {
+        if (surface[i] > remaining[i]) remaining[i] = surface[i]
+      }
+    }
+    leftoverCache.set(key, remaining)
+    return remaining
+  }
+  const linkLeftoverAt = (
+    row: RotaryLinkRow,
+    angleDeg: number,
+    layer: number,
+    reachDeg = 0,
+    budget: 'raised' | 'atLayer' = 'raised',
+  ): number[] => {
     const k = pointIndexAt(angleDeg)
     if (k < 0) return []
     // The base walk reads the link angle's own row and is already bounded by
@@ -2381,25 +2641,30 @@ function roughFromTargets(
     // that by the angle span, so only the window needs its own caps (#1093).
     const windowed = reachDeg > 0
     const windowRows = windowed ? angleWindow(k, reachDeg) : [k]
+    if (budget === 'atLayer' && insideRegion === null) return atLayerLeftover(row, k, layer, windowed, windowRows)
     const work = row.along.length * along.length * windowRows.length
     if (windowed && work > MAX_LINK_WORK) return []
     // Two reaches that select the same angle rows leave the same material, so
     // the key is the row span rather than the per-link height. Without this a
-    // long job recomputes the whole walk for every ring boundary.
-    const key = windowed
-      ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
-      : `${k}:${layer}`
+    // long job recomputes the whole walk for every ring boundary. The budget
+    // bucket is part of the key so an at-layer walk never stands in for the
+    // raised link's own charge (#1117 fix 1).
+    const key = `${
+      windowed
+        ? `${k}:${layer}:w${windowRows[0]}-${windowRows[windowRows.length - 1]}`
+        : `${k}:${layer}`
+    }:${budget}`
     const cached = leftoverCache.get(key)
     if (cached) return cached
     if (windowed) {
       // The per-call cap above cannot bound the operation: the link plan asks
       // at every ring boundary. Past the operation budget the rest of the links
       // retract, and the empty answer is cached so they do not retry the walk.
-      if (linkWindowWork + work > MAX_LINK_WINDOW_WORK) {
+      if (linkWindowWork[budget] + work > MAX_LINK_WINDOW_WORK) {
         leftoverCache.set(key, [])
         return []
       }
-      linkWindowWork += work
+      linkWindowWork[budget] += work
     }
     // The blank's own height over the body's window: a square blank's corner is
     // higher than its face, and an earlier layer that did not cut at a face
@@ -2496,7 +2761,459 @@ function roughFromTargets(
     leftoverCache.set(key, leftover)
     return leftover
   }
-  const linkPlan = (layer: number) => (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+  /**
+   * Whether grid angle `k` is a square blank's touch-gate boundary at this layer
+   * (#1117 slice B): the sample one step outward -- in the previous ring's
+   * traversal direction -- is one the gate does not cut. The 0/360 grid sample
+   * is duplicated, so the physical neighbour of either end is one step inside
+   * the seam. The caller has checked `angles.length >= 2`.
+   */
+  const gateBoundary = (k: number, layerRadius: number, outward: number): boolean => {
+    const last = angles.length - 1
+    const neighbour = outward < 0 ? (k === 0 ? last - 1 : k - 1) : (k === last ? 1 : k + 1)
+    return !(layerRadius < squareRotaryTouchRadius(stock, angles[neighbour], tool.radius, tool.type))
+  }
+  /**
+   * #1117 rl-e: the at-layer link **across an A change**, for two partial rings
+   * of one layer whose run ends do not share an angle.
+   *
+   * On a model that is not a solid of revolution a ring cuts only the arc where
+   * the material stands below the previous layer's radius, so its run ends where
+   * that boundary crosses this layer. The boundary moves along the bar, and the
+   * next ring -- traversed the other way -- starts where its own arc ends. Both
+   * ends are therefore genuine cut points of this layer, but a few degrees apart
+   * (measured on busto-round: median 1.98 deg, p90 5.09, max 12.03), and the
+   * equal-angle rule refused every one of them: the link retracted although the
+   * two rings it joins are the same stay-down transition.
+   *
+   * The path is the one straight commanded move from `from` to `to`, so it
+   * changes along **and** A together, and its samples are cut at
+   * `max(model, layerRadius)` exactly as the equal-angle link's are. It is
+   * accepted only when the **whole swept path** passes the same rules:
+   *
+   * - **One band of material, over the whole body.** `linkLeftoverAt` is asked
+   *   with the body's reach **widened by the drift**, so one window covers every
+   *   angle the path visits; a row the drift uncovers can only make the check
+   *   stricter, never looser. The material left over the path may exceed the cut
+   *   height by at most this layer's stepdown plus the between-ring scallop and
+   *   one sampling cell -- what the layer removes at its own rings. A sector the
+   *   earlier layers never reached stands at the blank and is refused, which is
+   *   the "model stands above the layer" case: those boundaries keep the raised
+   *   link.
+   * - **The model is protected.** Each waypoint cuts at or above the model at its
+   *   own angle, read from the two grid rows that bracket that angle (the same
+   *   rows the emitted rings are cut on; the sampler's own refinement holds the
+   *   surface within the chord tolerance between them, so the higher of the two
+   *   is at or above the surface on the way). A `NaN` row sample -- no model under
+   *   the tool there -- refuses the link: that is a model gap, and the equal-angle
+   *   rule refuses it too.
+   * - **The region.** The path is a slope in `(along, A)`, not one angle's
+   *   segment, so every dense path sample must be inside the mask (the rule
+   *   `followLink` uses where the mask has no boundary test). A mask that can
+   *   prove a whole segment (`containsSegment`) decides the **entire path**: the
+   *   slope in `(along, A)` is one straight segment on the sheet, because across
+   *   is affine in A, so `rotaryRegionSlopeContains` sees an excluded strip
+   *   narrower than the sample spacing that the waypoint checks step over.
+   * - **A square blank**: a link whose ends are both corner-arc boundaries of
+   *   the touch gate keeps the allowance above. With a region that is required;
+   *   without one, any other link (rings the model splits below the corner
+   *   layers) is proved under `linkAtLayer`'s stricter rule instead -- one
+   *   stepdown and nothing more, and rings no further apart than the cutter
+   *   (#1117 square links).
+   *
+   * A0 and A360 are one physical rotation, so a link between them is a commanded
+   * full turn rather than a partial ring's drift; it keeps the raised link, as
+   * does any drift wider than `MAX_LINK_ACROSS_DEG`, a path that needs more rows
+   * than the per-link or per-operation budget, and a span the dense row cannot
+   * cover with an interior sample. Every refusal is the pre-slice motion.
+   */
+  const linkAcrossAngle = (
+    layer: number,
+    layerRadius: number,
+    fromAlong: number,
+    from: ToolpathPoint,
+    to: ToolpathPoint,
+    outward: number,
+  ): readonly RotaryLinkStep[] | null => {
+    if (from.a === undefined || to.a === undefined) return null
+    const fromA = from.a
+    const toA = to.a
+    const delta = toA - fromA
+    if (sameRotaryAngle(fromA, toA) || !(Math.abs(delta) > 1e-9)) return null
+    if (Math.abs(delta) > MAX_LINK_ACROSS_DEG) return null
+    if (alongCoordinate(stock, from) !== fromAlong) return null
+    const toAlong = alongCoordinate(stock, to)
+    if (!(toAlong > fromAlong)) return null
+    const fromK = pointIndexAt(fromA)
+    const toK = pointIndexAt(toA)
+    if (fromK < 0 || toK < 0 || angles.length < 2) return null
+    // The grid rows the path crosses, in the order it crosses them (ring
+    // direction alternately increasing and decreasing A).
+    const stepK = toK > fromK ? 1 : -1
+    const rows: number[] = []
+    for (let k = fromK; k !== toK; k += stepK) rows.push(k)
+    rows.push(toK)
+    if (rows.length < 2 || rows.length > MAX_LINK_ACROSS_ROWS_PER_LINK) return null
+    // #1117 (square links): a row another A-changing candidate already sampled
+    // costs nothing; only the rows this path samples first are charged.
+    const freshRows = rows.filter((k) => !linkAcrossSampled.has(k))
+    if (linkAcrossRows + freshRows.length > MAX_LINK_ACROSS_ROWS) return null
+    // #1096/#1117: a mask without a boundary test falls back to per-sample point
+    // membership; the dense path samples below are that check, and the two ends
+    // are part of it.
+    if (region !== null && insideRegion !== null) {
+      if (!insideRegion(fromAlong, fromA) || !insideRegion(toAlong, toA)) return null
+      // #1117 rl-e correction (review finding 1): the whole swept path is one
+      // segment on the sheet. Checking only the emitted waypoints let a link cut
+      // across an excluded slit that fell between two samples; the mask's own
+      // boundary test decides the path, exactly as it does for the equal-angle
+      // link. `null` (a point-only mask) keeps the per-waypoint check below.
+      if (rotaryRegionSlopeContains(region, stock, fromAlong, fromA, toAlong, toA) === false) return null
+    }
+    // A square blank's corner-arc link joins two touch-gate boundaries, so
+    // each end is one: `outward` is the previous ring's traversal direction,
+    // which is also the step from an arc's start back out of it. With a region
+    // that is still required; without one, a link whose ends are not both gate
+    // boundaries is proved under the one-stepdown bound instead (#1117 square
+    // links, see `linkAtLayer`).
+    let oneStepdown = false
+    if (square) {
+      if (angles.length < 2) return null
+      if (!gateBoundary(fromK, layerRadius, outward) || !gateBoundary(toK, layerRadius, outward)) {
+        if (region !== null) return null
+        // Rings further apart than the cutter leave a strip no ring touches;
+        // see `linkAtLayer`.
+        if (toAlong - fromAlong > 2 * tool.radius) return null
+        oneStepdown = true
+      }
+    }
+    const row = linkRowAt(fromA, 'atLayer')
+    if (!row) return null
+    // The body reaches `bodyReachDeg` either side at the link's lowest height;
+    // widening that by the drift makes one window cover every angle the path
+    // visits. Charged to the at-layer bucket, never the raised one (#1117 fix 1).
+    const reach = bodyReachDeg(layerRadius) + Math.abs(delta)
+    const leftover = linkLeftoverAt(row, fromA, layer, reach, 'atLayer')
+    if (leftover.length === 0) return null
+    // #1117 rl-e (rl-c's footprint rule, applied to the link's **height**): the
+    // link may not ride at the model its own ray finds while the body reaches
+    // higher material a few degrees away. A ball's surface at an angular offset
+    // is at or above its tip, so keeping the whole window's height at or above
+    // the tallest material in it is safe without any rise discount. Read from the
+    // ring grid, which is the same conservative cell bound the rings cut at.
+    const windowRows: number[] = []
+    {
+      const k = pointIndexAt(fromA)
+      if (k < 0) return null
+      const span = bodyReachDeg(layerRadius) + Math.abs(delta)
+      for (let kk = 0; kk < angles.length; kk++) {
+        let offset = ((angles[kk] - angles[k]) % 360 + 360) % 360
+        if (offset > 180) offset = 360 - offset
+        if (offset <= span + 1e-9) windowRows.push(kk)
+      }
+      if (!windowRows.includes(k)) windowRows.push(k)
+    }
+    let alongIndex = 0
+    // One model row per grid angle the path crosses. `linkRowAt` builds every row
+    // on the same along grid, so one index is one along position in all of them.
+    const rowsData: RotaryLinkRow[] = []
+    for (const k of rows) {
+      const angleRow = linkRowAt(angles[k], 'atLayer')
+      if (!angleRow) return null
+      rowsData.push(angleRow)
+    }
+    for (const k of freshRows) linkAcrossSampled.add(k)
+    linkAcrossRows += freshRows.length
+    const scallop = tool.type === 'ball_endmill'
+      ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - Math.min((toAlong - fromAlong) / 2, tool.radius) ** 2))
+      : 0
+    const allowance = oneStepdown ? params.stepdown : params.stepdown + scallop + params.requestedCellSize
+    const steps: RotaryLinkStep[] = []
+    // The path's angle is monotone in `x`, so a moving cursor finds the two rows
+    // that bracket it without rescanning.
+    let cursor = 0
+    let interior = 0
+    for (let i = 0; i < row.along.length; i++) {
+      const x = row.along[i]
+      if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
+      const angle = fromA + delta * (x - fromAlong) / (toAlong - fromAlong)
+      while (cursor + 1 < rows.length
+        && (stepK > 0 ? angles[rows[cursor + 1]] < angle : angles[rows[cursor + 1]] > angle)) cursor++
+      const here = rowsData[cursor]
+      const next = rowsData[Math.min(cursor + 1, rowsData.length - 1)]
+      const tipHere = here.tips[i]
+      const tipNext = next.tips[i]
+      // No model under the tool at either bracketing row: a gap in the reachable
+      // surface is not crossed at the layer.
+      if (!Number.isFinite(tipHere) || !Number.isFinite(tipNext)) return null
+      // The tallest material the body can reach at this along position: the grid
+      // rows' own tips, which is what the height has to clear.
+      while (alongIndex + 1 < along.length && Math.abs(along[alongIndex + 1] - x) < Math.abs(along[alongIndex] - x)) alongIndex++
+      let reachHeight = layerRadius
+      // #1117 rl-f: redundant with `safeToolTipZAt` for sampled poses -- `linkRowAt`
+      // already carries the footprint-convolved safe tip -- and kept as defence in
+      // depth between samples, which is not proven either way.
+      for (const kk of windowRows) {
+        const gridTip = tips[kk][alongIndex]
+        if (Number.isFinite(gridTip) && gridTip > reachHeight) reachHeight = gridTip
+      }
+      const height = Math.max(tipHere, tipNext, reachHeight)
+      if (leftover[i] - height > allowance + 1e-9) return null
+      if (region !== null && insideRegion !== null && !insideRegion(x, angle)) return null
+      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      steps.push({ to: point(x, height, angle), kind: 'cut' })
+      interior++
+    }
+    // The same span-coverage rule the equal-angle link applies: a transition
+    // longer than the row's sample interval must be bridged by an interior
+    // sample, or the straight cut runs through material nothing examined.
+    const sampleInterval = row.along.length > 1
+      ? row.along[1] - row.along[0]
+      : Number.POSITIVE_INFINITY
+    if (interior === 0 && toAlong - fromAlong > sampleInterval + 1e-9) return null
+    steps.push({ to, kind: 'cut' })
+    return steps
+  }
+  /**
+   * #1117: the at-layer cutting link, tried before the raised one.
+   *
+   * The finish already follows the model between rings (#1093); a rough rose
+   * above whatever its own earlier layers left and rapid across, because the
+   * link may have to remove a layer's band. It does not have to: the standing
+   * stock at any along position before this layer is `max(model,
+   * previousRadius)`, so a cut at `max(currentLayerRadius, rowTip)` removes
+   * exactly the band this layer removes at its own rings -- full lateral
+   * engagement, no deeper cut, no new feed (decision 1 of the approved plan).
+   * The `max` with `layerRadius` is the layer clamp: where the model is lower
+   * than this layer the link stays at the layer instead of diving to the model,
+   * and where the model rises above it the link follows the model, so the rise
+   * is protected rather than cut through.
+   *
+   * The row is the same dense, cutter-safe `linkRowAt` row the raised link and
+   * the finish use, so it carries the stock allowance, the steep-step rule the
+   * emitter applies to its legs, and the retained-stub floors. It is never
+   * derived by removing clearance from the raised candidate: the raised height
+   * is about earlier layers, and this candidate is about the current one.
+   *
+   * **What the cutter may meet** is proved from the same leftover walk the
+   * raised link uses: the material the earlier layers can have left over this
+   * span (`linkLeftoverAt`, already the ring grid's own tips, the cutter's along
+   * footprint and the ball's rise). At every sample it may exceed the link's
+   * height by at most **one layer's band** -- a stepdown -- plus the scallop the
+   * tool leaves between the two adjoining rings (the ball's rise at half this
+   * transition's own span) and one sampling cell. More than that means the
+   * earlier layers did not cut there at all -- a plateau above the layer -- and a
+   * stay-down link would plunge through it at depth, which is exactly the
+   * engagement spike the plan forbids. The first layer's leftover is the blank,
+   * so its links remove one band by construction.
+   *
+   * Everything that makes a stay-down cut unsafe or unprovable keeps the raised
+   * link: a `NaN` row sample (no model under the tool there, so the ring at that
+   * along position removes nothing and the link would cut uncut blank), a
+   * transition that the row cannot actually sample (see the inclusive scan and
+   * its span-coverage rule below), more than one band of material to remove, a
+   * region span outside the mask, a square transition with a region that is
+   * not two corner arcs meeting at the touch gate's boundary, a changed angle (A0 to A360 is a
+   * commanded turn, not equal), a row the work budget refused, and a transition
+   * between rings that are not adjacent. The caller passes the previous ring's
+   * own along coordinate, so a ring that emitted nothing -- a skipped ring --
+   * leaves `current` at an earlier along position and cannot link across the
+   * gap; a partial ring whose last run is the adjoining one is fine, exactly as
+   * the raised link already links partial runs at their shared angle.
+   *
+   * **Square blanks** (#1117 slice B) cut short arcs around the corners, so
+   * every ring is split and the only link that can stay down joins two of those
+   * arcs at their **shared boundary angle**. The gate is angle-only, so the
+   * neighbouring ring's first cut is exactly the previous ring's last cut: a
+   * ring traverses its arcs in order, and the angle it ends on is where
+   * `squareRotaryTouchRadius` falls to the layer radius. The check below asks
+   * that the sample just outside that run is one the gate no longer cuts, which
+   * is what makes the shared angle a *corner-arc* boundary rather than the
+   * ring's own end.
+   *
+   * The link then cuts at the same height the two rings already cut at there,
+   * `max(model, layerRadius)`, and the blank's corner envelope above it is at
+   * most the one band this layer removes -- the leftover check below is what
+   * proves it. Once a layer's radius is at or below the blank's inscribed
+   * radius the gate no longer splits the ring: it is one whole turn at A0/A360,
+   * and a link there is not between corner arcs; below the corner layers the
+   * model splits rings too, at run ends that are not gate boundaries. Without a
+   * region those links are no longer refused (#1117 square links): they are
+   * proved under the stricter rule spelled out at the check below. (The
+   * stage-descent failure this paragraph used to cite was the descent checker
+   * judging a straight along move at its two ends only; it now samples the move
+   * like an along pass, and the footprint proof is unchanged.)
+   *
+   * **Regions** (#1096, #1117 slice B) are a mask on the tool position, so the
+   * link is a cut from one along position to another at one angle and its
+   * **whole span** must be inside the region -- the same rule the finish's
+   * `followLink` applies, including a narrow excluded strip that falls between
+   * two samples. A gap between two region bands is therefore never cut across;
+   * it keeps the raised link, whose height comes from `linkLeftoverAt`'s region
+   * walk and so clears the **uncut blank** that stands there. The same walk
+   * treats every angular cell outside the mask as blank, so the cutter body
+   * reaching material outside the region is part of the one-band check: past
+   * the first layer that material is above the link by more than one band, and
+   * the link is refused.
+   */
+  const linkAtLayer = (layer: number, layerRadius: number, fromAlong: number, from: ToolpathPoint, to: ToolpathPoint, outward: number): readonly RotaryLinkStep[] | null => {
+    if (from.a === undefined || to.a === undefined) return null
+    // #1117 rl-e: the boundary between a partial ring's end and the next ring's
+    // start is not two equal angles. That case is proved on the swept path, as a
+    // slope in (along, A), and falls back to the raised link exactly as every
+    // refusal here does; the equal-angle rule below is unchanged.
+    if (from.a !== to.a) return linkAcrossAngle(layer, layerRadius, fromAlong, from, to, outward)
+    if (alongCoordinate(stock, from) !== fromAlong) return null
+    const toAlong = alongCoordinate(stock, to)
+    if (!(toAlong > fromAlong)) return null
+    // #1096: the link is one straight cut at one angle, so the region decides
+    // on the segment, not on the dense row's samples. `null` from the mask means
+    // it has no boundary test, and then the row samples get the point test.
+    let pointOnlyRegion = false
+    if (region !== null && insideRegion !== null) {
+      if (!insideRegion(fromAlong, from.a) || !insideRegion(toAlong, from.a)) return null
+      const segment = rotaryRegionSegmentContains(region, stock, fromAlong, toAlong, from.a)
+      if (segment === false) return null
+      pointOnlyRegion = segment === null
+    }
+    // A square blank's corner-arc link joins two arcs at the touch gate's own
+    // boundary: the sample just outside this ring's last run is one the gate no
+    // longer cuts. `outward` is the previous ring's traversal direction in the
+    // angle grid, so this is the sample that ring would have cut next.
+    //
+    // #1117 (square links): that rule used to be a prerequisite, and it refused
+    // every **complete** ring (its end's neighbour is cut by the gate) and every
+    // ring the model splits below the corner layers -- busto-rect retracted at
+    // all 308 ring boundaries of its layers 6-17. With a region it still is: the
+    // caller blocks a region's split rings, and its whole rings were never
+    // proved here. Without a region such a link is proved under a **stricter**
+    // material bound instead of being refused. At a gate boundary the material
+    // the link meets is the blank right at the layer radius; between two whole
+    // rings it is what their cuts left, including the scallop a ball leaves
+    // between them -- material the rings themselves never take. So the link may
+    // take one stepdown from what the earlier layers left and nothing more: no
+    // scallop and no cell allowance (the independent proof in
+    // `squareAroundGenerator.property.test.ts` refused the looser bound on a
+    // ball with full-diameter ring spacing: 4.03 mm removed at stepdown 3). A
+    // face an earlier layer passed over in air stands at the blank in the walk
+    // below and is refused by the same bound.
+    //
+    // The walk only knows what **rings** cut, read at the dense row's samples.
+    // That is the material only where every point of the span is within a
+    // cutter radius of a ring: rings further apart than the cutter's diameter
+    // leave a strip between them that no ring touches, narrow enough to fall
+    // between two row samples, and what stands there is whatever an earlier
+    // layer's **link** left -- or the blank. So such a link keeps the raised
+    // form (the seeded square property in `rotarySquareAroundPasses.test.ts`
+    // caught a ball link 1.56 mm deep through that strip at stepdown 0.70, with
+    // rings 0.694 mm apart and a 0.633 mm ball).
+    let oneStepdown = false
+    if (square) {
+      const k = pointIndexAt(from.a)
+      if (k < 0 || angles.length < 2) return null
+      if (!gateBoundary(k, layerRadius, outward)) {
+        if (region !== null) return null
+        if (toAlong - fromAlong > 2 * tool.radius) return null
+        oneStepdown = true
+      }
+    }
+    const row = linkRowAt(from.a, 'atLayer')
+    if (!row) return null
+    // The material the earlier layers left, over **the whole cutter body** at
+    // this height, not only the link's own ray: the body reaches material a few
+    // degrees either side, and on a model that is not a solid of revolution the
+    // neighbouring angle can stand higher than the ray does. The reach shrinks
+    // as the height rises, and the link's lowest height is the layer radius, so
+    // that height's window is the widest one this link can need.
+    const reach = bodyReachDeg(layerRadius)
+    // #1117 fix 1 (P2): this walk is charged to the at-layer bucket, never to
+    // the raised link's. This candidate can still be rejected below, and the
+    // raised link that takes over must keep the budget and the cache entries
+    // the baseline gave it. #1117 fix 2 (P2): that is true when the candidate
+    // **wins** too -- the caller has already computed the raised plan, so an
+    // accepted candidate only overrides the emitted steps and cannot unspend a
+    // baseline charge.
+    const leftover = linkLeftoverAt(row, from.a, layer, reach, 'atLayer')
+    if (leftover.length === 0) return null
+    // The scallop the tool leaves between two rings: a ball cuts lowest at its
+    // own along position and rises by `r - sqrt(r^2 - dx^2)` at either side, so
+    // the material between the two adjoining rings stands up to this much above
+    // the layer's previous radius. A flat leaves none.
+    const halfSpan = (toAlong - fromAlong) / 2
+    const scallop = tool.type === 'ball_endmill'
+      ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - Math.min(halfSpan, tool.radius) ** 2))
+      : 0
+    const allowance = oneStepdown ? params.stepdown : params.stepdown + scallop + params.requestedCellSize
+    // #1117 (square links): a link the gate-boundary rule did not admit is
+    // judged on the material it actually meets, and that includes the ring it
+    // starts from. That ring is this layer's, it is fully emitted before the
+    // link runs, and the walk above only counts **earlier** layers -- so between
+    // two close rings it reads the previous layer's ridge where this layer's
+    // ring has already cut a stepdown off it. The ring's own contact at x is its
+    // cut height plus the ball's rise at the offset, at every window row; the
+    // window takes the highest, and a row the ring did not cut (or an offset
+    // past the cutter radius) leaves it unbounded. Taking the lower of that and
+    // the walk is at or above the true per-row minimum, so it never under-reads.
+    const ringIndex = oneStepdown ? along.indexOf(fromAlong) : -1
+    let ringTop = Number.POSITIVE_INFINITY
+    if (ringIndex >= 0) {
+      const previousRadius = maxRadius - (layer - 1) * params.stepdown
+      ringTop = Number.NEGATIVE_INFINITY
+      for (const kk of angleWindow(pointIndexAt(from.a), reach)) {
+        const tip = tips[kk][ringIndex]
+        const cut = tip < previousRadius && layerRadius < squareRotaryTouchRadius(stock, angles[kk], tool.radius, tool.type)
+        if (!cut) {
+          ringTop = Number.POSITIVE_INFINITY
+          break
+        }
+        ringTop = Math.max(ringTop, Math.max(tip, layerRadius))
+      }
+    }
+    const ringLevel = (x: number): number => {
+      const dx = Math.abs(x - fromAlong)
+      if (!Number.isFinite(ringTop) || dx > tool.radius) return Number.POSITIVE_INFINITY
+      const rise = tool.type === 'ball_endmill' ? tool.radius - Math.sqrt(Math.max(0, tool.radius * tool.radius - dx * dx)) : 0
+      return ringTop + rise
+    }
+    const steps: RotaryLinkStep[] = []
+    // #1117 review (P1): sample the transition **inclusively**. The dense row
+    // and the ring grid can be the same points -- at a stepover of the tool
+    // radius or less the row is spaced by the stepover and starts where the
+    // rings start -- and the old strict inequalities skipped every one of
+    // them. The candidate then degenerated to one straight cut with no leftover
+    // sample examined at all, so a model gap was crossed as if it were already
+    // cleared. A boundary sample is validated but not emitted: it is where the
+    // two ring cuts already are.
+    let interior = 0
+    for (let i = 0; i < row.along.length; i++) {
+      const x = row.along[i]
+      if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
+      // A mask with no boundary test keeps the finish's old per-sample rule.
+      if (pointOnlyRegion && insideRegion !== null && !insideRegion(x, from.a)) return null
+      const tip = row.tips[i]
+      if (!Number.isFinite(tip)) return null
+      const height = Math.max(tip, layerRadius)
+      const material = oneStepdown ? Math.min(leftover[i], ringLevel(x)) : leftover[i]
+      if (material - height > allowance + 1e-9) return null
+      if (x <= fromAlong + 1e-12 || x >= toAlong - 1e-12) continue
+      steps.push({ to: point(x, height, from.a), kind: 'cut' })
+      interior++
+    }
+    // Sufficient span coverage: the row's own sample interval is the widest
+    // stretch the surface can be read across. A transition longer than that
+    // must be bridged by an interior sample; if it has none -- because the row
+    // was filtered, not because the span is short -- the straight cut would run
+    // through unexamined material, so the candidate is refused and the caller
+    // keeps the raised link.
+    const sampleInterval = row.along.length > 1
+      ? row.along[1] - row.along[0]
+      : Number.POSITIVE_INFINITY
+    if (interior === 0 && toAlong - fromAlong > sampleInterval + 1e-9) return null
+    steps.push({ to, kind: 'cut' })
+    return steps
+  }
+  /** The raised link (#1093): rise to the earlier layers' leftover, rapid across, drop. */
+  const raisedLinkPlan = (layer: number) => (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
     if (from.a === undefined || to.a === undefined || from.a !== to.a) return null
     const fromAlong = alongCoordinate(stock, from)
     const toAlong = alongCoordinate(stock, to)
@@ -2579,7 +3296,16 @@ function roughFromTargets(
         : null
       // A new layer never links to the previous one, however its last ring ended.
       let previousEndedAtEnd = false
-      const layerLink = linkPlan(layer)
+      // #1117 review (P2): the at-layer candidate joins two **adjoining rings**
+      // of this layer, so both must be eligible. A split ring is a ring whose
+      // cut runs are separated by angular sectors this layer does not remove; on
+      // a round bar or with a region its first/last run can share an angle with
+      // the neighbouring ring while the transition itself is not an end-to-end
+      // ring link, so the raised link is the fallback there. A square blank's
+      // arcs are the exception the caller below spells out.
+      let previousRingSplit = false
+      let previousRingEmitted = false
+      const layerLink = raisedLinkPlan(layer)
       for (let i = 0; i < along.length; i++, ring++) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
         const forward = ring % 2 === 0
@@ -2591,9 +3317,46 @@ function roughFromTargets(
             && (insideRegion === null || insideRegion(along[i], angles[k]))
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
-        const emitted = emitRotaryRuns(moves, here, ringRuns(samples), safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, layerLink, i > 0)
+        const runs = ringRuns(samples)
+        const splitRing = runs.length > 1
+        // #1117: the at-layer cut joins the preceding ring **of this layer** to
+        // this one -- `along[i - 1]` is where the tool was left if that ring
+        // emitted anything, so a skipped ring's wider gap never qualifies. A
+        // partial run links when the emitted angle is exactly shared, which the
+        // link itself checks; an A-changing corner transition keeps the raised
+        // or travel-height link. **Split** rings keep the raised link on a round
+        // bar and with a region: their runs are separated by angular sectors
+        // this layer does not remove, so the shared angle is a run boundary
+        // rather than the end of a whole ring. A **square** blank is the
+        // exception (#1117 slice B): its rings are corner arcs by construction,
+        // and two neighbouring rings share the gate boundary angle exactly, so
+        // the candidate above proves the cut rather than refusing it outright.
+        // (A ring that emitted nothing is caught by the `fromAlong` check inside
+        // the candidate; `previousRingEmitted` makes that explicit.)
+        const splitBlocked = (previousRingSplit || splitRing) && !(square && region === null)
+        // #1117 fix 2 (P2): compute the raised plan **first** at every eligible
+        // boundary, even when the at-layer candidate wins. The raised walk is
+        // the baseline's accounting, not only its fallback: its budget charge
+        // and cache entries have to advance in the same order the pre-slice
+        // operation walked them, or a later **rejected** boundary finds material
+        // the baseline had already refused to walk and drops to a different
+        // height. (On `window-budget` with the 4 mm flat cutter and stepdown 2,
+        // skipping the accepted links' charges changed 784 fallback plans --
+        // A0 X5->X6 at layer 5 read z 41.191 instead of the baseline 49.284.)
+        // The candidate is an overlay on the emitted steps only; it has its own
+        // budget so it can never spend the raised walk's.
+        const ringLink = i === 0 || !previousRingEmitted || splitBlocked
+          ? layerLink
+          : (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+            const raised = layerLink(from, to)
+            return linkAtLayer(layer, layerRadius, along[i - 1], from, to, (ring - 1) % 2 === 0 ? 1 : -1)
+              ?? raised
+          }
+        const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, ringLink, i > 0)
         here = emitted.here
         previousEndedAtEnd = emitted.endedAtEnd
+        previousRingSplit = splitRing
+        previousRingEmitted = runs.length > 0
       }
     }
   } else {
@@ -2672,13 +3435,27 @@ function roughFromTargets(
  * `(layer - 1) * 360` is added, so A never leaves [0, 360]), and every sample
  * reads its own angle row. Consecutive rings are linked (#1093) at the
  * angle their runs share -- a full ring's end and the next ring's start, or a
- * square corner arc's touch-gate boundary -- along the bar at the highest
- * material this operation's own earlier layers left on the path, plus the 1 mm
- * clearance. The constant-height traverse is a **rapid**: it is in air by
- * construction, and a feed through air makes the machine creep. Its rise and
- * drop stay feeds; the first layer has nothing removed in front of it and keeps
- * the travel height, and an A-changing link is left to the old travel-height
- * rule (or its retract), because the surface link requires one exact angle.
+ * square corner arc's touch-gate boundary. Where the link can stay at the layer
+ * it is a **cutting feed** at `max(this layer's radius, the model)` along the
+ * bar (#1117): that removes only the band this layer removes anyway, so it
+ * neither cuts deeper nor adds a feed, and it is the common case on a round bar.
+ * A **square** blank's rings are corner arcs, so a link between two of them at
+ * the gate's boundary angle is tried too. Without a region, a layer below the
+ * blank's inscribed radius (one whole turn at A0/A360) and a ring the model
+ * splits link as well, under a stricter bound: one stepdown from the material
+ * the earlier layers and the ring it starts from left, no scallop or cell
+ * allowance, and rings no further apart than the cutter (#1117 square links).
+ * A **region** limits the link the same way it limits a ring: the whole
+ * along span must be inside the mask, and the material outside it stands as the
+ * uncut blank in the one-band check, so a link at a later layer is raised over
+ * it. Everything that cannot be proved safe keeps the raised link: it rises to
+ * the highest material this operation's own earlier layers left on the path,
+ * plus the 1 mm clearance, rapids across and drops back. The constant-height
+ * traverse is a **rapid**: it is in air by construction, and a feed through air
+ * makes the machine creep. Its rise and drop stay feeds; the first layer has
+ * nothing removed in front of it and, where no at-layer cut qualifies, keeps the
+ * travel height, and an A-changing link is left to the old travel-height rule
+ * (or its retract), because a surface link requires one exact angle.
  * Missing
  * keeps the along motion byte
  * for byte -- the shape of the motion, not its band: the slice-D retained-end

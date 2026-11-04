@@ -93,6 +93,14 @@
  * (`rotarySquareAroundPasses.test.ts`), so the square block here only proves
  * the old refusal is gone and the blank still produces motion.
  *
+ * #1117 adds block 2d: a round rough's adjacent rings are joined by a cutting
+ * feed at the current layer -- at `max(layerRadius, model)`, so the clamp and a
+ * model rise are both exercised -- instead of the raised rapid #1093 emitted.
+ * The region, model-gap and alternate-angle transitions deliberately keep the
+ * raised link, and the block pins that too. Mutations: the raised-only path
+ * restored, the layer clamp removed, the dense link row replaced by the ring
+ * positions, and the model-gap refusal removed.
+ *
  * Run with: npx tsx src/engine/toolpaths/rotaryAroundPasses.test.ts
  */
 
@@ -604,13 +612,78 @@ console.log('Testing that a finish link resolves a ridge between two rings...')
 }
 
 // ---------------------------------------------------------------------------
-// 2d. #1093: a rough link rises only to what this operation's own earlier
-//     layers left. The first layer keeps the bar-top travel height (11); the
-//     second layer's links sit a clearance above the 7 mm floor the first
-//     layer cut, not above the 5 mm model and not at the 11 mm bar envelope.
+// 2d. #1117: a round rough's ring-to-ring link stays down at the layer and cuts.
+//
+//     The raised link (#1093) rose above whatever the operation's own earlier
+//     layers left and rapid across. On a round bar the stock standing before a
+//     layer is `max(model, previous radius)`, so the same link can cut at this
+//     layer's radius instead: full engagement, no deeper cut, no new feed. The
+//     layer radius is a clamp -- a link over a model lower than the layer stays
+//     at the layer rather than diving to the model -- and a model rise is
+//     followed, so a ridge between two rings is protected instead of cut
+//     through. A link that cannot be proved to meet only one band of material,
+//     or that is not two adjoining rings at one exact angle, keeps the raised
+//     form.
+//
+//     Mutations each fail here:
+//      - the raised-only path restored -> the first block: no rapid between the
+//        rings, and the air-link count;
+//      - the `max(tip, layerRadius)` clamp removed -> the step block's first
+//        layer: its links dive to the low model (and the safety rule then
+//        refuses them, so the count fails too);
+//      - the link row sampled only at the ring positions -> the ridge block: the
+//        link cuts through the ridge at the layer height instead of climbing it;
+//      - the model-gap refusal removed -> the last block: a link crosses the gap
+//        the ring there does not cut;
+//      - the inclusive boundary scan removed (strict interior filter restored)
+//        -> the fine-step gap block: with the row and ring grids coincident a
+//        cutting link enters the span where the row has no model;
+//      - the split-ring eligibility removed -> the split-ring block: the twenty
+//        low links between the second layer's split rings return.
 // ---------------------------------------------------------------------------
 
+/** The first layer-boundary retract of an around rough: a rapid back along the bar. */
+function firstLayerRetract(moves: readonly ToolpathMove[]): number {
+  return moves.findIndex((move) => move.kind === 'rapid' && move.to.x < move.from.x)
+}
+
 {
+  // The step: radius 8 for x < 9 and 6.5 after it, in 3 mm layers. The first
+  // layer's radius is 7, so the links after the step must stay at 7 -- the
+  // clamp -- although the model there is 6.5. The low model is close enough to
+  // the layer that an unclamped link is still only one band deep, so removing
+  // the clamp produces a link *at the model* rather than a refusal, and the
+  // height assertion below is what catches it.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const model = revolved(stock, [
+    { along: 0, radius: 8 }, { along: 9, radius: 8 },
+    { along: 9, radius: 6.5 }, { along: 20, radius: 6.5 },
+  ], 128)
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-clamp', model, stock, FLAT, { ...params, stepdown: 3 }, {})
+  assert.deepEqual(result.warnings, [], 'the clamp rough has no warning')
+  const pivot = barPivotZ(stock)
+  const boundary = firstLayerRetract(result.moves)
+  const layerOne = result.moves.slice(0, boundary).filter(isAlongLink)
+  assert.ok(layerOne.length >= 10, `the first layer links its ten ring boundaries (${layerOne.length} moves)`)
+  const lowest = Math.min(...layerOne.flatMap((link) => [link.from.z, link.to.z])) - pivot
+  approx(lowest, 7, 'the first layer clamp holds the link at the layer radius, not the 6.5 mm model', 1e-6)
+  for (const link of layerOne) {
+    for (const tip of [link.from.z - pivot, link.to.z - pivot]) {
+      assert.ok(tip >= 7 - 1e-9,
+        `every first-layer link stays at or above the layer radius (tip ${tip.toFixed(4)}, model 6.5)`)
+    }
+  }
+}
+
+{
+  // A Ø20 bar, a Ø10 model, a Ø4 flat in 3 mm layers. Ten ring boundaries per
+  // layer, ten links. Layer 1's radius is 7 -- above the 5 mm model -- so its
+  // links must sit at 7 even though the model is lower; layer 2's last radius
+  // is the model's own, so its links follow it.
   const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
   const model = revolved(stock, [{ along: 0, radius: 5 }, { along: 20, radius: 5 }], 64)
   const params = {
@@ -620,26 +693,224 @@ console.log('Testing that a finish link resolves a ridge between two rings...')
   const result = generateRotaryRough('rough-links', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the linked rough has no warning')
   const pivot = barPivotZ(stock)
-  // The link's in-air traverse is a rapid at one angle and one height; its rise
-  // and drop are feeds and are not the link itself.
-  const links = result.moves.filter(isAirLink)
-  assert.ok(links.length >= 11, `the rough links its rings with an air rapid (${links.length})`)
-  assert.equal(result.moves.filter(isAlongLink).length, 0,
-    'no rough link is emitted as a feed through air')
-  // Rings are 2 mm apart, so layer 1 has ten links; the eleventh is layer 2's
-  // first link, between its first and second rings. `maxRadius - stepdown = 7`
-  // is the floor layer 1 left, and the bar is 10 mm, so a link at the model (6)
-  // would be a gouge.
-  const firstLayer = links.slice(0, 10).map((link) => link.to.z - pivot)
-  const secondLayer = links[10].to.z - pivot
-  assert.ok(firstLayer.every((tip) => Math.abs(tip - 11) <= 1e-9),
-    'the first layer keeps today\'s height: the bar surface plus the 1 mm clearance')
-  assert.ok(secondLayer >= 8 - 1e-9,
-    `the second layer's link clears the 7 mm floor plus the 1 mm clearance (got ${secondLayer.toFixed(3)})`)
-  assert.ok(secondLayer < 11 - 1e-9,
-    `the second layer's link drops below the bar's travel height (got ${secondLayer.toFixed(3)})`)
-  assert.ok(links.every((link) => link.to.z - pivot >= 5 + 1 - 1e-6),
-    'no rough link sinks into the model or misses the clearance')
+  const links = result.moves.filter(isAlongLink)
+  assert.equal(links.length, 20, 'each of the ten ring boundaries of both layers is a cutting link')
+  assert.equal(result.moves.filter(isAirLink).length, 0,
+    'no rough link between these rings is the old raised rapid')
+  const layerRadius = 7
+  const layerOne = links.slice(0, 10)
+  const layerTwo = links.slice(10)
+  for (const link of layerOne) {
+    approx(link.from.z - pivot, layerRadius, 'a first-layer link cuts at the layer radius')
+    approx(link.to.z - pivot, layerRadius, 'and finishes there')
+  }
+  for (const link of layerTwo) {
+    for (const tip of [link.from.z - pivot, link.to.z - pivot]) {
+      assert.ok(tip >= 5 - 1e-9 && tip <= 5 + params.requestedCellSize + 1e-9,
+        `a second-layer link follows the model, not the 7 mm floor (tip ${tip.toFixed(4)})`)
+    }
+  }
+  // Ring cuts and layer boundaries keep their motion: the rings are unchanged
+  // (layer 1 cuts at the 7 mm layer radius, layer 2 at the model), and the layer
+  // still steps up to the travel height, traverses back and plunges.
+  const rings = result.moves.filter((move) => move.kind === 'cut' && move.from.a !== move.to.a)
+  const boundary = firstLayerRetract(result.moves)
+  assert.ok(boundary > 0, 'the layer boundary is still a rapid back along the bar')
+  const firstLayerRings = rings.filter((move) => result.moves.indexOf(move) < boundary)
+  const secondLayerRings = rings.filter((move) => result.moves.indexOf(move) > boundary)
+  assert.ok(firstLayerRings.length > 0 && secondLayerRings.length > 0, 'both layers cut rings')
+  for (const move of firstLayerRings) approx(move.from.z - pivot, layerRadius, 'a first-layer ring cut is unchanged')
+  for (const move of secondLayerRings) {
+    const tip = move.from.z - pivot
+    assert.ok(tip >= 5 - 1e-9 && tip <= 5 + params.requestedCellSize + 1e-9,
+      `a second-layer ring cut is unchanged (tip ${tip.toFixed(4)})`)
+  }
+  assert.equal(result.moves.filter((move) => move.kind === 'plunge').length, 2,
+    'one plunge per layer, at the first cut of each')
+}
+
+{
+  // A ridge between two rings, 0.2 mm wide and 3 mm above the model, on a Ø20
+  // bar with a Ø1 ball in 3 mm layers: neither ring's 0.5 mm footprint reaches
+  // it, so only a link that samples between the rings can climb over it. The
+  // link must follow the protected model over the ridge instead of cutting it
+  // off at the 7 mm layer radius.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const ball = { ...BALL, id: 'ball-1', name: '1 mm ball nose', type: 'ball_endmill' as const, diameter: 1, radius: 0.5 }
+  const base = 5
+  const peak = 8
+  const ridgeFrom = 0.9
+  const ridgeTo = 1.1
+  const model = revolved(stock, [
+    { along: 0, radius: base },
+    { along: ridgeFrom, radius: base },
+    { along: ridgeFrom, radius: peak },
+    { along: ridgeTo, radius: peak },
+    { along: ridgeTo, radius: base },
+    { along: 20, radius: base },
+  ], 128)
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('ridge-link', model, stock, ball, { ...params, stepdown: 3 }, {})
+  assert.deepEqual(result.warnings, [], 'the ridge rough has no warning')
+  const pivot = barPivotZ(stock)
+  const links = result.moves.filter(isAlongLink)
+  assert.ok(links.length >= 10, `the ridge fixture still links its rings (${links.length})`)
+  // The rings cannot reach the ridge: their own tips stop at the 7 mm layer
+  // radius, so a link that did not sample between them would cut it off.
+  const ridgeBoundary = firstLayerRetract(result.moves)
+  const firstLayerRings = result.moves.slice(0, ridgeBoundary)
+    .filter((move) => move.kind === 'cut' && move.from.a !== move.to.a)
+  assert.ok(firstLayerRings.length > 0, 'the ridge fixture still cuts rings')
+  assert.ok(firstLayerRings.every((move) => Math.abs(move.from.z - pivot - 7) <= 1e-6),
+    'no ring cut reaches the ridge: every first-layer ring cuts at the 7 mm layer radius')
+  // The segment, not its endpoints: a merge collapses the run to its ends, so
+  // an endpoint filter would miss the point the link crosses.
+  let crossed = 0
+  let lowest = Number.POSITIVE_INFINITY
+  for (const link of links) {
+    const a = link.from.x
+    const b = link.to.x
+    if (!(b > a)) continue
+    const lo = Math.max(a, ridgeFrom)
+    const hi = Math.min(b, ridgeTo)
+    if (hi <= lo) continue
+    crossed++
+    for (const x of [lo, hi]) {
+      const tip = link.from.z + (link.to.z - link.from.z) * (x - a) / (b - a) - pivot
+      if (tip < lowest) lowest = tip
+    }
+  }
+  assert.ok(crossed > 0, 'a link crosses the ridge between the two rings')
+  // The row's conservative cell bound can only lift a sample above the model,
+  // so the crossing never falls below the peak; a coarse row that missed the
+  // ridge reads the 7 mm layer radius there (measured 7.951 under that
+  // mutation, 8.002 here).
+  assert.ok(lowest >= peak - 0.02,
+    `the link climbs over the ridge instead of cutting through it (lowest tip ${lowest.toFixed(4)}, model ${peak})`)
+}
+
+{
+  // A model gap: two 4 mm bosses with nothing between x = 6 and x = 14. The link
+  // row there has no model under the tool and the ring at those along positions
+  // removes nothing, so the transition keeps the raised link (the old motion)
+  // rather than cutting uncut blank.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const lower = revolved(stock, [{ along: 0, radius: 4 }, { along: 6, radius: 4 }], 64)
+  const upper = revolved(stock, [{ along: 14, radius: 4 }, { along: 20, radius: 4 }], 64)
+  const offset = lower.positions.length / 3
+  const positions = new Float32Array(lower.positions.length + upper.positions.length)
+  positions.set(lower.positions, 0)
+  positions.set(upper.positions, lower.positions.length)
+  const index = new Uint32Array(lower.index.length + upper.index.length)
+  index.set(lower.index, 0)
+  index.set(upper.index.map((vertex) => vertex + offset), lower.index.length)
+  const model: RotaryModelMesh = { positions, index }
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-gap', model, stock, FLAT, { ...params, stepdown: 3 }, {})
+  assert.deepEqual(result.warnings, [], 'the gap rough has no warning')
+  const pivot = barPivotZ(stock)
+  const links = result.moves.filter(isAlongLink)
+  assert.ok(links.length > 0, 'the bosses are still linked at the layer')
+  assert.ok(links.every((link) => !(link.from.x < 10 - 1e-9 && link.to.x > 10 + 1e-9)),
+    'no cutting link crosses the model gap')
+  const raised = result.moves.filter(isAirLink)
+  assert.ok(raised.some((link) => link.from.x === 8 && link.to.x === 10),
+    'the transition over the gap keeps the raised link')
+  assert.ok(raised.every((link) => link.from.z - pivot >= 4 + 1 - 1e-6),
+    'and the raised link still clears the last material the operation left')
+}
+
+{
+  // #1117 review (P1): a stepover at or below the tool radius makes the dense
+  // link row and the ring grid the same points. Every interior row sample then
+  // lands exactly on a ring position, the old strict `x > from && x < to`
+  // filter skipped all of them, and the candidate collapsed to one straight
+  // cut with no leftover sample examined at all. On the two-boss gap it cut 76
+  // links into the span where the row has no model (the raised-only path emits
+  // only raised links there). The inclusive scan validates the boundary
+  // samples, and a transition longer than one row interval with no interior
+  // sample is refused.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const lower = revolved(stock, [{ along: 0, radius: 4 }, { along: 6, radius: 4 }], 64)
+  const upper = revolved(stock, [{ along: 14, radius: 4 }, { along: 20, radius: 4 }], 64)
+  const offset = lower.positions.length / 3
+  const positions = new Float32Array(lower.positions.length + upper.positions.length)
+  positions.set(lower.positions, 0)
+  positions.set(upper.positions, lower.positions.length)
+  const index = new Uint32Array(lower.index.length + upper.index.length)
+  index.set(lower.index, 0)
+  index.set(upper.index.map((vertex) => vertex + offset), lower.index.length)
+  const model: RotaryModelMesh = { positions, index }
+  const params = {
+    stepover: 0.25, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-gap-fine', model, stock, FLAT, { ...params, stepdown: 2 }, {})
+  assert.deepEqual(result.warnings, [], 'the fine-step gap rough has no warning')
+  // Where the cutter's 2 mm footprint no longer reaches either boss, the link
+  // row has no model; a cutting link may not enter that span at all.
+  const gapFrom = 6 + FLAT.radius
+  const gapTo = 14 - FLAT.radius
+  const entersGap = (link: ToolpathMove): boolean =>
+    link.from.x < gapTo - 1e-9 && link.to.x > gapFrom + 1e-9
+  const links = result.moves.filter(isAlongLink)
+  assert.ok(links.length > 100,
+    `the fine-step rough still links both bosses at the layer (${links.length} links)`)
+  assert.equal(links.filter(entersGap).length, 0,
+    'no cutting link enters the no-model span between the bosses')
+  const raised = result.moves.filter(isAirLink)
+  assert.ok(raised.filter(entersGap).length >= 10,
+    `the transitions inside the gap keep the raised link (${raised.filter(entersGap).length})`)
+  // The fix is not a blanket fallback: the boundaries on either side of the gap
+  // still cut at the layer.
+  assert.ok(links.some((link) => link.to.x <= gapFrom + 1e-9 && link.to.x > gapFrom - 0.5),
+    'the last boundary before the gap still cuts at the layer')
+  assert.ok(links.some((link) => link.from.x >= gapTo - 1e-9 && link.from.x < gapTo + 0.5),
+    'the first boundary after the gap still cuts at the layer')
+}
+
+{
+  // #1117 review (P2): a split ring -- one whose cut runs are separated by
+  // angular sectors this layer does not remove -- must keep the raised link to
+  // its neighbour. Its first/last run can still share an angle with the next
+  // ring, and the old candidate accepted that shared angle and cut at the
+  // layer regardless. The round model here has an angular radius
+  // 7 - 2cos(2 theta), so layer 2 (radius 6) cuts two runs per ring and the
+  // transition between them was 20 low links. The caller now tracks both
+  // adjoining rings' eligibility, so only layer 1's whole rings stay down.
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const segments = 128
+  const crossSection: (readonly [number, number])[] = []
+  for (let j = 0; j < segments; j++) {
+    const t = 2 * Math.PI * j / segments
+    const radius = 7 - 2 * Math.cos(2 * t)
+    crossSection.push([radius * Math.cos(t), radius * Math.sin(t)])
+  }
+  const model = prism(stock, crossSection, [0, 20])
+  const params = {
+    stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('rough-split-rings', model, stock, FLAT, { ...params, stepdown: 2 }, {})
+  assert.deepEqual(result.warnings, [], 'the split-ring rough has no warning')
+  const pivot = barPivotZ(stock)
+  const links = result.moves.filter(isAlongLink)
+  assert.equal(links.length, 10,
+    'only the ten whole-ring boundaries of the first layer link at the layer')
+  for (const link of links) {
+    approx(link.from.z - pivot, link.to.z - pivot, 'a whole-ring link keeps one height', 1e-9)
+  }
+  const raised = result.moves.filter(isAirLink)
+  assert.equal(raised.length, 20,
+    'every split-ring boundary is a raised link instead of a low one')
+  assert.ok(raised.every((link) => link.to.z - pivot >= 6.5),
+    'the split-ring links rise above the second layer radius')
 }
 
 // ---------------------------------------------------------------------------
