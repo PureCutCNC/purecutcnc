@@ -59,7 +59,7 @@
  *   and a selected Around region joins it as a filter through "Use current
  *   selection".
  *
- * Run in the `test:e2e:workflow-ui` lane.
+ * Run in the `test:e2e:generation` lane.
  */
 
 import { readFileSync } from 'node:fs'
@@ -216,14 +216,16 @@ interface RotaryPassReadout {
   angleCount: number
   minAngle: number
   maxAngle: number
+  /** Moves whose commanded A goes backwards: an alternating ring or a modulo wrap. */
+  aReversals: number
   signature: number
   warningCodes: string[]
 }
 
 /**
  * The generated path of one rotary operation, read from the store's own
- * project, with the A range and a deterministic signature of the move list
- * (#1045 slice B).
+ * project, with the A range, its reversals and a deterministic signature of
+ * the move list (#1045 slice B, #1103 slice ca-c).
  *
  * `passDirection` overrides the stored Passes value, so the along result can be
  * compared against the same operation after the control has written 'around'.
@@ -263,12 +265,21 @@ async function rotaryPassReadout(
     const angles = points
       .map((point) => point.a)
       .filter((angle): angle is number => typeof angle === 'number')
+    // A forward-only pass never asks the controller to turn back. The tolerance
+    // only ignores the floating-point noise of two equal angles written by
+    // different arithmetic; a real reversal is a whole turn or an arc.
+    let aReversals = 0
+    for (const move of envelope.result.moves) {
+      if (typeof move.from.a !== 'number' || typeof move.to.a !== 'number') continue
+      if (move.to.a - move.from.a < -1e-6) aReversals += 1
+    }
     return {
       moveCount: envelope.result.moves.length,
       pointCount: points.length,
       angleCount: angles.length,
       minAngle: angles.length > 0 ? Math.min(...angles) : Number.NaN,
       maxAngle: angles.length > 0 ? Math.max(...angles) : Number.NaN,
+      aReversals,
       signature: hash >>> 0,
       warningCodes: envelope.result.warnings.map((warning) => warning.code),
     }
@@ -494,8 +505,9 @@ test('the rotary operations machine the model inside the bar', async ({ app, ui 
  * #1045 slice B: the Passes control switches a rotary operation between passes
  * along the bar and rings around it. The DOM proves the control exists and
  * writes the operation; the generated path proves the generator honoured it —
- * every point still carries A within one turn, and the move list is not the
- * along list merely relabelled.
+ * every point still carries A, the commanded A accumulates forward-only across
+ * the rings (#1103 slice ca-c), and the move list is not the along list merely
+ * relabelled.
  */
 test('the rotary finish can run its passes around the bar', async ({ app, ui }) => {
   test.setTimeout(180_000)
@@ -572,11 +584,15 @@ test('the rotary finish can run its passes around the bar', async ({ app, ui }) 
   const around = await rotaryPassReadout(page, finish.id)
   expect(around.warningCodes).toEqual(['rotaryFinishWithoutRough'])
   expect(around.moveCount).toBeGreaterThan(0)
-  // Every point of the around path turns, and one operation never leaves the
-  // first turn: the ring alternation keeps A inside [0, 360].
+  // Every point of the around path turns, and #1103 slice ca-c made the rings
+  // forward-only: each ring continues from the angle the last one reached, so
+  // A accumulates past one turn and is never wrapped modulo 360 (#1091 leaves
+  // the range to the controller). An alternating-ring output would have kept
+  // A inside [0, 360]; a rewind or a wrap shows up as a move whose A decreases.
   expect(around.angleCount).toBe(around.pointCount)
   expect(around.minAngle).toBeGreaterThanOrEqual(0)
-  expect(around.maxAngle).toBeLessThanOrEqual(360)
+  expect(around.maxAngle - around.minAngle).toBeGreaterThan(360)
+  expect(around.aReversals).toBe(0)
   // Rings at one along position are not the along pass with a different label.
   expect(around.signature).not.toBe(along.signature)
 })
