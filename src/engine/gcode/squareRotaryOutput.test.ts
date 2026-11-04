@@ -74,6 +74,7 @@ import { formatGCodeNumber } from './utils'
 import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { stockSpacePoint } from '../rotaryFrame'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -1437,6 +1438,140 @@ console.log('Testing the posted inverse-time feed against a seeded physical refe
   // The direction factor is the machine's, not the geometry's.
   assert.equal(direction, 1, 'fixture: an own-axis machine turns in the positive direction')
   console.log(`   ${checked} seeded pure-turn feeds match the true-pivot analytic word`)
+}
+
+// ── 6. the forward-only square path posts as straight moves (#1103 ca-e) ──
+//
+// Square around work cannot helix: its corner arcs and partial rings turn
+// forward only, with safe gaps, and A grows across the whole operation rather
+// than being rewound to the next ring's angle. The generated programs are
+// posted through the real emitter and checked for the four things that make
+// that motion safe to run:
+//
+//   - no turning cut reverses A anywhere in the path, and A never decreases;
+//   - every turning block is a straight G1 (arc fitting is on: a square arc
+//     cannot be become a G2/G3, and a G2/G3 would unwind the stock);
+//   - every block in inverse-time mode carries a positive F, and that F is
+//     `feed / length` for an independent integration of the tip path in the
+//     stock's own frame (sampled across the path, every block positive);
+//   - the program ends on the last pose angle, with no closing unwind.
+{
+  const bruteForceStockPathLength = (from: ToolpathPoint, to: ToolpathPoint, stock: SquareStock, chords = 4000): number => {
+    const lerp = (t: number): ToolpathPoint => ({
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+      z: from.z + (to.z - from.z) * t,
+      a: (from.a ?? 0) + ((to.a ?? 0) - (from.a ?? 0)) * t,
+    })
+    let previous = stockSpacePoint(lerp(0), stock)
+    let length = 0
+    for (let index = 1; index <= chords; index++) {
+      const point = stockSpacePoint(lerp(index / chords), stock)
+      length += Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z)
+      previous = point
+    }
+    return length
+  }
+  const aWord = (line: string): number | undefined => {
+    const match = /A(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+    return match ? Number(match[1]) : undefined
+  }
+  const fWord = (line: string): number | undefined => {
+    const match = /F(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+    return match ? Number(match[1]) : undefined
+  }
+
+  console.log('Testing the forward-only square around path posts as straight G1 moves...')
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const fixtureCell = fixture({ axis: 'x', units: 'mm', kind })
+    const { project, operation, stock } = fixtureCell
+    operation.rotaryPassDirection = 'around'
+    const envelope = computeOperationToolpath(project, operation)
+    assert.ok(envelope, `${kind}/around: the dispatch answers`)
+    if (!envelope) throw new Error('unreachable')
+    const label = `${kind}/around`
+    const moves = envelope.result.moves
+    assert.deepEqual(
+      envelope.result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'),
+      [],
+      `${label}: admitted, not a refusal`,
+    )
+    const feed = operation.feed
+    const turning = moves.filter((move) => move.kind !== 'rapid'
+      && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a)
+    assert.ok(turning.length > 0, `${label}: the path turns A`)
+
+    // Forward only, and never rewound: no sign change, no decrease between
+    // consecutive poses, and the last pose is the largest angle.
+    let lastSign = 0
+    for (const move of turning) {
+      const sign = Math.sign((move.to.a ?? 0) - (move.from.a ?? 0))
+      assert.ok(sign >= 0, `${label}: a turning cut never runs backwards (A${move.from.a} -> A${move.to.a})`)
+      if (lastSign !== 0) assert.equal(sign, lastSign, `${label}: every turning cut advances A`)
+      lastSign = sign
+    }
+    let previous = -Infinity
+    for (const move of moves) {
+      const angle = move.from.a ?? 0
+      assert.ok(angle >= previous - 1e-9, `${label}: commanded A never decreases (${angle} after ${previous})`)
+      previous = angle
+    }
+    const last = moves[moves.length - 1]
+    assert.ok((last.to.a ?? 0) > 360, `${label}: the program accumulates past one revolution (${last.to.a} deg)`)
+
+    const definition = machine('own', 'x')
+    const posted = post(project, definition, operation, envelope.result)
+    assert.deepEqual(posted.warnings, [], `${label}: the program posts with no refusal`)
+    assert.doesNotMatch(posted.gcode, /G[23]\b/, `${label}: no turning move is fitted into a G2/G3`)
+
+    // Every inverse-time block carries a positive F, and it is the feed over an
+    // independent integration of the stock-frame tip path.
+    let inverse = false
+    const blocks: string[] = []
+    for (const line of motionLines(posted.gcode)) {
+      if (line === 'G93') { inverse = true; continue }
+      if (line === 'G94') { inverse = false; continue }
+      if (inverse && /F-?[0-9]/.test(line)) blocks.push(line)
+    }
+    assert.equal(blocks.length, turning.length, `${label}: one inverse-time block per turning move`)
+    let checked = 0
+    let worst = 0
+    for (let index = 0; index < blocks.length; index++) {
+      const line = blocks[index]
+      const word = fWord(line)
+      assert.ok(word !== undefined && word > 0, `${label} block ${index}: F is present and positive (${line})`)
+      assert.match(line, /G1 |^[XYZ]/, `${label} block ${index}: is a straight motion block (${line})`)
+      const wordA = aWord(line)
+      assert.ok(wordA !== undefined
+        && Math.abs(wordA - Number(formatGCodeNumber(turning[index].to.a!, definition, 'mm'))) < 1e-9,
+        `${label} block ${index}: writes the move's own growing angle`)
+      // Sampling every 13th block keeps the integration cheap; the remaining
+      // assertions still cover every block.
+      if (index % 13 !== 0) continue
+      // A near-zero path is floored at the export geometry tolerance, exactly
+      // as `inverseTimeFeedValue` floors it; every other block is the true
+      // feed / length.
+      const length = Math.max(
+        bruteForceStockPathLength(turning[index].from, turning[index].to, stock),
+        exportGeometryTolerance('mm'),
+      )
+      const expected = feed / length
+      worst = Math.max(worst, Math.abs(word! - expected))
+      assert.ok(Math.abs(word! - expected) <= 0.0011,
+        `${label} block ${index}: F${word} is feed / the integrated path length (${expected.toFixed(3)})`)
+      checked += 1
+    }
+
+    // No closing unwind: the last angle written is the last pose's.
+    const written = motionLines(posted.gcode)
+      .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+    assert.equal(written[written.length - 1], Number(formatGCodeNumber(last.to.a!, definition, 'mm')),
+      `${label}: the program ends on the last pose angle`)
+    assert.ok(written[written.length - 1] > 360, `${label}: and that angle is the accumulated one`)
+    console.log(`   ${label}: ${moves.length} moves, ${turning.length} turning cuts, `
+      + `A ${moves[0].from.a?.toFixed(0)} -> ${written[written.length - 1].toFixed(0)}, `
+      + `${checked} sampled feeds match the integrated length (worst ${worst.toExponential(1)})`)
+  }
 }
 
 console.log('engine/gcode/squareRotaryOutput.test.ts: all assertions passed')

@@ -42,11 +42,16 @@
 
 import assert from 'node:assert/strict'
 import { barPivotZ, squareStock } from '../../types/barStock'
-import type { SquareStock } from '../../types/project'
-import { defaultTool } from '../../types/project'
+import type { BarStock } from '../../types/project'
+import { defaultTool, newProject, roundStock } from '../../types/project'
 import { generateRotaryFinish, generateRotaryRough, mergeCollinearCuts } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { ToolpathMove, ToolpathPoint } from './types'
+import { stockSpacePoint } from '../rotaryFrame'
+import { normalizeToolForProject } from './geometry'
+import { runPostProcessor } from '../gcode/postprocessor'
+import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
+import { validateMachineDefinition } from '../gcode/types'
 
 const STOCK = squareStock(20, 40, 'x', { x: 0, y: 0 })
 const PIVOT = barPivotZ(STOCK)
@@ -220,7 +225,7 @@ console.log('Testing the three points that a perpendicular metric merges over to
 // ---------------------------------------------------------------------------
 
 /** A coaxial cylinder surface inside the blank. */
-function cylinder(stock: SquareStock, radius: number, from: number, to: number, segments = 96): RotaryModelMesh {
+function cylinder(stock: BarStock, radius: number, from: number, to: number, segments = 96): RotaryModelMesh {
   const centre = stock.thickness / 2
   const pivot = barPivotZ(stock)
   const positions: number[] = []
@@ -278,6 +283,166 @@ console.log('Testing that a generated around ring merges and still posts...')
   assert.ok(finish.moves.length > 0, 'the finish emits motion')
   console.log(`  generated rough ${rough.moves.length} moves (${turningCuts(rough.moves)} turning cuts), `
     + `finish ${finish.moves.length} moves`)
+}
+
+
+// ---------------------------------------------------------------------------
+// #1103 slice ca-e: the merge over a continuous helix.
+//
+// An uninterrupted band is one forward helix: A grows a full turn per pitch and
+// every emitted segment is a straight line in (along, A, Z). The merge must
+// collapse those segments without changing what the controller is commanded to
+// do -- the same motion at every original sample, the same stock-frame path
+// length (which is what G93's F is computed from), and no reversal of A.
+// ---------------------------------------------------------------------------
+
+console.log('Testing that the merge collapses a continuous helix without moving it...')
+{
+  const stock = roundStock(20, 40, 'x')
+  const pivot = barPivotZ(stock)
+  const centre = stock.thickness / 2
+  const tip = 6
+  const bandStart = 12
+  const bandEnd = 28
+  const turns = 7
+  const stepsPerTurn = 100
+  const at = (along: number, angle: number): ToolpathPoint => ({ x: along, y: centre, z: pivot + tip, a: angle })
+
+  // The shape the rough emits on an uninterrupted round band (#1103 ca-d): a
+  // complete ring at each axial end and a 7-revolution helix between them, at a
+  // constant tip radius -- so each of the three runs is exactly a straight line
+  // in (along, A, Z), which is what the merge must collapse.
+  const points: ToolpathPoint[] = []
+  for (let step = 0; step <= stepsPerTurn; step++) {
+    points.push(at(bandStart, 360 * step / stepsPerTurn))
+  }
+  for (let step = 1; step <= stepsPerTurn * turns; step++) {
+    const u = step / (stepsPerTurn * turns)
+    points.push(at(bandStart + (bandEnd - bandStart) * u, 360 + 360 * turns * u))
+  }
+  for (let step = 1; step <= stepsPerTurn; step++) {
+    points.push(at(bandEnd, 360 + 360 * turns + 360 * step / stepsPerTurn))
+  }
+
+  // The stock-frame length of one straight commanded segment: an independent
+  // polyline through `stockSpacePoint`, the same oracle the export's F uses.
+  const stockFrameLength = (from: ToolpathPoint, to: ToolpathPoint, chords = 4000): number => {
+    const lerp = (t: number): ToolpathPoint => ({
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+      z: from.z + (to.z - from.z) * t,
+      a: (from.a ?? 0) + ((to.a ?? 0) - (from.a ?? 0)) * t,
+    })
+    let previous = stockSpacePoint(lerp(0), stock)
+    let length = 0
+    for (let index = 1; index <= chords; index++) {
+      const point = stockSpacePoint(lerp(index / chords), stock)
+      length += Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z)
+      previous = point
+    }
+    return length
+  }
+
+  const cuts: ToolpathMove[] = []
+  for (let index = 0; index + 1 < points.length; index++) {
+    cuts.push({ kind: 'cut', from: points[index], to: points[index + 1] })
+  }
+  // The exact length of one commanded move at a constant tip radius: along and
+  // A both interpolate linearly, so the tip's stock-frame speed is constant. The
+  // closed form is independent of the merge and of any quadrature.
+  const exactLength = (from: ToolpathPoint, to: ToolpathPoint): number => Math.hypot(
+    Math.abs(to.x - from.x),
+    (tip * Math.abs((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180,
+  )
+  const before = cuts.reduce((total, move) => total + exactLength(move.from, move.to), 0)
+  const merged = mergeCollinearCuts(cuts, 0.001, pivot)
+  assert.equal(merged.moves.length, 3, `the two rings and the helix merge to three moves (${merged.moves.length})`)
+  assert.equal(merged.dropped, cuts.length - 3, 'every interior sample is dropped')
+  const after = merged.moves.reduce((total, move) => total + exactLength(move.from, move.to), 0)
+  assert.ok(Math.abs(after - before) / before < 1e-12,
+    `the merge preserves the exact path length (${before.toFixed(9)} -> ${after.toFixed(9)})`)
+
+  let previousAngle = -Infinity
+  const spans: number[] = []
+  for (const move of merged.moves) {
+    assert.equal(move.kind, 'cut', 'the whole run merges as cuts')
+    assert.ok((move.from.a ?? 0) >= previousAngle - 1e-9, 'A never decreases through the merged run')
+    previousAngle = move.to.a ?? 0
+    spans.push((move.to.a ?? 0) - (move.from.a ?? 0))
+  }
+  assert.ok(spans[0] === 360 && spans[2] === 360, `the boundary rings stay complete turns (${spans[0]}, ${spans[2]})`)
+  assert.ok(spans[1] > 360, `the helix merges into one multi-turn move (${spans[1]} deg)`)
+
+  // Every dropped sample still lies on the merged move at its own A.
+  const indexOf = new Map<ToolpathPoint, number>()
+  points.forEach((point, index) => indexOf.set(point, index))
+  for (const move of merged.moves) {
+    const low = indexOf.get(move.from)
+    const high = indexOf.get(move.to)
+    assert.ok(low !== undefined && high !== undefined, 'a merged move keeps original poses as its ends')
+    for (let index = low + 1; index < high; index++) {
+      const error = interpolationErrorAtOwnAngle(points[index], move.from, move.to)
+      assert.ok(error <= 0.001 + 1e-9,
+        `sample ${index} (A${points[index].a}) commands ${error.toExponential(3)} mm of error at its own A`)
+    }
+  }
+
+  // And the long merged move posts as one straight inverse-time block whose F
+  // is the feed divided by the integrated length, not a shorter axial-only or
+  // rotary-only path.
+  const project = newProject('Helix merge', 'mm')
+  project.stock = stock
+  project.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Test End Mill' }]
+  const op = {
+    id: 'helix-merge', name: 'Helix merge', description: '', kind: 'pocket' as const,
+    pass: 'rough' as const, enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'stock' as const }, toolRef: 't1', stepdown: 1, stepover: 0.4,
+    feed: 600, plungeFeed: 180, rpm: 12000, pocketPattern: 'offset' as const, pocketAngle: 0,
+    stockToLeaveRadial: 0, stockToLeaveAxial: 0, finishWalls: true, finishFloor: true,
+    carveDepth: 1, maxCarveDepth: 1,
+  }
+  project.operations = [op]
+  const definition = validateMachineDefinition({
+    ...structuredClone(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!),
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+  const posted = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation: op,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: {
+        operationId: op.id, warnings: [], bounds: null,
+        // The establishing rapid: a feed move may only start at an angle the
+        // controller is already at (#393 rule 2).
+        moves: [{ kind: 'rapid' as const, from: { ...points[0] }, to: { ...points[0] } }, ...merged.moves],
+      },
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.deepEqual(posted.warnings, [], 'the merged helix posts with no refusal')
+  assert.doesNotMatch(posted.gcode, /G[23]\b/, 'no merged turning move is fitted into an arc')
+  const blocks = posted.gcode.split('\n').filter((line) => /A-?[0-9]/.test(line) && /F[0-9]/.test(line) && !/^G0\b/.test(line))
+  assert.equal(blocks.length, 3, 'the three merged runs post as three inverse-time blocks')
+  let longest = { line: blocks[0], move: merged.moves[0] }
+  for (let index = 0; index < merged.moves.length; index++) {
+    const move = merged.moves[index]
+    const feed = Number(/F(-?[0-9.]+)/.exec(blocks[index])?.[1])
+    assert.ok(feed > 0, `block ${index} carries a positive F`)
+    const expected = 600 / stockFrameLength(move.from, move.to,
+      Math.max(4000, Math.ceil(Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) * 40)))
+    assert.ok(Math.abs(feed - expected) <= 0.0011,
+      `block ${index}: F${feed} is feed / the integrated path (${expected.toFixed(3)})`)
+    if ((move.to.a ?? 0) - (move.from.a ?? 0) > (longest.move.to.a ?? 0) - (longest.move.from.a ?? 0)) {
+      longest = { line: blocks[index], move }
+    }
+  }
+  const longSpan = (longest.move.to.a ?? 0) - (longest.move.from.a ?? 0)
+  assert.ok(longSpan > 360, `the posted helix block spans more than a revolution (${longSpan} deg)`)
+  assert.match(longest.line, /A2880\b/, 'and its A word is the unwrapped, growing value')
+  console.log(`  helix: ${points.length} poses -> ${merged.moves.length} moves, `
+    + `length ${before.toFixed(3)} mm, longest move ${longSpan.toFixed(0)} deg`)
 }
 
 console.log('engine/toolpaths/rotaryMerge.test.ts: all assertions passed')
