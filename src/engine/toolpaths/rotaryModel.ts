@@ -1734,6 +1734,15 @@ function prepareRotaryTargets(
     ...(samplingMesh.retainedTriangleStart !== undefined
       ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
       : {}),
+    // #1103 ca-e: a round around operation may build a helix over the rings it
+    // has just sampled, and the helix reads the same physical angles. Keep the
+    // raster maps this grid builds so the helix can read them instead of
+    // rasterising a second set (#1103 ca-e, review P1). The base grid never
+    // reads the cache, so its own output stays byte for byte what it was; a
+    // square blank has no helix, so it pays nothing.
+    ...(params.passDirection === 'around' && stock.shape === 'round' && along.length > 1
+      ? { angleMaps: 'write' as const }
+      : {}),
     workspace,
   })
   return {

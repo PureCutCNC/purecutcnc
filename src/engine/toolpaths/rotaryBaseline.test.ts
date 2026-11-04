@@ -119,4 +119,44 @@ assert.deepEqual(
   'the along-mode byte-identical control has its two rows',
 )
 
-console.log(`  baseline: ${rows.length} rows, protocol 1 warm-up + ${measuredRuns} timed runs, medians consistent`)
+// ca-e review P1: a generation row over the handoff's 1.2x target cannot be
+// waved through. The ratio table and the acceptance list are one contract --
+// every row above the target names its ratio in the list, and every listed row
+// is still above it, so a later improvement cannot leave a stale acceptance
+// behind and a new regression cannot be quietly absorbed. Export is exempt: the
+// fixed cylinder's 2-3 ms postings are timer resolution, which the document
+// says.
+const GEN_TARGET = 1.2
+interface RatioRow {
+  case: string
+  genRatio: number
+}
+const ratioRows: RatioRow[] = []
+for (const text of doc.split('\n')) {
+  if (!text.startsWith('|')) continue
+  const cells = text.split('|').slice(1, -1).map((cell) => cell.trim())
+  if (cells.length !== 7) continue
+  if (!/^\d+\.\d{2}$/.test(cells[3]) || !/^\d+\.\d{2}$/.test(cells[6])) continue
+  ratioRows.push({ case: cells[0], genRatio: Number(cells[3]) })
+}
+assert.equal(ratioRows.length, 9, 'the timing-target table carries all nine cases')
+const overTarget = ratioRows.filter((row) => row.genRatio > GEN_TARGET).map((row) => row.case).sort()
+const accepted = new Map<string, number>()
+for (const text of doc.split('\n')) {
+  const match = /^- (.+?) — (\d+\.\d{2})x generation \(\d+ ms versus \d+ ms\)/.exec(text)
+  if (match) accepted.set(match[1], Number(match[2]))
+}
+assert.deepEqual([...accepted.keys()].sort(), overTarget,
+  'every generation row over 1.2x is named in the accepted-residual list, and no row under it is')
+for (const [name, ratio] of accepted) {
+  const row = ratioRows.find((entry) => entry.case === name)
+  assert.ok(row !== undefined, `the accepted row ${name} is in the ratio table`)
+  assert.ok(Math.abs(row.genRatio - ratio) <= 0.01,
+    `the accepted ${name} records its measured ratio (${ratio} versus ${row.genRatio})`)
+}
+if (overTarget.length > 0) {
+  assert.ok(doc.includes("Frank's sign-off"),
+    'an over-target row names the sign-off the approved plan requires')
+}
+
+console.log(`  baseline: ${rows.length} rows, protocol 1 warm-up + ${measuredRuns} timed runs, medians consistent; ${accepted.size} accepted over-target row(s)`)

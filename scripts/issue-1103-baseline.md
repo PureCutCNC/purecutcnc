@@ -67,7 +67,8 @@ with **one warm-up and five timed runs** per case. The ca-a rows above keep
 their own three-run capture; the medians below are the five-run re-measurement
 of the same cases. The baseline side is the unchanged ca-a base tree at
 `8fd5b18f` (the post-#1117 code, `6498aaf5` plus the slice handoffs); the
-candidate side is this branch's generator at `061da008` plus test-only changes.
+candidate side is this branch's generator at `061da008` plus the ca-e fix's
+angle-map reuse (below) and test-only changes.
 
 Only `computeOperationToolpath` is inside the generation timer. The export
 timer posts that run's moves through the bundled `grbl` definition plus an
@@ -80,8 +81,8 @@ export times are pure posting.
 
 | fixture | op | candidate moves | candidate rapids | candidate A reversals | candidate median gen ms | candidate median export ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| busto-round-stock.camj | op0025 | 22669 | 291 | 0 | 65534 | 72 |
-| busto-round-stock.camj | op0015 | 54231 | 2 | 0 | 46019 | 161 |
+| busto-round-stock.camj | op0025 | 22669 | 291 | 0 | 30772 | 72 |
+| busto-round-stock.camj | op0015 | 54231 | 2 | 0 | 42220 | 170 |
 | busto-rect-stock.camj | op0021 | 32866 | 74 | 0 | 41023 | 40972 |
 | busto-rect-stock.camj | op0022 | 79088 | 2 | 0 | 32839 | 32965 |
 | square-to-round-test-01.camj | op0028 (around) | 8791 | 32 | 0 | 46 | 66 |
@@ -97,14 +98,14 @@ control on the measurement itself.
 
 | case | base median gen ms | candidate median gen ms | gen ratio | base median export ms | candidate median export ms | export ratio |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| busto-round op0025 | 29497 | 65534 | 2.22 | 74 | 72 | 0.97 |
-| busto-round op0015 | 27205 | 46019 | 1.69 | 163 | 161 | 0.99 |
+| busto-round op0025 | 29497 | 30772 | 1.04 | 74 | 72 | 0.97 |
+| busto-round op0015 | 27205 | 42220 | 1.55 | 163 | 170 | 1.04 |
 | busto-rect op0021 | 39874 | 41023 | 1.03 | 39738 | 40972 | 1.03 |
 | busto-rect op0022 | 32253 | 32839 | 1.02 | 32602 | 32965 | 1.01 |
 | square op0028 (around) | 47 | 46 | 0.98 | 66 | 66 | 1.00 |
 | square op0029 (around) | 62 | 63 | 1.02 | 87 | 89 | 1.02 |
-| fixed cylinder, finish around | 179 | 360 | 2.01 | 2 | 3 | 1.50 |
-| fixed cylinder, rough around | 185 | 545 | 2.95 | 2 | 2 | 1.00 |
+| fixed cylinder, finish around | 179 | 188 | 1.05 | 2 | 3 | 1.50 |
+| fixed cylinder, rough around | 185 | 197 | 1.07 | 2 | 2 | 1.00 |
 | rotary fixture, along | 1174 | 1189 | 1.01 | 18 | 18 | 1.00 |
 
 Candidate A reversals against the base rows: 396 -> 0 (busto-round rough),
@@ -115,27 +116,75 @@ goes 7 -> 0 (finish) and 15 -> 0 (rough).
 ## What ca-e measured
 
 - **Export meets the target everywhere it is measurable.** The round rows are
-  0.97-0.99x the base, the square-stock rows 1.01-1.03x (their export includes
-  the regeneration described above), and the unchanged along fixture 1.00x.
-  The fixed cylinder's export medians are 2-3 ms, at timer resolution.
-- **Generation does not meet the 1.2x target on the round-bar helix.** It is
-  2.01x (cylinder finish), 2.95x (cylinder rough), 1.69x (busto-round finish)
-  and 2.22x (busto-round rough). The square rows (0.98-1.03x) and the unchanged
-  along fixture (1.01x) meet it. The slower cases are exactly those where the
-  round-bar helix is built; the square paths keep their forward-only ring
-  fallback. The cause was not changed in ca-e, which owns export, parity and
-  measurement -- this is recorded as a measured risk for the slices that own
-  the helix build.
+  0.97-1.04x the base (the finish's 170 ms is the same 2-3 ms of timer noise on
+  a posting that dominated by run merging, not a change in the posted program),
+  the square-stock rows 1.01-1.03x (their export includes the regeneration
+  described above), and the unchanged along fixture 1.00x. The fixed
+  cylinder's export medians are 2-3 ms, at timer resolution.
+- **Generation meets the 1.2x target on every row but one.** The cylinder rows
+  are 1.05x (finish) and 1.07x (rough), the busto-round rough 1.04x, the square
+  rows 0.98-1.03x and the unchanged along fixture 1.01x. The busto-round
+  **finish** is 1.55x and is the one row that needs an explicit acceptance (see
+  the correction section below); its cause is measured, not assumed: the helix
+  attempt never converges on that surface at that cell size (all eight
+  refinement rounds run and 29 of 1706 segments are still failing), so the band
+  keeps its rings and the second sampling pass is pure work.
 - **Fewer, forward-only moves.** The round rough drops 24322 -> 22669 moves and
   the finish gains 29 (54202 -> 54231); the cylinder rough goes 564 -> 613 moves
-  while its generation time triples. Move count alone does not explain the
-  timing, which is another reason the regression is flagged rather than waved
-  through as "fewer reversals".
+  because its rings are replaced by helix boundary rings and a pitch-length
+  advance. Move count alone does not predict the timing, which is why the
+  correction above was measured rather than derived from the counts.
 - **The along controls are byte-identical.** The square fixture's stored
   `along` rows re-run on both trees produce identical moves and posted text
   (date normalised) with the same move counts the ca-a table records: 1104
   (op0028) and 448 (op0029). The cylinder's along rough and finish controls,
   and a non-rotary program, are pinned by hash in `rotaryOutput.test.ts`.
+
+## Correction round 1 (review P1): shared height maps
+
+The helix's phase grid is the ring grid's angle grid, so a map the ring grid
+has already rasterised at a physical angle can serve the helix's row at that
+same angle: the map depends only on the angle (mesh, tool and cell size are
+fixed per operation) and the row still reads its own along positions.
+`RotarySamplingWorkspace.angleMaps` now keeps those maps, cropped to the rows
+(X bar) or columns (Y bar) the sampler reads, and the helix's row preps opt in
+with `angleMaps: 'read-write'`. The ring grid itself is `'write'` and never
+reads one back, so its rows -- and every move and post hash pinned above -- are
+unchanged (a test compares them bit for bit). The cache is bounded: a map over
+96 KiB is not stored, and the first map that would pass 32 MiB stops filling,
+which keeps the earliest angles (the ring grid's, the ones the helix's first
+round needs). Re-measured with the same protocol on the same machine:
+
+- fixed cylinder finish: 360 -> 188 ms (2.01x -> 1.05x)
+- fixed cylinder rough: 545 -> 197 ms (2.95x -> 1.07x)
+- busto-round op0025 rough: 65534 -> 30772 ms (2.22x -> 1.04x)
+- busto-round op0015 finish: 46019 -> 42220 ms (1.69x -> 1.55x)
+
+The busto-round finish improves only in proportion to its unshared ring
+refinement: its 0.01 mm cell makes the window it reads the **whole** height
+map (320 KiB), over the 96 KiB per-map gate, so its helix rows cannot be
+shared. That is the accepted residual below.
+
+## Accepted residual (review P1)
+
+The 1.2x generation target is met on every measured row except the busto-round
+around finish, which measures **1.55x** (42220 ms against 27205 ms). The row is
+a 1.47 M-vertex organic surface at a 0.01 mm cell: its window is the whole
+height map, so the shared-map correction above cannot apply, and its helix
+cannot converge -- all eight refinement rounds run and 29 of 1706 segments are
+still failing, so the band correctly keeps its rings and the attempt is work
+spent to prove a refusal. The measured cost is that attempt, not a regression
+in the ring path: the square, along and cylinder rows all meet the target.
+
+The approved plan says delivery requires Frank's acceptance. This row is
+recorded here as an **explicit acceptance item pending Frank's sign-off**, not
+as a met target. The alternative is a follow-up slice that shares the ring
+grid's sampling with the helix (merged per-angle reads) rather than accepting
+the cost. A test in `rotaryBaseline.test.ts` requires every row above 1.2x to
+appear in this list and every listed row to still be above it, so the gap can
+neither be quietly dropped nor left stale.
+
+- busto-round op0015 — 1.55x generation (42220 ms versus 27205 ms) — the around finish, accepted pending Frank's sign-off
 
 ## Changes a later slice must report against this table
 

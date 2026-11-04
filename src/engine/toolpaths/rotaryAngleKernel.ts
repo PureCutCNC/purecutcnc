@@ -113,6 +113,9 @@ export function createRotaryAngleKernel(setup: RotaryAngleSetupPayload): RotaryA
     along: setup.along,
     requestedCellSize: setup.requestedCellSize,
     conservativeCellBounds: setup.mode === 'around',
+    // A worker's rows are not cached: the map cache is a main-thread workspace
+    // optimisation (#1103 ca-e), and a worker's prep is rebuilt from a payload.
+    angleMaps: 'off',
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     workspace: {
       subset: new Uint32Array(2 * triangleCount),

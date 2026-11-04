@@ -59,7 +59,7 @@ import { barCentre, barPivotZ } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
 import { convertLength, type Units } from '../../utils/units'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
-import type { HeightMapWindow } from './finishSurfaceParallel'
+import type { HeightMap, HeightMapWindow } from './finishSurfaceParallel'
 import { buildRotaryHeightMap, buildRotaryRasterGeometry } from './rotaryRaster'
 import type { RotaryRasterGeometry } from './rotaryRaster'
 import type { NormalizedTool } from './types'
@@ -141,6 +141,13 @@ export interface RotarySampling {
    * plus its lift is the per-angle job's whole answer (#1115 slice p-d1).
    */
   readonly lifts: readonly number[]
+  /**
+   * Angle rows whose height map came from one this workspace had already
+   * rasterised at the same physical angle (#1103 ca-e): the row is still read
+   * at its own along positions, only the map build was saved. Always 0 when no
+   * angle-map cache is enabled.
+   */
+  readonly reused: number
   readonly stopped: boolean
   /**
    * False when the tool geometry handed to the sampler cannot describe a
@@ -286,6 +293,41 @@ interface RotaryStripPlan {
 type RotaryPlanGeometry = Pick<RotaryStripPlan, 'across' | 'up' | 'hull' | 'minAlong' | 'maxAlong'>
 
 /**
+ * Height maps one operation has already rasterised, keyed by physical angle
+ * (#1103 ca-e).
+ *
+ * An around operation samples the same physical angle several times: the ring
+ * grid, every refinement round, and -- when a continuous helix replaces a band
+ * -- the helix's own rows. The map depends only on the angle (the mesh, tool,
+ * cell size and workspace are fixed per operation), so a later row at the same
+ * angle only needs the tip read at its own along positions. Reusing the map
+ * removes the duplicate raster work without changing a single sampled value.
+ *
+ * A map is stored **cropped to the rows (or columns) the sampler reads** -- the
+ * window `runRotaryAngleJob` rasterises -- so a map that is mostly window costs
+ * the window, not the whole grid. Entries are only added while the byte budget
+ * has room; the policy is deliberately fill-then-stop rather than evict, so the
+ * earliest angles (the ring grid's, which the helix's first round needs) are the
+ * ones kept. A map too large to be worth keeping is not stored at all.
+ */
+export interface RotaryAngleMapCache {
+  readonly maps: Map<number, HeightMap>
+  bytes: number
+  readonly budgetBytes: number
+  /** The budget is spent: no entry is added after this, so no earlier one is lost. */
+  full: boolean
+}
+
+/** The most one operation's angle-map cache may hold. */
+export const MAX_ANGLE_MAP_CACHE_BYTES = 32 * 1024 * 1024
+
+/** A single map bigger than this is not cached: the copy would cost as much as a build. */
+export const MAX_CACHED_ANGLE_MAP_BYTES = 96 * 1024
+
+/** Whether one prep may write the workspace's angle maps, read them, or neither. */
+export type RotaryAngleMapMode = 'off' | 'write' | 'read-write'
+
+/**
  * Scratch storage owned by one operation, including every refinement round
  * (issue #1045 slice T). The geometry is mesh-only; the plan is valid for any
  * angle whose strip reach is not wider than the `reach` it was built with, so a
@@ -308,6 +350,11 @@ export interface RotarySamplingWorkspace {
   planGridExtra?: RotaryModelMesh
   /** Contiguous per-triangle records for the fused around-mode raster. */
   raster?: RotaryRasterGeometry
+  /**
+   * Height maps already rasterised at a physical angle (#1103 ca-e), shared by
+   * every prep that samples this operation. See {@link RotaryAngleMapCache}.
+   */
+  angleMaps?: RotaryAngleMapCache
 }
 
 /** The arc of turn directions over which a triangle can reach the strip. */
@@ -786,6 +833,12 @@ export interface RotaryAngleSample {
   /** `min(cellRise ?? 0, cellSize)` for this angle; 0 when cell rise is not tracked. */
   readonly lift: number
   readonly warnings: readonly ToolpathWarning[]
+  /**
+   * True when the height map came from the workspace's cache (#1103 ca-e).
+   * Optional because a worker's reply is the row alone: the cache lives in the
+   * main thread's workspace, and a row sampled in a worker was not reused.
+   */
+  readonly reused?: boolean
 }
 
 /**
@@ -821,6 +874,13 @@ export interface RotarySamplingSetup {
   readonly gridExtra?: RotaryModelMesh
   /** Scratch that outlives one sampling call, shared across refinement rounds. */
   readonly workspace?: RotarySamplingWorkspace
+  /**
+   * Share the operation's height maps by physical angle (#1103 ca-e): `write`
+   * adds every map it builds without ever reading one back, `read-write` also
+   * reuses a map the workspace already holds. `off` (the default) is the old
+   * behaviour byte for byte.
+   */
+  readonly angleMaps?: RotaryAngleMapMode
 }
 
 /**
@@ -840,6 +900,8 @@ export interface RotarySamplingPrep {
   readonly conservativeCellBounds: boolean
   readonly wallTriangleStart?: number
   readonly gridExtra?: RotaryModelMesh
+  /** See `RotarySamplingSetup.angleMaps` (#1103 ca-e). */
+  readonly angleMaps: RotaryAngleMapMode
   /** The operation's cached geometry, plan and raster. */
   readonly workspace: RotarySamplingWorkspace
   /** The bar's cross-axis centre, from `barCentre`. */
@@ -893,6 +955,7 @@ export function createRotarySamplingPrep(
     conservativeCellBounds,
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     ...(setup.gridExtra !== undefined ? { gridExtra: setup.gridExtra } : {}),
+    angleMaps: setup.angleMaps ?? 'off',
     workspace,
     centre: barCentre(stock),
     pivot: barPivotZ(stock),
@@ -901,6 +964,120 @@ export function createRotarySamplingPrep(
       return buildStripPlan(mesh, stock, tool, setup.requestedCellSize, anglesDeg, workspace, setup.gridExtra)
     },
   }
+}
+
+/** The workspace's angle-map cache, created on first use (#1103 ca-e). */
+function angleMapCache(workspace: RotarySamplingWorkspace): RotaryAngleMapCache {
+  return workspace.angleMaps ??= {
+    maps: new Map(),
+    bytes: 0,
+    budgetBytes: MAX_ANGLE_MAP_CACHE_BYTES,
+    full: false,
+  }
+}
+
+/**
+ * The cache key of a physical angle (#1103 ca-e).
+ *
+ * A turned surface repeats every 360 degrees, so A0 and A360 are one map; the
+ * key is the physical angle in [0, 360) on a 1e-6-degree grid. The grid is far
+ * finer than any difference that can move a cell: 1e-6 degrees is 1.7e-8 rad,
+ * orders below a Float32 coordinate's resolution at any bar this app cuts. It
+ * exists because the helix and the ring grid compute the same physical angle
+ * from different path parameters, so their doubles can differ in the last bit.
+ */
+function cachedAngleKey(angle: number): number {
+  const physical = ((angle % 360) + 360) % 360
+  return Math.round(physical * 1_000_000)
+}
+
+/** The rows (X bar) or columns (Y bar) one angle's sampler actually reads. */
+function cachedMapWindow(
+  map: HeightMap,
+  window: HeightMapWindow | undefined,
+  axis: BarStock['axis'],
+): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } {
+  const rowStart = axis === 'x' ? Math.max(0, window?.minRow ?? 0) : 0
+  const rowEnd = axis === 'x' ? Math.min(map.height - 1, window?.maxRow ?? map.height - 1) : map.height - 1
+  const colStart = axis === 'y' ? Math.max(0, window?.minCol ?? 0) : 0
+  const colEnd = axis === 'y' ? Math.min(map.width - 1, window?.maxCol ?? map.width - 1) : map.width - 1
+  return { rowStart, rowEnd, colStart, colEnd }
+}
+
+/** Copy the windowed part of a per-cell array into its own buffer, or `undefined`. */
+function cropCells(source: Float32Array | undefined, width: number, bounds: { rowStart: number; rowEnd: number; colStart: number; colEnd: number}): Float32Array | undefined {
+  if (source === undefined) return undefined
+  const { rowStart, rowEnd, colStart, colEnd } = bounds
+  const copyWidth = colEnd - colStart + 1
+  const copyHeight = rowEnd - rowStart + 1
+  if (copyWidth === width && rowStart === 0 && copyHeight * width === source.length) return source
+  const copy = new Float32Array(copyWidth * copyHeight)
+  for (let row = 0; row < copyHeight; row++) {
+    const from = (rowStart + row) * width + colStart
+    copy.set(source.subarray(from, from + copyWidth), row * copyWidth)
+  }
+  return copy
+}
+
+/** `cropCells` for the byte-per-cell wall coverage. */
+function cropBytes(source: Uint8Array | undefined, width: number, bounds: { rowStart: number; rowEnd: number; colStart: number; colEnd: number }): Uint8Array | undefined {
+  if (source === undefined) return undefined
+  const { rowStart, rowEnd, colStart, colEnd } = bounds
+  const copyWidth = colEnd - colStart + 1
+  const copyHeight = rowEnd - rowStart + 1
+  if (copyWidth === width && rowStart === 0 && copyHeight * width === source.length) return source
+  const copy = new Uint8Array(copyWidth * copyHeight)
+  for (let row = 0; row < copyHeight; row++) {
+    const from = (rowStart + row) * width + colStart
+    copy.set(source.subarray(from, from + copyWidth), row * copyWidth)
+  }
+  return copy
+}
+
+/**
+ * Keep one angle's map for later rows at the same angle (#1103 ca-e).
+ *
+ * Only the window the sampler reads is copied: for an around pass that is a
+ * thin strip along the bar, so the cache costs a fraction of the raster. A map
+ * larger than {@link MAX_CACHED_ANGLE_MAP_BYTES} is not kept -- the copy would
+ * cost about what a rebuild does -- and the first map that would overflow the
+ * budget stops the cache filling further, so the earliest angles (the ring
+ * grid's, which the helix's first round needs) are the ones retained.
+ */
+function storeAngleMap(
+  cache: RotaryAngleMapCache,
+  key: number,
+  map: HeightMap,
+  window: HeightMapWindow | undefined,
+  axis: BarStock['axis'],
+): void {
+  if (cache.full || cache.maps.has(key)) return
+  const bounds = cachedMapWindow(map, window, axis)
+  const cells = (bounds.colEnd - bounds.colStart + 1) * (bounds.rowEnd - bounds.rowStart + 1)
+  const perCell = 4 + (map.wallCoverage !== undefined ? 1 : 0) + (map.modelOnly !== undefined ? 4 : 0)
+  // Check the size before copying: a map that would not be kept must not be
+  // copied at all, or the gate would cost the copy it exists to avoid.
+  if (cells * perCell > MAX_CACHED_ANGLE_MAP_BYTES) return
+  const coverage = cropBytes(map.wallCoverage, map.width, bounds)
+  const modelOnly = cropCells(map.modelOnly, map.width, bounds)
+  const cropped: HeightMap = {
+    data: cropCells(map.data, map.width, bounds)!,
+    width: bounds.colEnd - bounds.colStart + 1,
+    height: bounds.rowEnd - bounds.rowStart + 1,
+    originX: map.originX + bounds.colStart * map.cellSize,
+    originY: map.originY + bounds.rowStart * map.cellSize,
+    cellSize: map.cellSize,
+    ...(map.cellRise !== undefined ? { cellRise: map.cellRise } : {}),
+    ...(coverage !== undefined ? { wallCoverage: coverage } : {}),
+    ...(modelOnly !== undefined ? { modelOnly } : {}),
+  }
+  const bytes = cropped.data.byteLength + (cropped.wallCoverage?.byteLength ?? 0) + (cropped.modelOnly?.byteLength ?? 0)
+  if (cache.bytes + bytes > cache.budgetBytes) {
+    cache.full = true
+    return
+  }
+  cache.maps.set(key, cropped)
+  cache.bytes += bytes
 }
 
 /**
@@ -926,66 +1103,81 @@ export function runRotaryAngleJob(
   const t = (angle * Math.PI) / 180
   const cos = Math.cos(t)
   const sin = Math.sin(t)
-  const bbox = turnedBounds(plan.hull, plan.minAlong, plan.maxAlong, stock, angle)
   const angleWarnings: ToolpathWarning[] = []
-  const cellSize = chooseHeightMapCellSize(bbox, prep.requestedCellSize, angleWarnings)
-  // Every sample sits on the line over the centreline, and `safeToolTipZAt`
-  // only reads cells within `ceil(radius / cell)` of its own. Rasterising the
-  // rows (X bar) or columns (Y bar) that line can reach reproduces every value
-  // the sampling reads, out of a map whose grid is unchanged: same bbox, cell
-  // size, origin, width and height (issue #1015 slice L). The map is not put
-  // through `getCachedHeightMap`, whose key carries neither orientation nor
-  // mesh and which only ever builds full maps.
-  const margin = Math.ceil(tool.radius / cellSize) + 1
-  const window: HeightMapWindow = stock.axis === 'x'
-    ? { minRow: Math.floor((centre - bbox.minY) / cellSize) - margin, maxRow: Math.floor((centre - bbox.minY) / cellSize) + margin }
-    : { minCol: Math.floor((centre - bbox.minX) / cellSize) - margin, maxCol: Math.floor((centre - bbox.minX) / cellSize) + margin }
-  // Only triangles whose cross-section arc covers this turn's strip direction
-  // can put a cell in that window. The bucket index is conservative -- a
-  // triangle lands in every bucket its arc touches, padded a bucket either
-  // side -- so the rasterised set is a superset of the covering triangles, and
-  // a cell's value is the maximum over all covering triangles either way.
-  let count = plan.always.length
-  for (let i = 0; i < plan.always.length; i++) subset[i] = plan.always[i]
-  // The two buckets' set bits, each bucket in ascending triangle order: the
-  // order a triangle is rasterised in cannot change the map (a cell takes the
-  // maximum), but keeping it ascending keeps the reads sequential.
-  const bucketWords = plan.bucketWords
-  if (bucketWords > 0) {
-    const bucketBits = plan.bucketBits
-    for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
-      const base = bucket * bucketWords
-      for (let word = 0; word < bucketWords; word++) {
-        let bits = bucketBits[base + word]
-        while (bits !== 0) {
-          const lowest = bits & -bits
-          subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
-          bits ^= lowest
+  // #1103 ca-e: one map per physical angle serves every row that asks for it.
+  // The map depends only on the angle -- this prep's mesh, tool, cell size and
+  // workspace are fixed for the operation -- so a hit skips the whole raster
+  // pass and only the tip read below remains. A `write` prep never reads, which
+  // keeps every existing caller's rows exactly as they were.
+  const cache = prep.angleMaps === 'off' ? undefined : angleMapCache(prep.workspace)
+  const cacheKey = cachedAngleKey(angle)
+  const cached = prep.angleMaps === 'read-write' ? cache?.maps.get(cacheKey) : undefined
+  const reused = cached !== undefined
+  let heightMap = cached
+  if (heightMap === undefined) {
+    const bbox = turnedBounds(plan.hull, plan.minAlong, plan.maxAlong, stock, angle)
+    const cellSize = chooseHeightMapCellSize(bbox, prep.requestedCellSize, angleWarnings)
+    // Every sample sits on the line over the centreline, and `safeToolTipZAt`
+    // only reads cells within `ceil(radius / cell)` of its own. Rasterising the
+    // rows (X bar) or columns (Y bar) that line can reach reproduces every value
+    // the sampling reads, out of a map whose grid is unchanged: same bbox, cell
+    // size, origin, width and height (issue #1015 slice L). The map is not put
+    // through `getCachedHeightMap`, whose key carries neither orientation nor
+    // mesh and which only ever builds full maps.
+    const margin = Math.ceil(tool.radius / cellSize) + 1
+    const window: HeightMapWindow = stock.axis === 'x'
+      ? { minRow: Math.floor((centre - bbox.minY) / cellSize) - margin, maxRow: Math.floor((centre - bbox.minY) / cellSize) + margin }
+      : { minCol: Math.floor((centre - bbox.minX) / cellSize) - margin, maxCol: Math.floor((centre - bbox.minX) / cellSize) + margin }
+    // Only triangles whose cross-section arc covers this turn's strip direction
+    // can put a cell in that window. The bucket index is conservative -- a
+    // triangle lands in every bucket its arc touches, padded a bucket either
+    // side -- so the rasterised set is a superset of the covering triangles, and
+    // a cell's value is the maximum over all covering triangles either way.
+    let count = plan.always.length
+    for (let i = 0; i < plan.always.length; i++) subset[i] = plan.always[i]
+    // The two buckets' set bits, each bucket in ascending triangle order: the
+    // order a triangle is rasterised in cannot change the map (a cell takes the
+    // maximum), but keeping it ascending keeps the reads sequential.
+    const bucketWords = plan.bucketWords
+    if (bucketWords > 0) {
+      const bucketBits = plan.bucketBits
+      for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
+        const base = bucket * bucketWords
+        for (let word = 0; word < bucketWords; word++) {
+          let bits = bucketBits[base + word]
+          while (bits !== 0) {
+            const lowest = bits & -bits
+            subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
+            bits ^= lowest
+          }
         }
       }
     }
+    const buildOptions = {
+      window,
+      triangles: subset.subarray(0, count),
+      ...(conservativeCellBounds ? { trackCellRise: true } : {}),
+      ...(conservativeCellBounds && prep.wallTriangleStart !== undefined
+        ? { wallTriangleStart: prep.wallTriangleStart }
+        : {}),
+    }
+    if (turned) turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
+    const built = turned
+      ? buildHeightMap(turned, mesh.index, bbox, cellSize, buildOptions)
+      : buildRotaryHeightMap({
+        axis: stock.axis, centre, pivot, cos, sin,
+        geometry: prep.workspace.raster ??= buildRotaryRasterGeometry(
+          mesh.positions, mesh.index, stock.axis, centre, pivot),
+      }, bbox, cellSize, buildOptions)
+    if (cache !== undefined) storeAngleMap(cache, cacheKey, built, window, stock.axis)
+    heightMap = built
   }
-  const buildOptions = {
-    window,
-    triangles: subset.subarray(0, count),
-    ...(conservativeCellBounds ? { trackCellRise: true } : {}),
-    ...(conservativeCellBounds && prep.wallTriangleStart !== undefined
-      ? { wallTriangleStart: prep.wallTriangleStart }
-      : {}),
-  }
-  if (turned) turnStripTriangles(turned, mesh.positions, mesh.index, plan.across, plan.up, stock, cos, sin, subset, count)
-  const heightMap = turned
-    ? buildHeightMap(turned, mesh.index, bbox, cellSize, buildOptions)
-    : buildRotaryHeightMap({
-      axis: stock.axis, centre, pivot, cos, sin,
-      geometry: prep.workspace.raster ??= buildRotaryRasterGeometry(
-        mesh.positions, mesh.index, stock.axis, centre, pivot),
-    }, bbox, cellSize, buildOptions)
   // #1045 slice F: around mode reads every cell as the top of its square, not
   // its centre, so the height map's centre samples can under-read a surface by
   // `(|dz/dx| + |dz/dy|) * cellSize / 2`. That margin is the angle's lift; it is
   // reported, not applied, and assembly adds it to every finite sample of the
   // angle it belongs to.
+  const cellSize = heightMap.cellSize
   const lift = conservativeCellBounds ? Math.min(heightMap.cellRise ?? 0, cellSize) : 0
   const row = new Float32Array(along.length)
   for (let i = 0; i < along.length; i++) {
@@ -995,7 +1187,7 @@ export function runRotaryAngleJob(
       conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
     row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
   }
-  return { index: job.index, row, lift, warnings: angleWarnings }
+  return { index: job.index, row, lift, warnings: angleWarnings, reused }
 }
 
 /**
@@ -1031,6 +1223,7 @@ export function assembleRotarySampling(
   const anglesDeg: number[] = []
   const tipRadius: Float32Array[] = []
   const lifts: number[] = []
+  let reused = 0
   for (let k = 0; k < jobs.length; k++) {
     const sample = ordered[k]
     if (sample === undefined) throw new Error(`rotary sampling: angle job ${k} has no result`)
@@ -1046,11 +1239,12 @@ export function assembleRotarySampling(
     for (const warning of sample.warnings) {
       if (!warnings.some((existing) => existing.code === warning.code)) warnings.push(warning)
     }
+    if (sample.reused === true) reused++
     anglesDeg.push(jobs[k].angle)
     tipRadius.push(row)
     lifts.push(lift)
   }
-  return { anglesDeg, along: [...prep.along], tipRadius, lifts, stopped, valid: true }
+  return { anglesDeg, along: [...prep.along], tipRadius, lifts, reused, stopped, valid: true }
 }
 
 /**
@@ -1131,7 +1325,7 @@ export async function sampleAnglesWithPrepAsync(
 
 /** A tool that cannot describe a cutter at all; sampling refuses it (see `RotarySampling.valid`). */
 function invalidSampling(along: readonly number[]): RotarySampling {
-  return { anglesDeg: [], along: [...along], tipRadius: [], lifts: [], stopped: false, valid: false }
+  return { anglesDeg: [], along: [...along], tipRadius: [], lifts: [], reused: 0, stopped: false, valid: false }
 }
 
 export function sampleRotaryModel(

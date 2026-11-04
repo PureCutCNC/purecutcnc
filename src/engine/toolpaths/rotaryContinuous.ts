@@ -232,6 +232,12 @@ export interface ContinuousHelix {
   readonly samples: number
   /** Angle rows (height maps) sampled. */
   readonly rows: number
+  /**
+   * Angle rows whose height map was already in the operation's workspace at
+   * this physical angle (#1103 ca-e): the row was read, not rasterised. The row
+   * count above still charges every row, so the budgets are unchanged.
+   */
+  readonly reusedRows: number
   /** A budget ran out: the caller keeps rings for this band. */
   readonly exhausted: boolean
   /** The operation was cancelled: the caller emits no motion. */
@@ -289,6 +295,7 @@ interface HelixSegment {
 interface HelixSampling {
   samples: number
   rows: number
+  reused: number
 }
 
 /** What a sampling/budget step decided. */
@@ -433,6 +440,9 @@ function sampleHelixRows(
       ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
       ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
       workspace: prep.workspace,
+      // #1103 ca-e: the ring grid has just rasterised the same physical angles
+      // on this workspace; read those maps instead of building a second set.
+      ...(prep.angleMaps === 'off' ? {} : { angleMaps: 'read-write' as const }),
     })
     const sampled = sampleAnglesWithPrep(
       rowPrep,
@@ -442,6 +452,7 @@ function sampleHelixRows(
     )
     if (!sampled.valid) return 'exhausted'
     if (sampled.stopped) return 'stopped'
+    sampling.reused += sampled.reused
     // The row arrives lifted by the angle's conservative cell rise, exactly as
     // the ring grid reads it; every finite value takes the operation's stock
     // offset and the clamp the ring path applies (`completeRotaryTargets`).
@@ -582,6 +593,7 @@ function emptyHelix(
     pitch,
     samples: sampling.samples,
     rows: sampling.rows,
+    reusedRows: sampling.reused,
     exhausted: flags.exhausted === true,
     stopped: flags.stopped === true,
     uncovered: flags.uncovered === true,
@@ -628,7 +640,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   const turns = Math.max(1, Math.ceil(length / input.stepover))
   if (!Number.isFinite(turns) || turns < 1 || turns > MAX_ROTARY_SAMPLES) return null
   const pitch = length / turns
-  const sampling: HelixSampling = { samples: 0, rows: 0 }
+  const sampling: HelixSampling = { samples: 0, rows: 0, reused: 0 }
   // Refuse before allocating the grid when the initial poses alone are over
   // budget: `intervals x (turns + 2)` is the whole first pass.
   if (intervals * (turns + 2) > budget.samples || intervals > budget.rows) {
@@ -666,6 +678,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
     pitch,
     samples: sampling.samples,
     rows: sampling.rows,
+    reusedRows: sampling.reused,
     exhausted: false,
     stopped: false,
     uncovered: false,
