@@ -931,7 +931,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       { ...base, stockToLeave: 0, passDirection: direction }, {})
     const withLeave = generateRotaryRough('leave', mesh, stock, BALL,
       { ...base, stockToLeave: leave, passDirection: direction }, {})
-    assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
+    const roughHash = createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16)
+    assert.equal(roughHash,
       // #1098: square along rough layers alternate direction. #1117 rl-b
       // re-recorded the around row: its corner arcs now link at the layer as
       // cutting feeds instead of rising over them, so only the around
@@ -942,7 +943,11 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // #1117 (square links) re-recorded it again: the whole rings below the
       // blank's inscribed radius now link at the layer too (10 raised links
       // became at-layer cuts; nothing else moved).
-      direction === 'along' ? 'fac8eaac0fb0b159' : '87d8b1bd453b40f4',
+      // #1103 slice ca-d fix 1 re-recorded the around row: the forward seam
+      // walk samples the rows the commanded sweep crosses and the wide cleared
+      // model gaps are proven by the at-layer row proof, so the around links are
+      // the ones the fix keeps down. The along row did not move.
+      direction === 'along' ? 'fac8eaac0fb0b159' : '5109d7361e8ee2bc',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
     const first = outermost(withLeave, spanStart)

@@ -57,7 +57,7 @@ import { validateMachineDefinition } from '../gcode/types'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject, toClipperPath } from './geometry'
 import { buildMaskFromClipperPaths, buildRegionMask } from './regions'
-import { generateRotaryFinish, generateRotaryRough, rotaryRegionContains } from './rotaryModel'
+import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
 import { rotaryTravelZ, squareRotaryTouchRadius } from './squareRotaryStock'
 import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove, ToolpathResult } from './types'
@@ -1024,7 +1024,12 @@ const NO_REGION_HASHES: Record<string, string> = {
   // blank's whole rings (below its inscribed radius) now link at the layer
   // instead of only its corner arcs. 33 raised links became at-layer cuts;
   // every other move is byte-identical to the previous recording.
-  'square/rotary_rough/around': 'moves=da1d6236c7b106f1 warnings= gcode=536d7fb8b229b50c',
+  // #1103 slice ca-d fix 1 re-recorded it once more, on purpose: a forward link
+  // across the A0/A360 seam now samples the rows its commanded sweep crosses
+  // (not the whole circumference the physical indices walked), and a wide square
+  // model gap the layer below cleared is proven by the at-layer row proof
+  // instead of the 45 degree drift bound. Both change which links stay down.
+  'square/rotary_rough/around': 'moves=3c69e9c477ad98de warnings= gcode=7a22363504ee4d70',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=755a66621cb1363c',
   'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=2d9890f36714171b',
 }

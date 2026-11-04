@@ -74,10 +74,9 @@
 
 import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ } from '../../types/barStock'
-import { polygonProfile, roundStock } from '../../types/project'
-import type { BarStock, SketchFeature, SketchProfile } from '../../types/project'
-import { buildRegionMask } from './regions'
-import { generateRotaryRough } from './rotaryModel'
+import { roundStock } from '../../types/project'
+import type { BarStock } from '../../types/project'
+import { generateRotaryRough, rotaryLinkRowSweep } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
 import type { NormalizedTool, ToolpathMove } from './types'
 
@@ -452,6 +451,122 @@ function diag(moves: readonly ToolpathMove[]): ToolpathMove[] {
   console.log(`  rl-f twisted ridge: ${probes.length} oracle/mesh probes agree to `
     + `${worstResidual.toFixed(5)} mm (the mirrored mapping differs by ${worstMirror.toFixed(3)} mm), `
     + `${alongCuts.length} along-and-A cutting moves`)
+}
+
+// ---------------------------------------------------------------------------
+// 6. #1103 ca-d fix 1 (review P1): a forward link across the A0/A360 seam
+//    samples the rows its **commanded** sweep crosses, not the long way round.
+//
+//    A ridge centred on the seam splits each ring below the layer that reaches
+//    its crest, so the only ring-to-ring transition is the forward gap from the
+//    ring's last cut (just below A360) to the next ring's first (just above A0).
+//    On this fine grid (0.57 deg) walking physical indices from the first to the
+//    second crosses most of the circumference -- 582 rows, past the 256-row
+//    per-link budget the drift proof applies -- so the link used to retract even
+//    though the commanded step is a few dozen rows forward. The corrected walk
+//    crosses the seam rows and keeps the link, and the link rides the crest it
+//    actually crosses.
+// ---------------------------------------------------------------------------
+{
+  // The sweep's own contract. On a 0.573 deg grid a forward step from A346.3
+  // to A373.7 (the same rotation as A13.7) crosses 49 rows in the commanded
+  // direction; the physical-index walk crosses 582, past the per-link budget,
+  // and the rows behind the sweep (A344/A342) are never sampled. The angles are
+  // unwrapped, so the pose just past A360 is bracketed by the seam rows and not
+  // by the A344/A346 pair the physical walk visited.
+  const grid = Array.from({ length: 630 }, (_, k) => 360 * k / 629)
+  const fromK = 605
+  const toK = 24
+  const fromA = grid[fromK]
+  const toA = 360 + grid[toK]
+  const sweep = rotaryLinkRowSweep(grid, fromK, toK, fromA, toA - fromA)
+  assert.ok(sweep !== null, 'the forward seam sweep resolves')
+  assert.equal(sweep.rows.length, 49, 'the seam step crosses 49 rows, not the 582 physical ones')
+  assert.equal(sweep.rows[0], fromK, 'the sweep starts at the link\'s own row')
+  assert.equal(sweep.rows[sweep.rows.length - 1], toK, 'the sweep ends at the destination row')
+  assert.ok(!sweep.rows.includes(fromK - 1) && !sweep.rows.includes(fromK - 2),
+    'the rows behind the sweep (A344/A342) are not sampled')
+  for (let i = 1; i < sweep.angles.length; i++) {
+    assert.ok(sweep.angles[i] > sweep.angles[i - 1],
+      `the swept row angles are unwrapped and monotone (row ${i}: `
+      + `${sweep.angles[i - 1].toFixed(3)} -> ${sweep.angles[i].toFixed(3)})`)
+  }
+  const pose = fromA + (toA - fromA) * 0.51
+  const bracket = sweep.angles.findIndex((angle, i) => i + 1 < sweep.angles.length
+    && angle <= pose && sweep.angles[i + 1] > pose)
+  assert.ok(bracket >= 0, `the commanded pose A${pose.toFixed(3)} is bracketed by two rows`)
+  assert.ok(Math.abs(sweep.angles[bracket] - 360) < 1e-9
+    && Math.abs(sweep.angles[bracket + 1] - (360 + grid[1])) < 1e-9,
+    `the pose at commanded A${pose.toFixed(3)} is bracketed by the seam rows `
+    + `(A${(sweep.angles[bracket] % 360).toFixed(3)}/A${(sweep.angles[bracket + 1] % 360).toFixed(3)})`)
+
+  const stock = roundStock(20, 20, 'x', { x: 0, y: 0 })
+  const base = 5
+  const crest = 3.6
+  const halfWidth = 30
+  /**
+   * A narrow along-varying spike centred on the seam and **between** the ring
+   * along positions. The link's dense row samples it, but the ring-grid tips the
+   * body window reads do not, so the link's own bracketing rows are the only
+   * thing that can size the move over it -- exactly what the unwrap decides.
+   */
+  const spikeHeight = 0.8
+  const spikeAlong = 1
+  const spikeAlongWidth = 0.25
+  const spikeAngleWidth = 2
+  /** The model in the **Around** frame: A0 is the mesh's +up, as in block 2. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - 90) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    const ridge = u >= halfWidth
+      ? 0
+      : crest * Math.cos(u * Math.PI / (2 * halfWidth)) ** 2
+    const alongFall = Math.exp(-(((along - spikeAlong) / spikeAlongWidth) ** 2) / 2)
+    const angleFall = Math.exp(-((u / spikeAngleWidth) ** 2) / 2)
+    return base + ridge + spikeHeight * alongFall * angleFall
+  }
+  const mesh = surface(stock, (along, meshAngle) => radiusAt(along, meshAngle), 0, 4, 80, 360)
+  const params = {
+    stepover: 2, sampleSpacing: 0.2, stockToLeave: 0, alongStart: 0, alongEnd: 4,
+    safeRadius: 30, requestedCellSize: 0.2, stepdown: 1.5, passDirection: 'around' as const,
+  }
+  const result = generateRotaryRough('ca-d-seam-rows', mesh, stock, BALL, params, {})
+  assert.deepEqual(result.warnings, [], 'the seam-ridge rough warns about nothing')
+  const pivot = barPivotZ(stock)
+  /** A cut whose commanded A crosses the seam: the forward ring-to-ring gap. */
+  const crossesSeam = (move: ToolpathMove): boolean => isAcrossAngleCut(move)
+    && Math.floor(move.from.a! / 360) !== Math.floor(move.to.a! / 360)
+  const layers = perLayer(result.moves)
+  const seamByLayer = layers.map((layer) => layer.filter(crossesSeam).length)
+  // The first layer's full rings are a helix, which crosses the seam by turning;
+  // the partial-ring layers below the crest are the ring-to-ring links. Each of
+  // those used to retract: the physical-index walk charged 582 rows against the
+  // 256-row per-link budget, although the commanded step is 48 rows forward.
+  const linkedLayers = seamByLayer.slice(1).filter((count) => count > 0).length
+  assert.ok(linkedLayers >= 2,
+    `the partial-ring layers keep their forward seam link (${JSON.stringify(seamByLayer)} seam `
+    + `cuts per layer; the physical-index walk crosses 582 rows against the 256-row budget)`)
+  const seam = layers.slice(1).flatMap((layer) => layer.filter(crossesSeam))
+  let checkedSeamPoints = 0
+  let spikePoses = 0
+  for (const move of seam) {
+    for (const point of [move.from, move.to]) {
+      const physical = ((point.a! % 360) + 360) % 360
+      const along = alongOf(point)
+      const model = radiusAt(along, physical)
+      checkedSeamPoints++
+      if (Math.abs(along - spikeAlong) <= 0.3) spikePoses++
+      assert.ok(point.z - pivot >= model - 1e-6,
+        `a seam link stays at or above the model at X${along.toFixed(3)} A${physical.toFixed(3)} `
+        + `(${(point.z - pivot).toFixed(4)} against ${model.toFixed(4)})`)
+    }
+  }
+  // The spike's along support has to appear in the emitted link, or the check
+  // above never meets the pose the unwrap decides.
+  assert.ok(spikePoses > 0,
+    `the seam link samples the spike's along position (${checkedSeamPoints} seam link points)`)
+  console.log(`  ca-d seam rows: ${seam.length} forward seam link cuts`)
 }
 
 console.log('engine/toolpaths/rotaryAcrossAngleLinks.test.ts passed')

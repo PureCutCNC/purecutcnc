@@ -871,14 +871,21 @@ const MAX_LINK_WORK = 4_000_000
 const MAX_LINK_WINDOW_WORK = 4 * MAX_LINK_WORK
 
 /**
- * The widest A change an at-layer link may sweep (#1117 rl-e).
+ * The widest A change a **round** bar's at-layer link may sweep (#1117 rl-e).
  *
  * An A-changing link is the partial-ring case: one ring's run ends where the
  * material crosses this layer's radius, and the next ring's run starts at the
  * angle that crossing has moved to. A few degrees of drift is that case. A wide
  * change is a different transition -- a lobe boundary jumping most of the bar --
- * and nothing proves it; past this bound the raised link stays, exactly as it
- * would today.
+ * and nothing in this slice proves that swept **surface**; past this bound the
+ * round bar keeps the raised link, exactly as it would today.
+ *
+ * A **square** blank's wide change is the model gap between two rings of one
+ * layer: the ring's cut span is the complement of the gap, so the forward step
+ * from one ring's last cut to the next ring's first is the gap's width (up to a
+ * good part of the circle). The at-layer proof below samples every row the
+ * sweep crosses and the row budget, not this bound, decides whether it can be
+ * proven (#1103 ca-d fix 1, review P2).
  */
 const MAX_LINK_ACROSS_DEG = 45
 
@@ -891,14 +898,62 @@ const MAX_LINK_ACROSS_DEG = 45
  * link plan into an unbounded number of model passes; the per-candidate cap
  * keeps one wide drift from spending the whole budget.
  */
-const MAX_LINK_ACROSS_ROWS = 512
-// #1117 (square links): half of the operation budget, 256 rows. 64 refused
-// valid short drifts on busto-rect's adaptive grid, which refines to about
-// 0.17 deg near A0: drifts of 12-28 deg inside `MAX_LINK_ACROSS_DEG` crossed
-// 72, 97, 138 and 165 rows. 256 admits a 45 deg drift on any grid of 0.18 deg
-// or coarser, while one candidate still cannot take more than half of the
-// operation's rows (rows already sampled by another candidate cost nothing).
-const MAX_LINK_ACROSS_ROWS_PER_LINK = MAX_LINK_ACROSS_ROWS / 2
+// #1103 ca-d fix 1: sized for the square blank's wide model gaps, which the
+// drift bound no longer refuses. Measured on busto-rect: the 44 wide gaps of
+// its last layers cross 469 rows at most and 15 678 rows in total, so the
+// operation budget admits every one and the per-link cap admits the largest
+// with room to spare. A gap over either budget keeps the raised link, exactly
+// as before; rows another candidate already sampled cost nothing.
+const MAX_LINK_ACROSS_ROWS = 24_000
+const MAX_LINK_ACROSS_ROWS_PER_LINK = 1_024
+
+/**
+ * The A-grid rows one A-changing link crosses, and each row's angle unwrapped
+ * into the link's commanded frame (#1103 ca-d fix 1).
+ *
+ * A forward-only ring turns A the same way as the ring before it, so a boundary
+ * that ends just below A360 and the next ring's start just above it is a short
+ * forward step **across the seam** (A346 -> A7). `pointIndexAt` maps both ends
+ * into the 0..360 grid, and physical row indices run 157 -> 0 for that step, so
+ * a walk from one index to the other goes the long way round the bar: it samples
+ * rows hundreds of degrees from the pose and charges the whole circumference
+ * against the per-link row budget. This helper instead walks in the commanded
+ * direction `delta`, wrapping at the seam (row 0 is both A0 and A360), and
+ * returns every row's angle shifted by whole turns so the result is monotone in
+ * `delta` and bracketing a commanded pose reads the rows it actually crosses.
+ *
+ * Exported for the seam-sampling regression in
+ * `rotaryAcrossAngleLinks.test.ts`; the caller is `linkAcrossAngle`.
+ */
+export function rotaryLinkRowSweep(
+  angles: readonly number[],
+  fromK: number,
+  toK: number,
+  fromA: number,
+  delta: number,
+): { readonly rows: number[]; readonly angles: number[] } | null {
+  const rowCount = angles.length - 1
+  if (rowCount < 1 || !Number.isFinite(fromA) || !Number.isFinite(delta) || delta === 0) return null
+  if (fromK < 0 || toK < 0 || fromK >= angles.length || toK >= angles.length) return null
+  const step = delta > 0 ? 1 : -1
+  const canonical = (k: number): number => (k >= rowCount ? k - rowCount : k)
+  const target = canonical(toK)
+  const rows: number[] = [canonical(fromK)]
+  let k = rows[0]
+  while (k !== target && rows.length <= rowCount) {
+    k += step
+    if (k >= rowCount) k -= rowCount
+    else if (k < 0) k += rowCount
+    rows.push(k)
+  }
+  // A guard, not a case: the canonical wrap reaches the target within one grid
+  // turn for any pair of row indices.
+  if (rows[rows.length - 1] !== target) return null
+  return {
+    rows,
+    angles: rows.map((row) => angles[row] + 360 * Math.round((fromA - angles[row]) / 360)),
+  }
+}
 
 // Bound emission as well as sampling: every layer revisits the entire sampled
 // grid, even when the touch gate ultimately skips it (#1045 slice N). Both this
@@ -3065,10 +3120,13 @@ function roughFromTargets(
    *   (#1117 square links).
    *
    * A0 and A360 are one physical rotation, so a link between them is a commanded
-   * full turn rather than a partial ring's drift; it keeps the raised link, as
-   * does any drift wider than `MAX_LINK_ACROSS_DEG`, a path that needs more rows
-   * than the per-link or per-operation budget, and a span the dense row cannot
-   * cover with an interior sample. Every refusal is the pre-slice motion.
+   * full turn rather than a partial ring's drift; it keeps the raised link. A
+   * round bar's drift wider than `MAX_LINK_ACROSS_DEG` does too -- nothing here
+   * proves that swept surface -- while a **square** blank's wide model gap goes
+   * through the row proof and is bounded by the row budgets instead. A path that
+   * needs more rows than the per-link or per-operation budget, and a span the
+   * dense row cannot cover with an interior sample, keep the raised link. Every
+   * refusal is the pre-slice motion.
    */
   const linkAcrossAngle = (
     layer: number,
@@ -3101,25 +3159,28 @@ function roughFromTargets(
     // bar's protrusion, a square sector an earlier layer left standing, a
     // region's excluded span) keeps its retract.
     const wide = Math.abs(delta) > MAX_LINK_ACROSS_DEG
+    // #1103 ca-d correction (review P1): sample the rows the **commanded** sweep
+    // crosses -- the long way round the physical indices sampled rows hundreds
+    // of degrees from the pose and charged the whole circumference against the
+    // per-link row budget. See `rotaryLinkRowSweep`.
+    const sweep = rotaryLinkRowSweep(angles, fromK, toK, fromA, delta)
+    if (sweep === null) return null
+    const rows = sweep.rows
+    const stepK = delta > 0 ? 1 : -1
     // The gate's air sector does not care how wide the gap is: a narrow one has
     // every row it crosses below the layer too. Try it first for a square blank,
     // then fall through to the drift proof (or the retract) when a row cuts.
+    // The sector is exactly the rows the sweep crosses, so only those are read;
+    // reading the rest of the circumference refused a short forward step
+    // whenever a corner stood anywhere else on the blank (#1103 ca-d fix 1).
     if (square) {
-      const gridLast = angles.length - 1
       let air = true
-      for (let k = fromK + 1; k <= gridLast && air; k++) {
-        const row = k === gridLast ? 0 : k
-        if (layerRadius < squareRotaryTouchRadius(stock, angles[row], tool.radius, tool.type)) air = false
+      for (let i = 1; i + 1 < rows.length && air; i++) {
+        if (layerRadius < squareRotaryTouchRadius(stock, angles[rows[i]], tool.radius, tool.type)) air = false
       }
-      for (let k = 1; k < toK && air; k++) {
-        if (layerRadius < squareRotaryTouchRadius(stock, angles[k], tool.radius, tool.type)) air = false
-      }
-      // The link rides the **layer's** radius, so both ends have to be there: a
-      // pose whose model stands above the layer keeps the ring and its retract.
-      // Without this the link rides the model skin over a layer the blank has
-      // already been cleared to, and one pass can take more than the layer's own
-      // band out of the raw blank (the seeded square property measured 3.0655 mm
-      // against 3.001 on a 25 x 20 blank).
+      // The air proof is about riding the **layer's** radius through the gap, so
+      // both ends have to be at or below the layer: a pose the model lifted
+      // above it is not that proof, and falls through to the row proof below.
       if (air && (from.z - pivot > layerRadius + 1e-6 || to.z - pivot > layerRadius + 1e-6)) air = false
       if (air) {
         if (region !== null && insideRegion !== null) {
@@ -3134,19 +3195,21 @@ function roughFromTargets(
         return [{ to, kind: 'cut' }]
       }
     }
-    if (wide) {
-      if (!square) return null
-      // A sector the gate does cut stands above the layer somewhere: the turn
-      // would have to ride the model, and the drift proof below is the only one
-      // that proves that. A drift past the bound keeps the retract.
+    if (wide && !square) {
+      // A round bar's wide A change is a lobe boundary jumping most of the bar;
+      // nothing in this slice proves that swept surface, so it keeps the raised
+      // link. A **square** blank's wide change is a model gap between two rings
+      // of one layer (the ring's cut span is the complement): the at-layer proof
+      // below samples every row the sweep crosses, and the row budget -- not the
+      // 45 degree drift bound -- is what decides whether it can be proven
+      // (#1103 ca-d fix 1, review P2: the bound refused 44 links busto-rect had
+      // at ca-a, 15 678 rows in total).
       return null
     }
-    // The grid rows the path crosses, in the order it crosses them (ring
-    // direction alternately increasing and decreasing A).
-    const stepK = toK > fromK ? 1 : -1
-    const rows: number[] = []
-    for (let k = fromK; k !== toK; k += stepK) rows.push(k)
-    rows.push(toK)
+    // The sweep's rows, each angle unwrapped into the frame the path commands in
+    // (#1103 ca-d fix 1), so a pose at commanded A364 is bracketed by the rows
+    // at 362 and 364 and never by the A344/346 rows the physical wrap visited.
+    const rowAngles = sweep.angles
     if (rows.length < 2 || rows.length > MAX_LINK_ACROSS_ROWS_PER_LINK) return null
     // #1117 (square links): a row another A-changing candidate already sampled
     // costs nothing; only the rows this path samples first are charged.
@@ -3232,7 +3295,7 @@ function roughFromTargets(
       if (x < fromAlong - 1e-12 || x > toAlong + 1e-12) continue
       const angle = fromA + delta * (x - fromAlong) / (toAlong - fromAlong)
       while (cursor + 1 < rows.length
-        && (stepK > 0 ? angles[rows[cursor + 1]] < angle : angles[rows[cursor + 1]] > angle)) cursor++
+        && (stepK > 0 ? rowAngles[cursor + 1] < angle : rowAngles[cursor + 1] > angle)) cursor++
       const here = rowsData[cursor]
       const next = rowsData[Math.min(cursor + 1, rowsData.length - 1)]
       const tipHere = here.tips[i]
@@ -3594,10 +3657,15 @@ function roughFromTargets(
     // angle, never on the along position -- and is `null` on a round bar.
     const last = angles.length - 1
     // The A cursor: the commanded angle every point of the next unit is built
-    // from. One ring advances it one turn; a helix advances it by its own
-    // complete turns, so the angle a unit ends on is the angle the next starts
-    // from. It is never reduced modulo 360.
+    // from. It is never reduced modulo 360. A whole ring advances it one turn
+    // (its A360 is the next ring's A0); a partial ring or a helix advances it
+    // only as far as the next unit's first cut needs (`unitBase`), so a
+    // transition is never charged a full extra turn it does not sweep.
     let angleBase = 0
+    // The A of the last point the operation actually emitted. The next unit
+    // starts at the smallest whole-turn representative of its own first angle
+    // that is at or ahead of this (#1103 ca-d fix 1): see `unitBase`.
+    let lastCommandedA: number | undefined
     for (let layer = 1; layer <= layers; layer++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
       const previousRadius = maxRadius - (layer - 1) * params.stepdown
@@ -3651,9 +3719,32 @@ function roughFromTargets(
         if (splitBlocked) return raised
         return linkAtLayer(layer, layerRadius, alongCoordinate(stock, from), from, to, 1) ?? raised
       }
-      /** Emit one ring at the A cursor, then advance the cursor one turn. */
+      /**
+       * The forward-equivalent A offset for a unit whose first sample is at
+       * `firstPhysical` degrees: the smallest whole-turn representative that is
+       * at or ahead of the last commanded A (#1103 ca-d fix 1, review P2).
+       *
+       * The old unconditional `angleBase += 360` charged a full extra turn
+       * between every pair of rings whichever way the cut happened to end. For
+       * a partial ring that ends **behind** the next one's first cut (the usual
+       * case: the ring's last run ends at its high-angle boundary, the next
+       * ring's first run starts at its low-angle one) that made the ring-to-ring
+       * transition a 380 degree sweep -- past `MAX_LINK_ACROSS_DEG`, so the
+       * #1117 at-layer link could not be kept and busto-rect lost 82 of them.
+       * The smallest representative instead asks only for the physical step the
+       * next ring needs, and a whole ring (which ends on this ring's A360, i.e.
+       * exactly the next ring's A0) still advances one turn, byte for byte.
+       */
+      const unitBase = (firstPhysical: number): number => lastCommandedA === undefined
+        ? angleBase
+        : angleBase + 360 * Math.ceil((lastCommandedA - (angleBase + firstPhysical)) / 360 - 1e-9)
+      /** Emit one ring at the A cursor, then move the cursor to its last cut. */
       const emitRing = (index: number): void => {
         const ring = layerRings[index]
+        if (ring.runs.length > 0) {
+          const first = ring.runs[0].points[0]
+          angleBase = unitBase(first.a ?? 0)
+        }
         const runs = ring.runs.map((run) => ({
           ...run,
           points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
@@ -3672,7 +3763,10 @@ function roughFromTargets(
         previousEndedAtEnd = emitted.endedAtEnd
         previousRingSplit = splitRing
         previousRingEmitted = runs.length > 0
-        angleBase += 360
+        if (runs.length > 0) {
+          const lastRun = runs[runs.length - 1]
+          lastCommandedA = lastRun.points[lastRun.points.length - 1].a
+        }
       }
       let ringIndex = 0
       while (ringIndex < along.length) {
@@ -3684,9 +3778,12 @@ function roughFromTargets(
           // turn into a pitch, and its two complete end rings would otherwise
           // add a full turn over no advance at all.
           if (band > ringIndex) {
+            // A helix opens on a whole turn at its band's start (physical A0),
+            // so its forward-equivalent base is `unitBase(0)`.
+            const helixBase = unitBase(0)
             const helix = continuousHelixForRough(
               sampling, params, tool, warnings, hooks,
-              along[ringIndex], along[band], angleBase,
+              along[ringIndex], along[band], helixBase,
               { radius: layerRadius, previousRadius },
             )
             if (helix?.stopped === true) return { operationId, moves: [], warnings: [], bounds: null }
@@ -3708,7 +3805,8 @@ function roughFromTargets(
               previousEndedAtEnd = emitted.endedAtEnd
               previousRingSplit = false
               previousRingEmitted = true
-              angleBase += 360 * (helix.turns + 2)
+              angleBase = helixBase
+              lastCommandedA = helix.points[helix.points.length - 1].a
               ringIndex = band + 1
               continue
             }

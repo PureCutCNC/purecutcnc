@@ -190,21 +190,38 @@ console.log('Testing that a square blank links whole and model-split rings at th
     `no equal-angle link is off the seam once A is one-way (${split.length})`)
   // A drift the proof still covers (at most 45 deg) links across the A change.
   assert.ok(across.length > 0, `adjacent model-split rings link across an A change (${across.length})`)
+  // #1103 ca-d fix 1 (review P2): a wide square transition has two proofs now.
+  // The gate's **air sector** still gives one straight cut at the layer (the
+  // blank stands below it through the gap), and a gap the layer below already
+  // cleared goes through the at-layer row proof, which rides `max(model,
+  // layer)` and emits the sampled steps. Both are cuts below the blank, and the
+  // row-proven ones must stay at or above the model they cross -- the frame
+  // exposes mesh direction `90 - A`, the same mapping the link proof uses.
+  const modelAt = (point: ToolpathMove['from']): number =>
+    radiusAt(alongOf(point), 90 - ((((point.a ?? 0) % 360) + 360) % 360))
+  let wideAir = 0
+  let wideModel = 0
   for (const link of across) {
     const drift = Math.abs((link.to.a ?? 0) - (link.from.a ?? 0))
     if (drift <= 45 + 1e-9) continue
-    // Wider than the drift proof: only a square blank's gate **air sector** may
-    // keep the link, and then it rides at the layer through the middle of the
-    // gap (the blank stands below it there). See #1103 slice ca-d.
     const middle = ((link.from.a ?? 0) + (link.to.a ?? 0)) / 2
     const wrapped = ((middle % 360) + 360) % 360
     const height = Math.min(link.from.z, link.to.z) - pivot
-    assert.ok(squareRotaryTouchRadius(stock, wrapped, BALL2.radius, BALL2.type) < height + 1e-6,
-      `a wide A-changing link rides the gate's air sector (${squareRotaryTouchRadius(stock, wrapped, BALL2.radius, BALL2.type).toFixed(3)} at A${wrapped.toFixed(1)} vs ${height.toFixed(3)})`)
+    if (squareRotaryTouchRadius(stock, wrapped, BALL2.radius, BALL2.type) < height + 1e-6) wideAir++
+    else wideModel++
+    assert.ok(Math.max(link.from.z, link.to.z) - pivot <= barMaxRadius(stock) + 1e-6,
+      `a wide A-changing link is a cut below the blank (${(Math.max(link.from.z, link.to.z) - pivot).toFixed(3)})`)
+    for (const point of [link.from, link.to]) {
+      const model = modelAt(point)
+      assert.ok(point.z - pivot >= model - 1e-6,
+        `a wide A-changing link stays at or above the model it crosses `
+        + `(${(point.z - pivot).toFixed(3)} vs ${model.toFixed(3)} at A${(((point.a ?? 0) % 360) + 360) % 360})`)
+    }
   }
-  // A wider transition is a run end jumping round the bar: on the gate's air
-  // sector the square-only wide rule keeps the link at the layer, and anywhere
-  // else (a model protrusion, a region) the transition keeps its retract.
+  assert.ok(wideAir > 0, `the gate's air sector still keeps a wide link (${wideAir})`)
+  assert.ok(wideModel > 0, `a cleared model gap keeps a wide link through the row proof (${wideModel})`)
+  // A wider transition the row proof cannot cover (a skipped ring, no material
+  // under the tool) still keeps its retract.
   const wideTurns = rough.moves.filter((move) => move.kind === 'rapid'
     && alongOf(move.to) > alongOf(move.from) + 1e-9
     && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 45)
@@ -223,9 +240,10 @@ console.log('Testing that a square blank links whole and model-split rings at th
   }
   // Pinned on the fixture so any change in what qualifies is a visible diff.
   assert.equal(whole.length, 63, `whole-ring links (${whole.length})`)
-  assert.equal(across.length, 18, `A-changing links (${across.length})`)
-  assert.equal(wideTurns.length, 11, `wide transitions that keep their retract (${wideTurns.length})`)
-  console.log(`  ${whole.length} whole-ring, ${split.length} split-ring and ${across.length} A-changing links; `
+  assert.equal(across.length, 38, `A-changing links (${across.length})`)
+  assert.equal(wideTurns.length, 2, `wide transitions that keep their retract (${wideTurns.length})`)
+  console.log(`  ${whole.length} whole-ring, ${split.length} split-ring and ${across.length} A-changing links `
+    + `(${wideAir} wide air-sector, ${wideModel} wide row-proven); `
     + `${wideTurns.length} wide turns and ${skips.length} skipped-ring transitions keep their retract`)
 }
 
@@ -301,12 +319,24 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   const widest = Math.max(0, ...across.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))))
   assert.ok(widest > 45,
     `the gate-gap links are wider than the drift bound (widest ${widest.toFixed(2)} deg)`)
-  // Every one of them is a single straight move: no interior waypoint, so no
-  // row samples were needed to prove it.
-  const single = across.filter((move) => move.kind === 'cut')
-  assert.equal(single.length, across.length, 'the gate-gap links are single cuts')
-  assert.equal(across.length, 16, `gate-gap links on the dense grid (${across.length})`)
-  console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, no sampled row`)
+  // #1103 ca-d fix 1: the gate's air sector is one straight cut (no row), and a
+  // model gap the layer below cleared is the row proof's multi-step cut. Both
+  // are present on the dense grid; the shape is what distinguishes them.
+  const groups: ToolpathMove[][] = []
+  let inLink = false
+  for (const move of rough.moves) {
+    if (isAtLayerLink(move)) {
+      if (!inLink) groups.push([])
+      groups[groups.length - 1].push(move)
+      inLink = true
+    } else inLink = false
+  }
+  const wideGroups = groups.filter((group) => Math.abs((group[0].to.a ?? 0) - (group[0].from.a ?? 0)) > 45)
+  assert.ok(wideGroups.some((group) => group.length === 1), 'a gate-gap link is one straight cut')
+  assert.ok(wideGroups.some((group) => group.length > 1), 'a model-gap link is the row proof\'s sampled cut')
+  assert.equal(across.length, 42, `gate-gap links on the dense grid (${across.length})`)
+  console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, `
+    + `${wideGroups.filter((group) => group.length > 1).length} of them row-proven`)
 }
 
 // ---------------------------------------------------------------------------
