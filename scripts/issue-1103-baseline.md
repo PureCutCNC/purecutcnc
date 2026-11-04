@@ -391,17 +391,51 @@ chiral finish seeds in `rotaryContinuous.test.ts` used to give every band up (34
 moves on the first seed, no turning cut at all) and now split into a helix piece
 and the rings around the failing spans (2578 moves), and the ca-f seam-groove
 fixture's first layer goes from 203 ring cuts to 46 helix and 93 ring cuts (478
-moves before, 385 after, and one raised link fewer).
+moves before, 385 after, and one raised link fewer). Correction round 1 adds the
+fixture the plan actually asked for: a turned bar with a narrow sharp raised sector
+in the middle of the band, which splits into helix -- the three forward-only rings
+over the sector -- helix on real motion, with the ring on the feature cutting the
+sector's own sampled top and both helix/ring seams closed by a complete boundary
+ring (`rotaryContinuous.test.ts` section 10). Its second sector sits in the seam
+span between the last fallback ring and the second helix, so the seam's
+surface-following link is the only pass that cuts it: a straight cut between the
+same ring ends gouges it by three millimetres, which is the link the review found
+untested.
 
-### Generation against the ca-a base
+### Generation against the ca-a base, re-measured (correction round 1)
 
-The ca-g medians above against the ca-a row of the first table, on the rows that
-changed or could have: `op0015` 30760 / 27558 = 1.12x (ca-e's re-measure of the
-base; the ca-a row's own median is 26754, giving 1.15x), `op0025` 32303 / 29497 =
-1.10x, `op0022` 33239 / 32253 = 1.03x, and the two square rows 58 / 47 = 1.23x
-and 78 / 62 = 1.26x. The square rows are 30-90 ms generations, where the whole
-difference is timer noise: the same-session pair on identical output is 56 -> 58
-and 72 -> 78, and the two trees' hash-identical output proves the motion did not
-change. Every row is at or under 1.2x the **same-session** base; the two
-sub-100 ms rows cannot resolve 1.2x at all, which is what the ca-a method already
-says about its 2-3 ms postings.
+The review found the target unverified: the previous revision quoted square ratios
+above 1.2x and then substituted a **ca-f** comparison for the ca-a base, and
+matching motion hashes do not establish generation performance. The ca-a base has
+therefore been re-measured here, **against this branch in one session with one
+probe**: for every case the base tree
+(`1103-ca-a-dsh`, whose generator is the unchanged post-#1117 one at `8fd5b18f`)
+runs first, then this branch, each with the ca-a protocol of one warm-up and three
+timed serial generations and nothing else generating in between. The ratio is
+this session's two medians; the ca-a column's around-row move counts match the
+ca-a table's above, and the ca-g column's hashes are the ones the document already
+pins (the byte-identical table, plus the prose entry for the one row this slice
+changed; the two `along` rows hash identically on both trees).
+
+| case | ca-a median ms | ca-g median ms | ratio | ca-a moves | ca-g moves | ca-g moves sha256 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| busto-round op0015 | 27703 | 30458 | 1.10 | 54202 | 54231 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| busto-round op0025 | 29838 | 32136 | 1.08 | 24322 | 22364 | `c2c4a338ef866fc237a7faff38b7aab16556627049b021a494ab4795a0f43b86` |
+| busto-rect op0021 | 40644 | 41475 | 1.02 | 32848 | 32866 | `c84617e2cbb3f4faa469498c53514812a05413e44cd4a4c35f0d20c1af53ba9d` |
+| busto-rect op0022 | 33376 | 33451 | 1.00 | 79103 | 79088 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` |
+| square op0028 (around) | 49 | 52 | 1.06 | 8744 | 8791 | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` |
+| square op0029 (around) | 64 | 65 | 1.02 | 13394 | 13394 | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` |
+| square op0028 (along) | 25 | 26 | 1.04 | 1104 | 1104 | `6189e3247e067f7b5d17290137e785504f274c753339a26719c562a55b796e14` |
+| square op0029 (along) | 25 | 25 | 1.00 | 448 | 448 | `8ed7b1a7fd8a0eead29d0afa1d4c1f9c07a8c2aeff923e3a0bc476b98c2892d5` |
+| busto-round op0025, one deep layer | 27253 | 28700 | 1.05 | 22191 | 22182 | `acff808a120d00b4a841901c4abb638253aa310a5cfe9122cab107d38ae21fab` |
+
+Every row is at or under **1.10x the ca-a base**, not merely under 1.2x: the
+largest cost is the `op0015` finish (1.10x), whose band is refused by the work cap
+rather than the tolerance one (above), then the rough that actually splits (1.08x,
+1 958 fewer moves and 85 fewer rapids), and the two sub-100 ms square rows are
+1.06x and 1.02x -- the ratios this review found substituted are gone, because both
+sides are the base and the branch measured back to back rather than the branch and
+ca-f. The `rotaryBaseline.test.ts` protocol check now reads this table: every row
+must be present, its ratio must be the two medians beside it, and no row may
+exceed 1.2x, so a later slice cannot paste an over-target row, prefix a "same
+session" substitute, or leave the ca-g tables unvalidated again.

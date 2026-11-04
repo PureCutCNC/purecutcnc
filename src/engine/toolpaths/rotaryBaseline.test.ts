@@ -205,5 +205,125 @@ for (const [name, entry] of candidateByCase) {
     `the ${name} candidate median is the same in both tables (${entry.median} versus ${row.candidateMedian})`)
 }
 
+// #1103 ca-g correction round 1 (review P2): the previous revision reported
+// square ratios above 1.2x and then substituted a same-session **ca-f**
+// comparison for the ca-a base, and this test still only read the older tables,
+// so nothing checked the numbers the ca-g section actually reports. The
+// re-measured table is therefore parsed **by its heading** and required to be
+// complete, internally consistent and at or under the target: every row, its
+// ratio, and its hash against the byte-identical table (except op0025, whose
+// ca-g hash the prose records because that row's motion changed).
+const CAG_HEADING = '### Generation against the ca-a base, re-measured (correction round 1)'
+const cagStart = doc.indexOf(CAG_HEADING)
+assert.ok(cagStart >= 0, 'the baseline carries the ca-g ca-a re-measurement table')
+interface CagRow {
+  case: string
+  baseMedian: number
+  candidateMedian: number
+  ratio: number
+  baseMoves: number
+  candidateMoves: number
+  hash: string
+}
+const cagRows: CagRow[] = []
+let inCagTable = false
+for (const text of doc.slice(cagStart).split('\n')) {
+  if (!text.startsWith('|')) {
+    if (inCagTable) break
+    continue
+  }
+  const cells = text.split('|').slice(1, -1).map((cell) => cell.trim())
+  // Skip the header and its separator.
+  if (!/^\d+$/.test(cells[1] ?? '')) continue
+  inCagTable = true
+  assert.equal(cells.length, 7,
+    `the ca-g row ${cells[0]} carries case, base median, candidate median, ratio, both move counts and the hash`)
+  const hash = cells[6].replaceAll('`', '')
+  assert.match(hash, SHA256, `the ca-g row ${cells[0]} carries a moves SHA-256`)
+  const baseMedian = Number(cells[1])
+  const candidateMedian = Number(cells[2])
+  assert.ok(Number.isInteger(baseMedian) && baseMedian > 0,
+    `the ca-g row ${cells[0]} records its measured ca-a median`)
+  assert.ok(Number.isInteger(candidateMedian) && candidateMedian > 0,
+    `the ca-g row ${cells[0]} records its measured ca-g median`)
+  assert.ok(Math.abs(Number(cells[3]) - candidateMedian / baseMedian) <= 0.006,
+    `the ca-g row ${cells[0]} ratio is its candidate over its base median `
+    + `(${cells[3]} versus ${candidateMedian} / ${baseMedian})`)
+  cagRows.push({
+    case: cells[0],
+    baseMedian,
+    candidateMedian,
+    ratio: Number(cells[3]),
+    baseMoves: Number(cells[4]),
+    candidateMoves: Number(cells[5]),
+    hash,
+  })
+}
+// The handoff's measurement list: every around row, the square fixture's around
+// rows and the single-deep-layer rough, plus the two along controls.
+const CAG_REQUIRED = [
+  'busto-round op0015',
+  'busto-round op0025',
+  'busto-rect op0021',
+  'busto-rect op0022',
+  'square op0028 (around)',
+  'square op0029 (around)',
+  'square op0028 (along)',
+  'square op0029 (along)',
+  'busto-round op0025, one deep layer',
+]
+assert.equal(cagRows.length, CAG_REQUIRED.length,
+  `the ca-g table carries every measured case (${cagRows.length})`)
+for (const name of CAG_REQUIRED) {
+  assert.ok(cagRows.some((row) => row.case === name), `the ca-g table carries ${name}`)
+}
+const cagOverTarget = cagRows.filter((row) => row.ratio > GEN_TARGET)
+assert.deepEqual(cagOverTarget.map((row) => `${row.case} ${row.ratio}x`), [],
+  `every re-measured ca-g generation row meets the ${GEN_TARGET}x target against ca-a`)
+// The ca-g hashes are the same programs the byte-identical table pins, so the
+// table above cannot describe a measurement of anything else.
+const normalizeCase = (value: string): string => value
+  .replace(/[()]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+// The ca-f table names a fixture file and an operation; the ca-g table names the
+// case. Both reduce to the same key.
+const fixtureCase = (value: string): string => {
+  const base = value.replace(/\.camj$/, '').replace(/-stock$/, '')
+  return normalizeCase(base === 'square-to-round-test-01' ? 'square' : base)
+}
+const pinned = new Map<string, string>()
+for (const text of doc.split('\n')) {
+  if (!text.startsWith('|')) continue
+  const cells = text.split('|').slice(1, -1).map((cell) => cell.trim())
+  // `| case | moves sha256 |` (the ca-g table) and `| fixture | op | moves sha256 |`
+  // (the ca-f table) both pin the same programs.
+  const sha = (cell: string | undefined): string | undefined => {
+    const found = /`([0-9a-f]{64})`/.exec(cell ?? '')
+    return found === null ? undefined : found[1]
+  }
+  if (cells.length === 2 && sha(cells[1]) !== undefined) {
+    pinned.set(normalizeCase(cells[0]), sha(cells[1])!)
+  } else if (cells.length === 3 && /^op\d+/.test(cells[1]) && sha(cells[2]) !== undefined) {
+    // The ca-f table's older row can carry "(was …)" after the curated hash; the
+    // first backticked digest is the one that table records.
+    pinned.set(`${fixtureCase(cells[0])} ${normalizeCase(cells[1])}`, sha(cells[2])!)
+  }
+}
+assert.ok(pinned.size > 0, 'the baseline pins the byte-identical moves hashes')
+const prose = /`busto-round op0025` moved to `([0-9a-f]{64})`/.exec(doc)
+assert.ok(prose !== null, 'the ca-g hash of busto-round op0025 is recorded')
+for (const row of cagRows) {
+  if (row.case === 'busto-round op0025') {
+    // That row's motion changed with this slice; the prose records its ca-g hash.
+    assert.equal(row.hash, prose[1], 'the re-measured busto-round op0025 hash is the recorded one')
+    continue
+  }
+  const known = pinned.get(normalizeCase(row.case))
+  assert.ok(known !== undefined, `the ca-g row ${row.case} has a byte-identical hash to compare with`)
+  assert.equal(row.hash, known, `the re-measured ${row.case} hash is the one the baseline pins`)
+}
+
 console.log(`  baseline: ${rows.length} rows, protocol 1 warm-up + ${measuredRuns} timed runs, medians consistent; `
-  + `${ratioRows.length} generation ratios all <= ${GEN_TARGET}x`)
+  + `${ratioRows.length} generation ratios all <= ${GEN_TARGET}x; `
+  + `${cagRows.length} re-measured ca-g rows against ca-a, all <= ${GEN_TARGET}x`)
