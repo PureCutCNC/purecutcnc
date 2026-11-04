@@ -119,17 +119,20 @@ assert.deepEqual(
   'the along-mode byte-identical control has its two rows',
 )
 
-// ca-e review P1: a generation row over the handoff's 1.2x target cannot be
-// waved through. The ratio table and the acceptance list are one contract --
-// every row above the target names its ratio in the list, and every listed row
-// is still above it, so a later improvement cannot leave a stale acceptance
-// behind and a new regression cannot be quietly absorbed. Export is exempt: the
-// fixed cylinder's 2-3 ms postings are timer resolution, which the document
-// says.
+// ca-e review P1 (correction round 2): the handoff's generation target is a
+// delivery condition, not a note. **Every** row of the ratio table must be at or
+// under 1.2x, so there is no "accepted residual" for a document to declare and
+// no phrase that can stand in for a measurement: the previous revision of this
+// test accepted any row above the target as long as the document mentioned a
+// sign-off nobody had given, which is exactly the gap the review found. Export
+// is exempt: the fixed cylinder's 2-3 ms postings are timer resolution, which
+// the document says.
 const GEN_TARGET = 1.2
 interface RatioRow {
   case: string
+  baseMedian: number
   genRatio: number
+  candidateMedian: number
 }
 const ratioRows: RatioRow[] = []
 for (const text of doc.split('\n')) {
@@ -137,26 +140,70 @@ for (const text of doc.split('\n')) {
   const cells = text.split('|').slice(1, -1).map((cell) => cell.trim())
   if (cells.length !== 7) continue
   if (!/^\d+\.\d{2}$/.test(cells[3]) || !/^\d+\.\d{2}$/.test(cells[6])) continue
-  ratioRows.push({ case: cells[0], genRatio: Number(cells[3]) })
+  const baseMedian = Number(cells[1])
+  const candidateMedian = Number(cells[2])
+  assert.ok(Number.isFinite(baseMedian) && baseMedian > 0,
+    `the ${cells[0]} row records its base median generation time`)
+  assert.ok(Number.isFinite(candidateMedian) && candidateMedian > 0,
+    `the ${cells[0]} row records its candidate median generation time`)
+  // The ratio is the two medians it sits between, rounded to the table's two
+  // decimals: a pasted ratio that no longer matches its own columns is a stale
+  // measurement, and this is the table the target is judged on.
+  assert.ok(Math.abs(cells.length > 0 ? Number(cells[3]) - candidateMedian / baseMedian : 1) <= 0.006,
+    `the ${cells[0]} generation ratio is its candidate median over its base median `
+    + `(${cells[3]} versus ${candidateMedian} / ${baseMedian})`)
+  ratioRows.push({ case: cells[0], baseMedian, genRatio: Number(cells[3]), candidateMedian })
 }
 assert.equal(ratioRows.length, 9, 'the timing-target table carries all nine cases')
-const overTarget = ratioRows.filter((row) => row.genRatio > GEN_TARGET).map((row) => row.case).sort()
-const accepted = new Map<string, number>()
+const overTarget = ratioRows.filter((row) => row.genRatio > GEN_TARGET)
+assert.deepEqual(overTarget.map((row) => `${row.case} ${row.genRatio}x`), [],
+  'every generation row meets the handoff\'s 1.2x target; an over-target row is a regression to fix, '
+  + 'not an acceptance to record')
+assert.equal(doc.includes('pending Frank'), false,
+  'the document does not leave an acceptance pending: the target is met, so nothing needs signing off')
+
+// The candidate-columns table and the ratio table carry the same measurement
+// twice, and the review found the first stale by 12 s. A candidate median that
+// disagrees with the ratio row it is quoted in is a document that cannot be
+// read as one record.
+// The candidate-columns table names the fixture file; the ratio table names the
+// case. The mapping is explicit so a renamed fixture cannot silently skip the
+// comparison.
+const FIXTURE_CASE: Record<string, string> = {
+  'busto-round-stock': 'busto-round',
+  'busto-rect-stock': 'busto-rect',
+  'square-to-round-test-01': 'square',
+}
+const candidateByCase = new Map<string, { median: number; case: string }>()
 for (const text of doc.split('\n')) {
-  const match = /^- (.+?) — (\d+\.\d{2})x generation \(\d+ ms versus \d+ ms\)/.exec(text)
-  if (match) accepted.set(match[1], Number(match[2]))
+  if (!text.startsWith('|')) continue
+  const cells = text.split('|').slice(1, -1).map((cell) => cell.trim())
+  if (cells.length !== 7) continue
+  // The candidate table alone has an operation id in the second column; the
+  // ratio table's second cell is the base median, and its export columns are
+  // numbers too, so the operation id is what tells the two seven-column tables
+  // apart.
+  if (!/^op\d+/.test(cells[1])) continue
+  // fixture | op | moves | rapids | A reversals | generation ms | export ms
+  if (!/^\d+$/.test(cells[2]) || !/^\d+$/.test(cells[3]) || !/^\d+$/.test(cells[5]) || !/^\d+$/.test(cells[6])) continue
+  const fixture = FIXTURE_CASE[cells[0].replace(/\.camj$/, '')]
+  assert.ok(fixture !== undefined, `the candidate fixture ${cells[0]} has a ratio-table name`)
+  const operation = /^op\d+/.exec(cells[1])
+  assert.ok(operation !== null, `the candidate row ${cells[1]} names its operation`)
+  const ratioCase = `${fixture} ${operation[0]}`
+  assert.ok(!candidateByCase.has(ratioCase), `the candidate row ${ratioCase} appears once`)
+  candidateByCase.set(ratioCase, { median: Number(cells[5]), case: ratioCase })
 }
-assert.deepEqual([...accepted.keys()].sort(), overTarget,
-  'every generation row over 1.2x is named in the accepted-residual list, and no row under it is')
-for (const [name, ratio] of accepted) {
-  const row = ratioRows.find((entry) => entry.case === name)
-  assert.ok(row !== undefined, `the accepted row ${name} is in the ratio table`)
-  assert.ok(Math.abs(row.genRatio - ratio) <= 0.01,
-    `the accepted ${name} records its measured ratio (${ratio} versus ${row.genRatio})`)
-}
-if (overTarget.length > 0) {
-  assert.ok(doc.includes("Frank's sign-off"),
-    'an over-target row names the sign-off the approved plan requires')
+assert.equal(candidateByCase.size, 6, 'the candidate-columns table carries the six around rows')
+// The ratio table spells the square cases `square op0028 (around)`; the candidate
+// table's operation cell is just the id.
+const ratioByShortCase = new Map(ratioRows.map((row) => [row.case.replace(' (around)', ''), row]))
+for (const [name, entry] of candidateByCase) {
+  const row = ratioByShortCase.get(name)
+  assert.ok(row !== undefined, `the candidate row ${name} has a ratio-table case`)
+  assert.equal(row.candidateMedian, entry.median,
+    `the ${name} candidate median is the same in both tables (${entry.median} versus ${row.candidateMedian})`)
 }
 
-console.log(`  baseline: ${rows.length} rows, protocol 1 warm-up + ${measuredRuns} timed runs, medians consistent; ${accepted.size} accepted over-target row(s)`)
+console.log(`  baseline: ${rows.length} rows, protocol 1 warm-up + ${measuredRuns} timed runs, medians consistent; `
+  + `${ratioRows.length} generation ratios all <= ${GEN_TARGET}x`)

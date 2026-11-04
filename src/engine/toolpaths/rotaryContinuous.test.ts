@@ -79,7 +79,9 @@ import {
   chiralSupport,
 } from '../../test/rotaryChiralReference'
 import type { ChiralModel } from '../../test/rotaryChiralReference'
-import { buildContinuousHelix, MAX_HELIX_ROWS } from './rotaryContinuous'
+import {
+  buildContinuousHelix, DEFAULT_CONTINUOUS_HELIX_BUDGET, MAX_HELIX_RASTER_WORK, MAX_HELIX_ROWS,
+} from './rotaryContinuous'
 import type { ContinuousHelix, ContinuousHelixInput } from './rotaryContinuous'
 import { generateRotaryFinish } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
@@ -473,8 +475,37 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
   assert.ok(complete.samples > 0 && complete.rows > 0, 'a real helix reports the work it did')
   assert.ok(complete.rows <= MAX_HELIX_ROWS && complete.samples <= 16_000_000,
     'a real helix stays inside the default budget')
-  console.log(`  budget: exhausted at 10 samples / 1 row, stopped with ${stopped.samples} samples, `
-    + `a real band uses ${complete.samples} samples in ${complete.rows} rows`)
+  // #1103 ca-e correction round 2: the attempt's raster work is a limit of its
+  // own. Rows alone cannot price an attempt -- one row visits ~100 candidate
+  // triangles on this fixture and ~96 000 on the busto-round finish -- so a
+  // refused refinement on a fine mesh is bounded by the work it may spend.
+  // Removing the check makes the `work: 1` build return a path instead of
+  // exhaustion, which is the mutation this block catches.
+  assert.equal(DEFAULT_CONTINUOUS_HELIX_BUDGET.work, MAX_HELIX_RASTER_WORK,
+    'the default budget carries the exported raster-work cap')
+  assert.ok(complete.rasterWork > 0,
+    `a real helix reports the raster work it spent (${complete.rasterWork})`)
+  assert.ok(complete.rasterWork < MAX_HELIX_RASTER_WORK,
+    `a verified band is far below the work cap (${complete.rasterWork} versus ${MAX_HELIX_RASTER_WORK})`)
+  const workCapped = build(RIDGE, FLAT, { budget: { work: 1 } })
+  assert.equal(workCapped.exhausted, true,
+    'a work budget below the first rows is reported as exhaustion, not spent')
+  assert.equal(workCapped.points.length, 0,
+    'a work-capped helix emits no points, so the caller keeps rings')
+  assert.equal(workCapped.rows, 1,
+    `the cap is checked before the next row, so only one row is built (${workCapped.rows})`)
+  assert.ok(workCapped.rasterWork > 1 && workCapped.rasterWork <= complete.rasterWork,
+    `the exhausted attempt reports the work that stopped it (${workCapped.rasterWork})`)
+  // Half the measured work is not enough to finish, and the difference from the
+  // full budget is the cap and nothing else -- same fixture, same band.
+  const halfWork = build(RIDGE, FLAT, { budget: { work: Math.floor(complete.rasterWork / 2) } })
+  assert.equal(halfWork.exhausted, true, 'half the measured raster work cannot finish the band')
+  assert.equal(halfWork.points.length, 0, 'an exhausted attempt emits no points at half the work')
+  assert.ok(halfWork.rasterWork < complete.rasterWork,
+    `the half-work attempt stops short of the full one (${halfWork.rasterWork} versus ${complete.rasterWork})`)
+  console.log(`  budget: exhausted at 10 samples / 1 row / 1 triangle of work, stopped with `
+    + `${stopped.samples} samples, a real band uses ${complete.samples} samples in `
+    + `${complete.rows} rows and ${complete.rasterWork} triangle raster passes`)
 }
 
 /**

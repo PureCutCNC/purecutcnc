@@ -148,6 +148,14 @@ export interface RotarySampling {
    * angle-map cache is enabled.
    */
   readonly reused: number
+  /**
+   * Candidate triangles the rows' raster passes visited (#1103 ca-e correction
+   * round 2): the work a row costs, summed over the angle rows this call built.
+   * A reused row costs nothing, so it adds 0. It is the deterministic measure a
+   * caller budgets an optional sampling pass with -- map builds scale with the
+   * candidate set, which depends on the mesh, never on the clock.
+   */
+  readonly rasterWork: number
   readonly stopped: boolean
   /**
    * False when the tool geometry handed to the sampler cannot describe a
@@ -839,6 +847,13 @@ export interface RotaryAngleSample {
    * main thread's workspace, and a row sampled in a worker was not reused.
    */
   readonly reused?: boolean
+  /**
+   * Candidate triangles this row's raster pass visited (#1103 ca-e correction
+   * round 2); 0 for a reused row. Optional because a worker's reply need not
+   * report it -- a missing value is read as 0, and only an in-process caller
+   * budgets on it.
+   */
+  readonly rasterWork?: number
 }
 
 /**
@@ -1113,6 +1128,7 @@ export function runRotaryAngleJob(
   const cacheKey = cachedAngleKey(angle)
   const cached = prep.angleMaps === 'read-write' ? cache?.maps.get(cacheKey) : undefined
   const reused = cached !== undefined
+  let rasterWork = 0
   let heightMap = cached
   if (heightMap === undefined) {
     const bbox = turnedBounds(plan.hull, plan.minAlong, plan.maxAlong, stock, angle)
@@ -1153,6 +1169,9 @@ export function runRotaryAngleJob(
         }
       }
     }
+    // The subset is this row's raster work: every candidate is projected and
+    // tested whether or not it lands in the window (#1103 ca-e correction 2).
+    rasterWork = count
     const buildOptions = {
       window,
       triangles: subset.subarray(0, count),
@@ -1187,7 +1206,7 @@ export function runRotaryAngleJob(
       conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
     row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
   }
-  return { index: job.index, row, lift, warnings: angleWarnings, reused }
+  return { index: job.index, row, lift, warnings: angleWarnings, reused, rasterWork }
 }
 
 /**
@@ -1224,6 +1243,7 @@ export function assembleRotarySampling(
   const tipRadius: Float32Array[] = []
   const lifts: number[] = []
   let reused = 0
+  let rasterWork = 0
   for (let k = 0; k < jobs.length; k++) {
     const sample = ordered[k]
     if (sample === undefined) throw new Error(`rotary sampling: angle job ${k} has no result`)
@@ -1240,11 +1260,12 @@ export function assembleRotarySampling(
       if (!warnings.some((existing) => existing.code === warning.code)) warnings.push(warning)
     }
     if (sample.reused === true) reused++
+    rasterWork += sample.rasterWork ?? 0
     anglesDeg.push(jobs[k].angle)
     tipRadius.push(row)
     lifts.push(lift)
   }
-  return { anglesDeg, along: [...prep.along], tipRadius, lifts, reused, stopped, valid: true }
+  return { anglesDeg, along: [...prep.along], tipRadius, lifts, reused, rasterWork, stopped, valid: true }
 }
 
 /**
@@ -1325,7 +1346,7 @@ export async function sampleAnglesWithPrepAsync(
 
 /** A tool that cannot describe a cutter at all; sampling refuses it (see `RotarySampling.valid`). */
 function invalidSampling(along: readonly number[]): RotarySampling {
-  return { anglesDeg: [], along: [...along], tipRadius: [], lifts: [], reused: 0, stopped: false, valid: false }
+  return { anglesDeg: [], along: [...along], tipRadius: [], lifts: [], reused: 0, rasterWork: 0, stopped: false, valid: false }
 }
 
 export function sampleRotaryModel(

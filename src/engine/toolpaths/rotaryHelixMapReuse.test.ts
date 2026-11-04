@@ -36,7 +36,9 @@
  *  - dropping the per-map size gate: block 4's big-cell map is stored and
  *    reused;
  *  - returning a cropped map with the uncropped origin or size: block 1's
- *    points no longer equal the independent grid's.
+ *    points no longer equal the independent grid's;
+ *  - charging raster work for a reused row: block 1's workspace reclaims almost
+ *    all of the control's raster work, and this asserts the difference.
  */
 
 import assert from 'node:assert/strict'
@@ -172,7 +174,16 @@ function assertHelixNear(a: ContinuousHelix, b: ContinuousHelix, label: string):
   assert.ok(uncached !== null, 'the control band is helix-applicable')
   assert.equal(uncached.reusedRows, 0, 'the control workspace reuses nothing')
   assertHelixNear(cached, uncached, 'cached versus independent sampling')
-  console.log(`  helix map reuse: ${cached.reusedRows}/${cached.rows} rows reused, path identical`)
+  // #1103 ca-e correction round 2: a reused row costs no raster work. The work
+  // figure is what the attempt's budget is charged in, so a row that only reads
+  // its map must add 0 -- otherwise a reuse would not buy the time it exists for.
+  assert.ok(uncached.rasterWork > 0,
+    `the control reports the raster work it spent (${uncached.rasterWork})`)
+  assert.ok(cached.rasterWork * 10 < uncached.rasterWork,
+    `reuse removes almost all of the control's raster work `
+    + `(${cached.rasterWork} versus ${uncached.rasterWork})`)
+  console.log(`  helix map reuse: ${cached.reusedRows}/${cached.rows} rows reused, `
+    + `${cached.rasterWork} versus ${uncached.rasterWork} triangle raster passes, path identical`)
 }
 
 // ── block 2: the base grid never reads the cache back ──────────────────────

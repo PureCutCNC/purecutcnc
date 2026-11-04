@@ -67,8 +67,11 @@ with **one warm-up and five timed runs** per case. The ca-a rows above keep
 their own three-run capture; the medians below are the five-run re-measurement
 of the same cases. The baseline side is the unchanged ca-a base tree at
 `8fd5b18f` (the post-#1117 code, `6498aaf5` plus the slice handoffs); the
-candidate side is this branch's generator at `061da008` plus the ca-e fix's
-angle-map reuse (below) and test-only changes.
+candidate side is this branch's generator at `061da008` plus the ca-e fixes
+(angle-map reuse and the bounded attempt, below) and test-only changes. The
+busto-round finish's generation median is the correction-round-2 re-measurement
+(29627 ms); every other generation median was unchanged by that correction and
+keeps the ca-e capture.
 
 Only `computeOperationToolpath` is inside the generation timer. The export
 timer posts that run's moves through the bundled `grbl` definition plus an
@@ -82,13 +85,13 @@ export times are pure posting.
 | fixture | op | candidate moves | candidate rapids | candidate A reversals | candidate median gen ms | candidate median export ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | busto-round-stock.camj | op0025 | 22669 | 291 | 0 | 30772 | 72 |
-| busto-round-stock.camj | op0015 | 54231 | 2 | 0 | 42220 | 170 |
+| busto-round-stock.camj | op0015 | 54231 | 2 | 0 | 29627 | 170 |
 | busto-rect-stock.camj | op0021 | 32866 | 74 | 0 | 41023 | 40972 |
 | busto-rect-stock.camj | op0022 | 79088 | 2 | 0 | 32839 | 32965 |
 | square-to-round-test-01.camj | op0028 (around) | 8791 | 32 | 0 | 46 | 66 |
 | square-to-round-test-01.camj | op0029 (around) | 13394 | 2 | 0 | 63 | 89 |
 
-## ca-e timing against the ca-a base (same session, same protocol)
+## ca-e timing against the ca-a base (same-session pairs, same protocol)
 
 The fixed cylinder is the `r6` lathe in a D20 x 40 bar with a 2 mm ball,
 stepover 2, spacing 1, around mode (finish and a 2 mm-stepdown rough). The
@@ -99,7 +102,7 @@ control on the measurement itself.
 | case | base median gen ms | candidate median gen ms | gen ratio | base median export ms | candidate median export ms | export ratio |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | busto-round op0025 | 29497 | 30772 | 1.04 | 74 | 72 | 0.97 |
-| busto-round op0015 | 27205 | 42220 | 1.55 | 163 | 170 | 1.04 |
+| busto-round op0015 | 27558 | 29627 | 1.08 | 163 | 170 | 1.04 |
 | busto-rect op0021 | 39874 | 41023 | 1.03 | 39738 | 40972 | 1.03 |
 | busto-rect op0022 | 32253 | 32839 | 1.02 | 32602 | 32965 | 1.01 |
 | square op0028 (around) | 47 | 46 | 0.98 | 66 | 66 | 1.00 |
@@ -107,6 +110,16 @@ control on the measurement itself.
 | fixed cylinder, finish around | 179 | 188 | 1.05 | 2 | 3 | 1.50 |
 | fixed cylinder, rough around | 185 | 197 | 1.07 | 2 | 2 | 1.00 |
 | rotary fixture, along | 1174 | 1189 | 1.01 | 18 | 18 | 1.00 |
+
+The busto-round finish row is the one row correction round 2 changed, so it was
+re-measured with both trees in one session (baseline tree at `8fd5b18f`, 27558 ms
+median; this branch, 29627 ms). Every other row is the ca-e capture and did not
+need re-measuring: the bounded attempt below cannot reach those cases (their
+whole helix attempt spends under 150 k candidate triangles against a 24 M cap),
+and the emitted moves of each were checked identical, which is what the export
+column depends on. Correction round 2 touched generation only, so the export
+medians are the ca-e ones: the moves of the changed row are byte-identical to
+them (same moves hash), so the posting work is the same.
 
 Candidate A reversals against the base rows: 396 -> 0 (busto-round rough),
 91 -> 0 (busto-round finish), 601 -> 0 (busto-rect rough), 85 -> 0 (busto-rect
@@ -121,14 +134,14 @@ goes 7 -> 0 (finish) and 15 -> 0 (rough).
   the square-stock rows 1.01-1.03x (their export includes the regeneration
   described above), and the unchanged along fixture 1.00x. The fixed
   cylinder's export medians are 2-3 ms, at timer resolution.
-- **Generation meets the 1.2x target on every row but one.** The cylinder rows
-  are 1.05x (finish) and 1.07x (rough), the busto-round rough 1.04x, the square
-  rows 0.98-1.03x and the unchanged along fixture 1.01x. The busto-round
-  **finish** is 1.55x and is the one row that needs an explicit acceptance (see
-  the correction section below); its cause is measured, not assumed: the helix
-  attempt never converges on that surface at that cell size (all eight
-  refinement rounds run and 29 of 1706 segments are still failing), so the band
-  keeps its rings and the second sampling pass is pure work.
+- **Generation meets the 1.2x target on every row.** The cylinder rows are 1.05x
+  (finish) and 1.07x (rough), the busto-round rough 1.04x, the square rows
+  0.98-1.03x, the unchanged along fixture 1.01x, and the busto-round **finish**
+  1.08x after correction round 2 bounded what a refused attempt may spend (see
+  below). Before that correction the finish was 1.55x: its helix attempt never
+  converges on that surface at that cell size (all eight refinement rounds run
+  and 29 of 1706 segments are still failing), so the band keeps its rings and
+  the second sampling pass was pure work.
 - **Fewer, forward-only moves.** The round rough drops 24322 -> 22669 moves and
   the finish gains 29 (54202 -> 54231); the cylinder rough goes 564 -> 613 moves
   because its rings are replaced by helix boundary rings and a pitch-length
@@ -160,31 +173,61 @@ round needs). Re-measured with the same protocol on the same machine:
 - busto-round op0025 rough: 65534 -> 30772 ms (2.22x -> 1.04x)
 - busto-round op0015 finish: 46019 -> 42220 ms (1.69x -> 1.55x)
 
-The busto-round finish improves only in proportion to its unshared ring
-refinement: its 0.01 mm cell makes the window it reads the **whole** height
-map (320 KiB), over the 96 KiB per-map gate, so its helix rows cannot be
-shared. That is the accepted residual below.
+The busto-round finish improves only in proportion to the helix rows that find
+a different angle: the ring grid rasterises **3353** maps for that operation (404
+base angles plus 2949 refinement angles), and each stored map is 61 KB -- a
+17-row window over 400 columns, `data` plus the wall-coverage and model arrays --
+so keeping all of them for the helix would cost about 205 MB. The 32 MiB budget
+retains the first 548 and then stops filling (the policy keeps early entries
+rather than evicting), and the helix's rows are spread over the whole circle, so
+548 of its 2334 rows are reads and the rest re-rasterise angles the ring grid has
+already built. The per-map gate is **not** what limits this: a 61 KB map is
+under the 96 KiB gate, which is why the rows are stored at all.
 
-## Accepted residual (review P1)
+Measured directly, by raising the budget to 400 MiB for one experiment: the same
+operation then reuses 2070 of 2334 rows. The duplication is real, but its price
+is ~125 MB of maps for the rows the helix actually asks for -- more memory than a
+browser tab should hold for one operation, and not a trade this slice makes.
+Bounding what a refused attempt may spend is correction round 2.
 
-The 1.2x generation target is met on every measured row except the busto-round
-around finish, which measures **1.55x** (42220 ms against 27205 ms). The row is
-a 1.47 M-vertex organic surface at a 0.01 mm cell: its window is the whole
-height map, so the shared-map correction above cannot apply, and its helix
-cannot converge -- all eight refinement rounds run and 29 of 1706 segments are
-still failing, so the band correctly keeps its rings and the attempt is work
-spent to prove a refusal. The measured cost is that attempt, not a regression
-in the ring path: the square, along and cylinder rows all meet the target.
+## Correction round 2 (review P1): a bounded attempt
 
-The approved plan says delivery requires Frank's acceptance. This row is
-recorded here as an **explicit acceptance item pending Frank's sign-off**, not
-as a met target. The alternative is a follow-up slice that shares the ring
-grid's sampling with the helix (merged per-angle reads) rather than accepting
-the cost. A test in `rotaryBaseline.test.ts` requires every row above 1.2x to
-appear in this list and every listed row to still be above it, so the gap can
-neither be quietly dropped nor left stale.
+The remaining cost was not the ring grid and not the shared-map gate; it was the
+**refused helix attempt**. On this operation the attempt samples 2334 rows, 548
+of them free reads and 1786 fresh rasters, at ~96 000 candidate triangles and
+~7.6 ms per raster: ~171 M triangle passes, ~13.5 s of the 42.2 s generation,
+all of it spent to prove that the band keeps its rings. The output was already
+the ring fallback, so the work bought nothing.
 
-- busto-round op0015 — 1.55x generation (42220 ms versus 27205 ms) — the around finish, accepted pending Frank's sign-off
+`ContinuousHelixBudget` now carries a **work** limit next to its samples, rows
+and rounds: `MAX_HELIX_RASTER_WORK` (24 M candidate triangles) is charged for
+every row that rasterises a map and not for a reused one, and an attempt that
+passes it reports `exhausted` with no points, exactly as the other three limits
+do. The unit is triangles rather than milliseconds, so the same attempt obeys
+the same limit on any machine; 24 M is about 2 s of raster at the ~80 ns per
+candidate measured here, and ~160x the largest attempt any committed fixture
+makes (150 k on the rotary fixture's around finish), so a helix that can verify
+its band is not refused for cost. What it refuses is a mesh fine enough that
+the speculation costs more than seconds, and the caller keeps the rings it has
+already sampled -- the same motion an exhausted refinement produces.
+
+Measured with the ca-e protocol (one warm-up, five timed serial generations, one
+process at a time, both trees in the same session):
+
+- busto-round op0015 generation: 42220 -> **29627 ms** median (1.55x -> **1.08x**
+  against the 27558 ms baseline re-measured in the same session). The moves and
+  their hash are **unchanged** (`976cbc22…`): the refused attempt was never part
+  of the output.
+- The other fixtures are untouched: every committed suite still pins the moves
+  and posted hashes it carried, and the largest attempt measured while running
+  them is 150 k candidate triangles, 160x under the cap. `busto-rect` and
+  `square-to-round` are square blanks, which never attempt a helix, and
+  `busto-round` op0025's rough helix attempt stays under the cap -- its moves
+  hash is identical before and after (`980d7ced…`).
+
+`rotaryBaseline.test.ts` now requires **every** generation row to be at or under
+1.2x and requires the two tables' numbers to agree; there is no acceptance list
+and no phrase that can stand in for one.
 
 ## Changes a later slice must report against this table
 

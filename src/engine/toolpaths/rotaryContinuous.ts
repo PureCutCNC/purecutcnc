@@ -138,17 +138,25 @@ export interface ContinuousHelixBand {
  *   summed), the same unit as `MAX_ROTARY_SAMPLES`;
  * - `rows` is the number of height maps, which is the cost a sample count
  *   cannot see when a row is short;
+ * - `work` is the candidate triangles every row's raster pass visits (see
+ *   {@link MAX_HELIX_RASTER_WORK}). A row count alone cannot price an attempt:
+ *   a row visits a few hundred candidate triangles on the small fixtures and
+ *   ~96 000 on a fine organic surface, so the same 300-row attempt can cost a
+ *   second or a minute. This is the limit that keeps a **refused** attempt
+ *   cheap, and it is counted only for rows that actually rasterise a map, so a
+ *   row served from the workspace's angle-map cache is free;
  * - `rounds` is the bisection limit, matching the ring refinement's eight. A
  *   path that is still unresolved when the last round is spent is `exhausted`,
  *   because its refinement can go no finer on the phase grid this budget builds.
  *
- * Over any of the three limits the result is `exhausted` and carries no points,
+ * Over any of the four limits the result is `exhausted` and carries no points,
  * so the caller falls back to rings for the whole band rather than emitting
  * half a helix or an unverified move.
  */
 export interface ContinuousHelixBudget {
   readonly samples: number
   readonly rows: number
+  readonly work: number
   readonly rounds: number
 }
 
@@ -176,6 +184,31 @@ export interface ContinuousHelixLayer {
 /** The most angle rows (height maps) one helix may build. */
 export const MAX_HELIX_ROWS = 65_536
 
+/**
+ * The most candidate triangles one helix attempt may rasterise (#1103 ca-e
+ * correction round 2).
+ *
+ * A helix is an optimisation over the rings: when its refinement cannot verify
+ * a band, the caller keeps the rings it already sampled and the attempt's work
+ * is spent to prove a refusal. On a fine mesh that proof is not cheap -- one
+ * height-map row visits every triangle the strip plan's buckets select, which on
+ * the `busto-round` finish is ~96 000 candidates per row, so a 4.4-rowset
+ * attempt costs ~171 M triangle passes (~13 s of the measured run). The ring
+ * pass that the band falls back to stays whatever it was; this cap bounds only
+ * the speculative addition.
+ *
+ * The value is a **work** count, not a time: the same attempt obeys the same
+ * limit on any machine. 24 M is about 2 s of raster at the ~80 ns per candidate
+ * the measured machine takes, and it is ~160x the largest attempt the committed
+ * suites make (150 k candidate triangles, measured on the chiral finish
+ * fixtures), so a helix that can verify its band is not refused for cost. What it refuses is the
+ * speculation that would spend seconds re-rasterising angles the ring grid has
+ * already proved this surface cannot resolve; a mesh fine enough that even its
+ * base rowset passes the cap forgoes the helix and keeps those rings, exactly
+ * as an exhausted refinement does.
+ */
+export const MAX_HELIX_RASTER_WORK = 24_000_000
+
 /** The bisection rounds, matching the around grid's refinement (#1045 slice E). */
 export const MAX_HELIX_REFINEMENT_ROUNDS = 8
 
@@ -183,6 +216,7 @@ export const MAX_HELIX_REFINEMENT_ROUNDS = 8
 export const DEFAULT_CONTINUOUS_HELIX_BUDGET: ContinuousHelixBudget = {
   samples: MAX_ROTARY_SAMPLES,
   rows: MAX_HELIX_ROWS,
+  work: MAX_HELIX_RASTER_WORK,
   rounds: MAX_HELIX_REFINEMENT_ROUNDS,
 }
 
@@ -232,6 +266,13 @@ export interface ContinuousHelix {
   readonly samples: number
   /** Angle rows (height maps) sampled. */
   readonly rows: number
+  /**
+   * Candidate triangles the built rows rasterised (#1103 ca-e correction round
+   * 2): the work the attempt actually spent. A row served from the angle-map
+   * cache costs nothing and adds 0, so this is the figure
+   * {@link ContinuousHelixBudget.work} bounds.
+   */
+  readonly rasterWork: number
   /**
    * Angle rows whose height map was already in the operation's workspace at
    * this physical angle (#1103 ca-e): the row was read, not rasterised. The row
@@ -296,6 +337,8 @@ interface HelixSampling {
   samples: number
   rows: number
   reused: number
+  /** Candidate triangles the built rows rasterised; a reused row adds nothing. */
+  work: number
 }
 
 /** What a sampling/budget step decided. */
@@ -433,6 +476,10 @@ function sampleHelixRows(
     if (input.shouldStop?.() === true) return 'stopped'
     if (sampling.rows + 1 > budget.rows) return 'exhausted'
     if (sampling.samples + row.along.length > budget.samples) return 'exhausted'
+    // #1103 ca-e correction round 2: the raster work is charged after the row
+    // (it is only known once the map is built), so the check is here, before the
+    // next one. A refused attempt may overshoot by its last row, never by a round.
+    if (sampling.work > budget.work) return 'exhausted'
     const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
       along: row.along,
       requestedCellSize: prep.requestedCellSize,
@@ -453,6 +500,7 @@ function sampleHelixRows(
     if (!sampled.valid) return 'exhausted'
     if (sampled.stopped) return 'stopped'
     sampling.reused += sampled.reused
+    sampling.work += sampled.rasterWork
     // The row arrives lifted by the angle's conservative cell rise, exactly as
     // the ring grid reads it; every finite value takes the operation's stock
     // offset and the clamp the ring path applies (`completeRotaryTargets`).
@@ -593,6 +641,7 @@ function emptyHelix(
     pitch,
     samples: sampling.samples,
     rows: sampling.rows,
+    rasterWork: sampling.work,
     reusedRows: sampling.reused,
     exhausted: flags.exhausted === true,
     stopped: flags.stopped === true,
@@ -629,10 +678,12 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   const budget: ContinuousHelixBudget = {
     samples: input.budget?.samples ?? DEFAULT_CONTINUOUS_HELIX_BUDGET.samples,
     rows: input.budget?.rows ?? DEFAULT_CONTINUOUS_HELIX_BUDGET.rows,
+    work: input.budget?.work ?? DEFAULT_CONTINUOUS_HELIX_BUDGET.work,
     rounds: input.budget?.rounds ?? DEFAULT_CONTINUOUS_HELIX_BUDGET.rounds,
   }
   if (!Number.isFinite(budget.samples) || budget.samples < 0) return null
   if (!Number.isFinite(budget.rows) || budget.rows < 0) return null
+  if (!Number.isFinite(budget.work) || budget.work < 0) return null
   if (!Number.isSafeInteger(budget.rounds) || budget.rounds < 0 || budget.rounds > 30) return null
   const phaseScale = intervals * 2 ** budget.rounds
   if (!Number.isSafeInteger(phaseScale)) return null
@@ -640,7 +691,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   const turns = Math.max(1, Math.ceil(length / input.stepover))
   if (!Number.isFinite(turns) || turns < 1 || turns > MAX_ROTARY_SAMPLES) return null
   const pitch = length / turns
-  const sampling: HelixSampling = { samples: 0, rows: 0, reused: 0 }
+  const sampling: HelixSampling = { samples: 0, rows: 0, reused: 0, work: 0 }
   // Refuse before allocating the grid when the initial poses alone are over
   // budget: `intervals x (turns + 2)` is the whole first pass.
   if (intervals * (turns + 2) > budget.samples || intervals > budget.rows) {
@@ -678,6 +729,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
     pitch,
     samples: sampling.samples,
     rows: sampling.rows,
+    rasterWork: sampling.work,
     reusedRows: sampling.reused,
     exhausted: false,
     stopped: false,
