@@ -35,12 +35,19 @@
  *    unwind. `block 3` counts each boundary ring's poses and its exact 360
  *    degrees, which is what "omit an end ring" breaks, and re-samples poses
  *    against the sampler to prove they are not interpolated.
- * 4. **Refinement.** A square prism is turned so a corner sits at the midpoint
- *    of the initial angular step, where a straight `(along, A, Z)` move sags
- *    below the material. The emitted path must be within the operation's
- *    0.005 mm tolerance at every segment's midpoint -- measured by sampling that
- *    midpoint independently -- and the same fixture with `rounds: 0` (the
- *    no-refinement path, the mutation) must not be. `block 4`.
+ * 4. **Refinement, and exhaustion when it cannot finish.** A square prism is
+ *    turned so a corner sits at the midpoint of the initial angular step, where a
+ *    straight `(along, A, Z)` move sags below the material. The emitted path must
+ *    be within the operation's 0.005 mm tolerance at every segment's midpoint --
+ *    measured by sampling that midpoint independently. The control is the
+ *    **initial grid itself**: refinement only ever splits a segment, so the
+ *    unrefined poses are still in the emitted path at whole `1 / STEPS`
+ *    fractions of a revolution; the straight moves between them are exactly the
+ *    path "remove refinement" leaves, and they must cut well past the tolerance.
+ *    A budget too small to finish must report `exhausted` with **no points**
+ *    (the ring fallback) rather than return the partly refined path: on this
+ *    prism `rounds: 1` and `2` still leave 0.067 mm and 0.018 mm of gouge. That
+ *    is the review's finding. `block 4`.
  * 5. **Budgets and cancellation.** A sample or row limit that runs out reports
  *    `exhausted` with no points (so the caller keeps rings); `shouldStop` reports
  *    `stopped`. `block 5` sets both limits below the first pass, so a module that
@@ -213,14 +220,14 @@ function buildOk(
 
 /** The largest amount by which a segment's straight move cuts below the surface. */
 function worstMidpointCut(
-  helix: ContinuousHelix,
+  points: readonly ToolpathPoint[],
   mesh: RotaryModelMesh,
   tool: NormalizedTool,
 ): { worst: number; segments: number } {
   let worst = Number.NEGATIVE_INFINITY
-  for (let i = 1; i < helix.points.length; i++) {
-    const from = helix.points[i - 1]
-    const to = helix.points[i]
+  for (let i = 1; i < points.length; i++) {
+    const from = points[i - 1]
+    const to = points[i]
     const along = (alongOf(from) + alongOf(to)) / 2
     const angle = (angleOf(from) + angleOf(to)) / 2
     const chord = (tipOf(from) + tipOf(to)) / 2
@@ -229,7 +236,25 @@ function worstMidpointCut(
     const cut = mid - chord
     if (cut > worst) worst = cut
   }
-  return { worst, segments: helix.points.length - 1 }
+  return { worst, segments: points.length - 1 }
+}
+
+/**
+ * The poses a chain holds at one depth of refinement, taken from an emitted path.
+ *
+ * Refinement only splits segments, so every pose the module held after `rounds`
+ * rounds is still an endpoint of the final path; its `u` is a whole multiple of
+ * `1 / (STEPS * 2 ** rounds)`. Selecting those poses, in order, reconstructs that
+ * depth's chain -- whose straight moves are the path a build with a `rounds`
+ * budget would emit if it did not refuse an unresolved refinement. `rounds: 0`
+ * is the initial grid, the "remove refinement" control.
+ */
+function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): ToolpathPoint[] {
+  const scale = STEPS * 2 ** rounds
+  return helix.points.filter((point) => {
+    const u = (angleOf(point) - startAngle) / 360
+    return Math.abs(u * scale - Math.round(u * scale)) < 1e-6
+  })
 }
 
 /**
@@ -343,28 +368,38 @@ function worstMidpointCut(
 }
 
 /**
- * 4. Refinement and its no-refinement control.
+ * 4. Refinement, its no-refinement control, and exhaustion when it cannot finish.
  *
  * A square prism's corner at 45 degrees is placed exactly at the midpoint of the
  * initial angular step (`startAngle` is chosen so `45 = startAngle + 360 u` for
  * the midpoint `u = 1.495`). The straight move between the two samples either
  * side sags below that corner; the module must sample the midpoint and keep
  * bisecting until every emitted segment's midpoint is within the operation's
- * 0.005 mm tolerance. The control is the same build with `rounds: 0`: that is
- * exactly the path "remove refinement" leaves, and it must cut more than the
- * tolerance allows.
+ * 0.005 mm tolerance.
+ *
+ * The control is the initial grid: refinement only splits, so those poses are
+ * still in the emitted path at whole `1 / STEPS` fractions of a revolution. The
+ * straight moves between them are exactly the path "remove refinement" leaves,
+ * and they gouge 0.071 mm -- twenty times the tolerance -- so the refinement is
+ * load-bearing. The old control asked the module for `rounds: 0`, which it now
+ * (correctly) refuses.
+ *
+ * The last part is the review's finding: a budget that cannot finish must say
+ * so. `rounds: 1` halves each coarse segment once and still leaves 0.067 mm;
+ * `rounds: 2` leaves 0.018 mm. Both used to return those points with
+ * `exhausted: false`, which suppresses the caller's ring fallback.
  */
 {
   const startAngle = 45 - 360 * (1 + 49.5 / STEPS) + 720
   const refined = buildOk(SQUARE_PRISM, FLAT, { startAngle })
-  const coarse = buildOk(SQUARE_PRISM, FLAT, { startAngle, budget: { rounds: 0 } })
   const initial = STEPS + (refined.turns * STEPS + 1) + STEPS
-  assert.equal(coarse.points.length, initial,
-    'the no-refinement control is exactly the initial ring + helix + ring grid')
   assert.ok(refined.points.length > initial,
     `refinement inserted poses (${refined.points.length} vs ${initial})`)
+  const coarse = gridAt(refined, startAngle, 0)
+  assert.equal(coarse.length, initial,
+    'the initial ring + helix + ring grid survives every refinement as segment ends')
   const REFINED_LIMIT = 0.007
-  const refinedWorst = worstMidpointCut(refined, SQUARE_PRISM, FLAT)
+  const refinedWorst = worstMidpointCut(refined.points, SQUARE_PRISM, FLAT)
   assert.ok(refinedWorst.worst <= REFINED_LIMIT,
     `every refined segment stays within 0.007 mm of the surface (worst ${refinedWorst.worst})`)
   const coarseWorst = worstMidpointCut(coarse, SQUARE_PRISM, FLAT)
@@ -372,8 +407,34 @@ function worstMidpointCut(
     `the no-refinement path cuts ${coarseWorst.worst} mm below the corner, so the refinement is load-bearing`)
   assert.ok(coarseWorst.worst > refinedWorst.worst * 3,
     `refinement removes most of the gouge (${coarseWorst.worst} -> ${refinedWorst.worst})`)
-  console.log(`  refinement: ${coarse.points.length} -> ${refined.points.length} poses, `
-    + `worst midpoint cut ${coarseWorst.worst.toFixed(4)} -> ${refinedWorst.worst.toFixed(4)} mm`)
+  // What the old code returned when its budget ran out at one and two rounds:
+  // both are still past the 0.005 mm tolerance, so neither may be emitted.
+  const partialWorsts: number[] = []
+  let previous = coarse.length
+  for (const rounds of [1, 2]) {
+    const partial = gridAt(refined, startAngle, rounds)
+    assert.ok(partial.length > previous,
+      `round ${rounds} split more segments (${partial.length} vs ${previous})`)
+    previous = partial.length
+    const partialWorst = worstMidpointCut(partial, SQUARE_PRISM, FLAT)
+    assert.ok(partialWorst.worst > 0.005,
+      `the ${rounds}-round path still gouges ${partialWorst.worst} mm, past the 0.005 mm tolerance`)
+    partialWorsts.push(partialWorst.worst)
+  }
+  // The finding's regression: an unfinished refinement is exhaustion with no
+  // points, never a partly refined path with `exhausted: false`.
+  for (const rounds of [0, 1, 2, 3]) {
+    const unfinished = build(SQUARE_PRISM, FLAT, { startAngle, budget: { rounds } })
+    assert.equal(unfinished.exhausted, true,
+      `a ${rounds}-round budget cannot finish this prism, so it reports exhaustion`)
+    assert.equal(unfinished.points.length, 0,
+      `an unresolved refinement emits no points (${rounds} rounds), so the caller keeps rings`)
+    assert.ok(unfinished.samples > 0, `the exhausted attempt reports the work it did (${rounds} rounds)`)
+  }
+  console.log(`  refinement: ${coarse.length} -> ${refined.points.length} poses, `
+    + `worst midpoint cut ${coarseWorst.worst.toFixed(4)} -> ${refinedWorst.worst.toFixed(4)} mm, `
+    + `1/2 rounds ${partialWorsts.map((w) => w.toFixed(4)).join('/')} mm, `
+    + 'rounds 0..3 exhausted with no points')
 }
 
 /**

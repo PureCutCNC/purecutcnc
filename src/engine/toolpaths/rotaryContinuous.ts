@@ -81,9 +81,10 @@
  * - A sample with no model under the tool (`NaN`) makes the band *uncovered*:
  *   the path is refused rather than cut through free air, and the caller keeps
  *   the ring path (which skips those samples).
- * - Cancellation (`shouldStop`) and the sample/row budgets are honoured; a
- *   budget that runs out reports `exhausted` so the caller can fall back to
- *   forward-only rings for that band.
+ * - Cancellation (`shouldStop`) and the sample/row/round budgets are honoured; a
+ *   budget that runs out -- a sampling limit, or a refinement that is still
+ *   unresolved when its last round is spent -- reports `exhausted`, so the
+ *   caller can fall back to forward-only rings for that band.
  * - Round bars only. A square blank's corners are not a surface of revolution
  *   and its retained-corner floor belongs to the ring path (#1045 slice C), so
  *   a square blank is **not applicable** (`null`) and the caller keeps rings.
@@ -126,11 +127,13 @@ export interface ContinuousHelixBand {
  *   summed), the same unit as `MAX_ROTARY_SAMPLES`;
  * - `rows` is the number of height maps, which is the cost a sample count
  *   cannot see when a row is short;
- * - `rounds` is the bisection limit, matching the ring refinement's eight.
+ * - `rounds` is the bisection limit, matching the ring refinement's eight. A
+ *   path that is still unresolved when the last round is spent is `exhausted`,
+ *   because its refinement can go no finer on the phase grid this budget builds.
  *
- * Over either sampling limit the result is `exhausted` and carries no points,
+ * Over any of the three limits the result is `exhausted` and carries no points,
  * so the caller falls back to rings for the whole band rather than emitting
- * half a helix.
+ * half a helix or an unverified move.
  */
 export interface ContinuousHelixBudget {
   readonly samples: number
@@ -430,9 +433,12 @@ function assignTips(nodes: readonly HelixNode[], rows: readonly HelixRow[], phas
  * only what is still too coarse -- the same bisection the around grid runs, over
  * the path instead of over an angle step.
  *
- * Returns `uncovered` if a sampled pose has no model under the tool. After the
- * round limit the path is returned with the refinement it reached, the ring
- * refinement's rule; the caller's fallback is for the two sampling budgets.
+ * Returns `uncovered` if a sampled pose has no model under the tool. A path
+ * whose refinement is still unresolved when the round limit is spent is
+ * **`exhausted`, never `ok`**: every round halves the segment again, so a chain
+ * that still holds an unchecked segment is a move whose between-sample error was
+ * never confirmed, and emitting it would cut below the operation's tolerance.
+ * The caller's fallback to rings is then the same one the sampling budgets use.
  */
 function refineHelix(
   chain: readonly HelixSegment[],
@@ -484,6 +490,14 @@ function refineHelix(
     }
     if (uncovered) return { status: 'ok', uncovered: true, chain: current }
     current = next
+  }
+  // Every round is spent. A chain that still holds an unchecked segment was
+  // still splitting -- its last round created children that no later round
+  // measured -- so the path it would produce is unresolved, not safe. The phase
+  // grid has no finer step than this budget allows, so the only honest answer is
+  // exhaustion with no points and the caller's ring fallback.
+  if (current.some((segment) => !segment.checked)) {
+    return { status: 'exhausted', uncovered: false, chain: current }
   }
   return { status: 'ok', uncovered: false, chain: current }
 }
