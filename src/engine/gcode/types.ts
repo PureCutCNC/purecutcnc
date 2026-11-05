@@ -142,6 +142,14 @@ const PlasmaDefinitionSchema = z.object({
  * - `reversed` — a positive angle turns the other way.
  * - `inverseTimeFeed` — the commands that switch inverse-time feed on and off;
  *   `null` means the controller has none.
+ * - `zeroA` — the optional "Zero A" program line (issue #1103 slice ca-h), e.g.
+ *   `G10 L20 P1 A0` on grbl/grblHAL/LinuxCNC. It is empty on every bundled
+ *   definition and by default; when it is filled, each rotary operation opens
+ *   with it (after a clearance retract, before its first turn) so the
+ *   operation starts reading A0 wherever the bar is. An empty field is what
+ *   makes the emitter pause between rotary operations for the operator to
+ *   zero A by hand. Allowed forms are the ones that set the A coordinate to
+ *   zero and move no axis (`templateRules.ts` refuses anything else).
  */
 export const RotaryDefinitionSchema = z.object({
   about: z.enum(['x', 'y']),
@@ -151,6 +159,11 @@ export const RotaryDefinitionSchema = z.object({
     on: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
     off: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
   }).nullable().default({ on: 'G93', off: 'G94' }),
+  // Optional, like an absent key elsewhere in the schema: a definition saved
+  // before the field existed reads as "not configured", so no format version
+  // changes and no migration runs (#1103 slice ca-h). Written only when set,
+  // which is also why every bundled definition stays byte-identical.
+  zeroA: z.string().optional(),
 })
 export type RotaryDefinition = z.infer<typeof RotaryDefinitionSchema>
 

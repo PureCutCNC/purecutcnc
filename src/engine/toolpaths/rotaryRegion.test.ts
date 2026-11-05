@@ -1004,8 +1004,12 @@ const ROUND_FINISH_PARAMS = {
 // rl-b re-recorded a second row: `square/rotary_rough/around` now links the
 // corner arcs of adjacent rings at the layer, which is the square half of the
 // same change.
+// #1103 slice ca-h re-recorded **every** row's posted hash on purpose: each
+// program now ends with the forward end turn to 0 up, its machine-coordinate
+// retract and the instruction. The `moves=` half of every row is unchanged —
+// the slice changes the emitter, not the path.
 const NO_REGION_HASHES: Record<string, string> = {
-  'round/rotary_rough/along': 'moves=57c161faf512400a warnings= gcode=53019c8531aafcfd',
+  'round/rotary_rough/along': 'moves=57c161faf512400a warnings= gcode=1d01980a26a07b1c',
   // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
   // earlier layer actually left (the lowest pass over the ring positions)
   // instead of an upper bound on it, so this fixture's asymmetric prism keeps
@@ -1017,14 +1021,14 @@ const NO_REGION_HASHES: Record<string, string> = {
   // split-ring eligibility rule refusing it outright, so #1117's same-A links
   // between the rings a helix leaves behind stay down. The links' heights and
   // material bounds are unchanged.
-  'round/rotary_rough/around': 'moves=5adeff002c5c2b0b warnings= gcode=3a2c646cf4a291a2',
-  'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=0f33efd742ed58e9',
+  'round/rotary_rough/around': 'moves=5adeff002c5c2b0b warnings= gcode=c8b8dfe7c7efdbee',
+  'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=bf4172fbd3f8e467',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
-  'round/rotary_finish/around': 'moves=5d3c9f79b5fd674f warnings=rotaryFinishWithoutRough gcode=ec5b836dbf5135c1',
-  'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=53c3d57f9a4146bb',
+  'round/rotary_finish/around': 'moves=5d3c9f79b5fd674f warnings=rotaryFinishWithoutRough gcode=55bf4df5d819768b',
+  'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=c8e19d47e3a0b8c1',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer
   // instead of only its corner arcs. 33 raised links became at-layer cuts;
@@ -1034,9 +1038,9 @@ const NO_REGION_HASHES: Record<string, string> = {
   // (not the whole circumference the physical indices walked), and a wide square
   // model gap the layer below cleared is proven by the at-layer row proof
   // instead of the 45 degree drift bound. Both change which links stay down.
-  'square/rotary_rough/around': 'moves=3c69e9c477ad98de warnings= gcode=7a22363504ee4d70',
-  'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=755a66621cb1363c',
-  'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=2d9890f36714171b',
+  'square/rotary_rough/around': 'moves=3c69e9c477ad98de warnings= gcode=4f921fb31dc6867b',
+  'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
+  'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=bd1329b8dc986b8b',
 }
 
 const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)

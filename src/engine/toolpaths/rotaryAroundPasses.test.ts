@@ -2299,7 +2299,9 @@ console.log('Testing the angle cap in inch units...')
 //     guide drawn on the Around face and a V-bit), so the control does not
 //     depend on a user file. Programs are posted through the bundled grbl
 //     definition plus an own-drive rotary block, with only the generation date
-//     normalised.
+//     normalised. #1103 slice ca-h changed the posted text of every rotary
+//     program — the operation now ends at 0 up — so the posted hash includes
+//     that end turn/instruction; the *motion* hash is unchanged.
 // ---------------------------------------------------------------------------
 {
   const stock = roundStock(20, 60, 'x', { x: 0, y: 0 })
@@ -2385,8 +2387,8 @@ console.log('Testing the angle cap in inch units...')
     .digest('hex')
   assert.equal(movesHash, '403cf195253577fa89e466126de2d61e982de6f2336e29ba8b3cbb0c12ceb9fa',
     'the wrapped engrave motion is byte-identical')
-  assert.equal(postedHash, '1532647609ec5a4a53d9b42e8f77d7aca64eb676e6859a479bec8f795cd6408f',
-    'the wrapped engrave posted program is byte-identical')
+  assert.equal(postedHash, '4112ed30cfa1e3eb77bb215e2094efaacb90c872f51e327d3dfdda517f367a43',
+    'the wrapped engrave posted program carries only the #1103 ca-h end turn beyond its pre-slice bytes')
   console.log(`  engrave control: ${moves.length} moves, ${posted.stats.lineCount} program lines`)
 }
 

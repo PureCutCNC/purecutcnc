@@ -88,6 +88,7 @@ const { translate } = await import('../../i18n/store')
 const { useProjectStore } = await import('../../store/projectStore')
 const { createToolpathGenerationService } = await import('../../app/toolpathGeneration/service')
 const { reportedGrblCopy, reportedRotaryProject } = await import('../../test/reportedRotaryMachines')
+const { validateMachineDefinition } = await import('../../engine/gcode/types')
 const { createRoot } = await import('react-dom/client')
 const { flushSync } = await import('react-dom')
 import type { Project } from '../../types/project'
@@ -261,6 +262,39 @@ await test('an empty default checklist is named as that, never as a missing mach
     const exportButton = dialog.host.querySelector('.dialog-footer .btn-primary') as HTMLButtonElement | null
     assert(exportButton, 'the dialog has its Export button')
     assert(exportButton.disabled, 'and it is disabled, because nothing is ticked')
+  } finally {
+    dialog.unmount()
+  }
+})
+
+await test('a rotary program on a machine with no Zero A line warns that A must be zeroed', async () => {
+  // #1103 slice ca-h: the operation ends at 0 up and the program pauses between
+  // rotary operations, so this line is the only place the operator is told to
+  // start with A zeroed at 0 up.
+  const project = reportedRotaryProject(REPORTED, REPORTED.id, DISPLAYED_OPS)
+  const dialog = mount(project)
+  try {
+    await dialog.waitFor(() => text(dialog.host, '.dialog-preview').includes('G20'), 'the program')
+    const notice = text(dialog.host, '[data-testid="export-rotary-zero-notice"]')
+    assert(notice === message('dialogs.export.rotaryZeroNotice'),
+      `the dialog shows the rotary-zeroing note, got ${JSON.stringify(notice)}`)
+  } finally {
+    dialog.unmount()
+  }
+})
+
+await test('a machine that zeroes A itself shows no rotary-zeroing note', async () => {
+  assert(REPORTED.rotary !== undefined, 'fixture: the reported machine has a rotary block')
+  const zeroing = validateMachineDefinition({
+    ...structuredClone(REPORTED),
+    rotary: { ...structuredClone(REPORTED.rotary!), zeroA: 'G10 L20 P1 A0' },
+  })
+  const project = reportedRotaryProject(zeroing, zeroing.id, DISPLAYED_OPS)
+  const dialog = mount(project)
+  try {
+    await dialog.waitFor(() => text(dialog.host, '.dialog-preview').includes('G20'), 'the program')
+    assert(text(dialog.host, '[data-testid="export-rotary-zero-notice"]') === '',
+      'the note is absent when the machine carries a Zero A line')
   } finally {
     dialog.unmount()
   }

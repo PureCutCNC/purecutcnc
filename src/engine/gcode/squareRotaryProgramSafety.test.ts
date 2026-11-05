@@ -614,16 +614,20 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
     assert.equal(audit.units, units, `${program.label}: the program declares its own unit system`)
     assert.deepEqual(audit.violations, [], `${program.label}: every rotary change executes above the travel height`)
     assert.ok(audit.turns > 0, `${program.label}: an accepted turning program actually turns`)
-    // #1091: the program ends where its last move left it. The last angle in
-    // the text is the last toolpath move's angle — no closing A0 is written,
-    // and no extra turn is invented after the retract.
+    // #1091 forbids a closing *unwind*; #1103 slice ca-h still leaves the bar
+    // at a known orientation. The last angle in the text is the next whole
+    // turn at or ahead of the last toolpath move's angle — a forward turn to
+    // 0 up, never a rewind to it.
     const lastMove = program.entries[program.entries.length - 1].moves.at(-1)
     assert.ok(lastMove?.to.a !== undefined, `${program.label}: the last move carries an angle`)
     if (lastMove?.to.a === undefined) throw new Error('unreachable')
+    const machineLast = lastMove.to.a * rotaryDirection(definition)
+    const endTurn = 360 * Math.ceil((machineLast - 1e-6) / 360)
+    assert.ok(endTurn >= machineLast, `${program.label}: the end turn never rewinds`)
     assert.equal(
       lastRotaryValue(result.gcode, letter),
-      Number(formatGCodeNumber(lastMove.to.a * rotaryDirection(definition), definition, units)),
-      `${program.label}: the program ends on the last toolpath angle, with no closing unwind`,
+      Number(formatGCodeNumber(endTurn, definition, units)),
+      `${program.label}: the program ends at 0 up, on the next whole turn`,
     )
     turns += audit.turns
   }
@@ -673,19 +677,21 @@ console.log('Testing the program keeps its last angle and its own retract...')
   const safeZ = emittedTravelZ(stock, 'mm', definition, project)
   const audit = auditProgram(result.gcode, letter, safeZ, emittedHalfStep(definition, 'mm'))
   assert.deepEqual(audit.violations, [], 'no rotary change runs below the travel height')
-  assert.equal(audit.turns, 2, 'the placement states A0 and the cut turns to A45: no closing unwind')
-  // The program keeps its last angle. There is no bare rapid back to 0, and no
-  // machine-coordinate retract at all on a program with no manual-index turn.
+  // The placement states A0, the cut turns to A45, and #1103 ca-h's end turn
+  // takes it forward to 360 (0 up): three rotary changes, none of them a
+  // rewind.
+  assert.equal(audit.turns, 3, 'the cut and the forward end turn are the only turns after the placement')
   const angles = [...result.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
-  assert.deepEqual(angles, [0, 45], `the program writes the toolpath's angles only: ${JSON.stringify(angles)}`)
-  assert.doesNotMatch(result.gcode, /G53/, 'no closing machine-coordinate retract is written')
-  // The final motion is the operation's own retract, and it carries no A word.
+  assert.deepEqual(angles, [0, 45, 360], `the program writes the toolpath's angles and 0 up: ${JSON.stringify(angles)}`)
   const lines = result.gcode.split('\n')
   const end = lines.lastIndexOf('M30')
   const retract = `Z${formatGCodeNumber(safeZ, definition, 'mm')}`
-  assert.equal(lines[end - 1], 'M5', 'the spindle stop follows the retract')
-  assert.equal(lines[end - 2], retract, 'the final motion is the operation retract at the travel height')
-  assert.doesNotMatch(lines[end - 2], /A/, 'the retract does not turn the bar')
+  assert.equal(lines[end - 1], 'M5', 'the spindle stop is the last thing before the end')
+  assert.equal(lines[end - 2], '; A is at 360.000, 0 up. Zero A before the next operation.', 'then the instruction')
+  assert.equal(lines[end - 3], 'G0 A360.000', 'the final motion is the forward end turn')
+  assert.equal(lines[end - 4], 'G53 G0 Z0.000', 'preceded by the machine-coordinate retract')
+  assert.equal(lines[end - 5], retract, 'the operation retract at the travel height is still written')
+  assert.doesNotMatch(lines[end - 5], /A/, 'the retract does not turn the bar')
 
   // The same program on a round bar: still no machine-coordinate retract and no
   // unwind. Nothing here assumes the bar returns to A0.
@@ -696,9 +702,9 @@ console.log('Testing the program keeps its last angle and its own retract...')
     moves,
   }])
   assert.ok(isBarStock(round.project.stock), 'fixture: the round project has bar stock')
-  assert.doesNotMatch(roundResult.gcode, /G53/, 'a round bar writes no closing retract either')
+  assert.match(roundResult.gcode, /G53 G0 Z/, 'a round bar takes the same machine-coordinate retract')
   const roundAngles = [...roundResult.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
-  assert.deepEqual(roundAngles, [0, 45], 'the round program also ends on A45')
+  assert.deepEqual(roundAngles, [0, 45, 360], 'the round program also ends at 0 up')
 
   // A tool change whose macro may have moved the bar no longer owes an unwind:
   // the second operation carries no angle, so the last stated angle is the only
@@ -724,9 +730,11 @@ console.log('Testing the program keeps its last angle and its own retract...')
   ], true)
   assert.deepEqual(multi.warnings, [], 'the two-operation program posts')
   const multiAngles = [...multi.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
-  assert.equal(multiAngles[multiAngles.length - 1], 90, 'the bar stays at the last angle a template may have left it near')
-  assert.ok(!multi.gcode.split('\n').some((line) => line === 'G0 A0.000'), 'no closing unwind is owed after the tool change')
-  assert.doesNotMatch(multi.gcode, /G53/, 'and no machine-coordinate closing retract is written')
+  assert.equal(multiAngles[multiAngles.length - 1], 360,
+    'the bar leaves the last operation that turned it at 0 up')
+  assert.ok(!multi.gcode.split('\n').some((line) => line === 'G0 A0.000'),
+    'no closing unwind is written; the end turn goes forward')
+  assert.match(multi.gcode, /G53 G0 Z/, 'and it retracts in machine coordinates first')
 
   // A footer template that lowers Z behind the emitter's back is written after
   // the operation's retract. The footer is the one template class the export

@@ -35,6 +35,7 @@ export const MACHINE_TEMPLATE_RULE_KEY: Record<MachineTemplateRuleCode, keyof ty
   'units': 'dialogs.machineDiagnostics.ruleName.units',
   'inverse-time-on': 'dialogs.machineDiagnostics.ruleName.inverse-time-on',
   'inverse-time-off': 'dialogs.machineDiagnostics.ruleName.inverse-time-off',
+  'zero-a': 'dialogs.machineDiagnostics.ruleName.zero-a',
   'torch': 'dialogs.machineDiagnostics.ruleName.torch',
   'material': 'dialogs.machineDiagnostics.ruleName.material',
   'material-feed': 'dialogs.machineDiagnostics.ruleName.material-feed',

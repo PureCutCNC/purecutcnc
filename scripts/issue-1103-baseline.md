@@ -439,3 +439,90 @@ ca-f. The `rotaryBaseline.test.ts` protocol check now reads this table: every ro
 must be present, its ratio must be the two medians beside it, and no row may
 exceed 1.2x, so a later slice cannot paste an over-target row, prefix a "same
 session" substitute, or leave the ca-g tables unvalidated again.
+
+## ca-h: thread passes go forward, and every rotary operation hands off at 0 up
+
+The plan change Frank approved on 2026-11-04 (comment on #1103, delivery in PR
+#1152). Three parts, two of them the emitter's:
+
+- **The thread's lifted returns go forward** (`aroundFrame.forwardWrappedToolpath`,
+  wired for wrapped Follow lines in `generateOperation.ts`): a Thread/Flutes
+  canned shape is cut by a Follow line whose every depth pass is the same helix
+  line, so wrapping gave each pass the line's own start angle and the lifted
+  return unwound A by the whole thread's turns. Only a **rapid** whose
+  destination is not already the smallest whole-turn equivalent at or ahead of
+  the previous pass's end is retargeted, and every later move of that pass
+  inherits the same offset. Whole turns are the same physical orientation, so
+  the thread's phase and every cut are unchanged; cuts are never retargeted (a
+  left-hand thread legitimately turns backward while it cuts). Other wrapped
+  kinds stay byte-identical.
+- **Every rotary operation ends facing 0 up** (`postprocessor.ts`): after the
+  operation's own final retract, a machine-coordinate retract (#1054) and a
+  forward-only rapid to `360 * ceil(lastA / 360)`, then the comment
+  `A is at <value>, 0 up. Zero A before the next operation.` An operation
+  already on a whole turn writes no move. A Top/Bottom manual-index bar program
+  commands its A once, at its opening turn, so its end turn follows its **last**
+  operation only.
+- **Zero A** (`rotary.zeroA`, an optional machine template line, plus the
+  `zero-a` rule in `templateRules.ts`): when set, every rotary operation opens
+  with it after a clearance retract and before its first turn; when unset, a
+  program with a further rotary operation writes the machine's pause template
+  (`M0` on grbl) and `Zero A at 0 up, then resume.` between the two, never after
+  the last. The line is validated to zero one axis without moving: `G10 L20
+  P<n> A0` or `G92 A0`, and the axis must be **this** machine's rotary letter
+  (A on an own axis, the borrowed letter on a borrowed motor), so zeroing a
+  real X/Y work coordinate is refused. The export dialog shows one note for
+  that case. The format needs no version bump: the field is optional and a
+  missing one reads as unset, the same rule `motion.machineSafeZ` follows, so
+  no migration runs.
+
+### What did not move: the generator
+
+Parts 2 and 3 are the emitter's, and part 1 touches only a wrapped Follow line
+that has a backward lifted return. All eight benchmark cases re-generate to the
+**ca-g moves hashes exactly**, measured with `work/ca-h-probe.ts` (scratch,
+gitignored), one process at a time:
+
+| case | moves sha256 (ca-g and ca-h) |
+| --- | --- |
+| busto-round op0015 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| busto-round op0025 | `c2c4a338ef866fc237a7faff38b7aab16556627049b021a494ab4795a0f43b86` |
+| busto-rect op0021 | `c84617e2cbb3f4faa469498c53514812a05413e44cd4a4c35f0d20c1af53ba9d` |
+| busto-rect op0022 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` |
+| square op0028 (around) | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` |
+| square op0029 (around) | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` |
+| square op0028 (along) | `6189e3247e067f7b5d17290137e785504f274c753339a26719c562a55b796e14` |
+| square op0029 (along) | `8ed7b1a7fd8a0eead29d0afa1d4c1f9c07a8c2aeff923e3a0bc476b98c2892d5` |
+
+Move counts are the ca-g ones too: 54231, 22364, 32866, 79088, 8791, 13394,
+1104 and 448.
+
+### What moved on purpose: the posted text of rotary programs
+
+Every program whose operation commands A now carries the end turn, its
+machine-coordinate retract and the instruction, so the posted hashes of the
+rotary rows moved and were re-recorded, each with a comment saying why:
+
+- `rotaryRegion.test.ts` — all eight `NO_REGION_HASHES` rows (the `moves=` half
+  of every row is unchanged);
+- `rotaryLayerDirection.test.ts` — both along-rough controls (moves unchanged);
+- `rotaryOutput.test.ts` — the two along controls' posted hashes (moves
+  unchanged) and the multi-turn ending;
+- `squareRotaryOutput.test.ts` — all 24 round-baseline `gcode=` halves and all
+  16 square-baseline `gcode=` halves (every `moves=` half unchanged);
+- `rotaryAroundPasses.test.ts` block 13 — the wrapped engrave's motion hash is
+  unchanged (`403cf195…`), its posted hash moved;
+- `exportRotarySafety.test.ts` and `projectType.test.ts` — the same Around
+  program's posted hash.
+
+Non-rotary programs are untouched: `templateByteIdentity.test.ts` still pins
+every bundled definition's no-tool-change program, and `rotaryOutput.test.ts`
+still pins a flat program that never carries an angle. The along-mode *motion*
+is unchanged; its posted text changed because along mode is a rotary program.
+
+### Commands
+
+- `npm run build` — exit 0 (docs, lint, e2e-lane check, colours, portable
+  paths, i18n, icons, tsc, all 572 test files, vite build).
+- `npm run check:gcode` — exit 0 (corpus exported; no controller interpreters
+  are installed on this machine, so it is a pass, not a validation).

@@ -72,6 +72,7 @@ import {
   aroundFrameForOperation,
   aroundMaterialBands,
   flatFaceProject,
+  forwardWrappedToolpath,
   unrolledProject,
   wrapToolpath,
 } from '../aroundFrame'
@@ -242,9 +243,18 @@ export function computeOperationToolpath(
         raw: null,
       }
     }
+    // #1103 slice ca-h: a wrapped Follow line's lifted returns go forward. A
+    // Thread/Flutes canned shape is cut by a Follow line whose every depth pass
+    // starts at its own line's angle; without this, each pass's return unwinds
+    // the whole thread's turns. Only whole turns are added, so the thread's
+    // phase and every cut are unchanged. No other wrapped kind is retargeted:
+    // a pocket/profile arc is a closed loop rather than a pass of a longer
+    // pattern, and its output stays byte-identical.
+    const forward = <T extends typeof envelope.result>(path: T): T =>
+      operation.kind === 'follow_line' ? forwardWrappedToolpath(path) : path
     return {
-      result: wrapToolpath(envelope.result, around),
-      raw: envelope.raw ? wrapToolpath(envelope.raw, around) : null,
+      result: forward(wrapToolpath(envelope.result, around)),
+      raw: envelope.raw ? forward(wrapToolpath(envelope.raw, around)) : null,
     }
   }
 

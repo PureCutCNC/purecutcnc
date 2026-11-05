@@ -360,6 +360,21 @@ for (const about of ['x', 'y'] as const) {
 }
 
 {
+  // #1103 slice ca-h: the Zero A line has no focused control, so editing the
+  // other rotary fields must carry it through untouched.
+  const zeroA = 'G10 L20 P1 A0'
+  const def = makeTestDef({ rotary: makeRotary({ zeroA }) })
+  const form = toFormData(def)
+  form.rotaryAbout = 'y'
+  form.rotaryDrive = 'borrowed'
+  form.rotaryReversed = true
+  const merged = mergeFormData(def, form)
+  assert(merged.rotary?.zeroA === zeroA, 'mergeFormData: the Zero A line is kept')
+  assert(!('zeroA' in (mergeFormData(makeTestDef({ rotary: makeRotary() }), toFormData(makeTestDef({ rotary: makeRotary() }))).rotary ?? {})),
+    'and an unset Zero A line stays absent, with no format change')
+}
+
+{
   // A plasma machine cannot carry the block, so converting drops it.
   const def = makeTestDef({ rotary: makeRotary() })
   const form = toFormData(def)

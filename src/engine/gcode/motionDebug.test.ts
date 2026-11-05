@@ -255,10 +255,16 @@ function testRotaryProgramReadback(): void {
     ]
     const { gcode, trace } = exportRotary(definition, moves)
     const parsed = parseExportedMotion(gcode, definition)
-    // The program ends at A90 and carries no closing unwind after #1091, so
-    // every block is a work-coordinate motion the parser can place.
-    assert(parsed.status === 'verified', `${drive}: parsed ${parsed.status}: ${parsed.warnings.join('; ')}`)
-    assert(parsed.warnings.length === 0, `${drive}: no block is unplaceable, got ${JSON.stringify(parsed.warnings)}`)
+    // Since #1103 slice ca-h the operation closes with a machine-coordinate
+    // retract and a forward turn to the next whole turn. Those two blocks are
+    // machine-frame motion the parser cannot place in the work frame, so it
+    // reports exactly them — and nothing about the cutting motion.
+    assert(parsed.status === 'unsupported', `${drive}: the end turn is reported (${parsed.status})`)
+    assert(parsed.warnings.length === 2, `${drive}: the retract and the turn after it, got ${JSON.stringify(parsed.warnings)}`)
+    for (const warning of parsed.warnings) {
+      assert(/G53 machine-coordinate move|move after a G53 block does not state Z/.test(warning),
+        `${drive}: only the end-turn blocks are unplaceable: ${warning}`)
+    }
 
     const feedMoves = parsed.moves.filter((m) => m.kind !== 'rapid')
     assert(feedMoves.length === 3, `${drive}: plunge + turning cut + straight cut, got ${feedMoves.length}`)
@@ -282,10 +288,12 @@ function testRotaryProgramReadback(): void {
     const angles = feedMoves.map((m) => m.to.a)
     assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)
 
-    // The view's own comparison matches every endpoint and angle: nothing
-    // assumes the bar returns to A0 at the end.
+    // The view's own comparison matches every cutting endpoint and angle; its
+    // one diagnostic is the machine-coordinate end turn itself, which the view
+    // reports rather than silently mis-places.
     const diagnostic = compareMotionTraces(parsed, trace, tolerance)
-    assert(diagnostic.warnings.length === 0, `${drive}: ${JSON.stringify(diagnostic.warnings)}`)
+    assert(diagnostic.warnings.length === 1 && diagnostic.warnings[0].kind === 'unsupported',
+      `${drive}: the only diagnostic is the end turn's machine-coordinate block: ${JSON.stringify(diagnostic.warnings)}`)
 
     if (drive === 'borrowed') {
       for (const m of parsed.moves) {

@@ -149,6 +149,9 @@ export function mergeFormData(
         // The three controls never touch inverse time: whatever the block
         // carries — including an explicit null — is kept.
         inverseTimeFeed: def.rotary ? def.rotary.inverseTimeFeed : DEFAULT_INVERSE_TIME_FEED,
+        // The Zero A line has no focused control (#1103 slice ca-h): editing
+        // the other rotary fields must not silently drop it.
+        ...(def.rotary?.zeroA !== undefined ? { zeroA: def.rotary.zeroA } : {}),
       }
     : null
   return {

@@ -79,7 +79,8 @@ const ROUTER: MachineDefinition = (() => {
     ...bundled('grblhal'),
     motion: { ...bundled('grblhal').motion, machineCoordinateCommand: 'G53 G0' },
     cannedCycles: bundled('mach3').cannedCycles,
-    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    // The Zero A line (#1103 slice ca-h) is the sweep's rotary zeroing form.
+    rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' }, zeroA: 'G10 L20 P1 A0' },
   })
   assert.equal(parsed.success, true, `fixture: the router superset validates: ${parsed.success ? '' : JSON.stringify(parsed.error.issues)}`)
   return parsed.success ? parsed.data : (undefined as unknown as MachineDefinition)

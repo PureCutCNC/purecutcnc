@@ -290,20 +290,24 @@ function postedDigest(stock: BarStock, moves: readonly ToolpathMove[]): string {
   return createHash('sha256').update(normalised).digest('hex')
 }
 
+// #1103 slice ca-h re-recorded both `posted` halves: an along rough commands A
+// too, so it now ends with the forward end turn to 0 up and the instruction.
+// Both `moves` halves are unchanged.
 const RECORDED_CONTROLS: Record<string, { moves: string; posted: string }> = {
   round: {
     moves: '8217669293bc0c8583e6aa33245cf69ae28d874937faa5a240bf5c29c5a55374',
-    posted: '0724c318d1c197c3b71b466e100a128013263c3118f46c617a2d03617a33520a',
+    posted: '2c5ea39e2ebc1243e9f412c2e50becf72ad87ad3601549115b57a6ad2ef6d6a6',
   },
   square: {
     moves: '35a780fd9a0af6e16e6cfec23bbcc266b16d27db237ce0765fb621dcbb3d0589',
-    posted: '655382c60e4b83adb021b2528db1e86648114e5d60a6d5184a50c4e85f637ae3',
+    posted: 'dbd9a29e1b4858b0e8a415d586183ac8ff463d043747e3914504f8a5c4afc59f',
   },
 }
 
 function checkControls(label: string, stock: BarStock, moves: readonly ToolpathMove[]): void {
   const actual = { moves: motionDigest(moves), posted: postedDigest(stock, moves) }
   const recorded = RECORDED_CONTROLS[label]
+  assert.equal(actual.moves, recorded.moves, `${label}: the along rough's motion is byte-identical`)
   assert.equal(actual.moves, recorded.moves, `${label}: the along rough's motion is byte-identical`)
   assert.equal(actual.posted, recorded.posted, `${label}: the along rough's posted program is byte-identical`)
 }

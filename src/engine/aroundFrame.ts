@@ -455,6 +455,64 @@ export function wrapToolpath<T extends ToolpathResult>(result: T, frame: AroundF
   return wrapped
 }
 
+/** One whole turn of the stock, in degrees. */
+const ROTARY_TURN = 360
+/**
+ * How close a commanded angle must be to a whole turn to be treated as one.
+ * A generated pose lands on a multiple of 360 exactly (the angle grid runs
+ * 0…360 and every ring adds a whole turn), so the slack only absorbs the
+ * repeated additions; it is far below the emitted precision.
+ */
+const WHOLE_TURN_EPSILON = 1e-6
+
+function shiftAngle(point: ToolpathPoint, delta: number): ToolpathPoint {
+  return point.a === undefined ? point : { ...point, a: point.a + delta }
+}
+
+/**
+ * A wrapped Follow line's lifted returns never rewind A (#1103 slice ca-h).
+ *
+ * Thread and flutes are cut by a Follow line on an Around feature: each depth
+ * pass (and each start) is a line whose wrapped start angle is its own phase,
+ * a long way behind the angle the previous pass ended at. The flat toolpath's
+ * lifted return is therefore a move back through the whole thread's turns.
+ * Only a **non-cutting** move is retargeted: the lifted return goes to the
+ * smallest whole-turn equivalent of its destination at or ahead of the A the
+ * previous pass ended at (`start + 360k`), and every later move of that pass
+ * inherits the same offset. A whole turn is the same physical orientation, so
+ * the thread's phase and every cut's shape are unchanged — only the commanded
+ * A numbers move — and A never rewinds between passes. Cuts are never
+ * retargeted: a left-hand thread legitimately turns the bar backward while it
+ * cuts, and straightening that would cut the other flank.
+ *
+ * Nothing else reads the offset, and z/x/y are untouched, so without a
+ * backward lifted return the result is byte-identical (the wrapped engrave
+ * control in `rotaryAroundPasses.test.ts` pins that).
+ */
+export function forwardWrappedToolpath<T extends ToolpathResult>(result: T): T {
+  const moves: ToolpathMove[] = []
+  let offset = 0
+  let lastA: number | undefined
+  for (const move of result.moves) {
+    const from = shiftAngle(move.from, offset)
+    let to = shiftAngle(move.to, offset)
+    if (move.kind === 'rapid' && from.a !== undefined && to.a !== undefined && lastA !== undefined) {
+      // The smallest whole-turn equivalent of the destination at or ahead of
+      // where the last move ended. A rapid that already goes there (within a
+      // turn) keeps its own angle: `Math.ceil` of a negative fraction is 0.
+      const turns = Math.ceil((lastA - to.a) / ROTARY_TURN - WHOLE_TURN_EPSILON)
+      if (turns !== 0) {
+        offset += ROTARY_TURN * turns
+        to = shiftAngle(to, ROTARY_TURN * turns)
+      }
+    }
+    moves.push({ ...move, from, to })
+    if (to.a !== undefined) lastA = to.a
+  }
+  const wrapped: T = { ...result, moves, bounds: boundsOf(moves) }
+  return wrapped
+}
+
 /** A wrapped toolpath back on the sheet; pieces stay split. */
 export function unwrapToolpath<T extends ToolpathResult>(result: T, frame: AroundFrame): T {
   const moves = result.moves.map((move) => ({ ...move, from: unwrapPoint(move.from, frame), to: unwrapPoint(move.to, frame) }))

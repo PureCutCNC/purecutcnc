@@ -660,17 +660,25 @@ function testManualIndexTurnsTheBarItself(): void {
             const motion = programWithoutComments(program, 'gcode').split('\n')
             const turnBlocks = motion.filter((line) => line.startsWith(`G0 ${letter}`))
             const endsAt = lines.lastIndexOf('M30')
-            // The program ends where it ended (#1091): Top stays at A0 and
-            // Bottom stays at A180. The opening turn is the only bar turn; the
-            // last operation's own retract is the final motion.
-            assertEqual(turnBlocks, [`G0 ${angleWord}`], `${label}, ${face}: one opening turn, never an unwind`)
+            // #1103 slice ca-h: after its last operation the program turns the
+            // bar forward to the next whole turn — 0 up — so the opening turn
+            // is joined by that end turn whenever the setup angle is not already
+            // one. Top's A0 needs no move; Bottom's A180 (or -180 on a reversed
+            // axis) turns forward to 360 (or 0). Never an unwind.
+            const programAngle = angle * (reversed ? -1 : 1)
+            const endAngle = 360 * Math.ceil((programAngle - 1e-6) / 360)
+            assertEqual(
+              turnBlocks,
+              endAngle === programAngle
+                ? [`G0 ${angleWord}`]
+                : [`G0 ${angleWord}`, `G0 ${letter}${endAngle.toFixed(3)}`],
+              `${label}, ${face}: the opening turn, then the forward end turn to 0 up`,
+            )
             assertEqual(lines[endsAt - 1], 'M5', `${label}, ${face}: nothing is posted after the last operation but the spindle stop`)
-            // A Top program's single `G0 A0` is its opening turn; a Bottom
-            // program has none at all. Either way there is no closing unwind.
             const zeroTurns = lines.slice(0, endsAt).filter((line) => line === `G0 ${letter}0.000`)
             assertEqual(
               zeroTurns.length,
-              face === 'top' ? 1 : 0,
+              endAngle === 0 || face === 'top' ? 1 : 0,
               `${label}, ${face}: no closing unwind to 0`,
             )
           }

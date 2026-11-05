@@ -113,15 +113,36 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the project origin, units or Safe Z: `G53` is the machine's zero, which the
   app does not know. A machine with no machine-coordinate move is refused with
   `postRotaryTurnWithoutClearance` rather than turned.
-  A program ends where its last move left it (#1091, Frank's 2026-10-22
-  decision): there is no closing unwind, so a rotary program's bar stays at its
-  last angle — an along rough at A3600 stays there, a Bottom program stays at
-  A180. The final motion is the last operation's own retract, exactly as a
-  non-rotary program's is; the emitter invents no retract and no turn. The
-  operator zeros A for the work and clears it when done, and the controller's
-  soft limits handle range. The opening turn of a Top/Bottom bar program is
-  unaffected: it still retracts in machine coordinates and states A0/A180
-  before the face. On a square blank a template Z move before an A word also
+  A program ends at a known orientation (#1103 slice ca-h, which replaces
+  #1091's "stay where you ended" with a **forward-only** turn; #1091's no
+  closing *unwind* still holds). After an operation that commands A — around,
+  along, wrapped, and a Top/Bottom manual-index bar program alike — its own
+  final retract is followed by a machine-coordinate retract (#1054) and a rapid
+  of the rotary word to the next whole turn, `360 * ceil(lastA / 360)`: 0 up,
+  never a rewind and never a modulo-360 wrap. An operation already on a whole
+  turn writes no move, only the instruction. The block after it is the program
+  comment `A is at <value>, 0 up. Zero A before the next operation.` (a comma,
+  not the handoff's parentheses: a parenthesised dialect cannot nest a pair).
+  A manual-index program commands its A once, at its opening turn, so its end
+  turn is written after its last operation only — turning after each operation
+  would cut a later one on the wrong face. The last operation's retract is
+  still its own; the turn follows it.
+  A rotary block may carry a **Zero A** line (`rotary.zeroA`, #1103 slice
+  ca-h), e.g. `G10 L20 P1 A0`. It is unset on every bundled definition and by
+  default (the optional field is the whole format change: a definition saved
+  before it reads as unset, with no version bump and no migration). When it is
+  set, every rotary operation opens with it after a clearance retract and
+  before its first turn, so the operation starts reading A0 wherever the bar
+  is, and no pause is needed. When it is unset, a program with a further
+  rotary operation writes the machine's pause template (`M0` on grbl) and
+  `Zero A at 0 up, then resume.` between two rotary operations, never after the
+  last. The line is validated as a template (`zero-a` in `templateRules.ts`):
+  only the forms that set the rotary axis's coordinate to zero and move nothing
+  are accepted — `G10 L20 P<n> A0` or `G92 A0` — so a moving line is refused,
+  and a second, definition-level check requires that axis to be **this**
+  machine's: A on its own fourth axis, the borrowed letter on a borrowed motor
+  (zeroing a real X/Y work coordinate is refused). The export dialog shows one
+  note when a program turns the bar and the machine has no Zero A line. On a square blank a template Z move before an A word also
   rapids to the generators' travel height whenever the tracked Z is unknown,
   because the last operation may have descended at a constant angle.
   **Machine templates are restricted by class** (#1057 slice F, Frank's
@@ -408,7 +429,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   devoted to the angle, the establishing rapid, `G93`/`G94` with a
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
   angle with no closing unwind, `postRotaryAxisMismatch`, and the program read
-  back through `parseGcodeMotion` onto the flat toolpath).
+  back through `parseGcodeMotion` onto the flat toolpath; since #1103 slice
+  ca-h the read-back reports the per-operation end turns as machine-coordinate
+  blocks, and the engrave control pins the posted text with that turn).
+- `rotaryOperationHandoff.test.ts` — #1103 slice ca-h parts 2 and 3: the
+  forward end turn to 0 up (after a machine-coordinate retract, never a rewind,
+  no move when already on a turn, the instruction always written and in the
+  dialect's comment syntax), a filled Zero A line once per rotary operation and
+  ordered after the clearance retract and before the first turn, the `M0` pause
+  only between rotary operations, and the `zeroA` field's schema round trip and
+  template refusals.
 - `squareRotaryOutput.test.ts` — the square blank through generation and the
   real posted program (#1016 C2-S4): both axes, both units, rough/finish and
   own / borrowed / reversed machines post nonempty angle-bearing inverse-time
