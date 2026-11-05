@@ -119,7 +119,7 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { defaultTool, newProject, roundStock } from '../../types/project'
+import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
 import type { BarStock, Operation, Project, RoundStock, SketchFeature, Tool } from '../../types/project'
 import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
@@ -144,6 +144,7 @@ import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import { generateRotaryFinish, generateRotaryRough, sampleRotaryModel } from './rotaryModel'
 import type { RotaryModelMesh } from './rotaryModel'
+import { buildRegionMask } from './regions'
 import { generateRotaryOperation } from './rotaryOperation'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
@@ -412,6 +413,41 @@ const RING_PARAMS = {
 }
 
 /**
+ * One Around-sheet rectangle as a region feature, the shape the production mask
+ * is built from (#1096). `mode` omitted is an include.
+ */
+function sheetRegion(
+  stock: BarStock,
+  id: string,
+  alongMin: number,
+  alongMax: number,
+  mode?: 'include' | 'exclude',
+): SketchFeature {
+  const circumference = Math.PI * stock.thickness
+  const centre = barCentre(stock)
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    operation: 'region',
+    authoringFace: 'around',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(alongMin, centre - circumference / 2, alongMax - alongMin, circumference),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    z_top: stock.thickness,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+    ...(mode === undefined ? {} : { regionMaskMode: mode }),
+  }
+}
+
+/**
  * The around grid's angular interval count under the slice-D cap (#1045 slice
  * D): one sample every `min(sampleSpacing, sqrt(8 R tolerance))` of arc, with
  * `R = barMaxRadius` and the stated 0.005 mm tolerance (these fixtures are mm).
@@ -473,10 +509,11 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 }
 
 {
-  // A square blank cannot be helixed (its corners are not a surface of
-  // revolution), so its rings are the fallback -- and they too keep A moving:
-  // every ring turns forward and the next starts exactly one turn later, so
-  // ring i runs A(360i)..A(360(i+1)).
+  // #1103 slice ca-j: a square blank is helixed once its band is a whole ring of
+  // the model at every angle -- which this surface-of-revolution model is -- so
+  // its only turning cuts at a fixed along are the helix's two complete boundary
+  // rings, one cutter radius inside each end. A turns forward throughout, exactly
+  // as the ring fallback does; the ring shape itself is proved on the taper below.
   const SQUARE_RING_STOCK = squareStock(40, 20, 'x', { x: 10, y: 7 })
   const result = generateRotaryFinish('rings-square', RING_MESH, SQUARE_RING_STOCK, FLAT, {
     ...RING_PARAMS, passDirection: 'around',
@@ -488,14 +525,23 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     }
   }
   const rings = cutRings(result.moves)
-  // `stepover` is the along step: 20 mm over 2 mm makes 11 rings, one per along
-  // position, and a finish adds no clearing layer (2026-10-22 decision).
-  assert.equal(rings.length, 11, 'one finish ring per along position, `stepover` apart')
+  // This fixture's cut range meets both stock ends, so there is no stub to pull
+  // the band off: the boundary rings sit on the raw ends.
+  assert.deepEqual(rings.map((ring) => ring.along), [RING_PARAMS.alongStart, RING_PARAMS.alongEnd],
+    'the helix opens and closes with one complete ring at each axial end')
+  // The helix between them advances one turn per `stepover`: `turns` of them,
+  // so the end ring opens at A(turns + 1) and closes at A(turns + 2).
+  const turns = Math.ceil((RING_PARAMS.alongEnd - RING_PARAMS.alongStart) / RING_PARAMS.stepover)
   for (let i = 0; i < rings.length; i++) {
-    assert.equal(ringDirection(rings[i]), 1, `ring ${i} turns forward, never back`)
-    assert.equal(rings[i].angles[0], 360 * i, `ring ${i} starts one turn after the last one ended`)
-    assert.equal(rings[i].angles[rings[i].angles.length - 1], 360 * (i + 1), `ring ${i} closes its own turn`)
+    const turn = i === 0 ? 0 : turns + 1
+    assert.equal(ringDirection(rings[i]), 1, `boundary ring ${i} turns forward, never back`)
+    assert.equal(rings[i].angles[0], 360 * turn, `boundary ring ${i} opens at its own turn`)
+    assert.equal(rings[i].angles[rings[i].angles.length - 1], 360 * (turn + 1), `boundary ring ${i} closes its own turn`)
   }
+  // The band between the rings is one helix: a cut that advances along and turns.
+  const helical = result.moves.filter((move) => move.kind === 'cut'
+    && alongOf(move.from) !== alongOf(move.to) && angleOf(move.from) !== angleOf(move.to))
+  assert.ok(helical.length > 0, `the square band is helixed (${helical.length} helix cuts)`)
 }
 
 {
@@ -595,29 +641,43 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
 //     A full ring ends at A(360k) and the next forward ring starts at
 //     A(360(k+1)) -- the same commanded angle -- so the surface link still
 //     joins them, exactly as it joined the alternating rings at A0/A360 before
-//     #1103 slice ca-c. An uninterrupted round band is now one helix with no
-//     ring boundary at all, so this fixture uses the square blank, where the
-//     rings are the fallback. The rejection this block guards is the old
-//     motion: one retract and one plunge per ring. A finish assumes no rough,
-//     so the link must stay on the model surface at the shared ring-end angle
-//     -- far below the travel height.
+//     #1103 slice ca-c. An uninterrupted band is one helix, on a round bar and
+//     (since ca-j) on a square blank too, so a full ring is the **fallback**
+//     the ring path still emits where a helix is refused. This fixture refuses
+//     it with a narrow excluded along-gap placed *between* two ring positions:
+//     the helix's combined poses sample the gap, every ring stays whole, and
+//     the rings run and link. The gap's own boundary link is refused by the
+//     mask's segment test (that rule is `rotaryRegion.test.ts`'s); every other
+//     boundary links. The rejection this block guards is the old motion: one
+//     retract and one plunge per ring. A finish assumes no rough, so the link
+//     must stay on the model surface at the shared ring-end angle -- far below
+//     the travel height.
 // ---------------------------------------------------------------------------
 
 {
   const SQUARE_RING_STOCK = squareStock(40, 20, 'x', { x: 10, y: 7 })
+  const circumference = Math.PI * SQUARE_RING_STOCK.thickness
+  // Between the ring positions X10 and X12, so no ring is trimmed.
+  const region = buildRegionMask([
+    sheetRegion(SQUARE_RING_STOCK, 'sheet', 0, 40, 'include'),
+    sheetRegion(SQUARE_RING_STOCK, 'gap', 10.8, 11.2, 'exclude'),
+  ], { axis: SQUARE_RING_STOCK.axis === 'x' ? 'y' : 'x', period: circumference })
+  assert.ok(region, 'the ring-fallback mask builds')
   const result = generateRotaryFinish('links', RING_MESH, SQUARE_RING_STOCK, FLAT, {
-    ...RING_PARAMS, passDirection: 'around',
+    ...RING_PARAMS, passDirection: 'around', region,
   }, {})
   assert.deepEqual(result.warnings, [], 'the linked finish has no warning')
   const rapid = result.moves.filter((move) => move.kind === 'rapid')
   const plunges = result.moves.filter((move) => move.kind === 'plunge')
-  assert.equal(plunges.length, 1, 'a full-ring around finish plunges once, at its first cut')
-  assert.equal(rapid.length, 2, 'and retracts only for the first positioning move and the final retract')
+  // One plunge at the start, plus the one the refused boundary link needs.
+  assert.ok(plunges.length <= 2, `the ring fallback plunges only at its first cut and the refused link (${plunges.length})`)
+  assert.ok(rapid.length <= 4, `and retracts only for the opening move, the refused link and the final retract (${rapid.length})`)
   const links = result.moves.filter(isAlongLink)
   // One feed link between each of the eleven rings; a steep shoulder splits a
-  // link into its horizontal legs, so a boundary can contribute more than one.
-  assert.ok(links.length >= 10 && links.length <= 24,
-    `ten ring boundaries are linked by feed moves (got ${links.length})`)
+  // link into its horizontal legs, so a boundary can contribute more than one,
+  // and the boundary over the excluded gap is the one link the mask refuses.
+  assert.ok(links.length >= 8 && links.length <= 24,
+    `the ring boundaries around the refused one are linked by feed moves (got ${links.length})`)
   const pivot = barPivotZ(SQUARE_RING_STOCK)
   for (const link of links) {
     assert.ok(angleOf(link.from) === angleOf(link.to), 'the link keeps the rings\' shared angle')

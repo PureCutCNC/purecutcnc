@@ -951,7 +951,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // blank's layers below the flat face are one continuous helix per band now
       // (`rotarySquareHelix.test.ts`), so the around program's rings and its
       // at-layer links between them are replaced by the helix. The finish rows
-      // below are unchanged: the slice scopes the square blank to the rough.
+      // below moved in ca-j's correction round 1, when the finish was admitted.
       direction === 'along' ? 'fac8eaac0fb0b159' : '4a38235b13638c6f',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
@@ -995,8 +995,12 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     // rings are now forward-only (A grows one turn per ring and is never
     // rewound), so both of its programs moved. The along rows are the base
     // commit's bytes exactly.
+    // #1103 slice ca-j re-recorded the around rows again: the finish's whole-ring
+    // band is one continuous helix now (rough and finish alike, review P1), so
+    // its ring program is replaced by the helix. The along rows are still the
+    // base commit's bytes.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'b7fea12dcc3c98c5' : '72f137fc45863d75',
+      direction === 'along' ? 'b7fea12dcc3c98c5' : '1c7492c5cba1e187',
       `finish ${direction}: zero stock to leave is byte-identical`)
     // Recaptured for #1095: square around is unchanged (its stub never entered
     // the sampling mesh); square along carries the un-thickened wall now, so
@@ -1004,7 +1008,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     // Recaptured for #1103 slice ca-c: the square around finish's rings are
     // forward-only, so its positive-leave program moved with the zero-leave one.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'cda89c07cab2130f' : 'a852fb9c5b0432f8',
+      direction === 'along' ? 'cda89c07cab2130f' : 'df7e7d6cd246a481',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + BALL.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

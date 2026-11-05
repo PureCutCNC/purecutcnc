@@ -27,21 +27,31 @@
  * - the band is a whole ring at every angle under the blank's **material-touch
  *   gate** (`squareRotaryTouchRadius`) and every pose has material standing at
  *   this layer (`tip < previousRadius`) -- a band with corners still standing
- *   keeps its rings;
+ *   keeps its rings. A **finish** has no layer, so its rule is the ring grid's
+ *   own: every sample of the band is the model under the tool (review P1).
  * - every sampled pose takes the blank's **retained-stub contact floor**
  *   (`squareRotaryStubContactFloor`) at its own along and angle, the same closed
  *   form `completeRotaryTargets` puts on every ring sample, so a helix point is
  *   never lower than the ring path would allow there;
+ * - the turns **overlap** on a square blank (`continuousHelixStepover`): a pitch
+ *   of a full cutter diameter leaves the blank's corner shell between two turns
+ *   outside both flanks, and a round bar (which has no corner shell above the
+ *   tip) keeps the requested stepover byte for byte;
  * - the angle-map cache is on for square-blank around operations exactly as for
  *   round ones, through the ca-i worker transport.
  *
  * ## What each block pins, and the mutation it catches
  *
- * 1. **The generator.** A square blank whose layers have become round cuts each
- *    band as one helix (a long run of cut moves with one constant axial advance
- *    per degree), while a layer with its corners still standing keeps its rings.
- *    Mutation: re-add the shape guard (`stock.shape !== 'round'` returns `null`)
- *    -- no helix run exists.
+ * 1. **The generator, rough and finish.** A square blank whose layers have
+ *    become round cuts each band as one helix (a long run of cut moves with one
+ *    constant axial advance per degree), while a layer with its corners still
+ *    standing keeps its rings. The **finish** is admitted on the same slice
+ *    (#1103 ca-j review P1): its whole-ring band is one helix, every pose stays
+ *    the ring path's one cutter radius inside a retained face, and the turns
+ *    overlap so the blank's corner shell between them is cleared, while a
+ *    round bar keeps the requested stepover exactly. Mutation: re-add the shape
+ *    guard (`stock.shape !== 'round'` returns `null`) -- no helix run exists;
+ *    drop the square turn overlap -- the square pitch reaches a full diameter.
  * 2. **The gate at the helix pose.** `ContinuousHelixLayer.material` answers for
  *    the blank, so a pose where no material stands at this layer refuses the
  *    band (`ineligible`, no points) exactly as a pose with no model does.
@@ -49,8 +59,10 @@
  *    returns a path.
  * 3. **The retained-stub floor.** A band whose start sits inside a retained
  *    stub's reach is floored at the closed form at every pose; the same build
- *    without the floor sits on the model, below the stub. Mutation: skip the
- *    floor on helix points -- the floor assertions fail.
+ *    without the floor sits on the model, below the stub. This is the shape
+ *    both generators supply (no `layer` on the finish), so the mutation covers
+ *    both. Mutation: skip the floor on helix points -- the floor assertions
+ *    fail.
  * 4. **The cache.** With the ring grid's maps in the workspace the square
  *    blank's helix reads every row (near-zero raster work); the `'off'` control
  *    rasterises them all and cuts the same path. Mutation: keep the helix's row
@@ -67,6 +79,7 @@
 
 import assert from 'node:assert/strict'
 import { barCentre, barMaxRadius, barPivotZ, barInscribedRadius, squareStock } from '../../types/barStock'
+import { roundStock as roundBarStock } from '../../types/project'
 import type { BarStock } from '../../types/project'
 import {
   createRotarySamplingPrep, refineAroundSampling, sampleAnglesWithPrep,
@@ -183,6 +196,25 @@ function helixRuns(moves: readonly ToolpathMove[]): HelixRun[] {
 }
 
 /**
+ * The axial advance per revolution of every helix the layer emits (#1103 slice
+ * ca-j): the pitch of an unmerged run, and of a merged command spanning whole
+ * turns. A square blank overlaps its turns (`continuousHelixStepover`); a round
+ * bar keeps the requested stepover exactly.
+ */
+function helixPitchesPerTurn(moves: readonly ToolpathMove[]): number[] {
+  const pitches = helixRuns(moves).map((run) => Math.abs(run.pitch) * 360)
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = alongOf(move.to) - alongOf(move.from)
+    const turn = angleOf(move.to) - angleOf(move.from)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) {
+      pitches.push(Math.abs(along / turn) * 360)
+    }
+  }
+  return pitches
+}
+
+/**
  * Whether a layer is cut by a **helix**: either a run of unmerged (along, A)
  * segments at one pitch, or a merged command spanning whole turns. The generator
  * merges collinear cuts, and a helix over a *linear* profile (a cylinder or a
@@ -267,22 +299,83 @@ console.log('Testing that a square blank helixes the bands its earlier layers ma
   console.log(`  rough: ${layers.length} layers, ${topLayers} corner layers on rings, `
     + `${helixLayers} round layers in ${helixMoves} helix moves`)
 
-  // The finish keeps its rings: ca-j scopes the square blank to the **rough**.
-  // Its band is the model itself, so the stock around it is whatever the rough
-  // left, and the independent square-blank surface proof cannot bound a diagonal
-  // finish path's leftover material there (a 12 mm blank, Ø1.4 flat, cone: a
-  // corner-support cell reads 4.79 mm over the bound) -- see
-  // `continuousFinishInput`. The finish's output is byte for byte what it was,
-  // so its motion here is rings, one per along position, and no helix run exists.
+  // The finish is admitted on the same slice (#1103 ca-j review P1): its band is
+  // a whole ring of the model at every angle, so this coaxial cone's whole band
+  // is one helix, and every pose takes the operation's own retained-stub floor
+  // (`continuousHelixStubFloor`, the closed form the ring samples take).
   const finish = generateRotaryFinish('square-helix-finish', MESH, STOCK, BALL, FINISH, {})
   assert.deepEqual(finish.warnings, [], 'the square finish warns about nothing')
-  assert.equal(isHelixed(finish.moves), false,
-    'a square blank\'s finish keeps its rings (ca-j scopes the helix to the rough)')
-  const ringAlong = new Set(finish.moves
-    .filter((move) => move.kind === 'cut' && Math.abs(angleOf(move.to) - angleOf(move.from)) > 1e-9)
-    .map((move) => Math.round(alongOf(move.from) * 1e6)))
-  assert.ok(ringAlong.size > 5, `the finish cuts one ring per along position (${ringAlong.size})`)
-  console.log(`  finish: ${ringAlong.size} rings, no helix (the slice is the rough's)`)}
+  assert.equal(isHelixed(finish.moves), true,
+    'a square blank\'s finish helixes its whole-ring band (rough and finish alike)')
+  const finishPitches = helixPitchesPerTurn(finish.moves)
+  assert.ok(finishPitches.length > 0, `the finish emitted a helix (${finishPitches.length} runs/cuts)`)
+  const pitchLimit = 2 * BALL.radius
+  for (const pitch of finishPitches) {
+    assert.ok(pitch < pitchLimit - 1e-9,
+      `the finish overlaps its turns so the blank's corner shell between them is cleared (${pitch.toFixed(4)} < ${pitchLimit})`)
+  }
+  // The ring path's retained-stub protection, at every finish pose: the band is
+  // pulled one cutter radius inside each stubbed end (`rotaryCutterSpan`), so
+  // the centre never comes closer than a radius to a stub face. The exact
+  // `squareRotaryStubContactFloor` is a tangency there and only binds where a
+  // pose is closer -- that half is proved on the builder itself in block 3
+  // (a band given at the stub face is floored exactly as a ring sample is).
+  const pullStart = FINISH.alongStart + BALL.radius
+  const pullEnd = FINISH.alongEnd - BALL.radius
+  let finishPoses = 0
+  let finishMinAlong = Number.POSITIVE_INFINITY
+  let finishMaxAlong = Number.NEGATIVE_INFINITY
+  for (const move of finish.moves) {
+    if (move.kind !== 'cut') continue
+    for (const point of [move.from, move.to]) {
+      const along = alongOf(point)
+      finishPoses++
+      finishMinAlong = Math.min(finishMinAlong, along)
+      finishMaxAlong = Math.max(finishMaxAlong, along)
+      assert.ok(along >= pullStart - 1e-9 && along <= pullEnd + 1e-9,
+        `a finish pose stays a cutter radius inside both stub faces (x ${along.toFixed(4)})`)
+      const tip = tipOf(point)
+      assert.ok(tip >= MODEL_LOW - 0.2, `no finish cut dives below the model (${tip.toFixed(3)})`)
+    }
+  }
+  assert.ok(finishPoses > 0, 'the finish emitted poses')
+  assert.ok(Math.abs(finishMinAlong - pullStart) < 1e-6 && Math.abs(finishMaxAlong - pullEnd) < 1e-6,
+    `the finish band is the whole pulled span (${finishMinAlong.toFixed(4)}..${finishMaxAlong.toFixed(4)})`)
+  // A stays forward on the finish too: the helix is one-way, like the rough's.
+  let finishSign = 0
+  for (const move of finish.moves) {
+    if (move.kind !== 'cut') continue
+    const turn = angleOf(move.to) - angleOf(move.from)
+    if (Math.abs(turn) < 1e-12) continue
+    const sign = Math.sign(turn)
+    assert.ok(finishSign === 0 || sign === finishSign, 'A never reverses across a square blank finish helix')
+    finishSign = sign
+  }
+  console.log(`  finish: ${finishPitches.length} helix runs, pitch ${finishPitches[0].toFixed(3)} (limit ${pitchLimit}), `
+    + `${finishPoses} poses inside the pulled span ${finishMinAlong.toFixed(2)}..${finishMaxAlong.toFixed(2)}`)
+
+  // The turn overlap is the **square blank's** rule: a round bar has no corner
+  // shell standing above the tip, so its pitch stays exactly the requested
+  // stepover, and its bytes do not move (the ca-i identity rows pin that).
+  const roundBar = roundBarStock(20, 24, 'x')
+  const roundMesh = coaxialCone(roundBar, MODEL_LOW, MODEL_HIGH, 3, 21)
+  const roundRough = generateRotaryRough('round-helix-pitch', roundMesh, roundBar, BALL, {
+    ...ROUGH, safeRadius: barMaxRadius(roundBar) * 2,
+  }, {})
+  const roundPitches = helixPitchesPerTurn(roundRough.moves)
+  assert.ok(roundPitches.length > 0, 'the round control is helixed')
+  for (const pitch of roundPitches) {
+    assert.ok(Math.abs(pitch - pitchLimit) <= 1e-6,
+      `a round bar keeps the requested stepover exactly (${pitch.toFixed(6)} = ${pitchLimit})`)
+  }
+  const squareRoughPitches = helixPitchesPerTurn(result.moves)
+  assert.ok(squareRoughPitches.length > 0, 'the square rough is helixed')
+  for (const pitch of squareRoughPitches) {
+    assert.ok(pitch < pitchLimit - 1e-9,
+      `the square blank overlaps its turns on the rough too (${pitch.toFixed(4)} < ${pitchLimit})`)
+  }
+  console.log(`  pitch: square rough ${squareRoughPitches[0].toFixed(3)} and finish ${finishPitches[0].toFixed(3)} `
+    + `overlap; round ${roundPitches[0].toFixed(3)} is the requested stepover`)}
 
 // ── 2. the material-touch gate at every helix pose ────────────────────────
 console.log('Testing that a square-blank pose with no material keeps the band on rings...')

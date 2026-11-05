@@ -720,10 +720,15 @@ const ROUND_FINISH_PARAMS = {
 // the 0.02 mm strip and cut it. The mask's own boundary geometry must refuse
 // the whole link, leaving the existing retract/rapid/plunge in its place.
 //
-// Since #1103 slice ca-c the rings of an uninterrupted round band are one helix,
-// so the link case this guards is the ring fallback: the square blank, whose
-// rings stay rings. Its full-ring link is at A0 (the exact constant-A
-// precondition), and the excluded strip is what refuses it.
+// Since #1103 slice ca-c the rings of an uninterrupted band are one helix, and
+// since ca-j the square blank helices too. The ring fallback the link lives on
+// is now what a refused helix leaves: the region below refuses the helix (one
+// of its excluded strips crosses the band) while every ring position stays
+// inside, so the rings are whole and the ring-to-ring link runs -- at A0 (the
+// exact constant-A precondition). The control's excluded strip sits *between*
+// two ring positions so it refuses the helix but not the X4.5 -> X5.5 link; the
+// tested strip sits under that link, so the mask's own segment geometry must
+// refuse it.
 {
   const stock = squareStock(12, 30, 'x')
   const circumference = Math.PI * stock.thickness
@@ -733,8 +738,7 @@ const ROUND_FINISH_PARAMS = {
   // The cutter-centre span 3..27 pulls in one 1.5 mm ball radius at each end,
   // so the rings land exactly on X4.5, X5.5, ...: the reviewer's link span.
   const params = ROUND_FINISH_PARAMS
-  // A region covering the whole sheet keeps every ring whole and inside, so the
-  // ring-to-ring link fires -- exactly what a full-band link looks like.
+  // A region covering the whole sheet keeps every ring whole and inside.
   const sheet: SheetRect = {
     alongMin: 0, alongMax: 30,
     acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
@@ -743,13 +747,26 @@ const ROUND_FINISH_PARAMS = {
     alongMin: 4.99, alongMax: 5.01,
     acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
   }
+  // #1103 slice ca-j: the control's helix refusal. It lies between the ring
+  // positions X9.5 and X10.5, so no ring is trimmed (the rings stay whole and
+  // link), while the helix's own poses sample it and the band falls back to
+  // rings -- the path the link rule is about.
+  const controlGap: SheetRect = {
+    alongMin: 9.7, alongMax: 10.3,
+    acrossMin: centre - circumference / 2, acrossMax: centre + circumference / 2,
+  }
   const stripMask = buildRegionMask(
     [regionFeature(stock, 'sheet', sheet), regionFeature(stock, 'strip', strip, 'exclude')],
     { axis: stock.axis === 'x' ? 'y' : 'x', period: circumference },
   )
   assert.ok(stripMask, 'the reviewer repro mask builds')
+  const controlMask = buildRegionMask(
+    [regionFeature(stock, 'sheet', sheet), regionFeature(stock, 'gap', controlGap, 'exclude')],
+    { axis: stock.axis === 'x' ? 'y' : 'x', period: circumference },
+  )
+  assert.ok(controlMask, 'the control mask builds')
   const linked = generateRotaryFinish('strip-free', mesh, stock, ROUND_FINISH_TOOL, {
-    ...params, region: productionMask(stock, sheet),
+    ...params, region: controlMask,
   }, {})
   const excluded = generateRotaryFinish('strip', mesh, stock, ROUND_FINISH_TOOL, {
     ...params, region: stripMask,
@@ -1039,12 +1056,13 @@ const NO_REGION_HASHES: Record<string, string> = {
   // model gap the layer below cleared is proven by the at-layer row proof
   // instead of the 45 degree drift bound. Both change which links stay down.
   // #1103 slice ca-j re-recorded this row: the square blank's whole-ring bands
-  // below its flat face are one continuous helix per band now (the rough scope of
-  // `rotarySquareHelix.test.ts`), so the rings and their at-layer links there are
-  // replaced by the helix. The finish rows and every along row are unchanged.
+  // below its flat face are one continuous helix per band now, on the **rough
+  // and the finish alike** (review P1: the finish was admitted in correction
+  // round 1), so the rings and their at-layer links there are replaced by the
+  // helix. Every along row is unchanged.
   'square/rotary_rough/around': 'moves=de87aed7bcab33b1 warnings= gcode=f6ccaa1a63e5576d',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
-  'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=bd1329b8dc986b8b',
+  'square/rotary_finish/around': 'moves=7e8c54c10fb7288b warnings=rotaryFinishWithoutRough gcode=d7c323786589a388',
 }
 
 const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)

@@ -729,10 +729,12 @@ The budget, the tolerances, the band splitting, the round-bar behaviour, the
 link rules, the postprocessor, the settings, the UI, the locale and the format
 are untouched.
 
-### Scope: the rough. The finish keeps its rings
+### Scope at 986576b1: the rough only. The finish kept its rings
 
-The handoff asked for rough and finish. The **rough** is delivered and verified.
-The finish is not: its band is the model itself, so the stock around it is
+**Superseded by correction round 1 below:** the finish is admitted now, and the
+surface proof is made to cover it by the square blank's overlapping turns.
+
+The handoff asked for rough and finish. The **rough** is delivered and verified. its band is the model itself, so the stock around it is
 whatever the rough left, and the independent square-blank surface proof
 (`squareAroundGenerator.property.test.ts`) cannot bound a diagonal finish path's
 leftover material there. On a seeded 12 mm blank / O1.4 flat / cone case a
@@ -907,3 +909,159 @@ proved on the rings a square blank keeps, plus the property suite).
 - `npm run check:gcode` -- exit 0 (corpus exported; no controller interpreters
   are installed on this machine, so it is a pass, not a validation).
 - `npx tsx src/engine/toolpaths/rotarySquareHelix.test.ts` -- passes.
+
+## ca-j correction round 1 (review of `986576b1`)
+
+Two review findings, both fixed, plus one rule the finish admission turned up:
+a square blank's helix **turns overlap** (`continuousHelixStepover`).
+
+### P1 -- required finish support was missing
+
+`continuousFinishInput` refused every square blank (`isSquareStock(prep.stock)
+return null`), so an eligible finish band stayed rings. That blanket refusal is
+gone. The finish now supplies the same inputs the rough does where they apply:
+
+- the retained-stub **contact floor** per pose (`continuousHelixStubFloor`,
+  `ContinuousHelixInput.stubFloor`), the closed form the ring samples take;
+- the square blank's **overlapping turn** (`continuousHelixStepover`: the pitch
+  is `min(stepover, 0.9 * diameter)`). A program on a square blank cannot leave
+  the corner shell between two turns to the flank, and a requested stepover of a
+  full diameter is not a pitch that clears it. A round bar has no corner shell
+  above the tip, so its pitch and its bytes are unchanged.
+- eligibility stays the ring grid's own: every sample of the band is the model
+  under the tool and inside the region. A finish has no layer, so the rough's
+  material-touch gate does not apply to it.
+
+Why the overlap is part of the fix: with the finish enabled and no overlap, the
+`squareAroundGenerator.property.test.ts` finished-surface assertion failed on
+its seed-140 case (`flat D1.4 12x20 cone both around rough ends 3 stepdown 3
+custom`): a blank-corner support cell read **4.7942 mm above the model** (allowed
+1.0921) at along 4.89, A125.07. A seed-140 rough layer's shank clears the blank's
+corner column only within one cutter radius of its own turn; turns a full
+diameter apart leave exactly the line halfway between them outside both flanks,
+and the finish could not reach the fin either. Overlapping both generators'
+square turns closes that line, and the same case passes.
+
+`rotarySquareHelix.test.ts` replaced its "the finish keeps its rings" block with:
+the finish's whole band is one helix, every finish pose stays the ring path's one
+cutter radius inside both retained faces (the whole pulled span is covered), and
+the square pitch is below one diameter while a round-bar control keeps the
+requested stepover exactly. Mutations, each applied in memory and restored:
+
+- square finish refusal restored (`isSquareStock` returns `null`) -- fails "a
+  square blank's finish helixes its whole-ring band";
+- square turn overlap dropped (the helper returns the caller's stepover) --
+  fails "the finish overlaps its turns ... (2.0000 < 2)";
+- stub floor skipped on every helix point (the `stubFloor` block removed) --
+  fails "pose 0 is at or above the ring path's stub floor (4.40862 >=
+  10.00000)".
+
+### P2 -- the revised safety checks had become ineffective
+
+`rotarySquareAroundPasses.test.ts` had two holes, both closed:
+
+- the 40 x 400 window-budget block classified every cut that advanced along and
+  turned A as "helix" (`helixCuts`), which also matched the ring path's
+  corner-arc links. `airLinks` was that set's complement, so it was empty and its
+  safety loop checked nothing (0 checked corner links). The block now uses
+  `helixMovesOf` -- a merged command spanning at least one turn, or a run of at
+  least six consecutive cuts at one pitch -- keeps the corner links in
+  `airLinks`, asserts it is non-empty, and counts the samples the loop checks:
+  **76,459 helix cuts and 392 corner-arc links (784 samples)**, 9 plunges.
+- the 50-seed property disabled the one-stepdown engagement rule for **every**
+  move as soon as the program held any helix (`!programHasHelix`). The rule is
+  now per move (`!helixMoves.has(move)`), and counters taken where the rule runs
+  prove the rings and links are judged: **330,545 ring and 1,697 link samples**
+  under the one-stepdown rule, 962,870 cut samples and 1,092,036 move samples
+  over 50 seeds.
+
+Mutations, each applied in memory and restored:
+
+- the broad "advanced along and turned A" classifier restored for `airLinks` --
+  fails "corner-arc links survive the helix classification and reach the safety
+  loop (0)";
+- `programHasHelix` restored as the gate on the engagement rule -- fails "the
+  one-stepdown rule judged the ring path beside the helix (0 ring samples)".
+
+Section 5's at-layer link coverage assertion was updated where the fixture's
+whole-ring bands are helices (it now counts helix cuts, 4, as the pose the stub
+walk must reach).
+
+### The cases after correction (`around` control where the fixture does not set one)
+
+| case | bands (rings) | helix built | turns (actual helix) | moves | moves digest (probe) |
+| --- | --- | ---: | ---: | ---: | --- |
+| `busto-rect` op0021 rough | 10 bands, refused 0 | 10 | 207 across the bands (ca-j table above; the rough is unchanged by this round) | 30,694 | `5f6ad965f279bebb…` (unchanged) |
+| `busto-rect` op0022 finish | 1 band (86) | 0 -- refused `exhausted`, 24,079,923 work against the 24 M budget | 0 | 79,088 | `e864f770149b4475…` (unchanged) |
+| `square-to-round` op0028 rough | 0 whole rings (gate false at every layer) | 0 | 0 | 8,791 | `b91bb7f52f7a2550…` (unchanged) |
+| `square-to-round` op0029 finish | 1 band (48) | 1 | 47 (A span 49 turns including the two boundary rings) | 13,625 (was 13,394) | `9323f459df779b69…` |
+
+`op0022`'s finish is admitted and its band reaches the builder; the shared,
+unchanged `MAX_HELIX_RASTER_WORK` refuses it (24,079,923 > 24,000,000), so the
+program is byte-identical to the ca-j recording -- the `exhausted` refusal is
+the report the handoff asks for on that case. `op0029`'s band is now one helix:
+13,625 moves against 13,394 rings, and its commanded A spans 49 turns -- the 47
+helix turns plus the two complete boundary rings.
+
+### Parity
+
+Sync (in-process) and the shipped Node pool produce one program. Probe moves
+digests, per case, are identical in both modes; the two square cases:
+
+| case | moves | sync | pool (2 workers) |
+| --- | ---: | --- | --- |
+| `square-to-round` op0028 | 8,791 | `b91bb7f52f7a2550…` | `b91bb7f52f7a2550…` |
+| `square-to-round` op0029 | 13,625 | `9323f459df779b69…` | `9323f459df779b69…` |
+
+`busto-rect` op0021 (`5f6ad965…`) and op0022 (`e864f770…`) were measured through
+the pool; the round-blank and along controls are the ca-j rows above, and
+`rotaryAngleMapTransport.test.ts` and the ca-j `rotarySquareHelix` pool block
+still run in the build.
+
+### Timing (probe: 1 cold + 5 warm, medians, this worktree, one process at a time)
+
+"Before" is the ca-j tree at `986576b1` measured in this session by restoring
+the square finish refusal; "after" is this correction. The ca-j section's
+`9aac82ff` numbers are listed for the handoff's original comparison.
+
+| case | 9aac82ff (ca-j doc) | before (986576b1, today) | after | ratio vs before |
+| --- | ---: | ---: | ---: | ---: |
+| `busto-rect` op0021 (pool) | 30,628 | -- (unchanged code path) | 28,482 | -- |
+| `busto-rect` op0022 (pool) | 19,307 | 19,745 | 22,529 | **1.14** |
+| `square-to-round` op0028 (pool) | 438 | 469 | 453 | 0.97 |
+| `square-to-round` op0029 (pool) | 436 | 447 | 497 | **1.11** |
+
+**`op0022` and `op0029` are over the handoff's 1.1x bound**, and the cause is the
+finish admission itself, not a regression in the shared path:
+
+- `op0022`: the unchanged 24 M work budget must be spent to prove the band
+  cannot be verified (2,557 rows, 251 uncached), so 2.8 s is added to a program
+  whose bytes do not move. A smaller pitch (the overlap) makes that refusal
+  cheaper than the requested stepover does (22.5 s versus 23.7 s), which is why
+  the finish takes the overlap too.
+- `op0029`: the helix is built, so the engine work is 131.8 ms serial against
+  84.1 ms for the 13,394-move ring program (1.57x serial); through the pool the
+  fixed ~350 ms worker install dominates and the median moves 447 -> 497 ms.
+
+There is no way to admit the finish, keep the 24 M budget unchanged and stay
+inside 1.1x on `op0022`: the refusal is the only thing the new admission adds to
+that case. This is surfaced rather than hidden; the change does not touch the
+budget, and a band that is refused keeps its bytes.
+
+### Commands
+
+- `npm run build:gates` -- exit 0, 9/9 phases (docs, lint, e2e-lane check,
+  colours, portable paths, i18n, icons, tsc, vite build). The shared
+  `node_modules` is a read-only symlink in this session's sandbox, so the run
+  used a writable `node_modules/.tmp` and `.vite-temp` beside it; the same
+  command is green in a normal checkout.
+- `npm test` -- exit 0, all 576 executed test files (0 skipped), including the
+  363-case property suite.
+- `npm run check:gcode` -- exit 0.
+- `npx tsx src/engine/toolpaths/rotarySquareHelix.test.ts` -- passes (finish
+  helix, pulled span, overlapping pitch, rough/finish comparison).
+- `npx tsx src/engine/toolpaths/rotarySquareAroundPasses.test.ts` -- passes
+  (76,459 helix cuts; 392 corner links checked; 330,545 ring / 1,697 link
+  samples under the one-stepdown rule).
+- `npx tsx src/engine/toolpaths/squareAroundGenerator.property.test.ts` --
+  passes, 363 cases in ~116 s.

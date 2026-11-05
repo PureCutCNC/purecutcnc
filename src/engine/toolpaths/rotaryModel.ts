@@ -2164,6 +2164,39 @@ function continuousHelixStubFloor(
 }
 
 /**
+ * The continuous helix's stepover for one square blank (#1103 slice ca-j), or
+ * the caller's own on a round bar.
+ *
+ * A square blank's corner shell stands above the cutter tip at every angle that
+ * is not its own, so a roughing turn cannot rely on the tip alone: the blank's
+ * material between two turns is cleared by the cutter's flank, which reaches one
+ * cutter radius either side of its own path. Two roughing turns exactly one
+ * **diameter** apart therefore leave every cell on the line halfway between them
+ * outside both flanks -- a helical fin of stock at the blank's corner radius.
+ * The property suite sees it as a blank-support column 4.79 mm over the
+ * finished-surface bound on its 12 mm / Ø1.4 / cone case with the stepover at a
+ * full diameter. Overlapping the roughing turns by one tenth of a diameter
+ * closes that line; a round bar has no corner shell above the tip, so its pitch
+ * stays exactly the requested stepover and its bytes do not move.
+ *
+ * The **finish** takes the same overlap: a finish-only program has no rough to
+ * clear the shell first, so its own turns cover it the same way, and on the
+ * busto-rect finish (a band the work budget refuses) the overlap's shorter pitch
+ * also makes that refused attempt cheaper -- 22.5 s against 23.7 s at the
+ * requested stepover, one process at a time through the pool.
+ */
+const SQUARE_HELIX_TURN_OVERLAP = 0.9
+
+function continuousHelixStepover(
+  stock: BarStock,
+  tool: NormalizedTool,
+  stepover: number,
+): number {
+  if (!isSquareStock(stock)) return stepover
+  return Math.min(stepover, tool.radius * 2 * SQUARE_HELIX_TURN_OVERLAP)
+}
+
+/**
  * The continuous helix's operation-wide input for the finish (#1103 slices ca-c
  * and ca-g).
  *
@@ -2174,8 +2207,12 @@ function continuousHelixStubFloor(
  * when the targets carry no prep (a refusal/cancellation never reaches here),
  * and the band walk then keeps every ring of the band.
  *
- * A square blank's retained ends are floored per pose (#1103 slice ca-j); a
- * round bar has no such floor, so its input is byte for byte what it was.
+ * A **square blank** is admitted since #1103 slice ca-j on the finish's own
+ * rules: the band is a whole ring of the model at every angle (the ring grid's
+ * eligibility, unchanged), the retained ends are floored per pose with the ring
+ * path's own stub contact, and its turns overlap so the blank's corner shell
+ * between them is cleared (`continuousHelixStepover`). A round bar has no such
+ * floor and no corner shell, so its input is byte for byte what it was.
  *
  * The band, the A cursor and the band's shared spend are left to each attempt:
  * slice ca-g splits a band that cannot be verified everywhere, and each piece
@@ -2190,22 +2227,11 @@ function continuousFinishInput(
 ): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
-  // #1103 ca-j scopes the square blank to the **rough**. A rough layer that has
-  // become round has the blank's material behind it, and its band is admitted
-  // only when the blank's own touch gate and stub floor hold at every pose. A
-  // finish has no such layer: its band is the model, so the stock around it is
-  // whatever the rough left, and the independent square-blank surface proof
-  // (`squareAroundGenerator.property.test.ts`) cannot bound a diagonal finish
-  // path's leftover material there -- it reads the blank's corner support at a
-  // cell the ring path only happens to land on (a 12 mm blank, Ø1.4 flat, cone:
-  // 4.79 mm over the bound). A finish keeps its rings until that proof covers
-  // the helix, so its output is byte for byte what it was.
-  if (isSquareStock(prep.stock)) return null
   const stubFloor = continuousHelixStubFloor(prep.stock, tool, params)
   return {
     prep,
     tool,
-    stepover: params.stepover,
+    stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
     warnings,
@@ -2224,8 +2250,9 @@ function continuousFinishInput(
  * `radius` and a pose with no material above `previousRadius` refuses the band.
  * A square blank adds its retained-stub floor here (as the finish does) and its
  * material-touch gate on the layer itself, because that gate depends on the
- * layer's radius. `null` when the targets carry no prep (a refusal/cancellation
- * never reaches here), and the band walk then keeps every ring of the band.
+ * layer's radius, and its turns overlap (`continuousHelixStepover`). `null` when
+ * the targets carry no prep (a refusal/cancellation never reaches here), and the
+ * band walk then keeps every ring of the band.
  */
 function continuousRoughInput(
   sampling: RotaryTargets,
@@ -2240,7 +2267,7 @@ function continuousRoughInput(
   return {
     prep,
     tool,
-    stepover: params.stepover,
+    stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
     warnings,
@@ -2375,8 +2402,12 @@ function finishFromTargets(
     // gap, a region that trims the ring, a helix whose budget ran out -- keeps
     // its rings, now forward-only, with the emitter's safe transition between
     // them. A **square blank** is helixed too since #1103 slice ca-j, on the
-    // same rule: its band must be a whole ring at every angle under the blank's
-    // own touch gate, and the builder floors each pose off the retained ends.
+    // finish's own rule: its band must be a whole ring of the model at every
+    // angle, and the builder floors each pose off the retained ends with the
+    // ring path's own stub contact and overlaps its turns so the blank's corner
+    // shell between them is cleared by the cutter's flank. A finishing pass has
+    // no layer, so the blank's material-touch gate does not apply here (the
+    // finish follows the model wherever the ring grid does).
     //
     // #1103 slice ca-g splits a band the attempt could not verify everywhere:
     // the rings around the unverifiable spans, a helix on each run between them,

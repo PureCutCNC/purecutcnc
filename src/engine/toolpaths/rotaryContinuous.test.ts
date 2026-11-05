@@ -543,10 +543,10 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
  */
 {
   // #1103 slice ca-j: a square blank is this module's case once its caller
-  // supplies the blank's own rules (the material-touch gate on the layer and the
-  // retained-stub floor per pose). The module itself admits it; the *rough*
-  // caller is what uses it, and the finish keeps its rings for now
-  // (`rotarySquareHelix.test.ts` owns both halves).
+  // supplies the blank's own rules (the rough's material-touch gate on the layer
+  // and the retained-stub floor per pose). Both callers now use it -- the rough
+  // since ca-j, the finish since correction round 1 -- and
+  // `rotarySquareHelix.test.ts` owns both halves.
   const square = squareStock(20, 60)
   const squarePrep = createRotarySamplingPrep(SQUARE_PRISM, square, FLAT, {
     along: [6], requestedCellSize: CELL, conservativeCellBounds: true, workspace: {},

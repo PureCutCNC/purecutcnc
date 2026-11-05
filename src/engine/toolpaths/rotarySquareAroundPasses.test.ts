@@ -234,6 +234,53 @@ const angleOf = (point: ToolpathPoint): number => {
 const isConstantAngleCut = (move: ToolpathMove): boolean => move.kind === 'cut'
   && move.from.a !== undefined && move.to.a !== undefined && move.from.a === move.to.a
 
+/**
+ * The moves of one program that belong to a **continuous helix** (#1103 slice
+ * ca-j).
+ *
+ * A helix advances along the bar *and* turns A, which is also the shape of an
+ * at-layer link, a corner-arc link and a wide gate-gap transition -- so the
+ * naive "changes along and A together" test classifies the ring path's own
+ * links as helix and removes them from the proofs that are about links. The
+ * classifier is the helix's own geometry instead: a merged command spanning at
+ * least a whole turn while it advances, or a run of at least six consecutive
+ * cut moves at one axial advance per degree (`buildContinuousHelix` emits one
+ * or the other, and `mergeCollinearCuts` only merges a run that is already one
+ * straight line in `(along, A, Z)`). A pair of ring links never holds a
+ * constant pitch for six moves.
+ */
+function helixMovesOf(moves: readonly ToolpathMove[]): Set<ToolpathMove> {
+  const set = new Set<ToolpathMove>()
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = move.to.x - move.from.x
+    const turn = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) set.add(move)
+  }
+  let run: ToolpathMove[] = []
+  let pitch = 0
+  const flush = (): void => {
+    if (run.length >= 6) for (const move of run) set.add(move)
+    run = []
+  }
+  for (const move of moves) {
+    const along = move.kind === 'cut' ? move.to.x - move.from.x : 0
+    const turn = move.kind === 'cut' ? (move.to.a ?? 0) - (move.from.a ?? 0) : 0
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) > 1e-9) {
+      const next = along / turn
+      if (run.length === 0
+        || Math.abs(next - pitch) <= 1e-6 * Math.max(Math.abs(next), Math.abs(pitch))) {
+        run.push(move)
+        pitch = next
+        continue
+      }
+    }
+    flush()
+  }
+  flush()
+  return set
+}
+
 // ---------------------------------------------------------------------------
 // 1. The slice-A refusal is gone: a square blank generates around passes.
 // ---------------------------------------------------------------------------
@@ -476,26 +523,36 @@ console.log('Testing that forward-only rings keep the square blank\'s at-layer l
   // the helix itself. The at-layer link rules are proved where a square blank
   // still has rings to link: `rotarySquareRingLinks.test.ts`, the split-ring
   // blocks above, and the property suite's `atLayerLinkCounts`.
-  const helixCuts = result.moves.filter((move) => move.kind === 'cut'
-    && move.to.x - move.from.x > 1e-9
-    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9)
+  //
+  // The helix is classified by `helixMovesOf`, not by "changes along and A":
+  // a corner-arc link changes both too, and the broad test removed every one of
+  // them from `airLinks`, leaving the link safety loop below with nothing to
+  // check (a review finding: it reported zero checked corner links). The count
+  // printed by this block is the proof that the loop is not vacuous again.
+  const helixMoves = helixMovesOf(result.moves)
+  const helixCuts = result.moves.filter((move) => helixMoves.has(move))
   const raisedTraverses = result.moves.filter(linkMove)
   const seamLinks = result.moves.filter(atLayerLink)
-  const airLinks = result.moves.filter(acrossLink).filter((move) => !helixCuts.includes(move))
-  assert.ok(helixCuts.length > 1000,
-    `the round layers are one helix each (${helixCuts.length} cutting helix moves)`)
+  const airLinks = result.moves.filter(acrossLink).filter((move) => !helixMoves.has(move))
+  assert.ok(helixCuts.length > 0,
+    `the round layers are a helix (${helixCuts.length} cutting helix moves)`)
+  assert.ok(airLinks.length > 0,
+    `corner-arc links survive the helix classification and reach the safety loop (${airLinks.length})`)
   assert.equal(plunges.length, 9, `the layer starts are the plunges (${plunges.length})`)
   assert.equal(seamLinks.length, 0,
     `no whole ring is left to link at the seam once the bands helix (${seamLinks.length})`)
   // Every at-layer link cuts at or above its own layer, and never above the
   // blank: a corner-arc link rides the layer radius through the gate's air.
+  let linkSamples = 0
   for (const link of airLinks) {
     const height = Math.min(link.from.z, link.to.z) - pivot
     assert.ok(height > 0 && height <= barMaxRadius(stock) + 1e-9,
       `an at-layer link stays inside the blank (${height.toFixed(3)})`)
+    linkSamples += 2
   }
-  console.log(`  ${helixCuts.length} helix cuts, ${airLinks.length} corner-arc links, `
-    + `${raisedTraverses.length} raised, ${plunges.length} plunges`)
+  assert.ok(linkSamples > 0, `the link loop checked real samples (${linkSamples})`)
+  console.log(`  ${helixCuts.length} helix cuts, ${airLinks.length} corner-arc links `
+    + `(${linkSamples} samples checked), ${raisedTraverses.length} raised, ${plunges.length} plunges`)
 }
 
 /** A rough ring-to-ring link: a cut that changes the along coordinate. */
@@ -796,6 +853,19 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
   let checkedSamples = 0
   let checkedSeeds = 0
   let worstEngagement = -Infinity
+  /**
+   * Cut samples the one-stepdown rule actually judged (#1103 ca-j review).
+   *
+   * The first version of the helix carve-out disabled the rule for **every**
+   * move as soon as the program held any helix (`!programHasHelix`), and a
+   * follow-up broad "changes along and A" classifier also swallowed the ring
+   * path's links. The counters are incremented only where the rule runs, on a
+   * move `helixMovesOf` did not classify as a helix, so a program that holds a
+   * helix can no longer switch the proof off for its rings or links: the run
+   * asserts both kinds were judged.
+   */
+  let ringEngagementChecks = 0
+  let linkEngagementChecks = 0
   for (let seed = 0; seed < PROP_SEEDS; seed++) {
     const side = between(7, 9)
     const length = between(2.5, 3.2)
@@ -931,10 +1001,13 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
     // replays *every* emitted pose against the raw blank. This block keeps its
     // per-sample rule for the ring path (round bars and square rings), which is
     // what it was written for.
-    const programHasHelix = result.moves.some((move) => move.kind === 'cut'
-      && move.from.a !== move.to.a
-      && (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) >= 360 - 1e-9
-        || Math.abs(move.to.x - move.from.x) > stepdown * 2))
+    //
+    // The review's finding: the carve-out was keyed on "the program contains a
+    // helix", which switched the one-stepdown rule off for the corner rings the
+    // same program still cuts. The helix is classified move by move now, from
+    // its own geometry (`helixMovesOf`), and everything else keeps the rule --
+    // counted below, so a silent switch-off fails instead of passing.
+    const helixMoves = helixMovesOf(result.moves)
     let seedCuts = 0
     let seedSamples = 0
     for (const move of result.moves) {
@@ -988,12 +1061,17 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
         // suite's interior number is a diagnostic on a square blank). The
         // one-stepdown engagement rule is about a *turning* cut taking material
         // out of its own ray; the helix's depth is owned by the property suite's
-        // emitted-descent proof, which replays every pose it emits.
-        const helixMove = move.kind === 'cut' && move.from.a !== move.to.a
-          && (Math.abs(toAngle - fromAngle) >= 360 - 1e-9
-            || Math.abs(toAlong - fromAlong) > stepdown * 2)
-        if (!programHasHelix && !helixMove && engagement > stepdown + gridAllowance) {
-          assert.fail(`seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at x ${x.toFixed(3)} A ${angle.toFixed(2)} f=${f} exceeds stepdown ${stepdown.toFixed(4)} + ${gridAllowance.toFixed(4)}`)
+        // emitted-descent proof, which replays every pose it emits. The move is
+        // classified as a helix from its own geometry -- never "this program has
+        // a helix somewhere", which disabled the rule for the rings too.
+        if (!helixMoves.has(move)) {
+          if (engagement > stepdown + gridAllowance) {
+            assert.fail(`seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at x ${x.toFixed(3)} A ${angle.toFixed(2)} f=${f} exceeds stepdown ${stepdown.toFixed(4)} + ${gridAllowance.toFixed(4)}`)
+          }
+          if (Number.isFinite(engagement)) {
+            if (linkMove) linkEngagementChecks++
+            else ringEngagementChecks++
+          }
         }
         if (Number.isFinite(engagement)) worstEngagement = Math.max(worstEngagement, engagement)
         seedCuts++
@@ -1005,7 +1083,17 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
     checkedSeeds++
   }
   assert.ok(checkedSeeds === PROP_SEEDS, `the property ran all ${PROP_SEEDS} seeds`)
-  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut samples and ${checkedSamples} move samples; worst axial engagement ${worstEngagement.toFixed(4)}`)
+  // #1103 ca-j review: the proof must judge the path a helix program still
+  // cuts, not only the helix. A program that holds a helix used to disable the
+  // rule outright (`!programHasHelix`); the counters are taken where the rule
+  // runs, so re-introducing that gate fails here instead of passing silently.
+  assert.ok(ringEngagementChecks > 0,
+    `the one-stepdown rule judged the ring path beside the helix (${ringEngagementChecks} ring samples)`)
+  assert.ok(linkEngagementChecks > 0,
+    `the one-stepdown rule judged the corner-arc and seam links (${linkEngagementChecks} link samples)`)
+  console.log(`  ${PROP_SEEDS} seeds, ${checkedCuts} cut samples and ${checkedSamples} move samples `
+    + `(${ringEngagementChecks} ring and ${linkEngagementChecks} link samples kept under the one-stepdown rule); `
+    + `worst axial engagement ${worstEngagement.toFixed(4)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1032,12 +1120,18 @@ console.log('Testing the retained-square shoulders on the forward-only rings...'
   let reversedRings = 0
   // #1117: the rough's at-layer links are cuts too, so the stub-floor walk below
   // must include them; this count proves the fixture actually contains them.
+  // #1103 ca-j: this fixture's whole-ring bands are helices now, so the cut the
+  // walk must also reach is the helix's own pose; both are counted and either
+  // one proves the floor walk is not vacuous.
   let atLayerLinks = 0
+  let helixCuts = 0
   for (const [label, result] of [['rough', rough], ['finish', finish]] as const) {
+    const helix = helixMovesOf(result.moves)
     let previousDirection = 0
     let previousAlong = Number.NaN
     for (const move of result.moves) {
       if (move.kind !== 'cut') continue
+      if (helix.has(move)) helixCuts++
       const along = move.from.x
       const direction = Math.sign(angleOf(move.to) - angleOf(move.from))
       if (along !== previousAlong) {
@@ -1071,10 +1165,10 @@ console.log('Testing the retained-square shoulders on the forward-only rings...'
   assert.ok(forwardRings > 0, 'forward rings were measured')
   // #1103 slice ca-d: no ring of either generator turns A backwards any more.
   assert.equal(reversedRings, 0, `no ring reverses A (${reversedRings})`)
-  assert.ok(atLayerLinks > 0,
-    `the stub-floor walk covers the at-layer links (${atLayerLinks} links measured)`)
+  assert.ok(atLayerLinks + helixCuts > 0,
+    `the stub-floor walk covers the at-layer links and the helix (${atLayerLinks} links, ${helixCuts} helix cuts measured)`)
   console.log(`  forward rings ${forwardRings}, reversed rings ${reversedRings}, `
-    + `${atLayerLinks} at-layer links checked against the retained stub`)
+    + `${atLayerLinks} at-layer links and ${helixCuts} helix cuts checked against the retained stub`)
 }
 
 // ---------------------------------------------------------------------------
