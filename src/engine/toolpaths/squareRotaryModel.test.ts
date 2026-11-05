@@ -947,7 +947,12 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // walk samples the rows the commanded sweep crosses and the wide cleared
       // model gaps are proven by the at-layer row proof, so the around links are
       // the ones the fix keeps down. The along row did not move.
-      direction === 'along' ? 'fac8eaac0fb0b159' : '5109d7361e8ee2bc',
+      // #1103 slice ca-j re-recorded the around row once more: this square
+      // blank's layers below the flat face are one continuous helix per band now
+      // (`rotarySquareHelix.test.ts`), so the around program's rings and its
+      // at-layer links between them are replaced by the helix. The finish rows
+      // below are unchanged: the slice scopes the square blank to the rough.
+      direction === 'along' ? 'fac8eaac0fb0b159' : '4a38235b13638c6f',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
     const first = outermost(withLeave, spanStart)

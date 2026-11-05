@@ -651,7 +651,7 @@ code restored from a copy (the restore was verified by re-diffing):
 ### Commands
 
 - `npm run build` -- exit 0 (docs, lint, e2e-lane check, colours, portable
-  paths, i18n, icons, tsc, every test file, vite build).
+  paths, i18n, icons, tsc, all 576 test files, vite build).
 - `npm run check:gcode` -- exit 0 (corpus exported; no controller interpreters
   are installed on this machine, so it is a pass, not a validation).
 - `npx tsx src/engine/toolpaths/rotaryAngleMapTransport.test.ts` -- passes.
@@ -689,3 +689,221 @@ of 2 rows)"; with the fix the rows report 1/2 and 2/4 reused, raster work 24 and
   `ROTARY_PARITY_FIXTURES=1 npx tsx src/engine/toolpaths/rotarySamplingParity.test.ts`
   -- passes (both directions on all four busto ops; the pinned base-row, lift and
   warning digests are unchanged).
+
+## ca-j: a square blank helixes once the layer is round
+
+Frank's retest of the slice on `busto-rect-stock.camj`: the rotary **rough**
+never used the helix, even on the layers whose corners the earlier layers had
+removed. `buildContinuousHelix` refused every non-round stock before sampling
+(`if (stock.shape !== 'round') return null`), so ten otherwise-eligible bands per
+part -- layers 6-13, one on each of 6-10 and 13, two on 11 and two on 12 -- were
+cut as rings. The angle-map cache was gated on the same shape, so a square blank
+had no maps to read even if a helix had been built.
+
+The slice admits a square blank on the round bar's own terms and makes the
+blank's rules follow the helix to each of its own poses:
+
+- `ContinuousHelixLayer.material` (`rotaryContinuous.ts`) is the ring path's
+  **material-touch gate** (`squareRotaryTouchRadius`) asked at every sampled
+  pose and refinement point. A layer whose corners still stand has no whole
+  ring, so no band is walked there; and a band whose finer pose the gate rejects
+  is `ineligible`, exactly as a pose with no material under it is.
+- `ContinuousHelixInput.stubFloor` is the retained-stub **contact floor**
+  (`squareRotaryStubContactFloor`) at every sampled pose, the same closed form
+  `completeRotaryTargets` puts on a ring sample. `rotaryModel.ts`
+  (`continuousHelixStubFloor`) builds the closure from the operation's own stub
+  ends, so a helix point is never lower than the ring path would allow at the
+  same along position and angle. On a band pulled one cutter radius inside a
+  stub the floor is a tangency; it binds wherever a pose is closer than that.
+- The **angle-map cache** is on for a square-blank around operation exactly as
+  for a round one (`prepareRotaryTargets`, `rotaryModel.ts`), and the ca-i
+  worker transport carries it: the pool's `stats()` now reports maps and map
+  bytes for `busto-rect` and the square fixture (both were 0).
+- `cropAngleMap` (`rotarySampling.ts`) returns `null` when the sampler's window
+  lies entirely off the map instead of copying it. A square blank makes that
+  routine (the ray at the bar's centrelines can miss an offset model's turned
+  bounds) and the empty intersection used to reach `cells()` as a negative
+  length.
+
+The budget, the tolerances, the band splitting, the round-bar behaviour, the
+link rules, the postprocessor, the settings, the UI, the locale and the format
+are untouched.
+
+### Scope: the rough. The finish keeps its rings
+
+The handoff asked for rough and finish. The **rough** is delivered and verified.
+The finish is not: its band is the model itself, so the stock around it is
+whatever the rough left, and the independent square-blank surface proof
+(`squareAroundGenerator.property.test.ts`) cannot bound a diagonal finish path's
+leftover material there. On a seeded 12 mm blank / O1.4 flat / cone case a
+blank-corner support cell came out **4.79 mm over** the bound with the finish
+helixed, where the ring path's own along phases had left it inside; two other
+families (a merged multi-turn finish move judged as a #1093 link, and a
+first-cut engagement at a phase-shifted corner) move the same way. Making that
+proof cover a helical finish is its own piece of work. `continuousFinishInput`
+therefore returns `null` for a square blank and the finish's bytes are unchanged
+-- which is why `op0022` and `op0029` below report no helix.
+
+### The bands, layer by layer (`busto-rect` op0021 rough)
+
+Measured with a temporary instrumentation of `roughFromTargets` (the per-layer
+ring pattern, every `walkContinuousBand` attempt and its outcome, and the moves
+each emitted helix actually contains), one generation per case. "Whole rings" is
+the layer's full-ring count; a band is a maximal run of them; "helix moves" are
+the emitted cut moves between consecutive points of the helix
+`buildContinuousHelix` returned, before `mergeCollinearCuts` (the merged program
+is 30,694 moves against 32,866 before, so the merge collapses most of them).
+
+| layer | layer radius | whole rings | bands (rings) | helix built | helix turns | helix moves |
+| ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| 1-5 | 1.339-1.039 | 0 | -- | 0 | 0 | 0 |
+| 6 | 0.964 | 40 | 1 (40) | 1 | 39 | 7,749 |
+| 7 | 0.889 | 39 | 1 (39) | 1 | 38 | 7,560 |
+| 8 | 0.814 | 34 | 1 (34) | 1 | 33 | 6,622 |
+| 9 | 0.739 | 33 | 1 (33) | 1 | 32 | 6,459 |
+| 10 | 0.664 | 31 | 1 (31) | 1 | 30 | 6,076 |
+| 11 | 0.589 | 26 | 2 (16, 10) | 2 | 24 | 5,382 |
+| 12 | 0.514 | 12 | 2 (6, 6) | 2 | 10 | 2,744 |
+| 13 | 0.439 | 2 | 1 (2) | 1 | 1 | 575 |
+| 14-18 | 0.364-0.127 | 0 | -- | 0 | 0 | 0 |
+
+Ten bands were walked, ten were built, none refused. That is **207 helix turns
+measured by 43,167 emitted helix cut moves**, against 103 rings on the same
+layers plus the 400 rings the ten corner/tip layers keep (one turn per along
+position outside a band). The naive "a move that changes along and A" count is
+useless here: `op0021` reports 4.6% that way, but most of it is the at-layer
+links the ring path emits (1.0% before the slice, all of it links).
+
+### The other cases
+
+| case | what the walk saw | helix | moves | moves sha256 |
+| --- | --- | ---: | ---: | --- |
+| `busto-rect` op0022 (finish) | one eligible band of 86 rings; not attempted (finish scope). With the finish enabled the same band was refused `exhausted` -- the 24 M `MAX_HELIX_RASTER_WORK` cap, 24,079,923 spent on the 251 rows the 32 MiB map cache could not hold (2,306 of 2,557 reused) | none | 79,088 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` (unchanged) |
+| `square-to-round` op0028 (rough) | 48 along positions, 4 layers, **0 whole rings on every layer**: the blank's gate is false at the flats for each layer radius (1.289 / 1.164 / 1.039 / 1.004 in), so no band exists | none | 8,791 | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` (unchanged) |
+| `square-to-round` op0029 (finish) | one eligible band of 48 rings; not attempted (finish scope) | none | 13,394 | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` (unchanged) |
+
+Every one of those three keeps the bytes the ca-i table recorded: the slice has
+no effect on them, which is the point of running them. The cache is still on
+(Square-blank rows): the pool hands back 2,715 maps / 18.8 MB for `op0021`,
+4,279 / 52.7 MB for `op0022`, 379 / 1.7 MB for `op0028` and 571 / 2.5 MB for
+`op0029`, against 0 for all four before the slice.
+
+### Byte identity
+
+Round-blank around rows and the along-mode controls, one generation each through
+the pool at two workers, against the hashes in the ca-i section above (and the
+same tree before this slice for the two along controls):
+
+| case | mode | moves | moves sha256 |
+| --- | --- | ---: | --- |
+| `busto-round` op0025 | around | 22,364 | `c2c4a338ef866fc237a7faff38b7aab16556627049b021a494ab4795a0f43b86` |
+| `busto-round` op0015 | around | 54,231 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| `busto-rect` op0021 | along | 21,231 | `21cf7905354ee3425adeeb56a833eb994fa8999bb0aa1b617d505101af095b0d` |
+| `square-to-round` op0028 | along | 1,104 | `6189e3247e067f7b5d17290137e785504f274c753339a26719c562a55b796e14` |
+
+### Parity: sync, serial and the pool produce one program
+
+One generation per mode on each of the four acceptance cases, through the shipped
+Node transport. Every row is the same SHA-256 in all three modes:
+
+| case | moves | moves sha256 (sync = serial = pool 2 workers) |
+| --- | ---: | --- |
+| `busto-rect` op0021 (rough, helix) | 30,694 | `4d07ee86149b5c93...` |
+| `busto-rect` op0022 (finish) | 79,088 | `561ba95a409e6195...` |
+| `square-to-round` op0028 (rough) | 8,791 | `33a09b96e28a71f5...` |
+| `square-to-round` op0029 (finish) | 13,394 | `bb47c4ed41b0c3af...` |
+
+### Timing, through the pool at 2 workers
+
+One warm-up and three timed generations per case, one process at a time, nothing
+else generating; the numbers in `runs` are the three in order. Both columns are
+this machine, this session and this worktree: "before" is the tree at `9aac82ff`
+(the branch's base, the handoff commit aside), "after" is the slice.
+
+| case | before runs (ms) | before median | after runs (ms) | after median | ratio |
+| --- | --- | ---: | --- | ---: | ---: |
+| `busto-rect` op0021 | 37,490 / 29,923 / 30,628 | 30,628 | 27,154 / 27,612 / 27,611 | 27,611 | **0.90** |
+| `busto-rect` op0022 | 19,526 / 19,292 / 19,307 | 19,307 | 19,582 / 19,755 / 19,570 | 19,582 | **1.01** |
+| `square-to-round` op0028 | 452 / 420 / 438 | 438 | 476 / 448 / 435 | 448 | **1.02** |
+| `square-to-round` op0029 | 436 / 441 / 429 | 436 | 486 / 457 / 454 | 457 | **1.05** |
+
+Every case is inside the 1.1x bound. `op0021` is **faster** than before because
+its ten bands stop being thousands of separate rings and at-layer links; the
+square finish rows pay the map build and store they now do and nothing else.
+
+### Committed test and mutations
+
+`rotarySquareHelix.test.ts` (new) is the slice's own file:
+
+1. the generator: a square blank whose layers have become round cuts each band
+   as one helix (a run at one pitch, or a merged multi-turn command) while a
+   corner layer keeps arcs and links -- and the finish keeps one ring per along
+   position, with the scope above recorded;
+2. the gate at a helix pose: a corner-standing layer is `ineligible`, the same
+   band on a round layer is a helix, and a gate that says no is a refusal;
+3. the retained-stub floor: a band opened on a stub's face has 536 of its 770
+   poses lifted, 234 of them exactly on `squareRotaryStubContactFloor`, and the
+   same build without the floor sits on the model -- inside the stub;
+4. the cache: 238 of 238 rows read from the ring grid's maps, 0 versus 13,208
+   triangle raster passes for the `'off'` control, same path;
+5. the generator installs the cache and the ca-i transport carries it: the
+   square rough through a real worker pool returns 243 maps (752 KB) and cuts the
+   serial program byte for byte.
+
+Each required mutation was applied to the finished code, the test run, and the
+code restored from a copy (the restore was verified with `diff`):
+
+- **shape guard restored** (`stock.shape !== 'round'` returns `null`): fails at
+  "the corner layers keep their rings and a deeper, round layer does not
+  (5 of 5)";
+- **stub floor skipped on helix points**: fails at "pose 0 is at or above the
+  ring path's stub floor (4.40862 >= 10.00000)";
+- **material-touch gate dropped from the helix**: fails at "a corner-standing
+  layer emits no helix";
+- **cache kept off on square blanks** (`stock.shape === 'round'` back on the
+  `angleMaps` gate): fails at "the ring grid kept its angle maps on the square
+  blank and the workers handed them back (0)";
+- **helix rows not `read-write`**: fails at "every helix row is read from the
+  ring grid's maps (0 of 238)".
+
+The existing square-blank gouge/safety suites were run as they are, with the
+changes the new admission forces (see **Tests the slice had to move**):
+`squareRotaryBand.test.ts` (the retained-stub penetration oracle, flat and ball,
+rough and finish, Frank's fixture and the 25 mm F6 one), `squareRotaryStub.test.ts`,
+`rotarySquareAroundPasses.test.ts`, `rotarySquareRingLinks.test.ts`,
+`squareRotaryModel.test.ts`, `rotaryContinuous.test.ts`, `rotaryAroundPasses.test.ts`,
+`rotaryRegion.test.ts`, and the 363-program `squareAroundGenerator.property.test.ts`.
+
+The property suite needed three helix-aware changes of its own, each written
+where it is applied:
+
+- `assertStageDescent`'s `footprintStanding` now runs for **any** cut over one
+  stepdown (it used to run only for a first cut), because a helix's passes at one
+  ray sit on that band's own axial phase: the pose that established the standing
+  material at a key is not always the immediately preceding layer's pose at the
+  same key. A body contact can only lower the measured drop, so this cannot hide
+  a deep cut.
+- a **helix move** (multi-turn, or a run of short `(along, A)` segments at one
+  pitch) is the layer's own cut, not a #1093 at-layer link and not a one-turn
+  turning cut: its depth is what the emitted-descent proof owns, and the interior
+  numbers the link/turn rules read are the square-blank corner-shell artifact the
+  file already treats as a diagnostic on a square blank.
+- the finished-surface allowance gains one helix tolerance floor (and, on a
+  square blank, one corner-support angular bin) for a program that contains a
+  finish helix -- the diagonal path's between-sample error is the module's own
+  tolerance, not one of the ring scallops.
+
+`rotaryRegion.test.ts`'s `square/rotary_rough/around` pin and
+`squareRotaryModel.test.ts`'s `rough around` rows were re-recorded for the new
+admission, and `rotaryAroundPasses.test.ts`, `rotarySquareAroundPasses.test.ts`
+and `rotarySquareRingLinks.test.ts` were updated where a fixture's whole-ring
+bands are helices now (their link and engagement rules are unchanged and still
+proved on the rings a square blank keeps, plus the property suite).
+
+### Commands
+
+- `npm run build` -- exit 0 (docs, lint, e2e-lane check, colours, portable
+  paths, i18n, icons, tsc, every test file, vite build).
+- `npm run check:gcode` -- exit 0 (corpus exported; no controller interpreters
+  are installed on this machine, so it is a pass, not a validation).
+- `npx tsx src/engine/toolpaths/rotarySquareHelix.test.ts` -- passes.

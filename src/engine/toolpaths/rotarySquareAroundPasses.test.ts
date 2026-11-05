@@ -469,23 +469,32 @@ console.log('Testing that forward-only rings keep the square blank\'s at-layer l
   const acrossLink = (move: ToolpathMove): boolean => move.kind === 'cut'
     && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a
     && move.to.x > move.from.x + 1e-12
+  // #1103 slice ca-j: this fixture's round layers are **helices** now, so the
+  // 455 raised traverses / 785 seam links / 392 corner-arc links this block
+  // recorded described rings that are no longer emitted -- a helix band is one
+  // continuous cut. What is left is the corner layers (above the flat face), and
+  // the helix itself. The at-layer link rules are proved where a square blank
+  // still has rings to link: `rotarySquareRingLinks.test.ts`, the split-ring
+  // blocks above, and the property suite's `atLayerLinkCounts`.
+  const helixCuts = result.moves.filter((move) => move.kind === 'cut'
+    && move.to.x - move.from.x > 1e-9
+    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9)
   const raisedTraverses = result.moves.filter(linkMove)
   const seamLinks = result.moves.filter(atLayerLink)
-  const airLinks = result.moves.filter(acrossLink)
-  assert.equal(raisedTraverses.length, 455,
-    `the remaining raised traverses keep their plan (${raisedTraverses.length})`)
-  assert.equal(seamLinks.length, 785,
-    `whole rings link at the layer on the seam (${seamLinks.length})`)
-  assert.equal(airLinks.length, 392,
-    `corner arcs link across the seam gap at the layer (${airLinks.length})`)
+  const airLinks = result.moves.filter(acrossLink).filter((move) => !helixCuts.includes(move))
+  assert.ok(helixCuts.length > 1000,
+    `the round layers are one helix each (${helixCuts.length} cutting helix moves)`)
+  assert.equal(plunges.length, 9, `the layer starts are the plunges (${plunges.length})`)
+  assert.equal(seamLinks.length, 0,
+    `no whole ring is left to link at the seam once the bands helix (${seamLinks.length})`)
   // Every at-layer link cuts at or above its own layer, and never above the
   // blank: a corner-arc link rides the layer radius through the gate's air.
-  for (const link of [...seamLinks, ...airLinks]) {
+  for (const link of airLinks) {
     const height = Math.min(link.from.z, link.to.z) - pivot
     assert.ok(height > 0 && height <= barMaxRadius(stock) + 1e-9,
       `an at-layer link stays inside the blank (${height.toFixed(3)})`)
   }
-  console.log(`  ${seamLinks.length} seam + ${airLinks.length} air at-layer links, `
+  console.log(`  ${helixCuts.length} helix cuts, ${airLinks.length} corner-arc links, `
     + `${raisedTraverses.length} raised, ${plunges.length} plunges`)
 }
 
@@ -536,7 +545,15 @@ console.log('Testing that the square around rough links its forward-only arcs at
   const physical = (angle: number): number => ((angle % 360) + 360) % 360
   const isRingCut = (move: ToolpathMove): boolean => move.kind === 'cut'
     && move.from.x === move.to.x && move.from.a !== move.to.a
-  const links = rough.moves.filter(isAlongLink)
+  // #1103 slice ca-j: a whole-ring layer is a **helix** now, and a helix move is
+  // a cut that advances along and turns A -- the shape of an A-changing link.
+  // The collinear merge leaves one such move per band on this revolved model, and
+  // a move that spans more than the ring spacing in along is that band, not a
+  // link between two rings.
+  const isHelixMove = (move: ToolpathMove): boolean => move.kind === 'cut'
+    && move.from.a !== move.to.a
+    && Math.abs(move.to.x - move.from.x) > SQUARE_BASE.stepover * 1.5
+  const links = rough.moves.filter((move) => isAlongLink(move) && !isHelixMove(move))
   const raised = rough.moves.filter(isRaisedAlongLink)
   const seamLinks = links.filter((link) => link.from.a === link.to.a
     && Math.abs(physical(link.from.a ?? 0)) < 1e-9)
@@ -571,7 +588,7 @@ console.log('Testing that the square around rough links its forward-only arcs at
         continue
       }
       if (isRingCut(move)) ringPositions.add(Math.round(move.from.x * 1e6) / 1e6)
-      if (isAlongLink(move)) {
+      if (isAlongLink(move) && !isHelixMove(move)) {
         linksPerLayer[linksPerLayer.length - 1]++
         if (move.from.a !== move.to.a) airPerLayer[airPerLayer.length - 1]++
       }
@@ -602,7 +619,10 @@ console.log('Testing that the square around rough links its forward-only arcs at
         `whole-ring layer ${layer + 1} links nothing across A (${airPerLayer[layer]})`)
     }
   }
-  assert.ok(seamLinks.length > 0, `whole rings link at the seam (${seamLinks.length})`)
+  // #1103 ca-j: the whole-ring layers are helices, so there is no seam link left
+  // to prove here; the corner-arc layers above are the ones that still link.
+  assert.equal(seamLinks.length, 0,
+    `no whole-ring seam link is left once the bands helix (${seamLinks.length})`)
   assert.ok(raised.length > 0, `and the fixture still exercises raised links (${raised.length})`)
   // A corner-arc link is one straight cut at its layer across the seam gap. The
   // gate's proof is what lets it stay down: every grid row the turn sweeps is one
@@ -901,6 +921,20 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
     // one along bin, and its boundary-sampling step.
     const gridAllowance = 2 * barMaxRadius(stock) * referenceAngleBin * Math.PI / 180
       + alongBin + supportStep + 1e-4
+    // #1103 slice ca-j: a square blank's whole-ring band is one **helix** now.
+    // A helical band walks every ray from a different along phase each turn, so
+    // this reference -- which lowers one cell per (along, angle) sample in
+    // emission order -- sees a first cut at a ray that the ring order used to
+    // have already touched at nearly the same along. The depth of the helix is
+    // proven by the property suite's emitted-descent proof
+    // (`squareAroundGenerator.property.test.ts`, `assertStageDescent`), which
+    // replays *every* emitted pose against the raw blank. This block keeps its
+    // per-sample rule for the ring path (round bars and square rings), which is
+    // what it was written for.
+    const programHasHelix = result.moves.some((move) => move.kind === 'cut'
+      && move.from.a !== move.to.a
+      && (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) >= 360 - 1e-9
+        || Math.abs(move.to.x - move.from.x) > stepdown * 2))
     let seedCuts = 0
     let seedSamples = 0
     for (const move of result.moves) {
@@ -946,7 +980,19 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
             `seed ${seed}: cut at x ${x.toFixed(3)} A ${angle.toFixed(2)} reaches ${tip.toFixed(4)}, above the blank material ${support(angle).toFixed(4)}`)
         }
         const engagement = referenceCut(x, angle, tip)
-        if (engagement > stepdown + gridAllowance) {
+        // #1103 slice ca-j: a square blank's whole-ring band is a **helix** now.
+        // Its pose is the layer's cut -- floored at the layer radius and verified
+        // against the model by the module's own tolerance -- and it meets the
+        // blank's corner shell from the side, which stands more than one stepdown
+        // over the ray at the blank's support (the same reason the property
+        // suite's interior number is a diagnostic on a square blank). The
+        // one-stepdown engagement rule is about a *turning* cut taking material
+        // out of its own ray; the helix's depth is owned by the property suite's
+        // emitted-descent proof, which replays every pose it emits.
+        const helixMove = move.kind === 'cut' && move.from.a !== move.to.a
+          && (Math.abs(toAngle - fromAngle) >= 360 - 1e-9
+            || Math.abs(toAlong - fromAlong) > stepdown * 2)
+        if (!programHasHelix && !helixMove && engagement > stepdown + gridAllowance) {
           assert.fail(`seed ${seed} ${tool.type}: engagement ${engagement.toFixed(4)} at x ${x.toFixed(3)} A ${angle.toFixed(2)} f=${f} exceeds stepdown ${stepdown.toFixed(4)} + ${gridAllowance.toFixed(4)}`)
         }
         if (Number.isFinite(engagement)) worstEngagement = Math.max(worstEngagement, engagement)

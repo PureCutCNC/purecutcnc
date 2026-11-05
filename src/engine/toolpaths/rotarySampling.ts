@@ -1123,6 +1123,14 @@ function cropAngleMap(
   axis: BarStock['axis'],
 ): RotaryAngleMapEntry | null {
   const bounds = cachedMapWindow(map, window, axis)
+  // #1103 ca-j: a window entirely off the map has no cell to keep, so there is
+  // nothing to copy and nothing to reuse. It happens when the sampler's ray --
+  // the bar's centreline -- lies outside the model's own turned bounds, which an
+  // offset box on a **square blank** (material all on one side of the axis)
+  // makes routine: the row it would serve reads no cell and comes back `NaN`
+  // either way. The empty intersection used to reach `cropCells` as a negative
+  // length.
+  if (bounds.colEnd < bounds.colStart || bounds.rowEnd < bounds.rowStart) return null
   const cells = (bounds.colEnd - bounds.colStart + 1) * (bounds.rowEnd - bounds.rowStart + 1)
   const perCell = 4 + (map.wallCoverage !== undefined ? 1 : 0) + (map.modelOnly !== undefined ? 4 : 0)
   if (cells * perCell > MAX_CACHED_ANGLE_MAP_BYTES) return null

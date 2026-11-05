@@ -85,14 +85,19 @@
  *   budget that runs out -- a sampling limit, or a refinement that is still
  *   unresolved when its last round is spent -- reports `exhausted`, so the
  *   caller can fall back to forward-only rings for that band.
- * - Round bars only. A square blank's corners are not a surface of revolution
- *   and its retained-corner floor belongs to the ring path (#1045 slice C), so
- *   a square blank is **not applicable** (`null`) and the caller keeps rings.
+ * - Round bars, and (since #1103 slice ca-j) **square blanks on a band that has
+ *   become round**. A square blank's corners are not a surface of revolution,
+ *   so the square blank's own rules are supplied through
+ *   {@link ContinuousHelixLayer.material} and
+ *   {@link ContinuousHelixInput.stubFloor} and applied at every sampled pose: a
+ *   pose the ring path skips as air, or floors off a retained end, refuses or
+ *   lifts the pose. A band whose every ring is a whole ring under those rules --
+ *   the corners already gone -- is helixed; any other keeps its rings.
  *
  * #1103 slice ca-c wires it into `generateRotaryFinish`: a maximal run of
- * fully-covered rings of a round bar (and, when the operation has a region, a
- * band whose every segment the mask's boundary test proves) is emitted as one
- * helix, and any band the builder refuses keeps forward-only rings.
+ * fully-covered rings (and, when the operation has a region, a band whose every
+ * segment the mask's boundary test proves) is emitted as one helix, and any band
+ * the builder refuses keeps forward-only rings.
  *
  * Slice ca-d uses it for the around **rough**, one layer at a time: the caller
  * passes {@link ContinuousHelixLayer}, so every pose is clamped to the layer's
@@ -208,6 +213,19 @@ export interface ContinuousHelixBudget {
 export interface ContinuousHelixLayer {
   readonly radius: number
   readonly previousRadius: number
+  /**
+   * The square blank's material-touch gate at the layer's own radius (#1103
+   * slice ca-j), or absent on a round bar.
+   *
+   * A square blank stands material out to its corners while a flat is only half
+   * the side, so a layer above the material at some angle is air there and the
+   * ring path skips that sample (`squareRotaryTouchRadius`, `rotaryModel`). A
+   * `false` answer makes the band **not uninterrupted** exactly as a pose with
+   * no material under it does (`ineligible`), so the caller keeps the rings and
+   * its air skip is never relaxed. The helix asks it at every sampled pose, on
+   * its own finer angle grid, rather than trusting the ring grid's angles.
+   */
+  readonly material?: (angleDeg: number) => boolean
 }
 
 /**
@@ -317,6 +335,20 @@ export interface ContinuousHelixInput {
    * path cuts to the model itself. See {@link ContinuousHelixLayer}.
    */
   readonly layer?: ContinuousHelixLayer
+  /**
+   * The square blank's retained-stub contact floor at one pose (#1103 slice
+   * ca-j), or absent on a round bar and on a square blank with no retained end.
+   *
+   * The ring path floors every one of its `(angle, along)` samples at this
+   * closed form (`squareRotaryStubContactFloor`, applied by
+   * `completeRotaryTargets`): the cutter's side must never enter the retained
+   * square stock beyond a cut range's ends. The helix samples its own, finer
+   * poses -- angles no ring row visits and along positions no ring sits on -- so
+   * it asks the same form directly at each of them, and a pose is never lower
+   * than the ring path would allow there. It is a **floor**: a value at or below
+   * the pose does not move it.
+   */
+  readonly stubFloor?: (along: number, angleDeg: number) => number
   /** The commanded A of the first boundary ring's first point. Default 0. */
   readonly startAngle?: number
   /** The operation's warnings; the sampler's height-map warnings are merged here. */
@@ -562,6 +594,7 @@ function sampleHelixRows(
   const prep = input.prep
   const startAngle = input.startAngle ?? 0
   const maxRadius = barMaxRadius(prep.stock)
+  const stubFloor = input.stubFloor
   const spent = input.spent ?? ZERO_HELIX_SPEND
   for (const row of rows) {
     if (input.shouldStop?.() === true) return 'stopped'
@@ -573,6 +606,8 @@ function sampleHelixRows(
     // #1103 slice ca-g: `spent` is what the band's earlier attempts already used,
     // so a split cannot spend the cap again per piece.
     if (spent.work + sampling.work > budget.work) return 'exhausted'
+    // The row is one physical angle: its poses differ only in along.
+    const angle = rowAngle(startAngle, row, phaseScale)
     const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
       along: row.along,
       requestedCellSize: prep.requestedCellSize,
@@ -586,7 +621,7 @@ function sampleHelixRows(
     })
     const sampled = sampleAnglesWithPrep(
       rowPrep,
-      [rowAngle(startAngle, row, phaseScale)],
+      [angle],
       input.warnings,
       input.shouldStop ? { shouldStop: input.shouldStop } : {},
     )
@@ -601,7 +636,10 @@ function sampleHelixRows(
     // takes there: a pose with no material standing (`tip >= previousRadius`)
     // is air this layer skips, which makes the band not uninterrupted, and a
     // pose that does cut is floored at the layer's radius so the helix never
-    // dives through the layer to the model.
+    // dives through the layer to the model. On a **square blank** (#1103 slice
+    // ca-j) the layer also carries the ring path's material-touch gate, and the
+    // pose then takes the retained-stub contact floor the ring sample takes --
+    // at the pose's own along and angle, not only at a ring position.
     const layer = input.layer
     const raw = sampled.tipRadius[0]
     const tips = new Float32Array(raw.length)
@@ -617,7 +655,15 @@ function sampleHelixRows(
           ineligible = true
           continue
         }
+        if (layer.material !== undefined && !layer.material(angle)) {
+          ineligible = true
+          continue
+        }
         tip = Math.max(tip, layer.radius)
+      }
+      if (stubFloor !== undefined) {
+        const floor = stubFloor(row.along[i], angle)
+        if (floor > tip) tip = floor
       }
       tips[i] = tip
     }
@@ -777,17 +823,21 @@ function emptyHelix(
 
 /**
  * Build a forward helix over one band, or `null` when the band is not a case
- * this module covers (a square blank, a degenerate band, a missing operation
- * precondition). A non-null result with `exhausted`, `stopped` or `uncovered`
- * set carries no points; see {@link ContinuousHelix}.
+ * this module covers (a degenerate band, a missing operation precondition). A
+ * non-null result with `exhausted`, `stopped` or `uncovered` set carries no
+ * points; see {@link ContinuousHelix}.
  */
 export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHelix | null {
   const { prep, band, stockToLeave } = input
   const stock = prep.stock
-  // The helix is a round-bar path. A square blank's retained corners are not a
-  // surface of revolution, and its corner floor is the ring path's; the caller
-  // keeps rings there (ca-d's forward-only arcs).
-  if (stock.shape !== 'round') return null
+  // A **square blank** is admitted since #1103 slice ca-j, but only on the same
+  // terms as a round one: the caller walks bands whose every ring is a whole
+  // ring (material at every angle under the blank's touch gate, `tip <
+  // previousRadius`, one run), and each sampled pose below re-checks that gate
+  // and takes the retained-stub contact floor at its own along and angle. A
+  // band whose corners are still standing therefore never reaches here, and a
+  // pose the ring path would skip or lift keeps the caller's rings.
+  //
   // Around mode samples with the conservative cell rise; without it the path
   // would be less safe than the ring grid it replaces.
   if (!prep.conservativeCellBounds) return null
@@ -914,8 +964,9 @@ export interface ContinuousBandVisit {
   readonly along: readonly number[]
   /**
    * Build one helix over the ring range, charging the band's shared spend.
-   * `null` means the case is not this module's (a square blank, a degenerate
-   * band): the whole range is cut as rings and nothing is split.
+   * `null` means the case is not this module's (a degenerate band, or a
+   * precondition the caller's prep does not meet): the whole range is cut as
+   * rings and nothing is split.
    */
   readonly attempt: (fromRing: number, toRing: number, spent: ContinuousHelixSpend) => ContinuousHelix | null
   /**

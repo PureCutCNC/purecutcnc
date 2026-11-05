@@ -3192,7 +3192,18 @@ function assertStageDescent(
     if (!(tip < current - 1e-12)) return
     let drop = current - tip
     let first = !samples.has(key)
-    if (first && drop > stepdown + DESCENT_TOLERANCE + 1e-9) {
+    // #1103 ca-j: a square blank's layer can be a **helix**, and one layer's
+    // passes at a ray sit on that band's own axial phase (the pitch follows the
+    // band's length, which changes as the qualifying rings change). The pose that
+    // established the material at this exact key is therefore not always the
+    // immediately preceding layer's pose at the same key, so a phase-shifted
+    // pose could read the layer-above height instead of what the passes actually
+    // left. `footprintStanding` is the existing answer to exactly that -- it
+    // finds the pass whose **body** covered the ray and returns that body's
+    // contact, an upper bound on the material left -- and it used to run only for
+    // a first cut. Run it whenever the drop is over the one-stepdown bound: a
+    // contact can only lower the measured drop, so this cannot hide a deep cut.
+    if (drop > stepdown + DESCENT_TOLERANCE + 1e-9) {
       const covered = footprintStanding(along, angle, raw)
       if (covered !== null) {
         current = Math.min(current, covered)
@@ -3213,7 +3224,6 @@ function assertStageDescent(
         + `drop ${drop.toFixed(4)} against ${allowed.toFixed(4)}`
     }
     if (drop > allowed + 1e-9) {
-
       assert.ok(false,
         `${entry.label}: the emitted ${label} does not descend from the raw blank at along `
         + `${along.toFixed(3)} A${angle.toFixed(3)}: ${first ? 'the first cut is' : 'one cut drops'} `
@@ -4153,9 +4163,71 @@ let worstPlungeLabel = ''
 // An in-air link is a rapid and is checked for body clearance below; a link
 // that stays a cut (the A-changing travel rule) must remove nothing.
 let roughLinkChecks = 0
+/**
+ * Rough around cut moves that are part of a **continuous helix** (#1103 ca-j).
+ *
+ * A square blank's whole-ring band is a helix now, so the emitted program holds
+ * moves that travel along the bar *and* turn A -- the shape the #1093/#1117
+ * at-layer link rules were written for. A helix is not a link: it is the layer's
+ * own cut, and its depth is owned by `assertStageDescent` above (which replays
+ * every emitted pose against the raw blank and the material the earlier layers
+ * left, corner shell and all). The link proof's one-stepdown bound is the wrong
+ * measure here: a square blank's intact corner shell stands more than a stepdown
+ * above the corner rays, exactly the reason the interior number is a diagnostic
+ * on a square blank, and a helix's cutter flank removes it just as a ring cut
+ * does. Counting them keeps the classification visible.
+ */
+let helixMoveChecks = 0
+/** Square blank and round bar share of those moves. */
+let helixSquareChecks = 0
 let roundAroundCases = 0
 /** Non-revolved models replayed (#1093 review). */
 let featureCases = 0
+
+/**
+ * The moves of one around stage that belong to a continuous helix (#1103 ca-j).
+ *
+ * Two shapes reach the analysis. The generator merges collinear moves, so a
+ * helix over a surface of revolution arrives as one (or a few) commanded moves
+ * whose A span is a whole number of turns -- 720 degrees on the failing fixture,
+ * which no at-layer link can be. A helix the surface does not make collinear
+ * stays a run of short (along, A) segments at one axial advance per degree,
+ * which the run test below recognises and a pair of ring links never is.
+ */
+function helixMovesOf(
+  moves: readonly ToolpathMove[],
+  alongOf: (point: ToolpathMove['from']) => number,
+): Set<ToolpathMove> {
+  const set = new Set<ToolpathMove>()
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = alongOf(move.to) - alongOf(move.from)
+    const turn = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) set.add(move)
+  }
+  let run: ToolpathMove[] = []
+  let pitch = 0
+  const flush = (): void => {
+    if (run.length >= 6) for (const move of run) set.add(move)
+    run = []
+  }
+  for (const move of moves) {
+    const along = move.kind === 'cut' ? alongOf(move.to) - alongOf(move.from) : 0
+    const turn = move.kind === 'cut' ? (move.to.a ?? 0) - (move.from.a ?? 0) : 0
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) > 1e-9) {
+      const next = along / turn
+      if (run.length === 0
+        || Math.abs(next - pitch) <= 1e-6 * Math.max(Math.abs(next), Math.abs(pitch))) {
+        run.push(move)
+        pitch = next
+        continue
+      }
+    }
+    flush()
+  }
+  flush()
+  return set
+}
 
 for (const { entry, program } of CASES) {
   currentCaseLabel = entry.label
@@ -4450,12 +4522,17 @@ for (const { entry, program } of CASES) {
   }
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
+  /** #1103 ca-j: the finish stage's helix moves, for the finished-surface bound below. */
+  let finishHelixMoves = 0
   for (const stage of stages) {
     const bound = roughBound
     // A finish-only program cuts to full depth in one pass, so the along-stage
     // radial bite does not apply to it; it is covered by the advisory instead.
     // (Turning engagement and plunges are rough-only assertions regardless.)
     const unlicensedFinish = stage.finish && entry.programKind === 'finish'
+    const helixMoves = stage.direction === 'around'
+      ? helixMovesOf(stage.moves, alongOf)
+      : new Set<ToolpathMove>()
     for (const move of stage.moves) {
       const hasAngle = move.from.a !== undefined || move.to.a !== undefined
       const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
@@ -4519,9 +4596,16 @@ for (const { entry, program } of CASES) {
         // along-mode pass is a constant-angle cut by construction.
         // #1117 rl-e: a rough link may also change A -- the partial-ring case, one
         // straight slope in (along, A). The finish's links stay at one angle.
+        const helixMove = helixMoves.has(move)
+        if (helixMove) {
+          helixMoveChecks++
+          if (entry.stock.shape === 'square') helixSquareChecks++
+          if (stage.finish) finishHelixMoves++
+        }
         const linkMove = stage.direction === 'around'
           && alongOf(move.from) !== alongOf(move.to)
           && (fromAngle === toAngle || !stage.finish)
+          && !helixMove
         if (linkMove) {
           if (stage.finish) {
             finishLinkChecks++
@@ -4732,7 +4816,14 @@ for (const { entry, program } of CASES) {
                 Math.abs(worstCell.along - entry.alongEnd),
               )
               const collar = faceDistance <= cutterRadius + budget.alongBin
-              if (!entry.mesh && !collar) {
+              // #1103 ca-j: a **helix** move is not a turning cut in this sense.
+              // Its A turn comes with the along advance, so the cumulative
+              // interior number spans several turns of the band and collects
+              // cavities under the intact corner shell that the ring path's
+              // one-turn check never sees (the same reason the interior number is
+              // a diagnostic on a square blank). What bounds how deep a helix may
+              // cut is `assertStageDescent`, which replays every emitted pose.
+              if (!entry.mesh && !collar && !helixMove) {
                 checkEngagement(engagement, bound,
                   `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
                   + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
@@ -4945,8 +5036,24 @@ for (const { entry, program } of CASES) {
   // property checked here is that the finish is not below the model and not
   // further above it than that lift plus its own scallop.
   const conservativeLift = entry.requestedCellSize
+  // #1103 ca-j: a square blank's finish band can be a **helix** now. A helix's
+  // between-sample error is the module's own tolerance (`helixTolerance`, whose
+  // floor is `AROUND_ANGLE_TOLERANCE_MM` = 0.005 mm) and it is measured along
+  // the **diagonal** (along, A) chord, so it adds to the cell lift and the ring
+  // scallops this allowance already names instead of being one of them. The ring
+  // path's angular sag is the `0.005` above; this is the diagonal one.
+  const helixTolerance = finishHelixMoves > 0 ? 0.005 : 0
+  // A square blank's blank support is not the cell's own ray: the corner stands
+  // above it, and the reference's cell carries that support. The ring path
+  // happened to sample the corner at the same angular phase as the reference's
+  // bins; a helix's (along, A) phase is its own, so the support it meets at a
+  // cell can be one reference bin away -- the same term the corner already
+  // contributes once. It is an angular-phase allowance, not slack in the cut.
+  const helixCornerSupport = finishHelixMoves > 0 && entry.stock.shape === 'square'
+    ? corner * referenceAngleRad
+    : 0
   const surfaceTolerance = conservativeLift + alongScallop + angularScallop + 0.005
-    + corner * referenceAngleRad + 1e-6
+    + helixTolerance + helixCornerSupport + corner * referenceAngleRad + 1e-6
   const skip = 2 * budget.alongBin + cutterRadius
   // A stubbed end keeps one cutter radius of the band uncut on purpose: the
   // cutter-centre span is pulled inside the stub face so the cutter's side
@@ -5126,6 +5233,10 @@ assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (
 // A run that stops emitting a qualifying link on one of them -- because the
 // generator fell back to raised links, or because a case was dropped -- fails
 // here instead of passing with a hole where that dimension's proof should be.
+assert.ok(helixMoveChecks > 0,
+  `a square blank's helix moves are classified as the layer's cut, not as links (${helixMoveChecks})`)
+assert.ok(helixSquareChecks > 0,
+  `the square blank's whole-ring bands reach the helix path (${helixSquareChecks})`)
 assert.ok(atLayerLinkCounts.total > 0,
   `the at-layer rough links are proved against the reference (${atLayerLinkCounts.total})`)
 

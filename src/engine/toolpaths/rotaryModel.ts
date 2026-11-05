@@ -1738,13 +1738,15 @@ function prepareRotaryTargets(
     ...(samplingMesh.retainedTriangleStart !== undefined
       ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
       : {}),
-    // #1103 ca-e: a round around operation may build a helix over the rings it
-    // has just sampled, and the helix reads the same physical angles. Keep the
+    // #1103 ca-e: an around operation may build a helix over the rings it has
+    // just sampled, and the helix reads the same physical angles. Keep the
     // raster maps this grid builds so the helix can read them instead of
     // rasterising a second set (#1103 ca-e, review P1). The base grid never
-    // reads the cache, so its own output stays byte for byte what it was; a
-    // square blank has no helix, so it pays nothing.
-    ...(params.passDirection === 'around' && stock.shape === 'round' && along.length > 1
+    // reads the cache, so its own output stays byte for byte what it was.
+    // #1103 ca-j: a square blank can helix too once a layer has become round,
+    // so it keeps its maps exactly as a round bar does; a band the blank's own
+    // rules refuse still costs only the stores the ring grid paid for.
+    ...(params.passDirection === 'around' && along.length > 1
       ? { angleMaps: 'write' as const }
       : {}),
     workspace,
@@ -2121,6 +2123,47 @@ function finishRefusal(
 }
 
 /**
+ * The square blank's retained-stub contact floor for the continuous helix
+ * (#1103 slice ca-j), or `undefined` when there is nothing to lift off.
+ *
+ * `completeRotaryTargets` floors every ring sample at exactly this closed form
+ * (the real cutter's contact height against the retained square stock beyond a
+ * cut range's end). The helix samples its own poses -- angles no ring row visits,
+ * along positions no ring sits on -- so it asks the same form at each of them
+ * instead of reading the ring grid, and a pose can never sit lower than the ring
+ * path would allow there. `undefined` on a round bar (`squareRotaryStubContactFloor`
+ * answers `-Infinity` for it) and on a square blank with no retained end, so the
+ * round path allocates nothing new.
+ */
+function continuousHelixStubFloor(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): ((along: number, angleDeg: number) => number) | undefined {
+  if (!isSquareStock(stock)) return undefined
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  // No stub exists at an end the cut range already meets; the ring path's own
+  // `stubFloor` draws the same line (`completeRotaryTargets`).
+  const lowerStub = params.alongStart > lower
+  const upperStub = upper > params.alongEnd
+  if (!lowerStub && !upperStub) return undefined
+  return (along: number, angleDeg: number): number => {
+    let floor = Number.NEGATIVE_INFINITY
+    if (lowerStub) {
+      floor = Math.max(floor, squareRotaryStubContactFloor(
+        stock, angleDeg, tool.radius, tool.type, along - params.alongStart))
+    }
+    if (upperStub) {
+      floor = Math.max(floor, squareRotaryStubContactFloor(
+        stock, angleDeg, tool.radius, tool.type, params.alongEnd - along))
+    }
+    return floor
+  }
+}
+
+/**
  * The continuous helix's operation-wide input for the finish (#1103 slices ca-c
  * and ca-g).
  *
@@ -2130,6 +2173,9 @@ function finishRefusal(
  * the rings would and pays no second cross-section, strip plan or raster. `null`
  * when the targets carry no prep (a refusal/cancellation never reaches here),
  * and the band walk then keeps every ring of the band.
+ *
+ * A square blank's retained ends are floored per pose (#1103 slice ca-j); a
+ * round bar has no such floor, so its input is byte for byte what it was.
  *
  * The band, the A cursor and the band's shared spend are left to each attempt:
  * slice ca-g splits a band that cannot be verified everywhere, and each piece
@@ -2144,6 +2190,18 @@ function continuousFinishInput(
 ): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
+  // #1103 ca-j scopes the square blank to the **rough**. A rough layer that has
+  // become round has the blank's material behind it, and its band is admitted
+  // only when the blank's own touch gate and stub floor hold at every pose. A
+  // finish has no such layer: its band is the model, so the stock around it is
+  // whatever the rough left, and the independent square-blank surface proof
+  // (`squareAroundGenerator.property.test.ts`) cannot bound a diagonal finish
+  // path's leftover material there -- it reads the blank's corner support at a
+  // cell the ring path only happens to land on (a 12 mm blank, Ø1.4 flat, cone:
+  // 4.79 mm over the bound). A finish keeps its rings until that proof covers
+  // the helix, so its output is byte for byte what it was.
+  if (isSquareStock(prep.stock)) return null
+  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params)
   return {
     prep,
     tool,
@@ -2151,20 +2209,23 @@ function continuousFinishInput(
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
     warnings,
+    ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
   }
 }
 
 /**
  * The continuous helix's operation-wide input for one roughing layer (#1103
- * slices ca-d and ca-g).
+ * slices ca-d, ca-g and ca-j).
  *
  * Same prep as the ring grid -- same mesh, tool, cell size, retained-wall
  * metadata and shared workspace -- with the layer's own two rules supplied per
  * attempt through {@link ContinuousHelixLayer}: every pose is floored at
  * `radius` and a pose with no material above `previousRadius` refuses the band.
- * `null` when the targets carry no prep (a refusal/cancellation never reaches
- * here), and the band walk then keeps every ring of the band.
+ * A square blank adds its retained-stub floor here (as the finish does) and its
+ * material-touch gate on the layer itself, because that gate depends on the
+ * layer's radius. `null` when the targets carry no prep (a refusal/cancellation
+ * never reaches here), and the band walk then keeps every ring of the band.
  */
 function continuousRoughInput(
   sampling: RotaryTargets,
@@ -2175,6 +2236,7 @@ function continuousRoughInput(
 ): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
+  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params)
   return {
     prep,
     tool,
@@ -2182,6 +2244,7 @@ function continuousRoughInput(
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
     warnings,
+    ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
   }
 }
@@ -2309,9 +2372,11 @@ function finishFromTargets(
     // whole band. `buildContinuousHelix` samples the actual combined (along, A)
     // poses and closes the band with a complete ring at each axial end, so the
     // band is one run with no stop. Everything else -- a partial ring, a model
-    // gap, a region that trims the ring, a square blank, a helix whose budget
-    // ran out -- keeps its rings, now forward-only, with the emitter's safe
-    // transition between them.
+    // gap, a region that trims the ring, a helix whose budget ran out -- keeps
+    // its rings, now forward-only, with the emitter's safe transition between
+    // them. A **square blank** is helixed too since #1103 slice ca-j, on the
+    // same rule: its band must be a whole ring at every angle under the blank's
+    // own touch gate, and the builder floors each pose off the retained ends.
     //
     // #1103 slice ca-g splits a band the attempt could not verify everywhere:
     // the rings around the unverifiable spans, a helix on each run between them,
@@ -3675,9 +3740,13 @@ function roughFromTargets(
     // band, so the ring path keeps its air skip). On a round bar that is the
     // same uninterrupted ring the finish helices; a layer change still retracts,
     // and the next layer resumes at the forward-equivalent angle the cursor is
-    // at, so nothing rewinds. A square blank is never helixed (its corner arcs
-    // are not a surface of revolution): it keeps forward-only corner arcs with
-    // the gate's safe gaps, exactly as before but turning one way.
+    // at, so nothing rewinds. A **square blank** is helixed too since #1103
+    // slice ca-j, once a layer has become round: the band is a whole ring at
+    // every angle under the blank's touch gate (`ContinuousHelixLayer.material`
+    // re-checks it at each helix pose), and every pose takes the retained-stub
+    // contact floor the ring sample takes. A layer whose corners are still
+    // standing has no whole ring, so it keeps forward-only corner arcs with the
+    // gate's safe gaps exactly as before.
     //
     // Each sample keeps its own angle row's height at the ring's own along
     // index, and the same `needsCut`/layer rule as an along pass: material still
@@ -3845,7 +3914,23 @@ function roughFromTargets(
                   // A helix opens on a whole turn at its band's start (physical
                   // A0), so its forward-equivalent base is `unitBase(0)`.
                   startAngle: unitBase(0),
-                  layer: { radius: layerRadius, previousRadius },
+                  // #1103 ca-j: a square blank's layer keeps the ring path's
+                  // material-touch gate at every helix pose. The gate is the
+                  // layer's air skip -- `touchesMaterial` above is the same test
+                  // at the ring grid's angles -- so a pose where the blank has no
+                  // material standing at this radius refuses the band and the
+                  // layer's rings are kept, exactly as a pose with no material
+                  // under the tool already does.
+                  layer: {
+                    radius: layerRadius,
+                    previousRadius,
+                    ...(square
+                      ? {
+                        material: (angle: number): boolean =>
+                          layerRadius < squareRotaryTouchRadius(stock, angle, tool.radius, tool.type),
+                      }
+                      : {}),
+                  },
                   spent,
                 }),
               accept: (helix) => region === null

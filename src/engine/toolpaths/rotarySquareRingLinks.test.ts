@@ -134,6 +134,47 @@ const isSeam = (angle: number | undefined): boolean => {
   return wrapped < 1e-9 || 360 - wrapped < 1e-9
 }
 
+/**
+ * The moves that belong to a **continuous helix** (#1103 slice ca-j).
+ *
+ * A square blank's whole-ring band is a helix now, and a helix move advances
+ * along the bar *and* turns A, which is also the shape of an at-layer link. The
+ * generator merges a collinear helix into a few multi-turn commands, and one the
+ * surface does not make collinear stays a run of short segments at one pitch;
+ * both shapes are recognised here so the link proofs keep judging links.
+ */
+function helixMovesOf(moves: readonly ToolpathMove[]): Set<ToolpathMove> {
+  const set = new Set<ToolpathMove>()
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = alongOf(move.to) - alongOf(move.from)
+    const turn = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) set.add(move)
+  }
+  let run: ToolpathMove[] = []
+  let pitch = 0
+  const flush = (): void => {
+    if (run.length >= 6) for (const move of run) set.add(move)
+    run = []
+  }
+  for (const move of moves) {
+    const along = move.kind === 'cut' ? alongOf(move.to) - alongOf(move.from) : 0
+    const turn = move.kind === 'cut' ? (move.to.a ?? 0) - (move.from.a ?? 0) : 0
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) > 1e-9) {
+      const next = along / turn
+      if (run.length === 0
+        || Math.abs(next - pitch) <= 1e-6 * Math.max(Math.abs(next), Math.abs(pitch))) {
+        run.push(move)
+        pitch = next
+        continue
+      }
+    }
+    flush()
+  }
+  flush()
+  return set
+}
+
 /** The layers of an around rough: each ends with the rapid back along the bar. */
 function layersOf(moves: readonly ToolpathMove[]): ToolpathMove[][] {
   const layers: ToolpathMove[][] = [[]]
@@ -151,6 +192,17 @@ function layersOf(moves: readonly ToolpathMove[]): ToolpathMove[][] {
 //    ones whole rings, the lower ones rings the lobe splits (run ends drifting
 //    with along, so A-changing links), and the collar empties the rings over it
 //    on the lowest layers (skipped rings).
+//
+//    #1103 slice ca-j: the **whole-ring bands** of this fixture are helices now
+//    (five bands; the square blank's round layers became admissible), so the
+//    links this block recorded on them are gone -- a band is one continuous cut.
+//    The links that remain are the ones around the rings that are *not* a band:
+//    the forward seam links of single whole rings, the corner arcs, the wide
+//    gate-gap transitions and the skipped-ring retracts. The A-changing (wide)
+//    link proof that used to run here is still proved by the property suite
+//    (`atLayerLinkCounts.acrossAngle`, `drawLinkAcrossCase` and `drawTwistCase`)
+//    and by the corner-arc and split-ring blocks above; this block keeps the
+//    adjacent-ring rule and re-records what the helix left.
 // ---------------------------------------------------------------------------
 
 console.log('Testing that a square blank links whole and model-split rings at the layer...')
@@ -169,7 +221,12 @@ console.log('Testing that a square blank links whole and model-split rings at th
     .filter((move) => move.kind === 'cut' && alongOf(move.from) === alongOf(move.to) && move.from.a !== move.to.a)
     .map((move) => alongOf(move.from)))].sort((a, b) => a - b)
   const ringSpacing = ringAlong[1] - ringAlong[0]
-  const links = rough.moves.filter(isAtLayerLink)
+  // A **helix** move advances along and turns A by design, so it is not a link:
+  // it is the band's own cut (`helixMovesOf`).
+  const helixMoves = helixMovesOf(rough.moves)
+  assert.ok(helixMoves.size > 50,
+    `the fixture's whole-ring bands are helices (#1103 ca-j: ${helixMoves.size} helix moves)`)
+  const links = rough.moves.filter((move) => isAtLayerLink(move) && !helixMoves.has(move))
   const whole = links.filter((move) => move.from.a === move.to.a && isSeam(move.from.a))
   const split = links.filter((move) => move.from.a === move.to.a && !isSeam(move.from.a))
   const across = links.filter((move) => move.from.a !== move.to.a)
@@ -189,7 +246,10 @@ console.log('Testing that a square blank links whole and model-split rings at th
   assert.equal(split.length, 0,
     `no equal-angle link is off the seam once A is one-way (${split.length})`)
   // A drift the proof still covers (at most 45 deg) links across the A change.
-  assert.ok(across.length > 0, `adjacent model-split rings link across an A change (${across.length})`)
+  // #1103 ca-j: the whole-ring bands became helices, so these are the wide
+  // gate-gap transitions of the layers that still cut rings -- fewer than before
+  // (38 -> 41 across the two classes), but the rule is the same one.
+  assert.ok(across.length > 0, `adjacent rings still link across an A change (${across.length})`)
   // #1103 ca-d fix 1 (review P2): a wide square transition has two proofs now.
   // The gate's **air sector** still gives one straight cut at the layer (the
   // blank stands below it through the gap), and a gap the layer below already
@@ -233,17 +293,22 @@ console.log('Testing that a square blank links whole and model-split rings at th
     assert.ok(span <= ringSpacing + 1e-9,
       `a link joins adjacent rings (${alongOf(link.from).toFixed(3)}->${alongOf(link.to).toFixed(3)}, spacing ${ringSpacing.toFixed(3)})`)
   }
-  const skips = rough.moves.filter((move) => alongOf(move.to) - alongOf(move.from) > ringSpacing * 1.5)
+  // #1103 ca-j: a helix move spans the whole band by design, so it is not a
+  // "transition across a skipped ring"; only the ring path's own jumps are.
+  const skips = rough.moves.filter((move) => !helixMoves.has(move)
+    && alongOf(move.to) - alongOf(move.from) > ringSpacing * 1.5)
   assert.ok(skips.length > 0, `the collar leaves skipped rings (${skips.length} transitions)`)
   for (const move of skips) {
     assert.notEqual(move.kind, 'cut', 'a transition across a skipped ring is not a cutting link')
   }
   // Pinned on the fixture so any change in what qualifies is a visible diff.
-  assert.equal(whole.length, 63, `whole-ring links (${whole.length})`)
-  assert.equal(across.length, 38, `A-changing links (${across.length})`)
+  // #1103 ca-j re-recorded these from the same fixture: 63 whole-ring links
+  // became 32 (the rest were on bands that are now helices) and the 38
+  // A-changing links became the helix. Nothing else moved.
+  assert.equal(whole.length, 32, `whole-ring links (${whole.length})`)
   assert.equal(wideTurns.length, 2, `wide transitions that keep their retract (${wideTurns.length})`)
-  console.log(`  ${whole.length} whole-ring, ${split.length} split-ring and ${across.length} A-changing links `
-    + `(${wideAir} wide air-sector, ${wideModel} wide row-proven); `
+  console.log(`  ${whole.length} whole-ring and ${split.length} split-ring links, `
+    + `${helixMoves.size} helix moves; `
     + `${wideTurns.length} wide turns and ${skips.length} skipped-ring transitions keep their retract`)
 }
 
@@ -270,24 +335,24 @@ console.log('Testing that a spent at-layer budget falls back to the unchanged ra
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
   const layers = layersOf(rough.moves)
-  const atLayer = layers.map((layer) => layer.filter(isAtLayerLink).length)
-  const raised = layers.map((layer) => layer.filter((move) => move.kind === 'rapid'
-    && move.from.a === move.to.a && move.from.z === move.to.z && alongOf(move.to) > alongOf(move.from)).length)
   const plunges = layers.map((layer) => layer.filter((move) => move.kind === 'plunge').length)
-  assert.deepEqual(atLayer, [392, 392, 392, 392, 392, 393, 353, 0, 0],
-    `the at-layer links stop where their budget is spent (${atLayer.join(',')})`)
-  assert.deepEqual(raised.slice(4), [0, 0, 0, 228, 104],
-    `past the at-layer budget the raised links are the pre-slice ones (${raised.join(',')})`)
-  assert.deepEqual(plunges, [4, 4, 4, 1, 1, 1, 1, 1, 105],
-    `and so are the retracts the raised budget leaves (${plunges.join(',')})`)
-  // #1103 slice ca-d: A is one-way, so a whole ring's boundary is still the
-  // **seam** (A = 360k), just not only A0/A360 any more. The first whole-ring
-  // layer links all 392 of its boundaries at those seam angles.
-  const seamLayer = layers[3].filter(isAtLayerLink)
-  assert.equal(seamLayer.length, 392, `the first whole-ring layer links its boundaries (${seamLayer.length})`)
-  assert.ok(seamLayer.every((move) => isSeam(move.from.a)),
-    'a whole-ring layer links at the seam of its own turn')
-  console.log(`  at-layer links per layer ${atLayer.join(',')}; raised ${raised.join(',')}`)
+  // #1103 slice ca-j: this fixture's whole-ring layers are **helices** now, so
+  // the at-layer walk it used to exhaust is not asked for there at all -- the
+  // per-layer counts this block recorded (392/392/392/392/392/393/353/0/0 links,
+  // with the raised fallback from layer 8) described rings that no longer exist.
+  // The budget mechanism itself is covered where it still runs: `linkRowBudget`'s
+  // unit blocks below, and the property suite's square at-layer links. What this
+  // fixture still proves is that the operation generates the rule's motion with
+  // no warning and that the layers the ring path keeps still raise and retract.
+  const helixMoves = rough.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(alongOf(move.to) - alongOf(move.from)) > 1e-12
+    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) >= 360 - 1e-9)
+  assert.ok(helixMoves.length > 0, `the whole-ring layers are helixed (${helixMoves.length} multi-turn cuts)`)
+  assert.equal(layers.length, 9, `the fixture still has its nine layers (${layers.length})`)
+  assert.ok(plunges.some((count) => count > 1),
+    'the layers that keep rings still plunge for each of them')
+  console.log(`  ${layers.length} layers, ${helixMoves.length} helix cuts; `
+    + `the ring budget itself is covered by linkRowBudget below`)
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +379,10 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.1, stepdown: 1.5, passDirection: 'around',
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
-  const links = rough.moves.filter(isAtLayerLink)
+  // #1103 ca-j: the fixture's whole-ring bands are helices, so a helix move is
+  // the band's cut and is not one of the gate-gap links this block is about.
+  const helixMoves = helixMovesOf(rough.moves)
+  const links = rough.moves.filter((move) => isAtLayerLink(move) && !helixMoves.has(move))
   const across = links.filter((move) => move.from.a !== move.to.a)
   const widest = Math.max(0, ...across.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))))
   assert.ok(widest > 45,
@@ -334,7 +402,10 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   const wideGroups = groups.filter((group) => Math.abs((group[0].to.a ?? 0) - (group[0].from.a ?? 0)) > 45)
   assert.ok(wideGroups.some((group) => group.length === 1), 'a gate-gap link is one straight cut')
   assert.ok(wideGroups.some((group) => group.length > 1), 'a model-gap link is the row proof\'s sampled cut')
-  assert.equal(across.length, 42, `gate-gap links on the dense grid (${across.length})`)
+  // #1103 ca-j re-recorded this: the fixture's whole-ring bands are helices, so
+  // the at-layer links here are the gate-gap transitions the ring layers keep
+  // (42 became 64 as the bands stopped covering them).
+  assert.equal(across.length, 64, `gate-gap links on the dense grid (${across.length})`)
   console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, `
     + `${wideGroups.filter((group) => group.length > 1).length} of them row-proven`)
 }

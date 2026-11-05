@@ -1038,7 +1038,11 @@ const NO_REGION_HASHES: Record<string, string> = {
   // (not the whole circumference the physical indices walked), and a wide square
   // model gap the layer below cleared is proven by the at-layer row proof
   // instead of the 45 degree drift bound. Both change which links stay down.
-  'square/rotary_rough/around': 'moves=3c69e9c477ad98de warnings= gcode=4f921fb31dc6867b',
+  // #1103 slice ca-j re-recorded this row: the square blank's whole-ring bands
+  // below its flat face are one continuous helix per band now (the rough scope of
+  // `rotarySquareHelix.test.ts`), so the rings and their at-layer links there are
+  // replaced by the helix. The finish rows and every along row are unchanged.
+  'square/rotary_rough/around': 'moves=de87aed7bcab33b1 warnings= gcode=f6ccaa1a63e5576d',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
   'square/rotary_finish/around': 'moves=213c0b27809a4a2f warnings=rotaryFinishWithoutRough gcode=bd1329b8dc986b8b',
 }

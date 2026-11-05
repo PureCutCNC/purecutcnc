@@ -542,14 +542,21 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
  * out of the retained end.
  */
 {
+  // #1103 slice ca-j: a square blank is this module's case once its caller
+  // supplies the blank's own rules (the material-touch gate on the layer and the
+  // retained-stub floor per pose). The module itself admits it; the *rough*
+  // caller is what uses it, and the finish keeps its rings for now
+  // (`rotarySquareHelix.test.ts` owns both halves).
   const square = squareStock(20, 60)
   const squarePrep = createRotarySamplingPrep(SQUARE_PRISM, square, FLAT, {
     along: [6], requestedCellSize: CELL, conservativeCellBounds: true, workspace: {},
   })
-  assert.equal(buildContinuousHelix({
+  const onSquare = buildContinuousHelix({
     prep: squarePrep, tool: FLAT, band: BAND, stepover: STEPOVER, sampleSpacing: SAMPLE_SPACING,
     stockToLeave: 0, warnings: [],
-  }), null, 'a square blank keeps the ring path')
+  })
+  assert.ok(onSquare !== null && onSquare.points.length > 1,
+    'a square blank on the around path is a helix once the caller supplies its rules')
 
   const alongPrep = createRotarySamplingPrep(RIDGE, STOCK, FLAT, {
     along: [6], requestedCellSize: CELL, workspace: {},
@@ -595,7 +602,7 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
     if (delta > 0) raised++
   }
   assert.equal(raised, left.points.length, 'every pose carries the stock to leave')
-  console.log(`  coverage: square/along/degenerate refused, pulled-in band ${retained.start}..${retained.end} held`)
+  console.log(`  coverage: along/degenerate refused, square blank helixed, pulled-in band ${retained.start}..${retained.end} held`)
 }
 
 /**
