@@ -76,6 +76,11 @@ function rotaryDefinition(zeroA?: string) {
   assert(grbl, 'the bundled GRBL machine validates')
   const definition = validateDef({
     ...JSON.parse(JSON.stringify(grbl)),
+    // The bundled GRBL program names no work coordinate system, and an
+    // unspecified system is unknown, not G54 — so the P1 line below is only
+    // proven once the program says which system it runs in (#1152 correction
+    // round 2, finding 2).
+    workCoordinates: { selectCommand: 'G54' },
     rotary: {
       about: 'x',
       drive: 'own',

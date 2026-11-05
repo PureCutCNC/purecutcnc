@@ -1095,14 +1095,15 @@ function machineRotaryLetter(definition: TemplateRuleDefinition): string | null 
  * its old A, while the pauses the filled line was supposed to replace are
  * suppressed for nothing (#1152 correction round 1, finding 3).
  *
- * No selection means the controller's default, G54 (the same default the
- * header rules expand `{wcsCommand}` to). A selection that names no G5x word,
- * or several, leaves the answer unknown: then only `P0` (the active system) or
- * `G92` can be trusted.
+ * An empty selection is **unknown**, not G54: the program may start in whatever
+ * system the controller was left in, so a `P1` line could zero G54 while G55
+ * stays active (#1152 correction round 2, finding 2). Likewise a selection that
+ * names no G5x word, or several, leaves the answer unknown. Only `P0` (the
+ * active system) or `G92` is trustworthy then.
  */
 function activeWorkOffsetIndex(selectCommand: string | null): number | null {
   const code = (selectCommand ?? '').replace(/\([^)]*\)/g, ' ').trim()
-  if (code.length === 0) return 1
+  if (code.length === 0) return null
   const indexes = new Set<number>()
   for (const match of code.matchAll(/\bG(5[4-9])(?![\d.])/gi)) {
     indexes.add(Number(match[1]) - 53)

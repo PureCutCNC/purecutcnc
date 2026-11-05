@@ -287,7 +287,10 @@ await test('a machine that zeroes A itself shows no rotary-zeroing note', async 
   assert(REPORTED.rotary !== undefined, 'fixture: the reported machine has a rotary block')
   const zeroing = validateMachineDefinition({
     ...structuredClone(REPORTED),
-    rotary: { ...structuredClone(REPORTED.rotary!), zeroA: 'G10 L20 P1 A0' },
+    // The reported GRBL program names no work coordinate system, so only the
+    // active-system form proves which offset the line zeroes (#1152 correction
+    // round 2, finding 2).
+    rotary: { ...structuredClone(REPORTED.rotary!), zeroA: 'G10 L20 P0 A0' },
   })
   const project = reportedRotaryProject(zeroing, zeroing.id, DISPLAYED_OPS)
   const dialog = mount(project)

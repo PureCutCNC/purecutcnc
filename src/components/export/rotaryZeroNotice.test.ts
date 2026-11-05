@@ -80,9 +80,11 @@ assert.equal(
 )
 
 // The machine's own Zero A line replaces the operator's zeroing, so the note
-// is not shown; this holds for a manual-index program too.
+// is not shown; this holds for a manual-index program too. The reported GRBL
+// program names no work coordinate system, so only the active-system form is a
+// proven zeroing there (#1152 correction round 2, finding 2).
 assert.equal(
-  shouldShowRotaryZeroNotice([program('top', FLAT)], withRotary({ zeroA: 'G10 L20 P1 A0' }), flatProject),
+  shouldShowRotaryZeroNotice([program('top', FLAT)], withRotary({ zeroA: 'G10 L20 P0 A0' }), flatProject),
   false,
   'a machine that zeroes A itself shows no note',
 )
