@@ -815,6 +815,17 @@ function lineCode(line: string, syntax: CommentSyntax): string {
 }
 
 /**
+ * A rendered template line with every comment form of the definition's output
+ * dialect removed — `( … )` and `;` for G-code, `'` for a ShopBot part file —
+ * regardless of the definition's own `commentPrefix`. Callers that ask whether
+ * a line carries a command (the mandatory pause between rotary operations)
+ * must not count a word the controller will read as a comment (#1103).
+ */
+export function templateLineCode(line: string, outputDialect: string | undefined): string {
+  return lineCode(line, COMMENT_SYNTAX[commentDialectOf(outputDialect)])
+}
+
+/**
  * Split one rendered template line into the words it spells, or return the
  * token the rule does not understand.
  *
@@ -1101,8 +1112,14 @@ function machineRotaryLetter(definition: TemplateRuleDefinition): string | null 
  * names no G5x word, or several, leaves the answer unknown. Only `P0` (the
  * active system) or `G92` is trustworthy then.
  */
-function activeWorkOffsetIndex(selectCommand: string | null): number | null {
-  const code = (selectCommand ?? '').replace(/\([^)]*\)/g, ' ').trim()
+function activeWorkOffsetIndex(selectCommand: string | null, syntax: CommentSyntax): number | null {
+  // Every comment form of the dialect is removed first: `; G54` selects
+  // nothing, so it must not prove the active system (#1103).
+  const code = (selectCommand ?? '')
+    .split(/\r?\n/)
+    .map((line) => lineCode(line, syntax))
+    .join(' ')
+    .trim()
   if (code.length === 0) return null
   const indexes = new Set<number>()
   for (const match of code.matchAll(/\bG(5[4-9])(?![\d.])/gi)) {
@@ -1650,7 +1667,7 @@ export function machineTemplateDiagnostics(
   const zeroA = definition.rotary?.zeroA
   const expectedLetter = machineRotaryLetter(definition)
   if (zeroA !== undefined && zeroA.trim().length > 0 && expectedLetter !== null) {
-    const activeOffset = activeWorkOffsetIndex(definition.workCoordinates.selectCommand)
+    const activeOffset = activeWorkOffsetIndex(definition.workCoordinates.selectCommand, syntax)
     zeroA.split(/\r?\n/).forEach((rawLine, index) => {
       const code = lineCode(rawLine, syntax).trim()
       const match = /^(?:G10\s*L20\s*P(\d+)|G92)\s*([AXY])/i.exec(code)

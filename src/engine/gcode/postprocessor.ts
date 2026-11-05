@@ -53,6 +53,7 @@ import {
 import type { FeedDirective, OperationSequence } from './motionPipeline'
 import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { emitOpenSbpProgram } from './opensbpEmitter'
+import { templateLineCode } from './templateRules'
 
 // What the emitter has written so far. Which tool is held and whether the
 // spindle and coolant are on are not tracked here: that is the program's
@@ -231,9 +232,11 @@ const MANUAL_PAUSE_COMMAND = 'M0'
  * cannot hand the operator the bar and then resume. Comments are stripped
  * first, so prose never counts as a command.
  */
-function templateHasMandatoryStop(content: string, commentPrefix: string): boolean {
+function templateHasMandatoryStop(content: string, outputDialect: string | undefined): boolean {
   for (const line of content.split(/\r?\n/)) {
-    for (const match of lineCode(line, commentPrefix).matchAll(/\bM\s*(\d+(?:\.\d+)?)/gi)) {
+    // The dialect's comment forms, not the definition's own prefix: LinuxCNC
+    // declares `(` yet still reads `; M0` as a comment (#1103).
+    for (const match of templateLineCode(line, outputDialect).matchAll(/\bM\s*(\d+(?:\.\d+)?)/gi)) {
       if (Number(match[1]) === 0) return true
     }
   }
@@ -1684,7 +1687,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         // path.)
         const pause = substituteTemplates(definition.toolChange.pauseCommand, operationContext)
         emitTemplateLine(
-          templateHasMandatoryStop(pause, definition.program.commentPrefix) ? pause : MANUAL_PAUSE_COMMAND,
+          templateHasMandatoryStop(pause, definition.outputDialect) ? pause : MANUAL_PAUSE_COMMAND,
         )
         // The operator has just made the bar's current orientation A0, so the
         // controller's A restarts at 0. Keeping the pre-pause number hid the

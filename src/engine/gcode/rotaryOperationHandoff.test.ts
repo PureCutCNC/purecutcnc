@@ -396,6 +396,31 @@ console.log('Testing the mandatory pause when the machine has no pause template.
       `${pauseCommand}: and carries the zeroing instruction`)
   }
 
+  // A commented M0 is not a stop (#1103 ca-h fix 3). LinuxCNC declares `(` as
+  // its comment prefix but still reads `;` to end of line as a comment, so
+  // both forms must be stripped before looking for M0, whatever the
+  // definition's own prefix is.
+  for (const pauseCommand of ['M5 ; M0', 'M5 (M0)']) {
+    const commentedStop = validateMachineDefinition({
+      ...structuredClone(LINUXCNC),
+      toolChange: { ...structuredClone(LINUXCNC.toolChange), pauseCommand },
+      rotary: { ...OWN_AXIS },
+    })
+    const commentedStopResult = exportProgram(project, commentedStop, [
+      { operation: operation('First'), moves: turningMoves(0, 30) },
+      { operation: operation('Second'), moves: turningMoves(30, 60) },
+    ])
+    assert.deepEqual(commentedStopResult.warnings, [],
+      `${pauseCommand}: both turning operations post`)
+    const lines = commentedStopResult.gcode.split('\n')
+    assert.ok(!lines.includes(pauseCommand),
+      `${JSON.stringify(pauseCommand)} only comments its M0, so it is not used as the stop`)
+    assert.equal(lines.filter((line) => line === 'M0').length, 1,
+      `${JSON.stringify(pauseCommand)}: the program writes the fallback M0 instead`)
+    assert.ok(lines.indexOf('M0') < lines.findIndex((line) => line.includes('Second')),
+      `${JSON.stringify(pauseCommand)}: the stop precedes the second operation`)
+  }
+
   // A pause template that does carry the mandatory stop is written exactly as
   // the machine defines it, so a machine-specific comment or modal word is not
   // replaced by the generic fallback.
@@ -508,6 +533,13 @@ console.log('Testing the Zero A machine field and template rule...')
   for (const zeroA of ['G10 L20 P0 A0', 'G92 A0']) {
     assert.equal(selecting(null, zeroA).rotary?.zeroA, zeroA,
       `an unspecified selection still accepts the active-system form ${JSON.stringify(zeroA)}`)
+  }
+  // A commented G5x selects nothing (#1103 ca-h fix 3): the controller reads
+  // `; G54` as prose, so the active system stays unknown and a fixed P is
+  // refused, in both comment forms.
+  for (const selectCommand of ['; G54', '(G54)']) {
+    assert.throws(() => selecting(selectCommand, 'G10 L20 P1 A0'), /zero-a|Zero A/,
+      `a commented selection ${JSON.stringify(selectCommand)} refuses a fixed P`)
   }
   // A selection that names no G54…G59 leaves the active system unknown too.
   assert.throws(() => selecting('G90', 'G10 L20 P1 A0'), /zero-a|Zero A/,
