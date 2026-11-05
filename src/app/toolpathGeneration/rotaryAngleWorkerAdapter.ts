@@ -54,8 +54,8 @@ const kernels = await tsImport(
 
 let kernel: RotaryAngleKernel | null = null
 
-function post(reply: RotaryAngleWorkerReply): void {
-  parentPort?.postMessage(reply)
+function post(reply: RotaryAngleWorkerReply, transfer: readonly ArrayBuffer[] = []): void {
+  parentPort?.postMessage(reply, transfer as ArrayBuffer[])
 }
 
 function reportError(
@@ -102,7 +102,13 @@ parentPort?.on('message', (message: unknown) => {
       case 'batch': {
         if (kernel === null) throw new Error('rotary angle worker: a batch arrived before the setup')
         const samples = kernel.run(request.jobs)
-        post({ kind: 'result', epoch: request.epoch, batchId: request.batchId, samples })
+        // Rows, and any maps the parent asked for (#1103 slice ca-i), are this
+        // thread's own freshly allocated arrays: transfer them rather than let
+        // the clone copy each one. Nothing here reads a sample after posting.
+        post(
+          { kind: 'result', epoch: request.epoch, batchId: request.batchId, samples },
+          protocol.rotaryAngleSampleTransfer(samples),
+        )
         return
       }
       case 'dispose':

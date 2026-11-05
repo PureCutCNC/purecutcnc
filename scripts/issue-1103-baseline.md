@@ -526,3 +526,132 @@ is unchanged; its posted text changed because along mode is a rotary program.
   paths, i18n, icons, tsc, all 572 test files, vite build).
 - `npm run check:gcode` — exit 0 (corpus exported; no controller interpreters
   are installed on this machine, so it is a pass, not a validation).
+
+## ca-i: maps a worker samples fill the parent cache
+
+The around grid's rows run on worker threads (#1115 slice p-d2), and every
+worker's `RotarySamplingPrep` is rebuilt from a payload with `angleMaps: 'off'`.
+The maps those rows built therefore never reached the **parent** workspace's
+cache -- the one the helix that follows reads with `angleMaps: 'read-write'`.
+On `busto-round op0025` layer 1 started with 0 parent maps and spent
+`MAX_HELIX_RASTER_WORK` proving a band it then refused, so the app's program
+stopped matching the node path's on the same file. Measured here: the pool
+produced `a7d4ae86…` for `op0025` against the serial entry's `c2c4a338…`, which
+is the disagreement Frank's retest reported.
+
+The change is transport only. `RotarySamplingPrep.emitAngleMaps` makes
+`runRotaryAngleJob` hand the cropped map back on its sample
+(`RotaryAngleSample.map`, a `RotaryAngleMapEntry` with the `cachedAngleKey` and
+the byte size) through the same `cropAngleMap` the cache uses; protocol version
+2 carries `emitAngleMaps` in the setup -- set only when the parent prep asked for
+maps and its cache is not already full -- and `rotaryAngleSampleTransfer`, so a
+reply moves the row and map buffers instead of cloning them. The pool inserts the
+returned entries with `storeRotaryAngleBatchMaps` in **job order**, through the
+same `insertRotaryAngleMap` rule the serial path uses (an existing key is kept,
+the first entry that would pass the budget latches `full`), and answers a
+`read-write` row the parent already holds itself with `runRotaryAngleJob`
+(`reused`, `rasterWork: 0`) rather than sending it to a worker that has no such
+cache. `stats()` reports `maps` and `mapBytes`, the transfer volume below.
+
+The cache key, its 32 MiB budget, the per-map 96 KiB gate, the ring and helix
+generators, the link rules and the postprocessor are untouched.
+
+### Parity: the pool produces the serial program
+
+One generation per mode, one process at a time, the fixtures from the gitignored
+`work/`. Every row below is the **same** SHA-256 in all four runs -- `sync`,
+`serialRotaryBatches`, the Node pool at 2 workers and the Node pool at 4 workers
+(its 900 MiB budget override is only so four workers fit at all: the design's
+512 MiB budget caps this mesh at three) -- and it is the ca-h hash recorded in
+the table above.
+
+| fixture | op | moves | rapids | moves sha256 (all four modes) |
+| --- | --- | ---: | ---: | --- |
+| busto-round-stock.camj | op0025 | 22364 | 176 | `c2c4a338ef866fc237a7faff38b7aab16556627049b021a494ab4795a0f43b86` |
+| busto-round-stock.camj | op0015 | 54231 | 2 | `976cbc223a3ca3759729617773315e9f3d068ac71d21385aff099c5c0da6569a` |
+| busto-rect-stock.camj | op0021 | 32866 | 74 | `c84617e2cbb3f4faa469498c53514812a05413e44cd4a4c35f0d20c1af53ba9d` |
+| busto-rect-stock.camj | op0022 | 79088 | 2 | `561ba95a409e6195a9e385fc58e6056702cb163dacf97afc2e98c02704c63a57` |
+| square-to-round-test-01.camj | op0028 (around) | 8791 | 32 | `33a09b96e28a71f5b693af8fb12ff5d34029904ccaa41a792aee69b497c6852b` |
+| square-to-round-test-01.camj | op0029 (around) | 13394 | 2 | `bb47c4ed41b0c3afd3daa0d74d9345cfc3c086af6907b813f14f4dcd80e7a6d9` |
+
+`busto-rect` and both square-fixture rows transfer **0** map bytes: the ring
+grid is `'write'` only on a round blank (`prepareRotaryTargets`), and a square
+blank has no helix. Their parity therefore checks that this slice changes
+nothing on the paths it does not touch.
+
+On `busto-round op0025` the pool's layers now carry the helix. Grouping the
+emitted motion into rapid-separated runs and taking each run's `minZ` as its
+layer:
+
+| layer (z) | before: helix groups / ring groups | after: helix groups / ring groups |
+| --- | --- | --- |
+| 1.9 | 0 / 2 | 2 / 0 |
+| 1.8 | 1 / 0 | 1 / 0 |
+| 1.7 | 1 / 0 | 1 / 0 |
+
+The top layer had no helix at all before the fix; after it, it has only helix.
+(The handoff's `0/44` -> `40/5, 36/9, 35/10` counts come from the boundaries
+probe, which counts ring boundaries rather than emitted runs; this table is the
+same evidence at group resolution, and the byte-identical hash to `serial` is
+the authoritative statement.)
+
+### Timing and transfer, through the pool at 2 workers
+
+One warm-up and three timed generations per case, one process at a time, nothing
+else generating; the numbers in `runs` are the three in order. The "before" side
+is the pre-slice code at `1bef4c37` (measured in the same worktree, sources
+restored byte for byte afterwards -- the diff patch hash was identical before and
+after), so both columns are the same machine, session and protocol.
+
+| case | before runs (ms) | before median | after runs (ms) | after median | ratio | maps | transfer bytes | peak RSS before -> after |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| busto-round op0025 | 27158, 25325, 25087 | 25325 | 20369, 20396, 20315 | 20369 | **0.80** | 2127 | 72,743,400 | 1212 -> 1165 MB |
+| busto-round op0015 | 17483, 17767, 17652 | 17652 | 18286, 18399, 18158 | 18286 | **1.04** | 3353 | 205,203,600 | 1196 -> 1404 MB |
+| busto-rect op0021 | 26375, 26489, 26339 | 26375 | 26880, 26831, 26696 | 26831 | **1.02** | 0 | 0 | 1006 -> 1000 MB |
+| busto-rect op0022 | 18531, 18709, 18562 | 18562 | 19092, 19359, 19157 | 19157 | **1.03** | 0 | 0 | 969 -> 965 MB |
+
+Every case is under the 1.1x bound, and `op0025` is **faster** than before
+because its helix now reads the maps instead of re-rasterising angles the ring
+grid has already built. `op0015`'s finish is refused by the work cap on both
+trees, so its delta is the transfer and the insertion, not a motion change: its
+peak RSS rises by about the 195.7 MiB of maps the parent now holds (1196 ->
+1404 MB) and its moves hash is unchanged. The square blank rows hold no maps, so
+their delta is the insertion rule alone.
+
+Peak RSS is `process.resourceUsage().maxRSS` for the one generation in that
+process. For reference, the 4-worker single-run parity generations measured
+15204 ms (`op0025`), 12955 ms (`op0015`), 19891 ms (`op0021`) and 12128 ms
+(`op0022`) at 1487, 1614, 1307 and 1291 MB peak.
+
+### Committed test and mutations
+
+`rotaryAngleMapTransport.test.ts` runs the shipped Node transport and worker
+adapter: the ring grid and its refinement leave a parent cache identical to the
+serial runner's (key for key, cell for cell), the helix built on it is the same
+path with 200/200 rows reused and the same raster work, and the small rotary
+fixture forced around generates identical moves with the same 78.3% helix share,
+856 maps and 5.1 MB transferred. A scripted in-process source answers in reverse
+completion order against a byte budget small enough to latch, and the cache is
+still the serial one; a read-write batch whose rows are all cached contacts no
+worker and reports the serial `reused` and `rasterWork: 0`; an `'off'` prep
+carries no emit flag, no map on a sample and no cache.
+
+Each required mutation was applied to the finished code, the test run, and the
+code restored from a copy (the restore was verified by re-diffing):
+
+- **worker maps dropped** (`storeRotaryAngleBatchMaps` removed from the pool):
+  fails at "the pooled grid created the parent cache";
+- **inserted in completion order** (`batch.arrival` instead of `ordered`): fails
+  at "a forward-completion batch caches exactly what the serial one does";
+- **a parent-cache hit dispatched** (the local partition removed): fails at "the
+  same reused count as the serial path";
+- **an `'off'` prep transferring maps** (`emitAngleMaps: true` unconditionally):
+  fails at "an 'off' prep's setup carries no emit flag".
+
+### Commands
+
+- `npm run build` -- exit 0 (docs, lint, e2e-lane check, colours, portable
+  paths, i18n, icons, tsc, every test file, vite build).
+- `npm run check:gcode` -- exit 0 (corpus exported; no controller interpreters
+  are installed on this machine, so it is a pass, not a validation).
+- `npx tsx src/engine/toolpaths/rotaryAngleMapTransport.test.ts` -- passes.

@@ -59,8 +59,14 @@ import type { NormalizedTool } from './types'
 import { buildRotaryRasterGeometry } from './rotaryRaster'
 import type { RotaryAngleJob, RotaryAngleSample, RotarySamplingPrep } from './rotarySampling'
 
-/** Bumped when a payload's shape or meaning changes; a worker refuses another. */
-export const ROTARY_ANGLE_PROTOCOL_VERSION = 1
+/**
+ * Bumped when a payload's shape or meaning changes; a worker refuses another.
+ *
+ * Version 2 (#1103 slice ca-i) adds `emitAngleMaps` to the setup and a `map` to
+ * a result sample: a worker told to emit hands each map it builds back, and the
+ * pool caches it in the parent workspace.
+ */
+export const ROTARY_ANGLE_PROTOCOL_VERSION = 2
 
 /** Which sampling mode an installed worker is configured for. */
 export type RotaryAngleMode = 'around' | 'along'
@@ -127,6 +133,14 @@ export interface RotaryAngleSetupPayload {
   readonly plan: RotaryAnglePlanPayload
   readonly raster?: RotaryAngleRasterPayload
   readonly mesh?: RotaryAngleMeshPayload
+  /**
+   * Hand every height map this worker builds back on its sample (#1103 slice
+   * ca-i). Set only when the parent's prep asked for maps (`angleMaps` not
+   * `'off'`) and its cache is not already full: the maps belong in the parent
+   * workspace's cache, and a worker's own workspace is a copy the parent never
+   * sees. Omitted, a result carries rows only, exactly as before this slice.
+   */
+  readonly emitAngleMaps?: boolean
 }
 
 /**
@@ -267,6 +281,10 @@ export function buildRotaryAngleSetup(
     along: [...prep.along],
     requestedCellSize: prep.requestedCellSize,
     ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
+    // #1103 slice ca-i: the parent's maps live in the parent workspace, so a
+    // worker must hand its own back. A parent whose cache is already full gains
+    // nothing from that and is not sent the flag at all.
+    ...(prep.angleMaps !== 'off' && prep.workspace.angleMaps?.full !== true ? { emitAngleMaps: true } : {}),
     plan: planPayload,
   }
   if (mode === 'around') {
@@ -322,6 +340,35 @@ export function rotaryAnglePlanTransfer(plan: RotaryAnglePlanPayload): ArrayBuff
     ...(plan.across !== undefined ? [plan.across.buffer as ArrayBuffer] : []),
     ...(plan.up !== undefined ? [plan.up.buffer as ArrayBuffer] : []),
   ]
+}
+
+/**
+ * Every buffer a batch's samples own, for a structured transfer (#1115 p-d2,
+ * extended by #1103 slice ca-i).
+ *
+ * A row and a returned map are freshly allocated per job and nothing reads them
+ * after the reply is posted, so handing their buffers over is a move rather than
+ * a copy. Only whole arrays are listed: a subarray's buffer carries cells the
+ * message does not describe, and a transferred buffer is detached in the sender.
+ * The map's three arrays are the ones `cropAngleMap` keeps, which are exactly
+ * the ones the parent cache stores.
+ */
+export function rotaryAngleSampleTransfer(samples: readonly RotaryAngleSample[]): ArrayBuffer[] {
+  const buffers = new Set<ArrayBuffer>()
+  const add = (array: { buffer: ArrayBufferLike; byteOffset: number; byteLength: number } | undefined): void => {
+    if (array === undefined) return
+    if (array.byteOffset !== 0 || array.byteLength !== array.buffer.byteLength) return
+    buffers.add(array.buffer as ArrayBuffer)
+  }
+  for (const sample of samples) {
+    add(sample.row)
+    const map = sample.map?.map
+    if (map === undefined) continue
+    add(map.data)
+    add(map.wallCoverage)
+    add(map.modelOnly)
+  }
+  return [...buffers]
 }
 
 /** Every buffer a copied setup payload owns, for a structured transfer. */
@@ -404,6 +451,7 @@ export function isRotaryAngleWorkerRequest(value: unknown): value is RotaryAngle
         && (setup.mode === 'around' || setup.mode === 'along')
         && typeof setup.requestedCellSize === 'number'
         && Array.isArray(setup.along)
+        && (setup.emitAngleMaps === undefined || typeof setup.emitAngleMaps === 'boolean')
         && isObject(setup.plan) && isObject(setup.tool) && isObject(setup.stock)
     }
     case 'plan':

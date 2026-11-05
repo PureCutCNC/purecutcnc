@@ -326,6 +326,24 @@ export interface RotaryAngleMapCache {
   full: boolean
 }
 
+/**
+ * One angle's map, ready to be cached: the key it belongs under, what it costs
+ * and the cropped map itself (#1103 slice ca-i).
+ *
+ * The serial path inserts this into the workspace cache where it built it. A
+ * worker cannot: its workspace is its own copy, so the pool that dispatched the
+ * row inserts the entry into the **parent** workspace's cache instead -- in job
+ * order, under the same key and the same byte and `full` rules -- which is what
+ * makes the cache state after a batch identical to the one a serial batch leaves.
+ */
+export interface RotaryAngleMapEntry {
+  /** {@link cachedAngleKey} of the angle the map was rasterised at. */
+  readonly key: number
+  /** Bytes the cropped map holds (its `data`, coverage and model-only arrays). */
+  readonly bytes: number
+  readonly map: HeightMap
+}
+
 /** The most one operation's angle-map cache may hold. */
 export const MAX_ANGLE_MAP_CACHE_BYTES = 32 * 1024 * 1024
 
@@ -854,6 +872,14 @@ export interface RotaryAngleSample {
    * budgets on it.
    */
   readonly rasterWork?: number
+  /**
+   * The map this row built, when the caller asked the row to hand it over so
+   * another realm can cache it (#1103 slice ca-i). Absent for every `'off'`
+   * prep, and absent for a reused row: there is nothing new to store. The
+   * caller inserts it under {@link RotaryAngleMapEntry.key} with the same byte
+   * rules the serial path uses; see {@link storeRotaryAngleBatchMaps}.
+   */
+  readonly map?: RotaryAngleMapEntry
 }
 
 /**
@@ -896,6 +922,14 @@ export interface RotarySamplingSetup {
    * behaviour byte for byte.
    */
   readonly angleMaps?: RotaryAngleMapMode
+  /**
+   * Hand every built map back on its sample instead of (or as well as) caching
+   * it here (#1103 slice ca-i). A worker sets this: its own workspace is not the
+   * parent's, so the pool that dispatched the row is what inserts the entry into
+   * the parent cache. `off` preps never emit, which is what keeps a non-helix
+   * caller's transport unchanged.
+   */
+  readonly emitAngleMaps?: boolean
 }
 
 /**
@@ -917,6 +951,12 @@ export interface RotarySamplingPrep {
   readonly gridExtra?: RotaryModelMesh
   /** See `RotarySamplingSetup.angleMaps` (#1103 ca-e). */
   readonly angleMaps: RotaryAngleMapMode
+  /**
+   * Return each built map on its sample for someone else to cache (#1103 slice
+   * ca-i). A worker's prep sets this; the parent's does not, because the parent
+   * caches where it builds. See `RotarySamplingSetup.emitAngleMaps`.
+   */
+  readonly emitAngleMaps?: boolean
   /** The operation's cached geometry, plan and raster. */
   readonly workspace: RotarySamplingWorkspace
   /** The bar's cross-axis centre, from `barCentre`. */
@@ -971,6 +1011,7 @@ export function createRotarySamplingPrep(
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     ...(setup.gridExtra !== undefined ? { gridExtra: setup.gridExtra } : {}),
     angleMaps: setup.angleMaps ?? 'off',
+    ...(setup.emitAngleMaps === true ? { emitAngleMaps: true } : {}),
     workspace,
     centre: barCentre(stock),
     pivot: barPivotZ(stock),
@@ -1004,6 +1045,18 @@ function angleMapCache(workspace: RotarySamplingWorkspace): RotaryAngleMapCache 
 function cachedAngleKey(angle: number): number {
   const physical = ((angle % 360) + 360) % 360
   return Math.round(physical * 1_000_000)
+}
+
+/**
+ * Whether the workspace already holds the map for this physical angle (#1103
+ * slice ca-i).
+ *
+ * The pool asks this before it dispatches a `read-write` batch: a row the parent
+ * can answer from its own cache must not be sent to a worker, which has no such
+ * cache and would rasterise the map again.
+ */
+export function hasRotaryAngleMap(workspace: RotarySamplingWorkspace, angle: number): boolean {
+  return workspace.angleMaps?.maps.has(cachedAngleKey(angle)) === true
 }
 
 /** The rows (X bar) or columns (Y bar) one angle's sampler actually reads. */
@@ -1050,29 +1103,24 @@ function cropBytes(source: Uint8Array | undefined, width: number, bounds: { rowS
 }
 
 /**
- * Keep one angle's map for later rows at the same angle (#1103 ca-e).
+ * Crop one angle's map to the window the sampler reads (#1103 ca-e), or `null`
+ * when the copy would cost about what a rebuild costs.
  *
- * Only the window the sampler reads is copied: for an around pass that is a
- * thin strip along the bar, so the cache costs a fraction of the raster. A map
- * larger than {@link MAX_CACHED_ANGLE_MAP_BYTES} is not kept -- the copy would
- * cost about what a rebuild does -- and the first map that would overflow the
- * budget stops the cache filling further, so the earliest angles (the ring
- * grid's, which the helix's first round needs) are the ones retained.
+ * Only the window is copied: for an around pass that is a thin strip along the
+ * bar, so a cached map costs a fraction of the raster. A map larger than
+ * {@link MAX_CACHED_ANGLE_MAP_BYTES} is refused **before** it is copied -- a gate
+ * that copied first would cost the copy it exists to avoid.
  */
-function storeAngleMap(
-  cache: RotaryAngleMapCache,
+function cropAngleMap(
   key: number,
   map: HeightMap,
   window: HeightMapWindow | undefined,
   axis: BarStock['axis'],
-): void {
-  if (cache.full || cache.maps.has(key)) return
+): RotaryAngleMapEntry | null {
   const bounds = cachedMapWindow(map, window, axis)
   const cells = (bounds.colEnd - bounds.colStart + 1) * (bounds.rowEnd - bounds.rowStart + 1)
   const perCell = 4 + (map.wallCoverage !== undefined ? 1 : 0) + (map.modelOnly !== undefined ? 4 : 0)
-  // Check the size before copying: a map that would not be kept must not be
-  // copied at all, or the gate would cost the copy it exists to avoid.
-  if (cells * perCell > MAX_CACHED_ANGLE_MAP_BYTES) return
+  if (cells * perCell > MAX_CACHED_ANGLE_MAP_BYTES) return null
   const coverage = cropBytes(map.wallCoverage, map.width, bounds)
   const modelOnly = cropCells(map.modelOnly, map.width, bounds)
   const cropped: HeightMap = {
@@ -1086,13 +1134,69 @@ function storeAngleMap(
     ...(coverage !== undefined ? { wallCoverage: coverage } : {}),
     ...(modelOnly !== undefined ? { modelOnly } : {}),
   }
-  const bytes = cropped.data.byteLength + (cropped.wallCoverage?.byteLength ?? 0) + (cropped.modelOnly?.byteLength ?? 0)
-  if (cache.bytes + bytes > cache.budgetBytes) {
+  return {
+    key,
+    bytes: cropped.data.byteLength + (cropped.wallCoverage?.byteLength ?? 0) + (cropped.modelOnly?.byteLength ?? 0),
+    map: cropped,
+  }
+}
+
+/**
+ * Put one entry in the cache, under the rules the serial path has always used
+ * (#1103 ca-e): a key the cache already holds is not replaced, and the first
+ * entry that would pass the byte budget stops the cache filling, so the earliest
+ * angles (the ring grid's, which the helix's first round needs) are the ones
+ * kept.
+ *
+ * Shared by the serial path and by the pool's insertion of worker maps, which is
+ * what makes those two cache states the same (#1103 slice ca-i).
+ */
+export function insertRotaryAngleMap(cache: RotaryAngleMapCache, entry: RotaryAngleMapEntry): void {
+  if (cache.full || cache.maps.has(entry.key)) return
+  if (cache.bytes + entry.bytes > cache.budgetBytes) {
     cache.full = true
     return
   }
-  cache.maps.set(key, cropped)
-  cache.bytes += bytes
+  cache.maps.set(entry.key, entry.map)
+  cache.bytes += entry.bytes
+}
+
+/**
+ * Cache the maps a batch returned, in **job order** (#1103 slice ca-i).
+ *
+ * Order is the whole point. The pool's replies arrive in completion order, which
+ * depends on which worker finished first, so inserting as they arrive would make
+ * both the contents and the `full` latch timing-dependent. Inserting the batch's
+ * samples in job order instead replays exactly the sequence a serial batch would
+ * have inserted, so the cache state after any batch equals the serial one.
+ */
+export function storeRotaryAngleBatchMaps(
+  prep: RotarySamplingPrep,
+  samples: readonly RotaryAngleSample[],
+): void {
+  if (prep.angleMaps === 'off') return
+  const cache = angleMapCache(prep.workspace)
+  for (const sample of samples) {
+    if (sample.map !== undefined) insertRotaryAngleMap(cache, sample.map)
+  }
+}
+
+/**
+ * Keep one angle's map for later rows at the same angle (#1103 ca-e).
+ *
+ * See {@link cropAngleMap} for the size gate and {@link insertRotaryAngleMap}
+ * for the budget and `full` rules.
+ */
+function storeAngleMap(
+  cache: RotaryAngleMapCache,
+  key: number,
+  map: HeightMap,
+  window: HeightMapWindow | undefined,
+  axis: BarStock['axis'],
+): void {
+  if (cache.full || cache.maps.has(key)) return
+  const entry = cropAngleMap(key, map, window, axis)
+  if (entry !== null) insertRotaryAngleMap(cache, entry)
 }
 
 /**
@@ -1130,6 +1234,7 @@ export function runRotaryAngleJob(
   const reused = cached !== undefined
   let rasterWork = 0
   let heightMap = cached
+  let emittedMap: RotaryAngleMapEntry | undefined
   if (heightMap === undefined) {
     const bbox = turnedBounds(plan.hull, plan.minAlong, plan.maxAlong, stock, angle)
     const cellSize = chooseHeightMapCellSize(bbox, prep.requestedCellSize, angleWarnings)
@@ -1189,6 +1294,12 @@ export function runRotaryAngleJob(
           mesh.positions, mesh.index, stock.axis, centre, pivot),
       }, bbox, cellSize, buildOptions)
     if (cache !== undefined) storeAngleMap(cache, cacheKey, built, window, stock.axis)
+    // #1103 slice ca-i: a worker's workspace is not the parent's, so it hands the
+    // map it built back on the sample and the pool caches it there, in job order,
+    // with the same key and byte rules. The crop is the one the serial path would
+    // have stored -- done here so the parent never copies it a second time -- and
+    // an `'off'` prep emits nothing at all.
+    if (prep.emitAngleMaps === true) emittedMap = cropAngleMap(cacheKey, built, window, stock.axis) ?? undefined
     heightMap = built
   }
   // #1045 slice F: around mode reads every cell as the top of its square, not
@@ -1206,7 +1317,10 @@ export function runRotaryAngleJob(
       conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
     row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
   }
-  return { index: job.index, row, lift, warnings: angleWarnings, reused, rasterWork }
+  return {
+    index: job.index, row, lift, warnings: angleWarnings, reused, rasterWork,
+    ...(emittedMap !== undefined ? { map: emittedMap } : {}),
+  }
 }
 
 /**
