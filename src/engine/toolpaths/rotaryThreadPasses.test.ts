@@ -35,15 +35,22 @@
  *  - every cut point lies on the **thread's own helix line**, measured in the
  *    unrolled sheet, up to whole circumferences — an independent phase
  *    reference, so a pass that dropped into a shifted groove would fail;
+ *  - the **swept cutter**, not only its endpoints: the interior of every cut
+ *    and lead is sampled at the emitted straight path's fractions and must sit
+ *    on the same line, because a whole turn added to the path keeps its ends in
+ *    phase while the middle of the cut sweeps off the groove;
  *  - every cut keeps its pass's intended depth below the Turn surface (the
  *    analytic swept-depth bound: no pass cuts deeper than `carveDepth`, and the
  *    three passes are exactly the stepdown apart), so a shifted pass that
  *    gouged its flank cannot pass.
  *
- * Mutation proved caught by hand (see the slice report): restoring the plain
+ * Mutations proved caught by hand (see the slice report): restoring the plain
  * start angle in `forwardWrappedToolpath` — i.e. not shifting the return at all
  * — makes the monotonic-A assertion fail on the second pass's return rapid
- * (2250 -> 112.86).
+ * (2250 -> 112.86); adding 360° from the first thread cut's end onward (in
+ * memory, after generation) keeps every endpoint in phase, every A monotonic
+ * and all three depths unchanged, but leaves that cut's interior 0.2 of a
+ * circumference off the helix, which the swept reference fails.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryThreadPasses.test.ts
  */
@@ -203,6 +210,38 @@ const moves = result.moves
     }
   }
   assert.ok(checked >= 6, `the phase reference checks every cut point (${checked})`)
+
+  // The swept cutter, not just its endpoints (#1152 correction round 1,
+  // finding 6). A cut is a straight segment in (along, A), and the thread's
+  // line has a fixed slope, so the whole segment stays on the helix exactly
+  // when its interior poses do. Both endpoints can be on the helix while the
+  // middle sweeps half a turn off it: adding 360° to one cut's end keeps that
+  // end on the next groove and silently changes the pitch of the whole pass,
+  // which is the mutation the endpoint-only check missed.
+  let swept = 0
+  for (const move of moves) {
+    if (move.kind !== 'cut' && move.kind !== 'lead_in' && move.kind !== 'lead_out') continue
+    const fromA = move.from.a!
+    const toA = move.to.a!
+    for (const t of [0.2, 0.5, 0.8]) {
+      const pose = {
+        x: move.from.x + (move.to.x - move.from.x) * t,
+        y: move.from.y + (move.to.y - move.from.y) * t,
+        z: move.from.z + (move.to.z - move.from.z) * t,
+        a: fromA + (toA - fromA) * t,
+      }
+      const flat = unwrapPoint(pose, frame!)
+      const along = frame!.axis === 'x' ? flat.x : flat.y
+      const across = frame!.axis === 'x' ? flat.y : flat.x
+      const onLine = line.acrossStart + slope * (along - line.alongStart)
+      const offset = (across - onLine) / circumference
+      assert.ok(Math.abs(offset - Math.round(offset)) < 1e-6,
+        `the swept cutter at ${t} of a ${move.kind} is ${(offset - Math.round(offset)).toFixed(6)} `
+        + `circumferences off the thread's helix, so the pass leaves its groove even though its endpoints do not`)
+      swept += 1
+    }
+  }
+  assert.ok(swept >= 9, `the swept reference samples the interior of every cut (${swept} poses)`)
 
   // The analytic swept-depth bound: no cut goes below the intended thread
   // depth, and the three passes sit exactly one stepdown apart. A pass that

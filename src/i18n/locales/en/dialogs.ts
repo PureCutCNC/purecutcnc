@@ -431,6 +431,8 @@ export const dialogsEn = {
   'dialogs.machineEditor.rotaryXMotor': 'The X motor',
   'dialogs.machineEditor.rotaryWord': 'Program word: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Reverse direction',
+  'dialogs.machineEditor.rotaryZeroA': 'Zero A line (optional)',
+  'dialogs.machineEditor.rotaryZeroAHint': 'Runs before every rotary operation; leave empty to pause and zero A by hand.',
 
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': 'line {line}',

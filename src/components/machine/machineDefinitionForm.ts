@@ -42,6 +42,8 @@ export interface MachineFormData {
   rotaryAbout: 'none' | 'x' | 'y'
   rotaryDrive: 'own' | 'borrowed'
   rotaryReversed: boolean
+  /** The optional Zero A program line; empty when the machine has none. */
+  rotaryZeroA: string
   name: string
   fileExtension: string
   mmCommand: string
@@ -110,6 +112,7 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     rotaryAbout: def.rotary?.about ?? 'none',
     rotaryDrive: def.rotary?.drive ?? 'own',
     rotaryReversed: def.rotary?.reversed ?? false,
+    rotaryZeroA: def.rotary?.zeroA ?? '',
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -149,9 +152,12 @@ export function mergeFormData(
         // The three controls never touch inverse time: whatever the block
         // carries — including an explicit null — is kept.
         inverseTimeFeed: def.rotary ? def.rotary.inverseTimeFeed : DEFAULT_INVERSE_TIME_FEED,
-        // The Zero A line has no focused control (#1103 slice ca-h): editing
-        // the other rotary fields must not silently drop it.
-        ...(def.rotary?.zeroA !== undefined ? { zeroA: def.rotary.zeroA } : {}),
+        // The Zero A line (#1103 slice ca-h) is a focused field: blank clears
+        // it, and a definition that never had one keeps no key, so the saved
+        // file does not gain a default that is not configured.
+        ...(form.rotaryZeroA.trim().length > 0
+          ? { zeroA: form.rotaryZeroA }
+          : def.rotary?.zeroA === '' ? { zeroA: '' } : {}),
       }
     : null
   return {

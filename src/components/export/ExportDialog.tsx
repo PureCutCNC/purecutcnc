@@ -144,9 +144,12 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
   // #1103 slice ca-h: a program that turns the bar on a machine with no Zero A
   // line ends at 0 up and pauses between rotary operations for the operator to
   // zero A. The note is the only place they are told to start with A zeroed.
+  // Each program brings its setup's face, because a Top/Bottom program turns
+  // the bar through its setup rather than through a toolpath move (#1152
+  // correction round 1, finding 4).
   const rotaryZeroNotice = useMemo(
-    () => shouldShowRotaryZeroNotice(activeOperations, activeDefinition),
-    [activeOperations, activeDefinition],
+    () => shouldShowRotaryZeroNotice(programs, activeDefinition, project),
+    [programs, activeDefinition, project],
   )
   // Files already written from the programs on screen. A browser may refuse a
   // second save dialog from one click, so an export can take more than one

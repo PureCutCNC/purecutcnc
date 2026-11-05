@@ -427,6 +427,8 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'Der X-Motor',
   'dialogs.machineEditor.rotaryWord': 'Programmwort: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Richtung umkehren',
+  'dialogs.machineEditor.rotaryZeroA': 'Null-A-Zeile (optional)',
+  'dialogs.machineEditor.rotaryZeroAHint': 'Wird vor jeder Drehoperation ausgeführt; leer lassen, um anzuhalten und A von Hand zu nullen.',
 
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': 'Zeile {line}',

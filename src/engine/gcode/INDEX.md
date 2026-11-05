@@ -134,15 +134,26 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   set, every rotary operation opens with it after a clearance retract and
   before its first turn, so the operation starts reading A0 wherever the bar
   is, and no pause is needed. When it is unset, a program with a further
-  rotary operation writes the machine's pause template (`M0` on grbl) and
+  rotary operation writes the machine's pause template and
   `Zero A at 0 up, then resume.` between two rotary operations, never after the
-  last. The line is validated as a template (`zero-a` in `templateRules.ts`):
-  only the forms that set the rotary axis's coordinate to zero and move nothing
-  are accepted — `G10 L20 P<n> A0` or `G92 A0` — so a moving line is refused,
-  and a second, definition-level check requires that axis to be **this**
-  machine's: A on its own fourth axis, the borrowed letter on a borrowed motor
-  (zeroing a real X/Y work coordinate is refused). The export dialog shows one
-  note when a program turns the bar and the machine has no Zero A line. On a square blank a template Z move before an A word also
+  last — and if that template is empty or only a comment (both are accepted),
+  the program writes `M0` anyway rather than leave the instruction without a
+  stop. Either way the operator has just made the current orientation A0, so
+  the emitter restarts its tracked A at 0 after the stop: the next operation's
+  own positioning word is written again instead of being suppressed by the
+  pre-pause number. The line is validated as a template (`zero-a` in
+  `templateRules.ts`): only the forms that set the rotary axis's coordinate to
+  zero and move nothing are accepted — `G10 L20 P<n> A0` or `G92 A0` — so a
+  moving line is refused, and two definition-level checks apply. The axis must
+  be **this** machine's: A on its own fourth axis, the borrowed letter on a
+  borrowed motor (zeroing a real X/Y work coordinate is refused). A positive
+  `P` must also name the system the machine selects (`G10 L20 P<n>` writes
+  offset n unconditionally, it does not follow the selection: on a `G55`
+  machine `P1` changes G54 and leaves the active A alone), so `P0` — the active
+  system — and `G92` are accepted whatever the selection, an empty selection
+  means the G54 default, and an unknown selection accepts only those two forms.
+  The export dialog shows one note when a program turns the bar and the
+  machine has no Zero A line. On a square blank a template Z move before an A word also
   rapids to the generators' travel height whenever the tracked Z is unknown,
   because the last operation may have descended at a constant angle.
   **Machine templates are restricted by class** (#1057 slice F, Frank's
@@ -432,13 +443,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   back through `parseGcodeMotion` onto the flat toolpath; since #1103 slice
   ca-h the read-back reports the per-operation end turns as machine-coordinate
   blocks, and the engrave control pins the posted text with that turn).
-- `rotaryOperationHandoff.test.ts` — #1103 slice ca-h parts 2 and 3: the
-  forward end turn to 0 up (after a machine-coordinate retract, never a rewind,
-  no move when already on a turn, the instruction always written and in the
-  dialect's comment syntax), a filled Zero A line once per rotary operation and
-  ordered after the clearance retract and before the first turn, the `M0` pause
-  only between rotary operations, and the `zeroA` field's schema round trip and
-  template refusals.
+- `rotaryOperationHandoff.test.ts` — #1103 slice ca-h parts 2 and 3, plus the
+  correction round: the forward end turn to 0 up (after a machine-coordinate
+  retract, never a rewind, no move when already on a turn, the instruction
+  always written and in the dialect's comment syntax), a filled Zero A line
+  once per rotary operation and ordered after the clearance retract and before
+  the first turn, the pause only between rotary operations and its mandatory
+  `M0` fallback for an empty or comment-only template, the tracked A reset
+  after the pause (the next operation starting on a whole turn writes its own
+  positioning word), and the `zeroA` field's schema round trip and template
+  refusals — including a positive `P` that writes the wrong coordinate system
+  (G55 with `P1`) and the active-system forms that stay valid.
 - `squareRotaryOutput.test.ts` — the square blank through generation and the
   real posted program (#1016 C2-S4): both axes, both units, rough/finish and
   own / borrowed / reversed machines post nonempty angle-bearing inverse-time

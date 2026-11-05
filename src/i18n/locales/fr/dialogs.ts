@@ -382,6 +382,8 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'Le moteur X',
   'dialogs.machineEditor.rotaryWord': 'Mot programme : {word}',
   'dialogs.machineEditor.rotaryReverse': 'Inverser le sens',
+  'dialogs.machineEditor.rotaryZeroA': 'Ligne de mise à zéro de A (facultative)',
+  'dialogs.machineEditor.rotaryZeroAHint': 'Exécutée avant chaque opération rotative ; laisser vide pour s’arrêter et mettre A à zéro à la main.',
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': 'ligne {line}',
   'dialogs.machineDiagnostics.rule': 'règle : {rule}',

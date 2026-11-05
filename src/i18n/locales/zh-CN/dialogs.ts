@@ -433,6 +433,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'X 电机',
   'dialogs.machineEditor.rotaryWord': '程序字：{word}',
   'dialogs.machineEditor.rotaryReverse': '反转方向',
+  'dialogs.machineEditor.rotaryZeroA': 'A 轴归零行（可选）',
+  'dialogs.machineEditor.rotaryZeroAHint': '在每个旋转工序前执行；留空则暂停并手动将 A 归零。',
 
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': '第 {line} 行',

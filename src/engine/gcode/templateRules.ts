@@ -1086,6 +1086,36 @@ function machineRotaryLetter(definition: TemplateRuleDefinition): string | null 
 }
 
 /**
+ * The work-offset number `G10 L20 P<n>` writes for the system the program
+ * actually runs in, or null when the machine's selection does not say.
+ *
+ * `G10 L20 P<n>` edits offset `n` (G54 = P1 … G59 = P6); it does **not** follow
+ * whichever system is selected. A line that names P1 on a machine that selects
+ * G55 therefore zeroes G54 and leaves the active system alone — the bar keeps
+ * its old A, while the pauses the filled line was supposed to replace are
+ * suppressed for nothing (#1152 correction round 1, finding 3).
+ *
+ * No selection means the controller's default, G54 (the same default the
+ * header rules expand `{wcsCommand}` to). A selection that names no G5x word,
+ * or several, leaves the answer unknown: then only `P0` (the active system) or
+ * `G92` can be trusted.
+ */
+function activeWorkOffsetIndex(selectCommand: string | null): number | null {
+  const code = (selectCommand ?? '').replace(/\([^)]*\)/g, ' ').trim()
+  if (code.length === 0) return 1
+  const indexes = new Set<number>()
+  for (const match of code.matchAll(/\bG(5[4-9])(?![\d.])/gi)) {
+    indexes.add(Number(match[1]) - 53)
+  }
+  return indexes.size === 1 ? [...indexes][0] : null
+}
+
+/** The `G54…G59` word for a work-offset number (1 = G54). */
+function workOffsetName(index: number): string {
+  return `G${53 + index}`
+}
+
+/**
  * A "Zero A" line: empty when the machine does not automate zeroing, otherwise
  * exactly one of the forms that set one axis's coordinate to zero and move
  * nothing (which axis is checked against the machine's own rotary word below).
@@ -1612,25 +1642,53 @@ export function machineTemplateDiagnostics(
   // the rules above accept the forms that zero one axis without moving, and
   // this says which axis that must be. On an own-drive machine it is A; on a
   // borrowed motor it is the borrowed letter, and zeroing anything else would
-  // silently shift a real axis's work coordinate.
+  // silently shift a real axis's work coordinate. A `G10 L20 P<n>` line is
+  // judged against the active coordinate system too (#1152 correction round 1,
+  // finding 3): P names the offset it writes, and on a machine that selects
+  // G55 a P1 line zeroes G54 instead.
   const zeroA = definition.rotary?.zeroA
   const expectedLetter = machineRotaryLetter(definition)
   if (zeroA !== undefined && zeroA.trim().length > 0 && expectedLetter !== null) {
+    const activeOffset = activeWorkOffsetIndex(definition.workCoordinates.selectCommand)
     zeroA.split(/\r?\n/).forEach((rawLine, index) => {
       const code = lineCode(rawLine, syntax).trim()
-      const match = /^(?:G10\s*L20\s*P\d+|G92)\s*([AXY])/i.exec(code)
+      const match = /^(?:G10\s*L20\s*P(\d+)|G92)\s*([AXY])/i.exec(code)
       if (match === null) return
-      const letter = match[1].toUpperCase()
-      if (letter === expectedLetter) return
+      const letter = match[2].toUpperCase()
+      if (letter !== expectedLetter) {
+        diagnostics.push({
+          path: ['rotary', 'zeroA'],
+          field: 'rotary.zeroA',
+          line: index + 1,
+          text: rawLine,
+          word: letter,
+          ruleCode: 'zero-a',
+          message: `rotary.zeroA: line ${index + 1}: this machine's rotary axis is ${expectedLetter}, `
+            + `so the Zero A line must set ${expectedLetter} to zero, not ${letter}.`,
+        })
+        return
+      }
+      // `G92` and `P0` write the active system whatever it is; a positive `P`
+      // writes exactly one offset, which must be the one this program selects.
+      if (match[1] === undefined) return
+      const written = Number(match[1])
+      if (written === 0) return
+      if (activeOffset !== null && written === activeOffset) return
       diagnostics.push({
         path: ['rotary', 'zeroA'],
         field: 'rotary.zeroA',
         line: index + 1,
         text: rawLine,
-        word: letter,
+        word: `P${written}`,
         ruleCode: 'zero-a',
-        message: `rotary.zeroA: line ${index + 1}: this machine's rotary axis is ${expectedLetter}, `
-          + `so the Zero A line must set ${expectedLetter} to zero, not ${letter}.`,
+        message: activeOffset === null
+          ? `rotary.zeroA: line ${index + 1}: the Zero A line's G10 L20 P${written} changes the ${workOffsetName(written)} `
+            + `work offset, but workCoordinates.selectCommand does not say which system the program runs in. `
+            + `Use P0 (the active system) or G92 ${expectedLetter}0, or name the system in the selection.`
+          : `rotary.zeroA: line ${index + 1}: the Zero A line's G10 L20 P${written} changes the ${workOffsetName(written)} `
+            + `work offset, but this machine selects ${workOffsetName(activeOffset)} `
+            + `(P${activeOffset}), so the active system would keep its old ${expectedLetter}. `
+            + `Use P${activeOffset}, P0 (the active system) or G92 ${expectedLetter}0.`,
       })
     })
   }

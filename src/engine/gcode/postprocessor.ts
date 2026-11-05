@@ -213,6 +213,16 @@ function templateCanMoveZ(line: string, commentPrefix: string): boolean {
 }
 
 /**
+ * The stop written between two rotary operations when the machine's pause
+ * template is empty or comment-only (#1152 correction round 1, finding 2).
+ * Without it the operator is told to zero A with nothing stopping the machine
+ * to do it. `M0` is the stop every G-code dialect that can carry a rotary axis
+ * understands; the emitter's rotary word is refused for ShopBot part files, so
+ * its own stop never has to be invented here.
+ */
+const MANUAL_PAUSE_COMMAND = 'M0'
+
+/**
  * Export a program for the machine definition's output dialect.
  *
  * This is the only place a dialect is chosen. Each dialect owns its line
@@ -739,24 +749,36 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   /**
-   * Write the machine's own "Zero A" line (#1103 slice ca-h, part 3).
-   *
-   * The line sets the controller's A offset at the current orientation, so the
-   * bar reads 0 wherever it is; the emitter therefore restarts A's tracking
-   * from 0, not from the last number it wrote. Nothing about X/Y/Z changes:
-   * the line is validated to move no axis (`rotary.zeroA` in
-   * `templateRules.ts`), so the work position and the proven Z are untouched.
-   * It is written with `emitLine`, not `emitTemplateLine`: it is the one place
-   * engine text may name the rotary, and the template-word guard that refuses
-   * a machine template driving the rotary must not read it as one.
+   * The controller's A now reads 0 at the bar's current orientation: either the
+   * machine's own Zero A line ran, or the operator was told to zero A and
+   * paused. Either way the emitter must stop believing the number it wrote
+   * before that (#1152 correction round 1, finding 1): after `M0` the tracking
+   * still said A360, so a following operation's own A360 positioning word
+   * disappeared and its first cut was commanded from a controller the operator
+   * had reset to 0. Nothing about X/Y/Z changes: the zeroing forms move no
+   * axis, so the work position and the proven Z are untouched.
    */
-  const emitZeroALine = (lines: readonly string[]) => {
-    if (state.rotaryWord === null) return
-    for (const line of lines) emitLine(line)
+  const markRotaryZeroed = () => {
     state.rotaryAngle = 0
     if (state.currentPosition !== null) {
       state.currentPosition = { ...state.currentPosition, a: 0 }
     }
+  }
+
+  /**
+   * Write the machine's own "Zero A" line (#1103 slice ca-h, part 3).
+   *
+   * The line sets the controller's A offset at the current orientation, so the
+   * bar reads 0 wherever it is; the emitter therefore restarts A's tracking
+   * from 0, not from the last number it wrote. It is written with `emitLine`,
+   * not `emitTemplateLine`: it is the one place engine text may name the
+   * rotary, and the template-word guard that refuses a machine template driving
+   * the rotary must not read it as one.
+   */
+  const emitZeroALine = (lines: readonly string[]) => {
+    if (state.rotaryWord === null) return
+    for (const line of lines) emitLine(line)
+    markRotaryZeroed()
   }
 
   /**
@@ -1632,7 +1654,20 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       // pause.
       if (zeroALines.length === 0 && commandsAngle.slice(opIndex + 1).some(Boolean)) {
         comment('Zero A at 0 up, then resume.')
-        emitTemplateLine(substituteTemplates(definition.toolChange.pauseCommand, operationContext))
+        // The instruction is worthless without a stop (#1152 correction round
+        // 1, finding 2): a machine may carry no pause template at all, or one
+        // that is only a comment, and `pauseCommand` is accepted as both. The
+        // program then has to pause anyway, so it writes `M0`, the stop every
+        // G-code dialect with a rotary axis understands. (A ShopBot cannot
+        // carry a rotary axis — validation refuses the block — so its part-file
+        // stop is out of this path.)
+        const pause = substituteTemplates(definition.toolChange.pauseCommand, operationContext)
+        const pauseRunsCode = lineCode(pause, definition.program.commentPrefix).trim().length > 0
+        emitTemplateLine(pauseRunsCode ? pause : MANUAL_PAUSE_COMMAND)
+        // The operator has just made the bar's current orientation A0, so the
+        // controller's A restarts at 0. Keeping the pre-pause number hid the
+        // next operation's own positioning word (finding 1).
+        markRotaryZeroed()
       }
     }
 

@@ -401,16 +401,24 @@ function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition): n
       last = value
     }
   }
-  for (const entry of fixture.operations) {
+  const commandsAngle = fixture.operations.map((entry) => fixture.wrapped.get(entry.id)!.moves.some(
+    (move) => move.from.a !== undefined || move.to.a !== undefined,
+  ))
+  const pauses = (definition.rotary?.zeroA ?? '').trim().length === 0
+  for (const [index, entry] of fixture.operations.entries()) {
     const moves = fixture.wrapped.get(entry.id)!.moves
     for (const move of moves) {
       if (move.to.a !== undefined) consider(move.to.a * direction)
     }
     // #1103 slice ca-h: the operation ends facing 0 up, on the next whole turn
     // at or ahead of the last angle it commanded.
-    const commandsAngle = moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
-    if (commandsAngle && last !== undefined) {
+    if (commandsAngle[index] && last !== undefined) {
       consider(360 * Math.ceil((last - 1e-6) / 360))
+      // And the pause before a later turning operation has the operator zero A
+      // there, so the controller reads 0 for that operation's angles (#1152
+      // correction round 1, finding 1). A zero at its start is therefore not
+      // written again.
+      if (pauses && commandsAngle.slice(index + 1).some(Boolean)) last = 0
     }
   }
   return written

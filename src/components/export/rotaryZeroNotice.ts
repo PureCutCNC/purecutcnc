@@ -25,24 +25,52 @@
  *
  * A machine whose rotary block has a Zero A line zeroes itself, so the note is
  * not shown; a program that never turns A has nothing to zero.
+ *
+ * A Top or Bottom program turns the bar too, through its setup's opening
+ * manual-index turn. No toolpath move carries that angle (it is emitted from
+ * the setup, not the path), so asking only the moves said "nothing to zero"
+ * about a program that contains `G0 A0` (#1152 correction round 1, finding 4).
+ * The setup's own face — and the same manual-indexing conditions the emitter
+ * checks — decide it instead.
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
+import { rotaryWord } from '../../engine/gcode/types'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { Project, SetupFace } from '../../types/project'
 
 type OperationWithToolpath = { toolpath: Pick<ToolpathResult, 'moves'> }
 
-/** True when the dialog should show the rotary-zeroing note. */
+/** One exported program: the setup it belongs to and the operations it cuts. */
+export interface RotaryZeroNoticeProgram {
+  /** The setup's face; a Top/Bottom program turns the bar by manual index. */
+  face: SetupFace
+  operations: readonly OperationWithToolpath[]
+}
+
+/** True when the program should show the rotary-zeroing note. */
 export function shouldShowRotaryZeroNotice(
-  operations: readonly OperationWithToolpath[],
-  definition: Pick<MachineDefinition, 'rotary'> | null | undefined,
+  programs: readonly RotaryZeroNoticeProgram[],
+  definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'> | null | undefined,
+  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
 ): boolean {
   // A machine with no rotary block cannot run a turning operation at all (the
   // emitter refuses it), and there is no A on it to zero.
   if (definition?.rotary == null) return false
   const zeroA = (definition.rotary.zeroA ?? '').trim()
   if (zeroA.length > 0) return false
-  return operations.some(({ toolpath }) => toolpath.moves.some(
-    (move) => move.from.a !== undefined || move.to.a !== undefined,
-  ))
+  // A Top/Bottom setup of a rotary bar project turns the bar itself, when the
+  // machine has a rotary word to turn (the emitter's own conditions: such a
+  // project is split per setup, and the emitter plans the turn from the setup —
+  // a project with no setup plans none).
+  const manualIndexTurns = manualIndexingApplies(project)
+    && (project.setups?.length ?? 0) > 0
+    && rotaryWord(definition) !== null
+  return programs.some((program) => {
+    if (manualIndexTurns && program.face !== 'around') return true
+    return program.operations.some(({ toolpath }) => toolpath.moves.some(
+      (move) => move.from.a !== undefined || move.to.a !== undefined,
+    ))
+  })
 }

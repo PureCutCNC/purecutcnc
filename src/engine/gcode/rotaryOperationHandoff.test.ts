@@ -291,6 +291,77 @@ console.log('Testing the pause between rotary operations...')
     'no pause when the following operation does not turn the bar')
 }
 
+// ── 3b. the pause resets the tracked A (#1152 correction round 1) ──
+
+console.log('Testing that the manual zeroing resets the controller state...')
+{
+  const project = projectWith()
+  const definition = machine(GRBL)
+  // The second operation's own plan starts at a whole turn, exactly where the
+  // first one's end turn left the *old* tracking. After the operator zeroes A
+  // the controller reads 0, so this word must be written again: before the fix
+  // it was suppressed and the cut below was commanded as A450 from A0.
+  const secondStartsAtTurn = established([
+    { kind: 'cut', from: at(0, 10, 20, 360), to: at(10, 10, 20, 450) },
+    { kind: 'rapid', from: at(10, 10, 20, 450), to: at(10, 10, 30, 450) },
+  ])
+  const result = exportProgram(project, definition, [
+    { operation: operation('First'), moves: turningMoves(0, 90) },
+    { operation: operation('Second'), moves: secondStartsAtTurn },
+  ])
+  assert.deepEqual(result.warnings, [], 'both turning operations post')
+  const lines = result.gcode.split('\n')
+  const pauseAt = lines.indexOf('M0')
+  const secondAt = lines.findIndex((line) => line.includes('Second'))
+  assert.ok(pauseAt > 0 && secondAt > pauseAt, 'the pause still separates the two operations')
+  const startWord = lines.findIndex((line, index) => index > secondAt && /\bA-?[0-9]/.test(line))
+  assert.ok(startWord > secondAt, 'the second operation commands A at all')
+  assert.equal(lines[startWord], 'X0.000 Y0.000 A360.000',
+    'the operation states its own start angle again: the operator zeroed A at the pause, '
+    + 'so the emitter must not assume the pre-pause number is still what the controller reads')
+  assert.ok(lines.slice(pauseAt + 1).some((line) => /G0 A720\.000/.test(line)),
+    'and it still ends forward on a whole turn')
+}
+
+// ── 3c. an empty pause template still stops the machine ───────
+
+console.log('Testing the mandatory pause when the machine has no pause template...')
+{
+  const project = projectWith()
+  const silent = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    toolChange: { ...structuredClone(GRBL.toolChange), pauseCommand: '' },
+    rotary: { ...OWN_AXIS },
+  })
+  const result = exportProgram(project, silent, [
+    { operation: operation('First'), moves: turningMoves(0, 30) },
+    { operation: operation('Second'), moves: turningMoves(30, 60) },
+  ])
+  assert.deepEqual(result.warnings, [], 'both turning operations post')
+  const lines = result.gcode.split('\n')
+  assert.equal(lines.filter((line) => line === 'M0').length, 1,
+    `an empty pause template still stops the machine once between the rotary operations `
+    + `(got ${JSON.stringify(lines.filter((line) => line === 'M0'))})`)
+  assert.equal(lines[lines.indexOf('M0') - 1], '; Zero A at 0 up, then resume.',
+    'and the stop carries the zeroing instruction')
+  assert.ok(lines.indexOf('M0') < lines.findIndex((line) => line.includes('Second')),
+    'before the second operation')
+
+  // A template that is only a comment is just as silent: the program must not
+  // rely on prose to stop a machine.
+  const commented = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    toolChange: { ...structuredClone(GRBL.toolChange), pauseCommand: '(pause)' },
+    rotary: { ...OWN_AXIS },
+  })
+  const commentedResult = exportProgram(project, commented, [
+    { operation: operation('First'), moves: turningMoves(0, 30) },
+    { operation: operation('Second'), moves: turningMoves(30, 60) },
+  ])
+  assert.ok(commentedResult.gcode.split('\n').includes('M0'),
+    'a comment-only pause template still emits a real stop')
+}
+
 // ── 4. machine format: the Zero A field and its rule ──────────
 
 console.log('Testing the Zero A machine field and template rule...')
@@ -353,6 +424,35 @@ console.log('Testing the Zero A machine field and template rule...')
     'a borrowed-motor machine zeroes its borrowed axis')
   assert.throws(() => borrowed('G10 L20 P1 A0'), /zero-a|Zero A/,
     'and refuses a line that zeroes A instead')
+
+  // #1152 correction round 1, finding 3: `G10 L20 P<n>` writes offset n, it
+  // does not follow the selected system. A machine that runs in G55 needs P2
+  // (or P0, the active-system form); P1 would silently change G54 and leave
+  // the bar's A untouched, while the filled line suppresses the pauses.
+  function selecting(selectCommand: string | null, zeroA: string): MachineDefinition {
+    return validateMachineDefinition({
+      ...structuredClone(GRBL),
+      workCoordinates: { selectCommand },
+      rotary: { ...OWN_AXIS, zeroA },
+    })
+  }
+  assert.throws(() => selecting('G55', 'G10 L20 P1 A0'), /zero-a|Zero A/,
+    'a G55 program refuses a Zero A line that writes G54')
+  for (const zeroA of ['G10 L20 P2 A0', 'G10 L20 P0 A0', 'G92 A0']) {
+    assert.equal(selecting('G55', zeroA).rotary?.zeroA, zeroA,
+      `a G55 program accepts the ${JSON.stringify(zeroA)} form`)
+  }
+  // No selection is the controller default, G54, so P1 is the selected system.
+  assert.equal(selecting(null, 'G10 L20 P1 A0').rotary?.zeroA, 'G10 L20 P1 A0',
+    'a machine with no selection defaults to G54 and accepts P1')
+  // A selection that names no G54…G59 leaves the active system unknown: only
+  // the active-system forms are safe then.
+  assert.throws(() => selecting('G90', 'G10 L20 P1 A0'), /zero-a|Zero A/,
+    'an unknown active system refuses a fixed P')
+  for (const zeroA of ['G10 L20 P0 A0', 'G92 A0']) {
+    assert.equal(selecting('G90', zeroA).rotary?.zeroA, zeroA,
+      `an unknown active system still accepts the ${JSON.stringify(zeroA)} form`)
+  }
 }
 
 console.log('rotary operation handoff tests passed')
