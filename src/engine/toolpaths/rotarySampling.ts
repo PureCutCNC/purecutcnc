@@ -1337,6 +1337,61 @@ export function runRotaryAngleJob(
 }
 
 /**
+ * The candidate triangles one angle row would rasterise, **without** building it
+ * (#1103 slice ca-j correction round 2).
+ *
+ * `runRotaryAngleJob` gathers a row's candidates into the workspace buffer and
+ * reports their count as that row's `rasterWork`; this counts the identical set
+ * and returns it, so a caller can price a row -- or a whole round of rows --
+ * before deciding whether to spend it. The two walk the same bits: `always`
+ * plus the set members of the two strip buckets, a triangle listed in both
+ * buckets counted twice, exactly as the raster visits it once per listing.
+ *
+ * A row the cache can answer costs `0`, because the raster pass is the whole of
+ * a row's work and a hit skips it. `readCache` says whether this prep would read
+ * the cache at all -- the helix's rows are prepared as `'read-write'` even when
+ * the grid prep that seeded them was `'write'`, so the caller's prep cannot
+ * answer that by itself.
+ *
+ * The popcount is the SWAR form rather than a per-set-bit loop: a bucket word
+ * carries up to 32 listings, and the loop version would cost as much as the
+ * gather it exists to avoid.
+ */
+export function rotaryAngleRowWork(
+  prep: RotarySamplingPrep,
+  angleDeg: number,
+  readCache = prep.angleMaps === 'read-write',
+): number {
+  if (readCache && hasRotaryAngleMap(prep.workspace, angleDeg)) return 0
+  // The same plan `runRotaryAngleJob` will be handed: one angle's reach, and
+  // `buildStripPlan` caches it on the workspace, so pricing a row before
+  // sampling it costs one plan lookup, not a second plan.
+  const plan = prep.planFor([angleDeg])
+  const t = (angleDeg * Math.PI) / 180
+  let count = plan.always.length
+  const bucketWords = plan.bucketWords
+  if (bucketWords > 0) {
+    const bucketBits = plan.bucketBits
+    for (const bucket of [
+      bucketIndex(Math.PI / 2 - t, plan.bucketWidth),
+      bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth),
+    ]) {
+      const base = bucket * bucketWords
+      for (let word = 0; word < bucketWords; word++) count += popcount32(bucketBits[base + word])
+    }
+  }
+  return count
+}
+
+/** The number of set bits in a 32-bit word (SWAR, no per-bit loop). */
+function popcount32(value: number): number {
+  let v = value - ((value >>> 1) & 0x55555555)
+  v = (v & 0x33333333) + ((v >>> 2) & 0x33333333)
+  v = (v + (v >>> 4)) & 0x0f0f0f0f
+  return Math.imul(v, 0x01010101) >>> 24
+}
+
+/**
  * Ordered assembly of a batch's results (#1115 slice p-d1).
  *
  * Three things happen here and nowhere else: a sample goes back to its **own**

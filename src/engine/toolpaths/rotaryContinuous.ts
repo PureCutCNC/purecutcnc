@@ -145,6 +145,7 @@ import {
   AROUND_ANGLE_TOLERANCE_MM,
   MAX_ROTARY_SAMPLES,
   createRotarySamplingPrep,
+  rotaryAngleRowWork,
   sampleAnglesWithPrep,
 } from './rotarySampling'
 import type { RotarySamplingPrep } from './rotarySampling'
@@ -583,6 +584,28 @@ function rowAngle(startAngle: number, row: HelixRow, phaseScale: number): number
  * row's own `along` list. The workspace is shared, so the cross-section, strip
  * plan and raster geometry are paid once for the whole helix, exactly as they
  * are for the ring grid.
+ *
+ * ## The round is priced before it is spent (#1103 slice ca-j correction 2)
+ *
+ * A refinement round is all-or-nothing for the work budget: its rows are new
+ * phases, so if the round's own raster work cannot fit what the budget has left,
+ * the row walk is guaranteed to cross the cap somewhere inside it and refuse the
+ * whole band -- the points it was verifying can never be emitted. Spending the
+ * round to discover that is pure waste on the largest attempt a refusal can
+ * happen to: on `busto-rect` op0022 the crossing round rasterised 139 maps
+ * (1.0 s of the measured 1.8 s the refused attempt cost) to prove a refusal that
+ * was already certain the moment the round's price was known.
+ *
+ * So the rows are priced first ({@link rotaryAngleRowWork}: the same candidate
+ * count each row would report as its `rasterWork`, and `0` for a row the
+ * angle-map cache answers), and a round whose price does not fit the remaining
+ * budget refuses **before** any of it is rasterised. The decision is unchanged
+ * -- that round could not have finished, so the same `exhausted` refusal falls
+ * out of the row walk -- and nothing is charged for a round that was not
+ * sampled: `rows`, `samples` and `rasterWork` stay what they have always meant,
+ * what the attempt actually spent. The rows and samples caps are still checked
+ * per row, because a round can be cut short by them without crossing the work
+ * cap.
  */
 function sampleHelixRows(
   rows: readonly HelixRow[],
@@ -596,13 +619,29 @@ function sampleHelixRows(
   const maxRadius = barMaxRadius(prep.stock)
   const stubFloor = input.stubFloor
   const spent = input.spent ?? ZERO_HELIX_SPEND
+  if (input.shouldStop?.() === true) return 'stopped'
+  // A row's prep reads the cache whenever the operation's does (see the
+  // `'read-write'` prep below), and a price must know which rows are free.
+  const readCache = prep.angleMaps !== 'off'
+  const remaining = budget.work - spent.work - sampling.work
+  let roundWork = 0
+  for (const row of rows) {
+    roundWork += rotaryAngleRowWork(prep, rowAngle(startAngle, row, phaseScale), readCache)
+    // Once the round's price has passed what the budget has left, the rest of it
+    // cannot change the answer, and pricing it would be the very work the price
+    // exists to avoid.
+    if (roundWork > remaining) break
+  }
+  if (roundWork > remaining) return 'exhausted'
   for (const row of rows) {
     if (input.shouldStop?.() === true) return 'stopped'
     if (spent.rows + sampling.rows + 1 > budget.rows) return 'exhausted'
     if (spent.samples + sampling.samples + row.along.length > budget.samples) return 'exhausted'
     // #1103 ca-e correction round 2: the raster work is charged after the row
     // (it is only known once the map is built), so the check is here, before the
-    // next one. A refused attempt may overshoot by its last row, never by a round.
+    // next one. A refused attempt may overshoot by its last row, never by a round
+    // -- and the round price above means it normally stops before a round it
+    // cannot afford rather than one row into it.
     // #1103 slice ca-g: `spent` is what the band's earlier attempts already used,
     // so a split cannot spend the cap again per piece.
     if (spent.work + sampling.work > budget.work) return 'exhausted'

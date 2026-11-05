@@ -1065,3 +1065,116 @@ budget, and a band that is refused keeps its bytes.
   samples under the one-stepdown rule).
 - `npx tsx src/engine/toolpaths/squareAroundGenerator.property.test.ts` --
   passes, 363 cases in ~116 s.
+
+## ca-j correction round 2 (review of `9bce60bd`)
+
+One finding, fixed: **the round the work budget cannot afford is refused before
+it is spent** (`rotaryAngleRowWork`, `sampleHelixRows`). The measured ratios
+below are against `9aac82ff` measured in this session, as the handoff requires,
+not against `986576b1`.
+
+### The finding
+
+`op0022` and `op0029` were over the handoff's 1.1x limit when the ratios were
+read against `986576b1`. Both are over. `op0022`'s extra cost was the *refused*
+helix attempt: the 24 M raster-work cap was discovered one row at a time, so the
+attempt rasterised 139 height maps (1.0 s) inside a refinement round that could
+not possibly fit what the budget had left -- and then threw the whole round away
+with the band.
+
+### The fix
+
+`sampleHelixRows` prices a round before sampling it. `rotaryAngleRowWork` counts
+the identical candidate set `runRotaryAngleJob` would gather -- `always` plus the
+two strip buckets' set bits, duplicates across the buckets included -- and `0`
+for a row the angle-map cache answers; the count is a SWAR popcount per 32-bit
+bucket word, and the price walk stops as soon as it passes what the budget has
+left. A round whose price does not fit refuses **before** any of its rows is
+rasterised, which is the same `exhausted` refusal the row walk reaches (the
+round could not have finished), wired to the same caller fallback: the band keeps
+its rings.
+
+Nothing is charged for a round that was not sampled, so `rows`, `samples` and
+`rasterWork` keep meaning what they have always meant -- what the attempt
+actually spent -- and the row walk's own cap check stays as the second bound. The
+rows and samples caps are still checked per row, because a round can be cut short
+by them without crossing the work cap.
+
+Measured on `busto-rect` op0022's attempt: 2,557 rows and 24,079,923 charged
+triangles before (the crossing round rasterised 139 maps in 1,013 ms); 2,370 rows
+and 10,611,003 charged triangles after, with the same `exhausted` refusal, the
+same 79,088-move program and the same moves digest (`e864f770149b4475…`).
+
+### The cases
+
+| case | bands (rings) | helix built | turns (actual helix) | moves | moves digest (probe) |
+| --- | --- | ---: | ---: | ---: | --- |
+| `busto-rect` op0021 rough | 10 bands | 10 | 207 | 30,694 | `5f6ad965f279bebb…` (unchanged) |
+| `busto-rect` op0022 finish | 1 band (86) | 0 -- refused, 10,611,003 work charged against the 24 M cap (was 24,079,923) | 0 | 79,088 | `e864f770149b4475…` (unchanged) |
+| `square-to-round` op0028 rough | 0 whole rings | 0 | 0 | 8,791 | `b91bb7f52f7a2550…` (unchanged) |
+| `square-to-round` op0029 finish | 1 band (48) | 1 | 47 | 13,625 | `9323f459df779b69…` (unchanged) |
+
+`op0022`'s refusal is still the `exhausted` report the handoff asks for, and its
+program is byte-identical: only the speculative spend it takes to prove the
+refusal changed. `op0029` is untouched by this round (nothing there refuses), and
+so is every round-blank and along-mode row.
+
+### Timing (probe: 1 cold + 5 warm, medians, pool with 2 workers, one process at a time)
+
+"Before" is `9aac82ff` measured from its own tree in this session, through its own
+probe, so the pool code is that tree's too. "After" is this worktree. Both pairs
+below were measured on the same machine in this session; the second pair was
+taken back to back at the end, the first pair earlier, because the machine drifts
+by a few percent between blocks (op0028, which this change cannot move, measures
+429.7 and 451.9 across the two blocks).
+
+| case | before (`9aac82ff`) | after | ratio |
+| --- | ---: | ---: | ---: |
+| `busto-rect` op0021 (pool) | 27,247.8 | 27,297.8 | **1.00** |
+| `busto-rect` op0022 (pool) | 19,169.8 | 20,309.6 | **1.06** |
+| `square-to-round` op0028 (pool) | 429.7 / 451.9 | 428.4 / 446.2 | **1.00 / 0.99** |
+| `square-to-round` op0029 (pool) | 428.6 / 449.0 | 477.2 / 489.9 | **1.11 / 1.09** |
+
+`op0022` moves from 1.11 (measured against `986576b1` in the previous round) to
+1.06 against the required baseline. `op0021` and `op0028` are at parity.
+
+`op0029` is the one case still at the limit (1.09 to 1.11 across the two blocks,
+against a 1.1 bound). Its cost is not this round's work and it is measured, not
+inferred: the helix's coordinator-side build is 32.7 ms of which 13.6 ms is
+sampling 570 angle rows (all cache hits, `rasterWork` 0) and 17.7 ms is the
+builder's own bookkeeping, and the emitter's Douglas--Peucker pass over the
+helix's single 13,966-point run is a further 29.7 ms (1,782,701 distance
+evaluations; the ring path it replaces paid ~1/9 of that over 48 short runs).
+Both are shared code -- `rotaryContinuous.ts`'s node/segment bookkeeping and
+`rotaryModel.ts`'s `mergeCollinearCuts`/`simplifyRun` -- so a change there is not
+the square-blank admission, its stub protection or the cache gate that ca-j's
+scope names, and it would move emitted programs everywhere. The same 45 ms shows
+up in the serial engine (64 ms before, 105-110 ms after, 1.6-1.7x), so the pool's
+~350 ms worker install is what keeps the ratio near 1.1 at all.
+
+### Committed tests
+
+`rotaryContinuous.test.ts` (section 5) now asserts the round-price rule, and each
+assertion fails on a mutation:
+
+- `a round the budget cannot afford is not sampled at all` and `a refused round
+  is not charged as spent` -- with `budget: { work: 1 }` the attempt builds 0 rows
+  and charges 0 triangles, where the row walk built one row and charged more than
+  one triangle.
+- a cap sample (fixed low caps plus fractions of the measured full-band work)
+  asserts three things at once: the refusal **decision** is unchanged (a cap
+  below the band's real cost refuses, a cap at or above it verifies), a refusal
+  emits no points, and `rasterWork <= cap` for every refused attempt -- the cap
+  is never overshot. Mutation: deleting the price block (keeping only the row
+  walk's check) fails at `a round the budget cannot afford is not sampled at all
+  (1 rows)`.
+
+### Commands
+
+- `npx tsc --noEmit` -- exit 0.
+- `npx tsx src/engine/toolpaths/rotaryContinuous.test.ts` -- exit 0 (adds the
+  round-price block; every other case in it unchanged).
+- `npm run build` -- exit 0 (docs, lint, e2e-lane check, colours, portable paths,
+  i18n, icons, tsc, every test file including the 363-case property suite, vite
+  build).
+- `npm run check:gcode` -- exit 0.

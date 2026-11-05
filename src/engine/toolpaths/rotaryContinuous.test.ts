@@ -515,10 +515,15 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
     'a work budget below the first rows is reported as exhaustion, not spent')
   assert.equal(workCapped.points.length, 0,
     'a work-capped helix emits no points, so the caller keeps rings')
-  assert.equal(workCapped.rows, 1,
-    `the cap is checked before the next row, so only one row is built (${workCapped.rows})`)
-  assert.ok(workCapped.rasterWork > 1 && workCapped.rasterWork <= complete.rasterWork,
-    `the exhausted attempt reports the work that stopped it (${workCapped.rasterWork})`)
+  // #1103 ca-j correction round 2: a round whose own work cannot fit the budget
+  // is refused **before** it is rasterised, so a work-capped attempt spends
+  // nothing of the round it could not afford. Pre-fix this walked the round
+  // until the cap tripped and charged the crossing row (one row built, more than
+  // one triangle of work).
+  assert.equal(workCapped.rows, 0,
+    `a round the budget cannot afford is not sampled at all (${workCapped.rows} rows)`)
+  assert.equal(workCapped.rasterWork, 0,
+    `a refused round is not charged as spent (${workCapped.rasterWork})`)
   // Half the measured work is not enough to finish, and the difference from the
   // full budget is the cap and nothing else -- same fixture, same band.
   const halfWork = build(RIDGE, FLAT, { budget: { work: Math.floor(complete.rasterWork / 2) } })
@@ -526,6 +531,27 @@ function gridAt(helix: ContinuousHelix, startAngle: number, rounds: number): Too
   assert.equal(halfWork.points.length, 0, 'an exhausted attempt emits no points at half the work')
   assert.ok(halfWork.rasterWork < complete.rasterWork,
     `the half-work attempt stops short of the full one (${halfWork.rasterWork} versus ${complete.rasterWork})`)
+  // The refusal decision itself is unchanged: a cap at or above what the band
+  // actually costs still verifies it, one below still refuses, and no refusal
+  // anywhere in the range spends more than the cap it was given.
+  const caps = new Set<number>([0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144])
+  for (const fraction of [0.1, 0.25, 0.33, 0.5, 0.66, 0.75, 0.9, 0.99]) {
+    caps.add(Math.floor(complete.rasterWork * fraction))
+  }
+  caps.add(complete.rasterWork - 1)
+  caps.add(complete.rasterWork)
+  let refusedCapped = 0
+  for (const cap of [...caps].filter((value) => value >= 0)) {
+    const attempt = build(RIDGE, FLAT, { budget: { work: cap } })
+    assert.equal(attempt.exhausted, cap < complete.rasterWork,
+      `a cap of ${cap} triangles ${cap < complete.rasterWork ? 'cannot' : 'can'} finish the band`)
+    if (!attempt.exhausted) continue
+    refusedCapped++
+    assert.equal(attempt.points.length, 0, `a refused band emits no points at cap ${cap}`)
+    assert.ok(attempt.rasterWork <= cap,
+      `a refused attempt never spends more than its cap (${attempt.rasterWork} > ${cap})`)
+  }
+  assert.ok(refusedCapped > 0, 'the cap sample covered refused attempts')
   console.log(`  budget: exhausted at 10 samples / 1 row / 1 triangle of work, stopped with `
     + `${stopped.samples} samples, a real band uses ${complete.samples} samples in `
     + `${complete.rows} rows and ${complete.rasterWork} triangle raster passes`)
