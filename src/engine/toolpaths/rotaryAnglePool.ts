@@ -54,6 +54,7 @@ import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
 import { rotaryCandidateScratchBytes } from './rotaryRaster'
 import type { RotaryAngleJob, RotaryAngleSample, RotaryBatchFactory, RotarySamplingPrep } from './rotarySampling'
 import {
+  cachedAngleKey,
   hasRotaryAngleMap,
   runRotaryAngleJob,
   serialRotaryBatches,
@@ -790,12 +791,39 @@ export function createRotaryAnglePool(
       // rasterise a map this operation already has and the parent would count it
       // as fresh work. Answer it here with the serial job instead: the row is the
       // same, and `reused`/`rasterWork` are what the serial path reports for it.
+      //
+      // The same rule applies to a row whose physical angle an **earlier job of
+      // this batch** is about to build (#1103 ca-i review round 1). A360 and A0
+      // are one map, so serial samples A0 and answers A360 from the map it just
+      // cached; a partition that only reads the parent cache before dispatch sees
+      // an empty cache and sends both to workers, reporting two rasters and no
+      // reuse. Those repeats are *deferred* rather than served here: the map they
+      // read is only in the parent cache once the workers' replies have been
+      // inserted (in job order), so they run after the batch and report exactly
+      // the hit -- or the rebuild, when the cache refused the map -- that the
+      // serial path reports at the same position.
       const local: RotaryAngleSample[] = []
+      const deferred: RotaryAngleJob[] = []
       const remote: RotaryAngleJob[] = []
-      for (const job of jobs) {
-        if (prep.angleMaps === 'read-write' && hasRotaryAngleMap(prep.workspace, job.angle)) {
-          local.push(runRotaryAngleJob(prep, planValue, job))
-        } else remote.push(job)
+      if (prep.angleMaps === 'read-write') {
+        const claimed = new Set<number>()
+        for (const job of jobs) {
+          const key = cachedAngleKey(job.angle)
+          if (hasRotaryAngleMap(prep.workspace, job.angle)) {
+            // Already cached before this batch; serial hits it at its own position.
+            local.push(runRotaryAngleJob(prep, planValue, job))
+            claimed.add(key)
+          } else if (claimed.has(key)) {
+            deferred.push(job)
+          } else {
+            claimed.add(key)
+            remote.push(job)
+          }
+        }
+      } else {
+        // `write` never reads, and `off` has no cache: every row is sampled, so a
+        // repeated physical angle rasterises twice exactly as it does serially.
+        for (const job of jobs) remote.push(job)
       }
       if (remote.length === 0) return local
       if (!installed) {
@@ -825,6 +853,13 @@ export function createRotaryAnglePool(
         return serial(jobs)
       }
       const results = await dispatch(remote, workers)
+      // The batch's maps are in the parent cache now -- `dispatch` inserts the
+      // workers' replies in job order before it resolves. A deferred repeat of a
+      // physical angle can therefore run the serial job and see the same cache
+      // entry serial saw at its position: a hit (`reused`, `rasterWork: 0`) when
+      // the map was cached, a rebuild when the cache refused it. Either way the
+      // totals match serial.
+      for (const job of deferred) local.push(runRotaryAngleJob(prep, planValue, job))
       if (local.length === 0) return results
       // Put the two halves back in the batch's own job order.
       const byIndex = new Map<number, RotaryAngleSample>()

@@ -41,6 +41,15 @@
  *    is answered here with the serial job, so it reports `reused` and
  *    `rasterWork: 0`; sending it to a worker reports a raster and charges work
  *    the serial path does not, which is what the totals comparison catches.
+ * 3b. **A physical angle repeated inside one batch reuses the batch's own map.**
+ *    A0 and A360 are one turned surface, so serial rasterises once and answers
+ *    the repeat from the map it just cached. The partition runs before dispatch,
+ *    so a cache read alone would send both rows to workers -- two rasters, no
+ *    reuse, and raster work the serial path never charges. The repeat is
+ *    deferred until the batch's maps are inserted, then reported as the serial
+ *    hit (or the serial rebuild, when the cache refused the map). The reported
+ *    case is A0/A360; a two-pair batch and a reverse-completion run pin the job
+ *    order the decision has to use.
  * 4. **An `'off'` prep transfers nothing.** No map on a sample, no cache
  *    created, no `emitAngleMaps` in the setup, `stats().maps === 0`.
  * 5. **A malformed map fails its batch** instead of entering the cache.
@@ -65,6 +74,7 @@ import {
   refineAroundSamplingAsync,
   sampleAnglesWithPrep,
   sampleAnglesWithPrepAsync,
+  serialRotaryBatches,
   storeRotaryAngleBatchMaps,
 } from './rotarySampling'
 import type {
@@ -449,6 +459,129 @@ function scriptedSource(
   }
   console.log(`  read-write hits: ${pooled.reused}/${angles.length} rows served here,`
     + ` 0 raster work, no worker contacted`)
+}
+
+// ── block 3b: a repeat of one physical angle reuses the batch's own map ────
+
+{
+  const cases = [
+    // The reported case, literally: an empty read-write cache and A0/A360. On an
+    // unfixed partition both rows are dispatched, so the pool reports two rasters
+    // and no reuse where serial reports one of each. After the fix the batch has
+    // one row to sample, which is below the pool's two-angle floor, so it runs
+    // serial -- still the serial accounting, which is the requirement.
+    { angles: [0, 360], repeats: 1, label: 'A0/A360' },
+    // Two repeats in one batch, so the pool really runs on two workers and the
+    // deferred rows still have to report the serial hit at their own positions.
+    { angles: [0, 45, 360, 405], repeats: 2, label: 'two repeated angles, one batch' },
+  ] as const
+
+  for (const { angles, repeats, label } of cases) {
+    const pooledWorkspace: RotarySamplingWorkspace = {}
+    const serialWorkspace: RotarySamplingWorkspace = {}
+    const pooledPrep = prepFor(pooledWorkspace, 'read-write')
+    const serialPrep = prepFor(serialWorkspace, 'read-write')
+    const jobs = jobsFor(angles)
+    // The serial control, sample by sample: the repeat's `reused`/`rasterWork`
+    // are what the pool has to reproduce, not just the batch totals.
+    const serial = await serialRotaryBatches(serialPrep)(jobs)
+
+    const captured: { jobs: readonly RotaryAngleJob[]; samples: readonly RotaryAngleSample[] }[] = []
+    const pool = nodePool(pooledPrep, 2)
+    const runner = pool.batches
+    const capture: typeof runner = async (batchJobs) => {
+      const samples = await runner(batchJobs)
+      // The driver's assembly adds each row's lift in place, so keep the raw row
+      // to compare against the serial runner's raw row.
+      captured.push({ jobs: batchJobs, samples: samples.map((sample) => ({ ...sample, row: sample.row.slice() })) })
+      return samples
+    }
+    const pooled = await sampleAnglesWithPrepAsync(pooledPrep, angles, [], {}, capture)
+
+    assert.ok(pooled.valid, `${label}: the pooled batch samples`)
+    assert.equal(serial.length, jobs.length, `${label}: every serial job answered`)
+    assert.equal(serial.filter((sample) => sample.reused).length, repeats,
+      `${label}: the serial control reuses ${repeats} row(s), or this proves nothing`)
+    assert.equal(pooled.reused, repeats,
+      `${label}: the pool reuses the repeated angle's map (${pooled.reused} of ${angles.length} rows)`)
+    assert.equal(pooled.rasterWork, serial.reduce((sum, sample) => sum + (sample.rasterWork ?? 0), 0),
+      `${label}: the pool charges the serial raster work (${pooled.rasterWork})`)
+
+    const base = captured[0]
+    assert.ok(base, `${label}: the pool dispatched a batch`)
+    assert.equal(base.samples.length, jobs.length, `${label}: every pooled job answered`)
+    for (let k = 0; k < jobs.length; k++) {
+      const pooledSample = base.samples[k]
+      assert.equal(pooledSample.index, jobs[k].index, `${label}: result ${k} is in job order`)
+      assert.equal(pooledSample.reused, serial[k].reused, `${label}: job ${k} reuse flag`)
+      assert.equal(pooledSample.rasterWork, serial[k].rasterWork, `${label}: job ${k} raster work`)
+      assert.deepEqual(pooledSample.row, serial[k].row, `${label}: job ${k} row`)
+    }
+    // The repeat costs no raster: exactly the serial symptom's shape.
+    for (let k = 0; k < jobs.length; k++) {
+      if (serial[k].reused) {
+        assert.equal(base.samples[k].rasterWork, 0, `${label}: the repeated row ${k} rasterises nothing`)
+      }
+    }
+    // The cache the batch built is the serial cache: the repeat did not insert a
+    // second entry, and the maps the workers returned are the serial maps.
+    assertCachesEqual(pooledWorkspace, serialWorkspace, `${label}: pool versus serial cache`)
+    if (angles.length > 2) {
+      const stats = pool.stats()
+      assert.equal(stats.mode, 'parallel', `${label}: the repeat still ran on workers`)
+      assert.equal(stats.workers, 2, `${label}: two real worker threads`)
+      assert.equal(stats.maps, angles.length - repeats,
+        `${label}: only the distinct angles' maps crossed the wire (${stats.maps})`)
+    }
+    console.log(`  repeated angle ${label}: ${pooled.reused}/${angles.length} rows reused,`
+      + ` ${pooled.rasterWork} raster work, same cache as serial`)
+  }
+
+  // Completion order must not decide which row owns the map. With the second
+  // worker answering first, the batch still reuses the earliest job's map in
+  // **job order**; a partition or an insertion that followed arrival would
+  // either rasterise the repeat or cache the later job's map under its key.
+  {
+    const angles = [0, 45, 360, 405]
+    const workspace: RotarySamplingWorkspace = {}
+    const prep = prepFor(workspace, 'read-write')
+    const scripted = scriptedSource(2, { reverse: true })
+    const pool = createRotaryAnglePool(prep, scripted.source, { maxWorkers: 2 })
+    pools.push(pool)
+    const pooled = await sampleAnglesWithPrepAsync(prep, angles, [], {}, pool.batches)
+    const serialWorkspace: RotarySamplingWorkspace = {}
+    const serial = sampleAnglesWithPrep(prepFor(serialWorkspace, 'read-write'), angles, [])
+    assert.equal(pooled.reused, serial.reused, 'reverse completion: the same reuse as serial')
+    assert.equal(pooled.rasterWork, serial.rasterWork, 'reverse completion: the same raster work as serial')
+    assert.equal(pooled.reused, 2, 'reverse completion: both repeats are still hits')
+    assertCachesEqual(workspace, serialWorkspace, 'reverse completion: the serial cache')
+    assert.ok(pool.stats().maps > 0, 'reverse completion: the distinct angles crossed the wire')
+    console.log(`  repeated angle, reverse completion: ${pooled.reused}/4 rows reused,`
+      + ` ${pooled.rasterWork} raster work`)
+  }
+  // The deferred row is a real cache read, not an assumption of reuse: with a
+  // cache that cannot hold a map, serial rebuilds the repeat and charges for it,
+  // and the pool must do the same rather than reporting a hit it does not have.
+  {
+    const angles = [0, 45, 360, 405]
+    const zeroBudget = (): RotarySamplingWorkspace => ({
+      angleMaps: { maps: new Map(), bytes: 0, budgetBytes: 0, full: false },
+    })
+    const workspace = zeroBudget()
+    const prep = prepFor(workspace, 'read-write')
+    const pool = nodePool(prep, 2)
+    const pooled = await sampleAnglesWithPrepAsync(prep, angles, [], {}, pool.batches)
+    const serialWorkspace = zeroBudget()
+    const serial = sampleAnglesWithPrep(prepFor(serialWorkspace, 'read-write'), angles, [])
+    assert.equal(serial.reused, 0, 'the control: a cache that cannot hold a map reuses nothing')
+    assert.equal(pooled.reused, 0, 'the pool reports the rebuild, not a hit it does not have')
+    assert.equal(pooled.rasterWork, serial.rasterWork, 'the rebuild is charged exactly as serial charges it')
+    assert.equal(workspace.angleMaps?.full, true, 'the pool latched the cache full as serial did')
+    assertCachesEqual(workspace, serialWorkspace, 'zero-budget cache: pool versus serial')
+    assert.equal(pool.stats().mode, 'parallel', 'the repeats were still dispatched and then rebuilt here')
+    console.log(`  repeated angle, no cache room: 0/4 rows reused, ${pooled.rasterWork} raster work`
+      + ' -- the same rebuild as serial')
+  }
 }
 
 // ── block 4: an 'off' prep never moves a map ───────────────────────────────

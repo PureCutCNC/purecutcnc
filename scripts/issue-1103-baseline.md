@@ -655,3 +655,37 @@ code restored from a copy (the restore was verified by re-diffing):
 - `npm run check:gcode` -- exit 0 (corpus exported; no controller interpreters
   are installed on this machine, so it is a pass, not a validation).
 - `npx tsx src/engine/toolpaths/rotaryAngleMapTransport.test.ts` -- passes.
+
+### Correction round 1: a physical angle repeated inside one batch
+
+The partition above read only the parent cache *before* dispatch, so two rows of
+one `read-write` batch naming the same physical angle (A0 and A360) were both
+sent to workers. Serial sampling reports one raster and one reused row
+(`rasterWork` `[24, 0]`, `reused` 1); the two-worker pool reported `[24, 24]` and
+`reused` 0, and charged raster work the serial path never spends.
+
+A repeat whose physical angle an earlier job of the same batch is building is
+now **deferred** until that batch's worker maps have been inserted (in job
+order), then run through the serial job, which reports the same hit -- or the
+same rebuild, when the cache refused the map -- at its own position
+(`rotaryAnglePool.ts`, `createRotaryAnglePool`; `cachedAngleKey` is exported by
+`rotarySampling.ts` so the partition and the cache use one identity). `'write'`
+and `'off'` batches are untouched: every row is still dispatched, so the parity
+table and timings above stand as recorded.
+
+`rotaryAngleMapTransport.test.ts` block 3b pins the reported A0/A360 case, a
+two-repeat batch on two real worker threads, a reverse-completion run, and a
+zero-budget cache that must rebuild rather than claim a hit. Against the pre-fix
+pool the first assertion fails with "the pool reuses the repeated angle's map (0
+of 2 rows)"; with the fix the rows report 1/2 and 2/4 reused, raster work 24 and
+48, and the cache equals the serial one.
+
+- Correction round 1: `npm run build` -- exit 0 (10/10 phases, 575 test files);
+  `npm run check:gcode` -- exit 0 (no controller interpreters installed);
+  `npx tsx src/engine/toolpaths/rotaryAngleMapTransport.test.ts` -- passes;
+  `ROTARY_PARITY_FIXTURES=1 npx tsx src/engine/toolpaths/rotaryAnglePool.test.ts`
+  -- passes (busto-round op0025 22364, op0015 54231, busto-rect op0021 32866,
+  op0022 79088 moves all identical to the synchronous entry through 2 workers);
+  `ROTARY_PARITY_FIXTURES=1 npx tsx src/engine/toolpaths/rotarySamplingParity.test.ts`
+  -- passes (both directions on all four busto ops; the pinned base-row, lift and
+  warning digests are unchanged).

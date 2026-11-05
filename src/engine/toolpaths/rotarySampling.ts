@@ -1041,8 +1041,13 @@ function angleMapCache(workspace: RotarySamplingWorkspace): RotaryAngleMapCache 
  * orders below a Float32 coordinate's resolution at any bar this app cuts. It
  * exists because the helix and the ring grid compute the same physical angle
  * from different path parameters, so their doubles can differ in the last bit.
+ *
+ * Exported for the pool (#1103 slice ca-i review round 1): a `read-write` batch
+ * must partition on this exact identity, because two rows of one batch that name
+ * the same physical angle -- A0 and A360, say -- share one map, and the later row
+ * must reuse the earlier one's map rather than rasterise it again.
  */
-function cachedAngleKey(angle: number): number {
+export function cachedAngleKey(angle: number): number {
   const physical = ((angle % 360) + 360) % 360
   return Math.round(physical * 1_000_000)
 }
