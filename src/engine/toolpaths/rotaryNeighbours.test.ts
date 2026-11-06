@@ -61,7 +61,13 @@
  * `trackCellRise`) that `assembleRotarySampling` adds to every finite sample.
  * The checks pin its direction and size (a sample may only rise, a margin may
  * not shrink and may not grow past one cell) and compare every emitted point
- * with the no-neighbour run at the same along position and angle.
+ * with the no-neighbour run at the same along position and angle
+ * (`compareRotaryDepth`, `src/test/rotaryDepthCompare.ts`): the baseline's depth
+ * there is interpolated along its own segments, and a point no baseline segment
+ * passes through must be in the air, so no point is skipped. Mutation 8: lower
+ * the points the old exact-angle match could not pair (641 of them, to -100 mm)
+ * -> that check fails; the check also lowers every third move by just over one
+ * cell itself and requires the comparison to see it.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbours.test.ts
  */
@@ -86,6 +92,7 @@ import { rotaryAlongRange, rotaryConservativeSampling, rotarySampledMesh, sample
 import type { RotaryFinishParams } from './rotaryModel'
 import { alongExtremes } from './rotarySampling'
 import type { ToolpathMove, ToolpathResult } from './types'
+import { compareRotaryDepth } from '../../test/rotaryDepthCompare'
 
 // ── fixture ───────────────────────────────────────────────────────────────
 
@@ -874,14 +881,11 @@ check('a neighbour only raises what the target samples, in either pass direction
   }
 })
 
-/** Every emitted point of a rotary result, as the sampler's own (along, A, tip radius). */
-function emittedPoints(result: ToolpathResult, stock: BarStock): { along: number; angle: number; tip: number }[] {
-  const pivot = barPivotZ(stock)
-  return result.moves.map((move) => ({
-    along: stock.axis === 'x' ? move.to.x : move.to.y,
-    angle: move.to.a ?? 0,
-    tip: move.to.z - pivot,
-  }))
+/** `moves` with every point of every move lowered by `drop`, as a fresh copy. */
+function lowered(moves: readonly ToolpathMove[], drop: number, every = 1): ToolpathMove[] {
+  return moves.map((move, i) => (i % every === 0
+    ? { ...move, from: { ...move.from, z: move.from.z - drop }, to: { ...move.to, z: move.to.z - drop } }
+    : move))
 }
 
 check('the Hex operation never cuts deeper with the Turn as its neighbour', () => {
@@ -893,59 +897,48 @@ check('the Hex operation never cuts deeper with the Turn as its neighbour', () =
     features: project.features.filter((feature) => feature.id !== turnId),
   }
   const stock = project.stock as BarStock
-  const tool = normalizeToolForProject(project.tools.find((record) => record.id === 'flat')!, project)
-  const cell = Math.min(tool.radius / 3, (STEPOVER_RATIO * tool.diameter) * 0.5)
   for (const toolRef of ['flat', 'ball'] as const) {
+    const tool = normalizeToolForProject(project.tools.find((record) => record.id === toolRef)!, project)
+    const cell = Math.min(tool.radius / 3, (STEPOVER_RATIO * tool.diameter) * 0.5)
+    // One stepover is the widest gap between two baseline passes over the same
+    // angle (ring to ring, or one turn of a helix).
+    const stepover = STEPOVER_RATIO * tool.diameter
+    const options = {
+      alongTolerance: 1e-6, maxAlongGap: stepover + 1e-6, depthTolerance: cell, airRadius: barMaxRadius(stock),
+    }
     for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
-      const joined = emittedPoints(
-        generate(project, rotaryOperation(project, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })),
-        stock,
-      )
-      const alone = emittedPoints(
-        generate(hexOnly, rotaryOperation(hexOnly, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })),
-        stock,
-      )
-      // The deepest emitted point the target-only run made at (or within one
-      // height-map cell along of) each angle. A head point above that line
-      // removes no material the baseline left.
-      const byAngle = new Map<number, { along: number; tip: number }[]>()
-      for (const point of alone) {
-        const group = byAngle.get(point.angle) ?? []
-        group.push({ along: point.along, tip: point.tip })
-        byAngle.set(point.angle, group)
-      }
-      let matched = 0
-      let unmatched = 0
-      let violations = 0
-      let deepest = 0
-      let where = 'nowhere'
-      for (const point of joined) {
-        let floor = Number.POSITIVE_INFINITY
-        for (const base of byAngle.get(point.angle) ?? []) {
-          if (Math.abs(base.along - point.along) <= cell && base.tip < floor) floor = base.tip
-        }
-        if (!Number.isFinite(floor)) {
-          unmatched += 1
-          continue
-        }
-        matched += 1
-        const depth = floor - point.tip
-        if (depth > deepest) {
-          deepest = depth
-          where = `along ${point.along.toFixed(4)}, A ${point.angle.toFixed(3)}\u00b0, `
-            + `tip ${point.tip.toFixed(4)} vs the baseline's deepest ${floor.toFixed(4)}`
-        }
-        if (depth > cell) violations += 1
-      }
-      assert.ok(matched > 0, `${kind} ${toolRef}: no emitted point could be compared with the baseline`)
+      const joined = generate(project, rotaryOperation(project, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })).moves
+      const alone = generate(hexOnly, rotaryOperation(hexOnly, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })).moves
+      // Every point of every move, against the deepest baseline cut through the
+      // same along position and angle, interpolated along the baseline's own
+      // segments (`compareRotaryDepth`). A point no baseline segment passes
+      // through is never skipped: it must be in the air.
+      const result = compareRotaryDepth(alone, joined, stock, options)
+      assert.equal(result.points, 2 * joined.length, `${kind} ${toolRef}: every point of every move is compared`)
       assert.equal(
-        violations, 0,
-        `${kind} ${toolRef}: ${violations} emitted point(s) cut more than one ${cell.toFixed(6)} mm cell `
-          + `deeper than the baseline run, the deepest by ${deepest.toFixed(6)} mm at ${where}`,
+        result.uncoveredInMaterial, 0,
+        `${kind} ${toolRef}: ${result.uncoveredInMaterial} emitted point(s) in material have no baseline cut `
+          + `through their along/angle (${result.where})`,
       )
+      assert.equal(
+        result.tooDeep, 0,
+        `${kind} ${toolRef}: ${result.tooDeep} emitted point(s) cut more than one ${cell.toFixed(6)} mm cell `
+          + `deeper than the baseline run, the deepest by ${result.deepest.toFixed(6)} mm at ${result.where}`,
+      )
+      // The comparison must be able to fail: the same run with every third move
+      // lowered by just over one cell is caught at every lowered point that is in
+      // material, and one lowered by 100 mm at every lowered point.
+      for (const [drop, label] of [[cell * 1.01 + 1e-9, 'just over one cell'], [100, '100 mm']] as const) {
+        const mutated = compareRotaryDepth(alone, lowered(joined, drop, 3), stock, options)
+        assert.ok(
+          mutated.tooDeep + mutated.uncoveredInMaterial > 0,
+          `${kind} ${toolRef}: lowering every third move by ${label} went unnoticed`,
+        )
+      }
       console.log(
-        `     ${kind} ${toolRef}: ${matched} point(s) compared (${unmatched} without a baseline within a cell); `
-          + `deepest ${deepest.toFixed(6)} mm (a negative depth would be a gouge)`,
+        `     ${kind} ${toolRef}: ${result.points} point(s) of ${joined.length} moves vs ${alone.length}; `
+          + `${result.covered} on a baseline cut, ${result.bracketed} between two, ${result.uncoveredInAir} in the air, none uncovered in material; `
+          + `deepest ${result.deepest.toFixed(6)} mm (positive would be deeper than the baseline)`,
       )
     }
   }
