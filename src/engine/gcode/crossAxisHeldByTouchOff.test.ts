@@ -40,8 +40,14 @@ import golden from './crossAxisHeldPrograms.golden.json'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import type { ParsedGcodeMove } from './gcodeMotionParser'
 import { crossAxisHeldByTouchOff } from './motionPipeline'
-import { ownAMachine } from '../../test/crossAxisPrograms'
+import { fitArcsInMachineMoves } from './arcFitting'
+import { projectToMachinePoint } from './utils'
+import { setupFrameForOperation } from '../setupOrientation'
+import { exportGeometryTolerance } from '../../utils/units'
+import { ownAMachine, machineWithToolChangeCommands } from '../../test/crossAxisPrograms'
 import {
+  crossAxisArcProgram,
+  crossAxisJitterProgram,
   crossAxisLetter,
   crossAxisPrograms,
   renderCrossAxisProgram,
@@ -259,6 +265,163 @@ console.log('Testing the decision directly: each condition withholds the rule...
     }),
     null,
     'a program that never writes A is not a rotary program (condition 2)',
+  )
+}
+
+// ── Physical lines and complete G-code words ─────────────────
+
+console.log('Testing the template scan: physical lines and complete G-code words...')
+{
+  const holds = PROGRAMS.find((entry) => entry.name === 'smoke-rule-holds')
+  assert.ok(holds, 'the smoke program is in the fixture set')
+  const decision = (commands: string[]): 'x' | 'y' | null => crossAxisHeldByTouchOff({
+    project: holds.project,
+    definition: machineWithToolChangeCommands(...commands),
+    operations: holds.operations,
+    manualIndexAngle: null,
+  })
+
+  // The comment marker ends a *physical line*, not the template entry. Slicing
+  // the entry at the first `;` hid the code on every later line, so the rule
+  // held while the tool change moved Y and never restored the centreline
+  // (#1156 correction round, finding 1).
+  assert.equal(
+    decision(['; comment\nG53 G0 Y-10']),
+    null,
+    'a cross-axis word after a line comment on the first physical line still counts',
+  )
+  // A home is a complete G-code word, not a substring: `G90G28` is G90 then
+  // G28, `G028` is G28, and `G90G30` is G90 then G30. Each moves axes the line
+  // does not name, so each withholds the rule.
+  for (const home of ['G28', 'G90G28', 'G028', 'G90G30', 'G30', 'G28.1']) {
+    assert.equal(
+      decision([home]),
+      null,
+      `${home} homes the machine, so the program cannot hold its cross axis`,
+    )
+  }
+  // The controls stay controls: prose is prose, and a line that moves no axis
+  // of the cross pair changes nothing.
+  assert.equal(decision(['; G53 G0 Y-10\n; G28']), 'y', 'comment prose is not code')
+  assert.equal(decision(['G53 G0 X0']), 'y', 'a line that moves only the along axis is harmless')
+
+  // Withheld means byte-identical: the added command is written and the
+  // program keeps writing its cross words, exactly as before the rule.
+  const control = {
+    ...holds,
+    definition: machineWithToolChangeCommands('; comment\nG53 G0 Y-10'),
+  }
+  assert.deepEqual(renderCrossAxisProgram(control).warnings, [], 'the control posts cleanly')
+  const controlText = normalizeDate(renderCrossAxisProgram(control).gcode)
+  assert.match(controlText, /G53 G0 Y-10/, 'the multi-line tool-change command is written')
+  assert.match(controlText, /Y0\.000/, 'and the program keeps writing its cross words')
+}
+
+// ── The word goes, the block stays ───────────────────────────
+
+console.log('Testing a sub-format cross move: only its word is removed...')
+{
+  // One rapid out to Y + 0.0001 mm and one back. Every point formats as the
+  // machine's zero, so the rule holds; the two rapids are blocks of their own
+  // because the *unformatted* cross coordinate changed, and each repeats the X
+  // it already stated. Removing the coordinate from the plan instead of the
+  // word dropped both blocks, including that X repetition
+  // (#1156 correction round, finding 2).
+  const held = crossAxisJitterProgram(0)
+  const control = crossAxisJitterProgram(1)
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: held.project,
+      definition: held.definition,
+      operations: held.operations,
+      manualIndexAngle: null,
+    }),
+    'y',
+    'a cross coordinate that formats as zero holds the axis even when it jitters',
+  )
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: control.project,
+      definition: control.definition,
+      operations: control.operations,
+      manualIndexAngle: null,
+    }),
+    null,
+    'shifting the origin off the centreline withholds the rule, giving today\'s bytes',
+  )
+
+  const heldText = normalizeDate(renderCrossAxisProgram(held).gcode)
+  const controlText = normalizeDate(renderCrossAxisProgram(control).gcode)
+  // The setup header names the origin, and the control's origin really moved,
+  // so only the program body — from the first operation's comment on — is the
+  // same input. Every motion block lives there.
+  const body = (text: string): string => text.slice(text.search(/^; Operation 1:/m))
+  // The control is today's block structure with a constant cross offset; the
+  // held program must be that text with only the cross words removed.
+  assert.equal(
+    body(heldText),
+    withoutCrossWords(body(controlText), 'Y'),
+    'the held program body is the control with every Y word removed, byte for byte',
+  )
+  // The blocks the sub-format moves create are not one-offs: today's emitter
+  // repeats its X word on each, and the held program must keep repeating it.
+  // Three: the operation's own rapid and the two sub-format moves.
+  const repeated = controlText.split('\n').filter((line) => line === 'X20.000 Y1.000')
+  assert.ok(repeated.length >= 3, 'the control repeats X on the sub-format cross blocks')
+  const kept = heldText.split('\n').filter((line) => line === 'X20.000')
+  assert.ok(kept.length >= 3, 'and the held program keeps every one of those X words')
+}
+
+// ── An arc and a held cross axis cannot coexist ──────────────
+
+console.log('Testing that a fitted arc always moves the cross coordinate...')
+{
+  /** How many emitted arc descriptors the planner's own fitting produces for a
+   *  program, using the rule's probe inputs. */
+  const machineArcs = (program: CrossAxisProgram): number => {
+    const tolerance = exportGeometryTolerance(program.project.meta.units)
+    let arcs = 0
+    for (const { operation, toolpath } of program.operations) {
+      const setup = setupFrameForOperation(program.project, operation)
+      const moves = toolpath.moves.map((move) => ({
+        ...move,
+        from: projectToMachinePoint(move.from, program.project.origin, program.definition, setup),
+        to: projectToMachinePoint(move.to, program.project.origin, program.definition, setup),
+      }))
+      arcs += fitArcsInMachineMoves(moves, tolerance, 90)
+        .filter((step) => step.kind === 'arc').length
+    }
+    return arcs
+  }
+
+  // Every program the rule holds has one constant machine coordinate in the XY
+  // plane the fitter reads, so no run in it is an arc. Condition 3's arc probe
+  // therefore never decides these programs.
+  for (const program of PROGRAMS.filter((entry) => entry.holdsCrossAxis)) {
+    assert.equal(
+      machineArcs(program),
+      0,
+      `${program.name}: a held cross axis leaves nothing to fit as an arc`,
+    )
+  }
+
+  // A program that *does* fit arcs moves its cross coordinate (by up to the
+  // radius), so the format half of condition 3 already withholds the rule.
+  // Both halves of the condition reject exactly the same programs: removing the
+  // arc exclusion cannot make any test fail, because no program it could decide
+  // can reach it. Acceptance item 4's arc control cannot be built against this
+  // fitter — reported as a stop-and-report in the #1156 correction round.
+  const arc = crossAxisArcProgram()
+  assert.ok(machineArcs(arc) > 0, 'the arc-shaped program really is fitted as arcs')
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: arc.project,
+      definition: arc.definition,
+      operations: arc.operations,
+      manualIndexAngle: null,
+    }),
+    null,
+    'and it cannot hold the cross axis: its cross coordinate moves off the centreline',
   )
 }
 

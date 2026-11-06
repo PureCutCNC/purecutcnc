@@ -130,9 +130,15 @@ export function lineCode(line: string, commentPrefix: string): string {
  * code, which is why a line is never skipped just because it starts with one.
  */
 export function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
-  const code = lineCode(line, commentPrefix)
-  for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
-    if (match[1].toUpperCase() === letter) return true
+  // A template entry may hold several physical lines (`; note\nG53 G0 Y0`).
+  // The comment marker ends a *line*, not the entry, so the scan is per
+  // physical line; slicing the joined text at the first `;` would hide every
+  // later line's code (#1156 correction round).
+  for (const physical of line.split(/\r?\n/)) {
+    const code = lineCode(physical, commentPrefix)
+    for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
+      if (match[1].toUpperCase() === letter) return true
+    }
   }
   return false
 }
@@ -1006,12 +1012,12 @@ function suppressAxis(point: ToolpathPoint, axis: 'x' | 'y'): ToolpathPoint {
 /**
  * Remove one machine axis's coordinate from a planned sequence.
  *
- * Two readers need it. A borrowed motor's linear coordinate must never be
- * emitted — that letter carries the angle instead (issue #393) — and the
- * program's cross axis is not emitted at all when the program holds it by
- * touch-off (issue #1156): the operator zeroed it on the bar's centreline and
- * the program never moves it, so writing it on every block only makes the file
- * unusable on a controller that counts axis words per line.
+ * A borrowed motor's linear coordinate must never be emitted — that letter
+ * carries the angle instead (issue #393). A held cross axis (issue #1156) is
+ * *not* removed here: dropping the coordinate would also drop the blocks that
+ * exist only because it moved by less than one format unit, and the rule may
+ * remove only its word, never another axis's repetition
+ * (the word guard in `emitMotionLine`, `postprocessor.ts`).
  */
 export function suppressAxisInSteps(
   steps: readonly FittedMoveDescriptor[],
@@ -1484,14 +1490,35 @@ function programTemplateLines(definition: MachineDefinition): string[] {
   ]
 }
 
+/**
+ * True when a template line carries a G-code word that homes the machine —
+ * `G28`, `G30`, or their stored-position forms `G28.1`/`G30.1` — which move
+ * axes the line never names.
+ *
+ * The word is read the way a controller reads it: a letter followed by its
+ * value, so `G90G28`, `G028` and `G90 G30` are words too. A substring test on
+ * `G28`/`G30` missed the compact spellings (#1156 correction round).
+ */
+function lineHomesMachine(line: string, commentPrefix: string): boolean {
+  for (const physical of line.split(/\r?\n/)) {
+    const code = lineCode(physical, commentPrefix)
+    for (const match of code.matchAll(/[Gg]\s*([-+]?\d+(?:\.\d*)?)/g)) {
+      const value = Number(match[1])
+      // A whole-number part of 28/30 is a home: `G28` and the stored-position
+      // `G28.1` both move axes without naming them.
+      if (Math.floor(value) === 28 || Math.floor(value) === 30) return true
+    }
+  }
+  return false
+}
+
 /** True when a template this program writes spells `letter` as an axis word, or
  *  homes the machine (`G28`/`G30`), which moves axes it never names. */
 function templateMovesAxis(definition: MachineDefinition, letter: 'X' | 'Y'): boolean {
   const prefix = definition.program.commentPrefix
-  return programTemplateLines(definition).some((line) => {
-    if (lineCarriesAxisWord(line, letter, prefix)) return true
-    return /\bG\s*(?:28|30)\b/i.test(lineCode(line, prefix))
-  })
+  return programTemplateLines(definition).some(
+    (line) => lineCarriesAxisWord(line, letter, prefix) || lineHomesMachine(line, prefix),
+  )
 }
 
 /**
@@ -1524,15 +1551,27 @@ function templateMovesAxis(definition: MachineDefinition, letter: 'X' | 'Y'): bo
  * 4. None of the machine's templates the program writes names the cross letter
  *    as an axis word, or homes the machine with `G28`/`G30`: a tool change or a
  *    header that moves the cross axis must be restated, and the line that moves
- *    it names it, which is exactly what the controller refuses.
+ *    it names it, which is exactly what the controller refuses. A template entry
+ *    may hold several physical lines, and a G word may be compact (`G90G28`) or
+ *    leading-zero (`G028`); both are read as complete words, never as
+ *    substrings.
+ *
+ * When the rule holds, the emitter omits only the cross *word* from the motion
+ * blocks it writes; the coordinate is still planned exactly as before, so every
+ * other word — including the X repetition on a block that a sub-format cross
+ * move created — is what it was (the word guard in `emitMotionLine`,
+ * `postprocessor.ts`).
  *
  * The arc test is a probe over the same fitting the planner runs, taken **before**
  * the emitted-arc validation can fall a run back to linear moves: a run that
- * only *might* be an arc withholds the rule. With the cross coordinate pinned
- * to zero this probe cannot in fact find one — every candidate point lies on the
- * machine's cross line, and the fitter rejects a collinear run — so the test is
- * a guard against a future change to the fitting plane, never a decision that
- * changes a program today.
+ * only *might* be an arc withholds the rule. It cannot in fact find one: the
+ * machine-plane fitter reads X and Y, the cross axis is one of those two, and
+ * condition 3 requires it to format as zero on every point, so every candidate
+ * run is collinear. The clause therefore overlaps the format half of condition 3
+ * completely and is a guard against a future change to the fitting plane, never
+ * a decision that changes a program today. It is kept deliberately: if an arc
+ * ever could be planned, `emitArcLine` writes both X and Y whatever the axis
+ * does, and the program could not be word-free.
  */
 export function crossAxisHeldByTouchOff(input: CrossAxisHoldInput): 'x' | 'y' | null {
   const { project, definition, operations, manualIndexAngle } = input
@@ -1652,9 +1691,6 @@ export interface PlanOperationMotionArgs {
   startPosition: { x: number; y: number } | null
   /** Debug-only (issue #356): also return the machine-coordinate trace. */
   captureTrace: boolean
-  /** The cross axis the program holds by touch-off (issue #1156), or null or
-   *  absent when it does not: then every coordinate is planned as it always was. */
-  heldCrossAxis?: 'x' | 'y' | null
 }
 
 /**
@@ -1665,7 +1701,7 @@ export interface PlanOperationMotionArgs {
 export function planOperationMotion(args: PlanOperationMotionArgs): OperationMotionPlan {
   const {
     project, definition, operation, toolpath, arcEmitOptions,
-    startPosition, captureTrace, heldCrossAxis = null,
+    startPosition, captureTrace,
   } = args
   const warnings: ToolpathWarning[] = []
 
@@ -1750,13 +1786,13 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
   if (rotaryBorrowedAxis(definition) !== null && (borrowedWord === 'X' || borrowedWord === 'Y')) {
     steps = suppressAxisInSteps(steps, borrowedWord.toLowerCase() as 'x' | 'y')
   }
-  // The program's cross axis (issue #1156): the operator zeroed it on the bar's
-  // centreline and no operation moves it, so no block writes it. Dropped here,
-  // in the plan, so the emitter's own blocks — the restart reposition, the
-  // rapid split and every feed move — write no cross word without knowing why.
-  if (heldCrossAxis !== null) {
-    steps = suppressAxisInSteps(steps, heldCrossAxis)
-  }
+  // A held cross axis (issue #1156) is **not** suppressed here. Dropping the
+  // coordinate from the plan would also drop the blocks that only exist
+  // because the cross coordinate changed by less than one format unit: a rapid
+  // whose only change is `Y0.0001` still repeats its X word today, and the
+  // rule must leave every non-cross word alone. The emitter therefore plans
+  // the coordinate exactly as before and omits only the *word* it writes (the
+  // word guard in `emitMotionLine`, `postprocessor.ts`).
 
   if (!captureTrace) {
     return { steps, warnings }
@@ -1793,9 +1829,6 @@ export function plannedStepStart(
   toolpath: Pick<ToolpathResult, 'moves'>,
   steps: readonly FittedMoveDescriptor[],
   index: number,
-  /** The program's cross axis when it holds it by touch-off (issue #1156), so
-   *  the operation's first move states no cross word either. */
-  heldCrossAxis: 'x' | 'y' | null = null,
 ): ToolpathPoint {
   const step = steps[index]
   if (step.kind === 'arc') return step.startPoint
@@ -1808,12 +1841,12 @@ export function plannedStepStart(
     ? projectToMachinePoint(first.from, project.origin, definition, setupFrameForOperation(project, operation))
     : step.point
   // A borrowed motor's letter is the angle, never a linear coordinate (issue
-  // #393), and a held cross axis is never written (issue #1156). The planned
-  // steps suppress both; the first move's raw `from` still carries them, so
-  // they are dropped here too.
+  // #393). The planned steps suppress it; the first move's raw `from` still
+  // carries it, so it is dropped here too. A held cross axis (issue #1156) is
+  // not dropped here: the emitter omits only its word, so the restart block
+  // keeps the same block shape (and X repetition) it has today.
   const borrowed = rotaryBorrowedAxis(definition)
-  const dropped = borrowed === 'x' || borrowed === 'y' ? borrowed : heldCrossAxis
-  return dropped === null ? start : suppressAxis(start, dropped)
+  return borrowed === 'x' || borrowed === 'y' ? suppressAxis(start, borrowed) : start
 }
 
 /**

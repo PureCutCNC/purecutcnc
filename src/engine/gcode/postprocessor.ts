@@ -396,10 +396,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     ),
   )
   // #1156: a program that never moves its cross axis holds it by touch-off —
-  // the operator zeroed it on the bar's centreline — so no block writes it. The
-  // decision is taken once for the program, here, because it governs every
-  // operation's plan and the canned-cycle choice below; null means the program
-  // keeps every coordinate it wrote before this rule existed.
+  // the operator zeroed it on the bar's centreline — so no motion block writes
+  // that word. The decision is taken once for the program, here, because it
+  // governs every emitted block and the canned-cycle choice below; null means
+  // the program keeps every word it wrote before this rule existed.
   const heldCrossAxis = crossAxisHeldByTouchOff({
     project,
     definition,
@@ -588,10 +588,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       state.motionCommand = motionCmd
     }
 
-    if (axes.x !== undefined) {
+    // A held cross axis (issue #1156) keeps its coordinate everywhere the
+    // emitter decides block shape from it — `splitRapid` and the positional
+    // tracking below see exactly what they saw before the rule — but the word
+    // itself is not written. Omitting the coordinate from the plan instead
+    // would also drop a block that exists only because a sub-format cross
+    // change (`Y0.0001`) made `splitRapid` repeat its X word.
+    if (axes.x !== undefined && heldCrossAxis !== 'x') {
       lineSegments.push(`X${formatGCodeNumber(axes.x, definition, outputUnits)}`)
     }
-    if (axes.y !== undefined) {
+    if (axes.y !== undefined && heldCrossAxis !== 'y') {
       lineSegments.push(`Y${formatGCodeNumber(axes.y, definition, outputUnits)}`)
     }
     if (axes.z !== undefined) {
@@ -1133,7 +1139,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       arcEmitOptions,
       startPosition: emittedPosition,
       captureTrace,
-      heldCrossAxis,
     })
     warnings.push(...plan.warnings)
     const travelTo = (point: ToolpathPoint) => {
@@ -1317,7 +1322,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       arcEmitOptions,
       startPosition: emittedPosition,
       captureTrace,
-      heldCrossAxis,
     })
     // The height the restart retracts to: the operation's own clearance (the
     // height its rapids travel at), never a cutting point. A canned cycle
@@ -1327,7 +1331,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       : cannedCycles![0].clear.z
     const restartStart = plan !== null
       ? plan.steps.length > 0
-        ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0, heldCrossAxis)
+        ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0)
         : null
       : cannedCycles![0].clear
     // A feed or an arc that starts the operation states its own plane after

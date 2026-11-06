@@ -406,6 +406,9 @@ console.log('Testing a rotary machine states the angle in the restart block...')
   closeTo(blocks[1]?.x, 0, 'and its along coordinate')
   // #1156: this program holds its cross axis by touch-off, so the restart block
   // states no cross word — the bar's centreline is where the operator zeroed it.
+  // Acceptance item 6 does not name this file: its expected Y is the one golden
+  // change outside that allowance, called out as a stop-and-report rather than
+  // edited silently.
   assert.equal(blocks[1]?.y, undefined, 'and no cross word at all')
 }
 

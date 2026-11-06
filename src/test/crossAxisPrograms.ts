@@ -45,7 +45,7 @@ import { convertLength } from '../utils/units'
 import { defaultOrigin, defaultTool, newProject, roundStock } from '../types/project'
 import type { BarStock, MachiningSetup, Operation, Project, Tool } from '../types/project'
 import { isBarStock, squareStock } from '../types/barStock'
-import type { ToolpathMove, ToolpathResult } from '../engine/toolpaths/types'
+import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../engine/toolpaths/types'
 import { defaultOperationForTarget } from '../store/helpers/operationDefaults'
 import { defaultRoundWorkholding } from '../store/helpers/roundWorkholding'
 import { rotaryOperationFixture } from './rotaryOperationFixture'
@@ -95,6 +95,18 @@ export function machineWithCrossAxisToolChange(about: 'x' | 'y' = 'x'): MachineD
   return validateMachineDefinition({
     ...base,
     toolChange: { ...base.toolChange, commands: ['G53 G0 Y-10', ...base.toolChange.commands] },
+  })
+}
+
+/** The own-A machine with extra tool-change commands in front of the bundled
+ *  ones. The commands are machine text, so a multi-line entry, a compact G word
+ *  (`G90G28`) or a leading-zero one (`G028`) is exactly what a definition may
+ *  legally hold; the rule must read all of them. */
+export function machineWithToolChangeCommands(...commands: string[]): MachineDefinition {
+  const base = ownAMachine('x')
+  return validateMachineDefinition({
+    ...base,
+    toolChange: { ...base.toolChange, commands: [...commands, ...base.toolChange.commands] },
   })
 }
 
@@ -270,6 +282,89 @@ function smokeCase(options: {
       : ownAMachine('x'),
     operations: [entry(project, operation, toolpath)],
     holdsCrossAxis: options.holdsCrossAxis,
+  }
+}
+
+/**
+ * A rule-holding program whose cross coordinate moves by less than one format
+ * unit: one rapid out to `Y + 0.0001` mm and one back. The centreline is still
+ * the machine's zero in every emitted word — the whole program is eligible for
+ * the rule — but the coordinate is not *constant*, so the emitter's own
+ * `splitRapid` writes a block for each of those two rapids, each stating the X
+ * it already stated. That block is a repetition today's output carries and the
+ * rule must keep it: only the cross *word* may go (#1156 correction round).
+ *
+ * `originShift` moves the project origin along the bar's across axis, which
+ * makes the cross coordinate a constant non-zero value on every point. The rule
+ * then withholds, so the program is a base-emitter control: its text is today's
+ * block for block, and stripping only the cross words from it must equal the
+ * held program's text.
+ */
+export function crossAxisJitterProgram(originShift = 0): CrossAxisProgram {
+  const base = smokeProject()
+  const project: Project = originShift === 0
+    ? base
+    : { ...base, origin: { ...base.origin, y: base.origin.y + originShift } }
+  const operation = project.operations[0]
+  const moves: ToolpathMove[] = [
+    SMOKE_MOVES[0],
+    { kind: 'rapid', from: { x: 20, y: 10, z: 30, a: 0 }, to: { x: 20, y: 10.0001, z: 30, a: 0 } },
+    { kind: 'rapid', from: { x: 20, y: 10.0001, z: 30, a: 0 }, to: { x: 20, y: 10, z: 30, a: 0 } },
+    ...SMOKE_MOVES.slice(1),
+  ]
+  return {
+    name: originShift === 0 ? 'smoke-subformat-cross-rapid' : 'control-subformat-cross-rapid',
+    project,
+    definition: ownAMachine('x'),
+    operations: [entry(project, operation, {
+      operationId: operation.id,
+      warnings: [],
+      bounds: null,
+      moves,
+    })],
+    holdsCrossAxis: originShift === 0,
+  }
+}
+
+/**
+ * A program whose cut path is a real circle in the machine XY plane on the same
+ * own-A bar. The arc fitter joins it, and every point's machine cross
+ * coordinate is up to the radius away from the centreline — so the program
+ * cannot hold the cross axis. It exists to show that condition 3's two halves
+ * overlap completely: the fitter can only produce an arc when the cross
+ * coordinate moves, and the rule can only hold when it does not. The arc
+ * exclusion can therefore never be the deciding test (#1156 correction round,
+ * finding 3).
+ */
+export function crossAxisArcProgram(): CrossAxisProgram {
+  const project = smokeProject()
+  const operation = project.operations[0]
+  const radius = 5
+  const count = 16
+  const at = (index: number): ToolpathPoint => {
+    const angle = (index / count) * Math.PI * 2
+    return { x: 20 + radius * Math.cos(angle), y: 10 + radius * Math.sin(angle), z: 14, a: 0 }
+  }
+  const moves: ToolpathMove[] = [
+    // Establish the angle above the bar; the circle then cuts at it.
+    { kind: 'rapid', from: { x: 10, y: 10, z: 30, a: 0 }, to: at(0) },
+    ...Array.from({ length: count }, (_, index) => ({
+      kind: 'cut' as const,
+      from: at(index),
+      to: at(index + 1),
+    })),
+  ]
+  return {
+    name: 'control-machine-plane-arc',
+    project,
+    definition: ownAMachine('x'),
+    operations: [entry(project, operation, {
+      operationId: operation.id,
+      warnings: [],
+      bounds: null,
+      moves,
+    })],
+    holdsCrossAxis: false,
   }
 }
 
