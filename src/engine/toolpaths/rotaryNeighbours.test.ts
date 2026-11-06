@@ -34,16 +34,19 @@
  * Mutations this file is checked with (each was applied, seen to fail, and
  * restored):
  *   1. leave the neighbours out of the sampling mesh (`prepareRotaryTargets`
- *      uses `mesh` alone) -> every gouge case sees the cutter 3+ mm inside the
- *      Hex, and the shank helix runs through the head band;
- *   2. append the neighbours **after** the retained stubs (so the wall
+ *      uses `mesh` alone) -> every gouge case, around and along, sees the
+ *      cutter enter the Hex, and the shank helix runs through the head band;
+ *   2. let the helix sample the target-only mesh (the ring grid keeps the
+ *      neighbour) -> the head band stops falling back to rings and the helix
+ *      crosses it, which the helix assertions catch;
+ *   3. append the neighbours **after** the retained stubs (so the wall
  *      boundary covers their triangles) -> the sampled mesh's wall boundary no
  *      longer starts after the neighbour;
- *   3. drop the neighbours when the operation carries a #1096 region ->
+ *   4. drop the neighbours when the operation carries a #1096 region ->
  *      the region test cuts the Hex away;
- *   4. run the outside-bar check on the combined mesh -> the neighbour that
+ *   5. run the outside-bar check on the combined mesh -> the neighbour that
  *      pokes out of the bar warns on the Turn's operation;
- *   5. drop the along-overlap cull -> the model outside the target's range
+ *   6. drop the along-overlap cull -> the model outside the target's range
  *      moves the operation's output.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbours.test.ts
@@ -229,37 +232,71 @@ function hexDepth(along: number, across: number, up: number, hex: HexSolid): num
   for (const normal of HEX_NORMALS) {
     largest = Math.max(largest, normal.across * (across - hex.centre) + normal.up * (up - hex.pivot))
   }
-  return hex.apothem - largest
+  // The two end faces are faces of the prism. Without them a body point one
+  // radius inside the band reads as "inside by the whole radial depth", so a
+  // pass tangent to the end face looks like a gouge; with them, a point on the
+  // face is depth 0 and a point behind it is negative.
+  return Math.min(
+    hex.apothem - largest,
+    along - hex.alongMin,
+    hex.alongMax - along,
+  )
 }
 
-/** One point of the cutter body, relative to the tip: lateral offset and rise up the axis. */
+/** One point of the cutter body, relative to the tip: lateral and along offsets, and rise up the axis. */
 interface BodyPoint {
   readonly lateral: number
+  readonly along: number
   readonly rise: number
 }
 
 /**
- * The real cutter's body, sampled over the solid: a flat endmill is a cylinder
- * of the tool radius standing on the tip disc, a ball endmill a sphere whose
- * lowest point is the tip (its shank never reaches wider than the ball).
+ * The real cutter's body, sampled in the tool's own frame: `lateral` and
+ * `along` are the two directions perpendicular to the tool axis (the bar's
+ * cross-section and its axial direction), `rise` is distance up the axis from
+ * the tip.
+ *
+ * A flat endmill is a cylinder of the tool radius standing on the tip disc; a
+ * ball endmill is a sphere whose lowest point is the tip, with the shank's
+ * cylinder of the tool radius above its equator. The **along extent** is part
+ * of the body and not a detail: the cutter is a disc in the bar's axial
+ * direction too, so a pass whose centre is a full radius past a neighbour's end
+ * face still has its body touching that face, and a checker that samples only
+ * the lateral direction cannot see the overlap.
  */
 function cutterBody(radius: number, type: 'flat' | 'ball'): BodyPoint[] {
   const points: BodyPoint[] = []
-  if (type === 'ball') {
-    for (let latitude = 0; latitude <= 4; latitude++) {
-      const phi = (latitude / 4) * Math.PI / 2
-      for (let longitude = 0; longitude < 24; longitude++) {
-        const theta = (longitude / 24) * Math.PI * 2
-        points.push({ lateral: radius * Math.sin(phi) * Math.cos(theta), rise: radius * (1 - Math.cos(phi)) })
+  const longitudes = 16
+  const rises = [0, radius / 2, radius, 2 * radius]
+  if (type === 'flat') {
+    for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
+      const rr = radius * fraction
+      for (let i = 0; i < longitudes; i++) {
+        const theta = (i / longitudes) * Math.PI * 2
+        for (const rise of rises) {
+          points.push({ lateral: rr * Math.cos(theta), along: rr * Math.sin(theta), rise })
+        }
       }
     }
     return points
   }
-  for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
-    for (let longitude = 0; longitude < 12; longitude++) {
-      const theta = (longitude / 12) * Math.PI * 2
-      points.push({ lateral: radius * fraction * Math.cos(theta), rise: 0 })
-      if (fraction === 1) points.push({ lateral: radius * Math.cos(theta), rise: radius })
+  // The ball: its lower hemisphere, centred one radius up the axis.
+  for (let latitude = 0; latitude <= 8; latitude++) {
+    const phi = (latitude / 8) * Math.PI / 2
+    for (let i = 0; i < longitudes; i++) {
+      const theta = (i / longitudes) * Math.PI * 2
+      points.push({
+        lateral: radius * Math.sin(phi) * Math.cos(theta),
+        along: radius * Math.sin(phi) * Math.sin(theta),
+        rise: radius * (1 - Math.cos(phi)),
+      })
+    }
+  }
+  // The shank above the equator: a cylinder of the tool radius.
+  for (let i = 0; i < longitudes; i++) {
+    const theta = (i / longitudes) * Math.PI * 2
+    for (const rise of [radius, 2 * radius]) {
+      points.push({ lateral: radius * Math.cos(theta), along: radius * Math.sin(theta), rise })
     }
   }
   return points
@@ -318,14 +355,16 @@ function deepestGouge(
       const sin = Math.sin(angle)
       for (const point of body) {
         // The stock frame is the tool frame rotated by `-A`: the tip's own
-        // position is `(r sin A, r cos A)` off the bar's centreline.
+        // position is `(r sin A, r cos A)` off the bar's centreline, and a body
+        // point `(lateral, along, rise)` moves with it.
         const across = centre + cos * point.lateral + sin * (radius + point.rise)
         const up = pivot - sin * point.lateral + cos * (radius + point.rise)
-        const candidate = hexDepth(along, across, up, hex)
+        const candidate = hexDepth(along + point.along, across, up, hex)
         if (candidate > depth) {
           depth = candidate
-          where = `move ${index} (${move.kind}) at along ${along.toFixed(3)}, A ${(angle * 180 / Math.PI).toFixed(1)}°, `
-            + `tip radius ${radius.toFixed(3)}, body offset (${point.lateral.toFixed(3)}, ${point.rise.toFixed(3)})`
+          where = `move ${index} (${move.kind}) at along ${(along + point.along).toFixed(3)}, `
+            + `A ${(angle * 180 / Math.PI).toFixed(1)}°, tip radius ${radius.toFixed(3)}, `
+            + `body offset (${point.lateral.toFixed(3)}, ${point.along.toFixed(3)}, ${point.rise.toFixed(3)})`
         }
       }
     }
@@ -364,16 +403,13 @@ function check(name: string, run: () => void): void {
 
 const TOOL_RADIUS = TOOL_DIAMETER / 2
 const MIN_HEIGHT = minRenderHeight('mm')
-/**
- * The along pass's own tolerance: the along sampler has no conservative cell
- * lift (`conservativeCellBounds` is an around-mode option), so a cornered
- * neighbour can be approached to within one height-map cell. Measured on the
- * **base** tree at 428a285e with the Hex joined to the target mesh instead of
- * being a neighbour: the same 0.127 mm, so this is the along sampler's
- * discretization, not the neighbour rule. Around mode holds the exact
- * `minRenderHeight` bound.
+/*
+ * One bound for every mode: `MIN_HEIGHT`, the 3D view's own minimum render
+ * height. Along mode samples conservatively whenever a neighbour is in the
+ * mesh (`prepareRotaryTargets`), so it holds the same bound around mode does;
+ * before that it read each cell only at its centre and stepped 0.500 mm into a
+ * neighbour's end face.
  */
-const ALONG_CELL_TOLERANCE = 0.2
 
 check('the Hex stands above the Turn and is a neighbour of the Turn operations', () => {
   const { project, turnId, hexId } = boltFixture()
@@ -422,7 +458,7 @@ check('the same bolt case in along mode keeps clear of the Hex', () => {
     const grow = kind === 'rotary_rough' ? STOCK_TO_LEAVE : 0
     assertNoGouge(
       `${kind} along`, generate(project, operation).moves, stock,
-      { radius: TOOL_RADIUS, type: 'flat' }, hexSolid(stock, grow), ALONG_CELL_TOLERANCE,
+      { radius: TOOL_RADIUS, type: 'flat' }, hexSolid(stock, grow), MIN_HEIGHT,
     )
   }
 })
@@ -548,53 +584,53 @@ check('the shank band helices while the head band falls back to rings', () => {
   })
   const result = generate(project, operation)
   const alongOf = (point: { x: number; y: number }) => (stock.axis === 'x' ? point.x : point.y)
-  // What `buildContinuousHelix` emits: consecutive cut moves that each advance
-  // the along position while turning A -- a helix on a cylinder merges into one
-  // move that turns whole revolutions, and a band the walk splits stays several
-  // shorter runs. A ring changes A alone, an along pass changes the along
-  // position alone, and a link changes both in a single move.
-  const helix: ToolpathMove[] = []
-  for (let i = 0; i < result.moves.length;) {
-    let j = i
-    let turn = 0
-    while (j < result.moves.length) {
-      const move = result.moves[j]
-      const turned = Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))
-      const advanced = Math.abs(alongOf(move.to) - alongOf(move.from))
-      if (move.kind !== 'cut' || !(turned > 1e-9) || !(advanced > 1e-9)) break
-      turn += turned
-      j += 1
-    }
-    if (j - i >= 2 || (j - i === 1 && turn >= 360)) helix.push(...result.moves.slice(i, j))
-    i = j > i ? j : i + 1
-  }
-  assert.ok(helix.length > 0, 'the band is cut by continuous helix pieces')
-  const pivot = barPivotZ(stock)
-  const shankHelix = helix.filter((move) => Math.min(alongOf(move.from), alongOf(move.to)) > HEX_END)
-  assert.ok(shankHelix.length > 0, 'the shank band is cut by a continuous helix')
-  // A layer **above** the Hex is a whole ring at every angle, so it may helix
-  // across the head band -- but then it must run above the Hex, never into it.
-  // A layer below the Hex's top has a ring that is not `full` over the head,
-  // and the walk keeps its rings there instead of helixing through them.
-  for (const move of helix) {
+  // What `buildContinuousHelix` emits: consecutive samples merged into one cut
+  // move that advances along the bar while turning through whole turns, so one
+  // move can carry well over 360 degrees of A. A ring turns A at one along
+  // position, an along pass advances at one angle, and a link is one short
+  // diagonal: none of them can carry a full turn *and* an advance, so this
+  // signature identifies the builder's own output rather than inferring a
+  // helix from "A and along both changed".
+  const helixMoves = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) >= 360
+    && Math.abs(alongOf(move.to) - alongOf(move.from)) > 1e-9)
+  // The rough has two layers on the shank; each is one continuous helix.
+  assert.equal(helixMoves.length, 2, `the shank is cut by one continuous helix per layer, found ${helixMoves.length}`)
+  for (const move of helixMoves) {
     const low = Math.min(alongOf(move.from), alongOf(move.to))
-    if (low > HEX_END) continue
-    const tip = Math.min(move.from.z, move.to.z) - pivot
+    const high = Math.max(alongOf(move.from), alongOf(move.to))
     assert.ok(
-      tip >= HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6,
-      `a helix crosses the head band at tip radius ${tip.toFixed(3)}; below the Hex's apothem means it is `
-        + 'helixing through material the Hex stands in',
+      low > HEX_END,
+      `a helix starts at along ${low.toFixed(3)}, inside the head band (the band ends at ${HEX_END}); the head `
+        + 'must fall back to rings, not be helixed through',
+    )
+    assert.ok(high > low, 'the helix advances along the bar')
+  }
+  // The head band falls back to **rings**: cut moves that turn A at one along
+  // position inside the band, every one of them at or above the Hex's surface
+  // (its apothem plus the rough's stock to leave), never at the Turn below it.
+  const headRings = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9
+    && Math.abs(alongOf(move.to) - alongOf(move.from)) <= 1e-9
+    && alongOf(move.from) >= HEX_START && alongOf(move.from) <= HEX_END)
+  // Measured on this fixture: 441 ring moves cut the head band.
+  assert.equal(headRings.length, 441, `the head band is cut by rings, found ${headRings.length}`)
+  const pivot = barPivotZ(stock)
+  const headFloor = HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6
+  for (const ring of headRings) {
+    const tip = Math.min(ring.from.z - pivot, ring.to.z - pivot)
+    assert.ok(
+      tip >= headFloor,
+      `a head-band ring cuts at tip radius ${tip.toFixed(3)}, below the Hex's apothem plus the stock to leave `
+        + `(${headFloor.toFixed(3)}); the ring is following the Turn instead of the neighbour`,
     )
   }
+  // And the helix body itself stays clear of the Hex, in the along direction as
+  // well as radially: the shank moves pass the head band one cutter radius away.
   assertNoGouge(
-    'helix moves', helix, stock, { radius: TOOL_RADIUS, type: 'flat' }, hexSolid(stock, STOCK_TO_LEAVE), MIN_HEIGHT,
+    'helix moves', helixMoves, stock, { radius: TOOL_RADIUS, type: 'flat' },
+    hexSolid(stock, STOCK_TO_LEAVE), MIN_HEIGHT,
   )
-  // The head band is cut as rings: cut moves that change A and keep the along
-  // position.
-  const rings = result.moves.filter((move) => move.kind === 'cut'
-    && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9
-    && Math.abs(alongOf(move.to) - alongOf(move.from)) <= 1e-9)
-  assert.ok(rings.length > 0, 'the head band still emits rings')
 })
 
 check('a neighbour that pokes out of the bar does not warn on this operation', () => {

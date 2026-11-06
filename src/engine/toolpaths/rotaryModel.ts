@@ -1777,10 +1777,18 @@ function prepareRotaryTargets(
   // and along positions are the same in all of them, so the hull, the strip
   // index and the candidate buffer are built once (issue #1045 slice T).
   const workspace: RotarySamplingWorkspace = {}
+  // #1155 correction: along mode samples conservatively too whenever a
+  // neighbour is in the mesh. Its old centre-sampled read left a pass one
+  // cutter radius past a neighbour's end face blind to the half cell that face
+  // covers, and the cutter stepped into that face by up to that cell (0.500 mm
+  // measured on the bolt case, against the 0.01 mm the rule requires). Around
+  // mode has always read this way; an along operation without a neighbour still
+  // takes the old path byte for byte.
+  const neighbourSampling = params.neighbours !== undefined && params.neighbours.length > 0
   const prep = createRotarySamplingPrep(samplingMesh, stock, samplingTool, {
     along,
     requestedCellSize: params.requestedCellSize,
-    ...(params.passDirection === 'around' ? { conservativeCellBounds: true } : {}),
+    ...(params.passDirection === 'around' || neighbourSampling ? { conservativeCellBounds: true } : {}),
     ...((gridExtra !== undefined) ? { gridExtra } : {}),
     ...(samplingMesh.retainedTriangleStart !== undefined
       ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
