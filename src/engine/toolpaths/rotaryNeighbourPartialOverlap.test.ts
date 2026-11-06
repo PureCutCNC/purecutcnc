@@ -46,7 +46,12 @@
  * Turn finish's body sat 0.00288 in inside the Hex (0.073 mm) and the tip
  * sampling read 0.5134 in at 1.3721 in along, where the Hex's facing surface is
  * 0.8354 in; after it the same pose reads 0.8766 in and the body clears the Hex
- * by 0.00409 in.
+ * by 0.00409 in. The mirrored partial overlap -- the Turn's far end 0.05 in
+ * inside the Hex's near end -- fails on the branch the same way (0.00285 in
+ * inside, 0.00409 in clear after), and the Turn rough is covered at the saved
+ * file's 0.02 in of radial leave and at the zero the handoff specifies (0.00407
+ * in clear; the rough's passes stop short of the face, so it is regression
+ * coverage of the required setting rather than a second reproducer).
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourPartialOverlap.test.ts
  */
@@ -154,14 +159,20 @@ function boltFixture(): BoltFixture {
   return { project: hex.project, turnId: turn.created.featureId, hexId: hex.created.featureId }
 }
 
-/** The mirrored bolt: a Turn over 0.25..1.2 whose **end** is inside the Hex. */
+/** The mirrored Turn's end: 0.05 in inside the Hex's near face. */
+const MIRROR_TURN_END = HEX_START + 0.05
+const MIRROR_TURN_START = 0.25
+
+/** The mirrored bolt: a Turn over 0.25..0.8 whose **far end** is inside the Hex. */
 function mirroredBoltFixture(): BoltFixture {
   const base = boltProject('rn-c mirrored partial overlap')
-  // The Turn ends at 1.2 and the Hex runs 0.75..1.25: the Turn's end is 0.05 in
-  // inside the Hex, the mirror of Frank's file.
-  const turnStart = TURN_START - 0.95
+  // The Hex still runs 0.75..1.25 and the Turn approaches from the other side,
+  // ending at 0.8: 0.05 in inside the Hex's near face at 0.75, the mirror of
+  // Frank's file, so the bands overlap by 0.05 in and not the 0.45 in a Turn
+  // that covers most of the Hex.
   const turn = planRotarySolid(base, EMPTY_SELECTION, {
-    kind: 'turn', start: turnStart, length: TURN_START - turnStart, diameter: TURN_DIAMETER,
+    kind: 'turn', start: MIRROR_TURN_START, length: MIRROR_TURN_END - MIRROR_TURN_START,
+    diameter: TURN_DIAMETER,
   })
   if (!turn.ok) throw new Error(`the mirror Turn must plan: ${turn.reason}`)
   const hex = planRotarySolid(turn.project, EMPTY_SELECTION, {
@@ -462,36 +473,91 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
 }
 
 /**
- * The mirror: a Turn that **ends** 0.05 in inside the Hex's near end.
+ * The mirror: a Turn whose **far end** is 0.05 in inside the Hex's near end.
  *
- * Same rule, same sweep. The Turn runs 0.25..1.2 and the Hex 0.75..1.25, so the
+ * Same rule, same sweep. The Turn runs 0.25..0.8 and the Hex 0.75..1.25, so the
  * Turn's own end is inside the Hex and the Hex's near face at 0.75 is what the
- * cutter body must stay off. (This direction is the safe side of a centre--
- * sampled height map -- the first cell centre that holds the Hex already lands
- * inside it -- so it is coverage of the rule, not a second failing case.)
+ * cutter body must stay off. The overlap is the mirrored 0.05 in -- the Turn's
+ * range covers 0.75..0.8 of the Hex, not 0.75..1.2 -- so the fixture first
+ * proves the partial overlap, then sweeps the rough and the finish. It is a
+ * second reproducer, not only coverage: on the branch before the fix the mirror
+ * finish's body sat 0.00285 in inside the Hex and clears it by 0.00409 in after.
  */
 {
   const { project, turnId } = mirroredBoltFixture()
+  // The fixture really is the mirrored partial overlap: the Hex's near face at
+  // 0.75 sits 0.05 in inside the Turn's own range.
+  const overlap = MIRROR_TURN_END - HEX_START
+  assert.ok(
+    Math.abs(overlap - 0.05) < 1e-9,
+    `the Turn's end is 0.05 in inside the Hex, found ${overlap.toFixed(5)} in of overlap`,
+  )
+  assert.ok(
+    MIRROR_TURN_END > HEX_START && MIRROR_TURN_END < HEX_END,
+    'the Turn ends inside the Hex band, so the bands overlap partially',
+  )
   const stock = project.stock as BarStock
-  const operation = rotaryOperation(project, [turnId], 'rotary_finish', {
-    name: 'mirror finish', toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: 0,
+  for (const [kind, grow] of [['rotary_rough', 0.02], ['rotary_finish', 0]] as const) {
+    const operation = rotaryOperation(project, [turnId], kind, {
+      name: `mirror ${kind}`, toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125,
+      stockToLeaveRadial: grow,
+    })
+    const tool = toolOf(project, operation)
+    const moves = generate(project, operation)
+    assert.ok(moves.length > 0, `the mirror ${kind} emits motion`)
+    for (const [label, solid] of [
+      ['its own surface', hexSolid(stock, 0)],
+      ['its own surface plus the stock to leave', hexSolid(stock, grow)],
+    ] as const) {
+      const report = deepestCutterGouge(moves, stock, { radius: tool.radius, type: 'flat' }, (along, across, up) =>
+        hexDepth(along, across, up, solid))
+      assert.ok(
+        report.depth <= MIN_HEIGHT,
+        `the mirror ${kind}: the cutter body is ${report.depth.toFixed(5)} in inside the Hex `
+          + `(${label}, tolerance ${MIN_HEIGHT.toFixed(6)}) at ${report.where}`,
+      )
+    }
+    // And the neighbour is engaged: the operation really does cut towards the
+    // Hex's near face, so the clearance is not the operation having stopped
+    // early.
+    const approaching = moves.filter((move) => move.kind !== 'rapid'
+      && [move.from, move.to].some((point) => point.x <= HEX_START && point.x > HEX_START - tool.radius))
+    assert.ok(approaching.length > 0, `the mirror ${kind} cuts within one cutter radius of the Hex`)
+  }
+}
+
+/**
+ * The Turn rough with **zero** stock to leave, the setting the handoff specifies
+ * for op0197.
+ *
+ * The four operations above are the file's own, and the saved file carries
+ * 0.02 in on the Turn rough, so that case stays. Zero leave is a separate
+ * setting and the one the handoff requires: the cutter body is meant to reach
+ * the Turn's surface, so the only thing it must still clear is the higher
+ * neighbour, and it is checked against the Hex's own surface.
+ */
+{
+  const { project, turnId } = boltFixture()
+  const operation = rotaryOperation(project, [turnId], 'rotary_rough', {
+    name: 'Rotary rough 2, zero leave', toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125,
+    stockToLeaveRadial: 0,
   })
+  const stock = project.stock as BarStock
   const tool = toolOf(project, operation)
   const moves = generate(project, operation)
-  assert.ok(moves.length > 0, 'the mirror finish emits motion')
-  const solid = hexSolid(stock, 0)
+  assert.ok(moves.length > 0, 'the zero-leave Turn rough emits motion')
   const report = deepestCutterGouge(moves, stock, { radius: tool.radius, type: 'flat' }, (along, across, up) =>
-    hexDepth(along, across, up, solid))
+    hexDepth(along, across, up, hexSolid(stock, 0)))
   assert.ok(
     report.depth <= MIN_HEIGHT,
-    `the mirror finish: the cutter body is ${report.depth.toFixed(5)} in inside the Hex `
+    `the zero-leave Turn rough: the cutter body is ${report.depth.toFixed(5)} in inside the Hex `
       + `(tolerance ${MIN_HEIGHT.toFixed(6)}) at ${report.where}`,
   )
-  // And the neighbour is engaged: the finish really does cut towards the Hex's
-  // near face, so the clearance is not the operation having stopped early.
-  const approaching = moves.filter((move) => move.kind !== 'rapid'
-    && [move.from, move.to].some((point) => point.x <= HEX_START && point.x > HEX_START - tool.radius))
-  assert.ok(approaching.length > 0, 'the mirror finish cuts within one cutter radius of the Hex')
+  // The rough really does reach the Hex's far face, so the clearance is not the
+  // operation having stopped short of the head.
+  const atFace = moves.filter((move) => move.kind !== 'rapid'
+    && [move.from, move.to].some((point) => point.x <= HEX_END + tool.radius))
+  assert.ok(atFace.length > 0, 'the zero-leave Turn rough cuts within one cutter radius of the Hex')
 }
 
 console.log('rotary partial-overlap neighbour tests passed')
