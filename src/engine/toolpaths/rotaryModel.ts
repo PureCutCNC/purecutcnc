@@ -1619,6 +1619,18 @@ interface RotaryTargetPlan {
  * wall as stock to keep and not as a surface to follow (#1095 slice D), while a
  * neighbour is exactly a surface to follow. A neighbour appended after a stub
  * would be read as retained stock and a pass beside it lifted off it.
+ *
+ * Joining a mesh moves more than its cells. The around sampler reads its
+ * conservative margin from the **rasterised triangles** -- `trackCellRise` in
+ * `rotaryRaster.ts` takes the largest `(|dz/dx| + |dz/dy|) * cell / 2` over the
+ * triangles that cover the angle's window, `runRotaryAngleJob` reports it as
+ * `lift`, and `assembleRotarySampling` adds it to every finite sample of that
+ * angle. A neighbour below the target can therefore raise an angle's margin
+ * without changing a single cell value (its triangles are steeper than the
+ * target's), which is the one accepted drift of #1155: it is upward-only, it is
+ * capped at one height-map cell, and it can never put an emitted point deeper
+ * than the target-only run (#1155 acceptance 2, pinned by the drift checks in
+ * `rotaryNeighbours.test.ts`).
  */
 export function rotarySampledMesh(
   mesh: RotaryModelMesh,
@@ -1646,6 +1658,27 @@ export function rotarySampledMesh(
     includeSquareStubs,
     params.stockToLeave,
   )
+}
+
+/**
+ * Whether this operation samples its height map as the top of each cell rather
+ * than at its centre (#1045 slice F, #1155).
+ *
+ * Around mode always does. **Along** mode does whenever a neighbour is in the
+ * mesh: its old centre-sampled read left a pass one cutter radius past a
+ * neighbour's end face blind to the half cell that face covers, and the cutter
+ * stepped into the face by up to that cell (#1155 correction). An along
+ * operation with no neighbour keeps the old path byte for byte.
+ *
+ * Exported because the focused suite asserts the margin itself: on a target
+ * with a neighbour wholly inside it no sample may come out lower, and in along
+ * mode the conservative read is the neighbour's doing, so the margin must be
+ * there (#1155 acceptance 2).
+ */
+export function rotaryConservativeSampling(
+  params: Pick<RotaryFinishParams, 'passDirection' | 'neighbours'>,
+): boolean {
+  return params.passDirection === 'around' || (params.neighbours !== undefined && params.neighbours.length > 0)
 }
 
 /** Preparation, or the warning code that refuses the operation before sampling. */
@@ -1784,11 +1817,10 @@ function prepareRotaryTargets(
   // measured on the bolt case, against the 0.01 mm the rule requires). Around
   // mode has always read this way; an along operation without a neighbour still
   // takes the old path byte for byte.
-  const neighbourSampling = params.neighbours !== undefined && params.neighbours.length > 0
   const prep = createRotarySamplingPrep(samplingMesh, stock, samplingTool, {
     along,
     requestedCellSize: params.requestedCellSize,
-    ...(params.passDirection === 'around' || neighbourSampling ? { conservativeCellBounds: true } : {}),
+    ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
     ...((gridExtra !== undefined) ? { gridExtra } : {}),
     ...(samplingMesh.retainedTriangleStart !== undefined
       ? { wallTriangleStart: samplingMesh.retainedTriangleStart }

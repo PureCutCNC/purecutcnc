@@ -47,7 +47,21 @@
  *   5. run the outside-bar check on the combined mesh -> the neighbour that
  *      pokes out of the bar warns on the Turn's operation;
  *   6. drop the along-overlap cull -> the model outside the target's range
- *      moves the operation's output.
+ *      moves the operation's output;
+ *   7. sample the joined mesh without `conservativeCellBounds` (a neighbour
+ *      present but read at cell centres only) -> the along check fails: the
+ *      margin with a neighbour is no larger than the target-only run's, which is
+ *      the correction's own rule, and the along gouge case fails with it.
+ *
+ * The two checks added for #1155 acceptance 2 are the Hex operation's own drift.
+ * With the Hex as the target the Turn is a neighbour wholly inside it, so the
+ * material is the Hex; the extra mesh can still move the **conservative lift**
+ * (`heightMap.cellRise` -> `min(cellRise, cellSize)`), a maximum over the
+ * triangles rasterised in that angle's window (`rotaryRaster.ts`
+ * `trackCellRise`) that `assembleRotarySampling` adds to every finite sample.
+ * The checks pin its direction and size (a sample may only rise, a margin may
+ * not shrink and may not grow past one cell) and compare every emitted point
+ * with the no-neighbour run at the same along position and angle.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbours.test.ts
  */
@@ -57,7 +71,7 @@ import { createHash } from 'node:crypto'
 import { cpuRatio } from '../../test/cpuRatio'
 import { defaultTool, newProject, rectProfile, roundStock } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
-import { barCentre, barPivotZ, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
@@ -67,7 +81,10 @@ import type { SelectionState } from '../../store/types'
 import { minRenderHeight } from '../csg'
 import { resolveFinishModelSurface, resolveRotaryNeighbourMesh } from './finishModelSurface'
 import { computeOperationToolpath } from './generateOperation'
-import { rotarySampledMesh } from './rotaryModel'
+import { normalizeToolForProject } from './geometry'
+import { rotaryAlongRange, rotaryConservativeSampling, rotarySampledMesh, sampleRotaryModel } from './rotaryModel'
+import type { RotaryFinishParams } from './rotaryModel'
+import { alongExtremes } from './rotarySampling'
 import type { ToolpathMove, ToolpathResult } from './types'
 
 // ── fixture ───────────────────────────────────────────────────────────────
@@ -701,6 +718,237 @@ check('a model outside the target\u2019s along range changes nothing', () => {
     movesDigest(clear), movesDigest(aloneMoves),
     'a model outside the target\u2019s along range was not culled',
   )
+})
+
+// ── the Hex-op drift (#1155 acceptance 2) ────────────────────────────────
+
+/**
+ * The two samplings the Hex-target operation gets (#1155 acceptance 2): the
+ * target alone -- what `428a285e` sampled, and what this branch still samples
+ * when no neighbour reaches the range -- and the target with the Turn joined
+ * through `rotarySampledMesh`, which is what this branch is.
+ *
+ * The Turn is a Ø10 cylinder inside the Hex's 15 mm across-flats prism over the
+ * whole band, so the union the operation must respect is the Hex. The extra mesh
+ * can still move a sample -- the per-angle conservative lift, mostly, plus the
+ * wall-adjacent padding beside the retained stubs -- and the checks below pin
+ * the direction it may move in: up, never down.
+ */
+function hexTargetSampling(
+  project: Project,
+  hexId: string,
+  turnId: string,
+  withNeighbour: boolean,
+  passDirection: 'around' | 'along',
+) {
+  const stock = project.stock as BarStock
+  const [hex] = resolveFeatureInstances(project, [hexId])
+  const [turn] = resolveFeatureInstances(project, [turnId])
+  assert.ok(hex && turn, 'the Hex and the Turn resolve')
+  const surface = resolveFinishModelSurface(project, [hex])
+  assert.ok(surface, 'the Hex surface resolves')
+  const neighbour = resolveRotaryNeighbourMesh(project, [turn])
+  assert.ok(neighbour, 'the Turn neighbour mesh resolves')
+  const tool = normalizeToolForProject(project.tools.find((record) => record.id === 'flat')!, project)
+  const range = rotaryAlongRange(stock, project.clamps, alongExtremes(surface.mesh.positions, stock), tool, {
+    chuckEnd: 0, tailEnd: 0,
+  })
+  assert.ok(range, 'the Hex band is inside the bar')
+  const stepover = STEPOVER_RATIO * tool.diameter
+  const stockToLeave: number = STOCK_TO_LEAVE
+  const params: RotaryFinishParams = {
+    stepover,
+    stockToLeave,
+    sampleSpacing: tool.radius / 4,
+    requestedCellSize: Math.min(tool.radius / 3, stepover * 0.5),
+    alongStart: range.start,
+    alongEnd: range.end,
+    safeRadius: barPivotZ(stock) + barMaxRadius(stock) + tool.diameter,
+    passDirection,
+    // The adapter's own shape: the neighbour is a separate argument, never part
+    // of the target surface, and `rotaryConservativeSampling` reads it.
+    ...(withNeighbour ? { neighbours: [neighbour] } : {}),
+  }
+  const mesh = rotarySampledMesh(surface.mesh, params.neighbours, stock, tool.units, params)
+  return {
+    stock,
+    params,
+    mesh,
+    range,
+    // The sampler's own stock-to-leave enlargement, exactly as the generator
+    // builds it.
+    samplingTool: stockToLeave === 0 ? tool : {
+      ...tool,
+      radius: tool.radius + stockToLeave,
+      diameter: tool.diameter + 2 * stockToLeave,
+    },
+  }
+}
+
+check('a neighbour only raises what the target samples, in either pass direction', () => {
+  const { project, turnId, hexId } = boltFixture()
+  for (const passDirection of ['around', 'along'] as const) {
+    const alone = hexTargetSampling(project, hexId, turnId, false, passDirection)
+    const joined = hexTargetSampling(project, hexId, turnId, true, passDirection)
+    assert.notEqual(
+      joined.mesh.positions.length, alone.mesh.positions.length,
+      `${passDirection}: the Turn really is joined into the sampled mesh`,
+    )
+    const along: number[] = []
+    for (let i = 0; i <= 120; i++) {
+      along.push(alone.range.start + (alone.range.end - alone.range.start) * (i / 120))
+    }
+    const angles: number[] = []
+    for (let k = 0; k < 24; k++) angles.push(k * 15)
+    const sample = (setup: ReturnType<typeof hexTargetSampling>) => sampleRotaryModel(
+      setup.mesh, setup.stock, setup.samplingTool,
+      {
+        anglesDeg: angles,
+        along,
+        requestedCellSize: setup.params.requestedCellSize,
+        // The generator's own decision, not a flag this check sets itself: in
+        // along mode the conservative read is the neighbour's doing.
+        ...(rotaryConservativeSampling(setup.params) ? { conservativeCellBounds: true } : {}),
+        ...(setup.mesh.retainedTriangleStart !== undefined
+          ? { wallTriangleStart: setup.mesh.retainedTriangleStart }
+          : {}),
+      },
+      [],
+    )
+    const targetOnly = sample(alone)
+    const withNeighbour = sample(joined)
+    const cell = alone.params.requestedCellSize
+    let valueRises = 0
+    let valueDrops = 0
+    let maxRise = 0
+    let maxDrop = 0
+    let lowerLifts = 0
+    let liftDelta = 0
+    for (let k = 0; k < angles.length; k++) {
+      for (let i = 0; i < along.length; i++) {
+        const a = targetOnly.tipRadius[k][i]
+        const b = withNeighbour.tipRadius[k][i]
+        if (b > a) {
+          valueRises += 1
+          maxRise = Math.max(maxRise, b - a)
+        } else if (b < a) {
+          valueDrops += 1
+          maxDrop = Math.max(maxDrop, a - b)
+        }
+      }
+      if (withNeighbour.lifts[k] < targetOnly.lifts[k]) lowerLifts += 1
+      liftDelta = Math.max(liftDelta, withNeighbour.lifts[k] - targetOnly.lifts[k])
+    }
+    // The safety property, pointwise over the whole sampled grid: a neighbour may
+    // only raise a sample, never lower it. A lower sample is a tip the target-only
+    // run did not take off, which is exactly the direction a gouge would come from.
+    assert.equal(
+      valueDrops, 0,
+      `${passDirection}: ${valueDrops} sampled height(s) came out lower with the neighbour `
+        + `(by up to ${maxDrop.toFixed(6)} mm)`,
+    )
+    // ... and the margins that do move can only move up, by at most one cell.
+    assert.equal(
+      lowerLifts, 0,
+      `${passDirection}: ${lowerLifts} angle(s) sampled a smaller conservative margin with the `
+        + 'neighbour than without it',
+    )
+    assert.ok(
+      liftDelta <= cell,
+      `${passDirection}: the lift moved ${liftDelta.toFixed(6)} mm, more than one `
+        + `${cell.toFixed(6)} mm height-map cell`,
+    )
+    if (passDirection === 'along') {
+      // The target-only along run reads cell centres (`lift` 0); a neighbour must
+      // turn the conservative read on, which is the #1155 correction.
+      assert.ok(
+        Math.max(...withNeighbour.lifts) > Math.max(...targetOnly.lifts),
+        'an along operation with a neighbour did not sample conservatively',
+      )
+    }
+    console.log(
+      `     ${passDirection}: ${angles.length} angles x ${along.length} along positions, `
+        + `${valueRises} sample(s) raised (by up to ${maxRise.toFixed(6)} mm), none lowered; `
+        + `lift +${liftDelta.toFixed(6)} mm at most (cell ${cell.toFixed(6)} mm)`,
+    )
+  }
+})
+
+/** Every emitted point of a rotary result, as the sampler's own (along, A, tip radius). */
+function emittedPoints(result: ToolpathResult, stock: BarStock): { along: number; angle: number; tip: number }[] {
+  const pivot = barPivotZ(stock)
+  return result.moves.map((move) => ({
+    along: stock.axis === 'x' ? move.to.x : move.to.y,
+    angle: move.to.a ?? 0,
+    tip: move.to.z - pivot,
+  }))
+}
+
+check('the Hex operation never cuts deeper with the Turn as its neighbour', () => {
+  const { project, turnId, hexId } = boltFixture()
+  // The no-neighbour control is the same project with the Turn removed: for the
+  // Hex's own operation that is exactly what `428a285e` sampled.
+  const hexOnly: Project = {
+    ...project,
+    features: project.features.filter((feature) => feature.id !== turnId),
+  }
+  const stock = project.stock as BarStock
+  const tool = normalizeToolForProject(project.tools.find((record) => record.id === 'flat')!, project)
+  const cell = Math.min(tool.radius / 3, (STEPOVER_RATIO * tool.diameter) * 0.5)
+  for (const toolRef of ['flat', 'ball'] as const) {
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      const joined = emittedPoints(
+        generate(project, rotaryOperation(project, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })),
+        stock,
+      )
+      const alone = emittedPoints(
+        generate(hexOnly, rotaryOperation(hexOnly, [hexId], kind, { toolRef, rotaryPassDirection: 'around' })),
+        stock,
+      )
+      // The deepest emitted point the target-only run made at (or within one
+      // height-map cell along of) each angle. A head point above that line
+      // removes no material the baseline left.
+      const byAngle = new Map<number, { along: number; tip: number }[]>()
+      for (const point of alone) {
+        const group = byAngle.get(point.angle) ?? []
+        group.push({ along: point.along, tip: point.tip })
+        byAngle.set(point.angle, group)
+      }
+      let matched = 0
+      let unmatched = 0
+      let violations = 0
+      let deepest = 0
+      let where = 'nowhere'
+      for (const point of joined) {
+        let floor = Number.POSITIVE_INFINITY
+        for (const base of byAngle.get(point.angle) ?? []) {
+          if (Math.abs(base.along - point.along) <= cell && base.tip < floor) floor = base.tip
+        }
+        if (!Number.isFinite(floor)) {
+          unmatched += 1
+          continue
+        }
+        matched += 1
+        const depth = floor - point.tip
+        if (depth > deepest) {
+          deepest = depth
+          where = `along ${point.along.toFixed(4)}, A ${point.angle.toFixed(3)}\u00b0, `
+            + `tip ${point.tip.toFixed(4)} vs the baseline's deepest ${floor.toFixed(4)}`
+        }
+        if (depth > cell) violations += 1
+      }
+      assert.ok(matched > 0, `${kind} ${toolRef}: no emitted point could be compared with the baseline`)
+      assert.equal(
+        violations, 0,
+        `${kind} ${toolRef}: ${violations} emitted point(s) cut more than one ${cell.toFixed(6)} mm cell `
+          + `deeper than the baseline run, the deepest by ${deepest.toFixed(6)} mm at ${where}`,
+      )
+      console.log(
+        `     ${kind} ${toolRef}: ${matched} point(s) compared (${unmatched} without a baseline within a cell); `
+          + `deepest ${deepest.toFixed(6)} mm (a negative depth would be a gouge)`,
+      )
+    }
+  }
 })
 
 check('the target-only surface and the neighbour mesh never share a cache entry', () => {
