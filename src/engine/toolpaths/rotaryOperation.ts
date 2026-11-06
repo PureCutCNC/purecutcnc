@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-import type { BarStock, Operation, Project } from '../../types/project'
+import type { BarStock, Operation, Project, SketchFeature, StockAxis } from '../../types/project'
 import { barMaxRadius, barPivotZ, isBarStock } from '../../types/barStock'
+import { loadSTLTransformedGeometry } from '../csg'
+import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { operationFace } from '../setupTargets'
 import { setupForOperation } from '../setupOrientation'
-import { resolveFinishModelSurface } from './finishModelSurface'
+import { resolveFinishModelSurface, resolveRotaryNeighbourMesh } from './finishModelSurface'
 import { normalizeToolForProject } from './geometry'
 import { splitFeatureTargets, buildRegionMask, type SplitFeatureTargets } from './regions'
 import {
@@ -138,6 +140,78 @@ export function rotaryTargetRegions(project: Project, operation: Operation): Rot
 }
 
 /**
+ * Slack on the along overlap test: a neighbour that merely touches the target's
+ * range is still material the cutter reaches, so touching counts as overlap.
+ */
+const NEIGHBOUR_OVERLAP_TOLERANCE = 1e-9
+
+/** The along extent of a transformed model mesh, in the bar's own coordinates. */
+function meshAlongExtent(
+  mesh: { readonly positions: Float32Array },
+  axis: StockAxis,
+): { min: number; max: number } | null {
+  const axisIndex = axis === 'x' ? 0 : 1
+  let min = Infinity
+  let max = -Infinity
+  for (let i = axisIndex; i < mesh.positions.length; i += 3) {
+    const value = mesh.positions[i]
+    if (!Number.isFinite(value)) continue
+    if (value < min) min = value
+    if (value > max) max = value
+  }
+  return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null
+}
+
+/**
+ * The STL model features standing on the bar that this operation does **not**
+ * target and whose along extent reaches its cut range (#1155).
+ *
+ * This is the set `aroundMaterialBands` reads as material: a resolved feature
+ * whose definition is kind `stl` with operation `model`, canned Turn/Polygon
+ * and imported models alike. Visibility and whether another operation targets
+ * the model do not matter -- an around-the-bar rough or finish never cuts into
+ * any of them. Flat add/subtract and line features are not neighbours.
+ *
+ * A model that does not overlap the range is left out, because the retained bar
+ * stubs already stand outside the range and a mesh the sampler would see only
+ * through its own footprint would move the height-map grid for nothing (a
+ * project with an unrelated second model stays byte-identical). Overlapping
+ * models are a **union**: inside its range the operation cuts down to the
+ * higher of the target and its neighbours.
+ *
+ * Feature order is `project.features` order, and a model whose geometry cannot
+ * load is skipped: a mesh the sampler cannot sample is not material it can
+ * protect.
+ */
+function rotaryNeighbourModels(
+  project: Project,
+  targets: readonly SketchFeature[],
+  axis: StockAxis,
+  along: { readonly min: number; readonly max: number },
+): SketchFeature[] {
+  const targetIds = new Set(targets.map((feature) => feature.id))
+  const candidateIds = project.features
+    .filter((feature) => {
+      if (targetIds.has(feature.id)) return false
+      const definition = project.featureDefinitions[feature.definitionId]
+      return definition?.kind === 'stl' && definition.operation === 'model'
+    })
+    .map((feature) => feature.id)
+  if (candidateIds.length === 0) return []
+  const neighbours: SketchFeature[] = []
+  for (const feature of resolveFeatureInstances(project, candidateIds)) {
+    const geometry = loadSTLTransformedGeometry(feature, project)
+    if (!geometry) continue
+    const extent = meshAlongExtent(geometry, axis)
+    if (!extent) continue
+    if (extent.max < along.min - NEIGHBOUR_OVERLAP_TOLERANCE) continue
+    if (extent.min > along.max + NEIGHBOUR_OVERLAP_TOLERANCE) continue
+    neighbours.push(feature)
+  }
+  return neighbours
+}
+
+/**
  * The generator parameters for one saved operation, or the warning code that
  * says why it cannot run. No other operation's row, result or enabled flag is
  * read here: a finish emits only its model-following passes (2026-10-22
@@ -197,6 +271,12 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     axis: stock.axis === 'x' ? 'y' : 'x',
     period: Math.PI * stock.thickness,
   })
+  // #1155: every other model standing on the bar is material this operation
+  // must not cut into. The neighbours are collected **outside** the target
+  // surface and handed to the generator separately, so the range above, the
+  // outside-bar warning and the target ids below stay this operation's own.
+  const neighbours = rotaryNeighbourModels(project, models, stock.axis, { min: range.start, max: range.end })
+  const neighbourMesh = resolveRotaryNeighbourMesh(project, neighbours)
   const params: RotaryFinishParams = {
     stepover,
     stockToLeave: operation.stockToLeaveRadial,
@@ -207,6 +287,7 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
     ...(region !== null ? { region } : {}),
+    ...(neighbourMesh !== null ? { neighbours: [neighbourMesh] } : {}),
   }
   return {
     stock, surface, tool, params,

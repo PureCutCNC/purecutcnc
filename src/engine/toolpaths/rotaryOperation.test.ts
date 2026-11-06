@@ -110,7 +110,9 @@ for (const axis of ['x', 'y'] as const) {
     assert.equal(lowRapid.moves[0].to.z, stock.thickness + tool.diameter, 'low saved rapid height falls back above the bar')
   }
 }
-// All targeted model meshes are joined, including transformed instances.
+// Every model on the bar is sampled: a targeted one through the target surface,
+// an untargeted overlapping one as a neighbour (#1155). All targeted meshes are
+// joined, including transformed instances.
 const unionProject = rotaryOperationFixture()
 const second = { ...unionProject.features[0], id: 'second', transform: { ...unionProject.features[0].transform, f: 0.5 } }
 unionProject.features.push(second)
@@ -118,9 +120,12 @@ const one = resolveFinishModelSurface(unionProject, resolveFeatureInstances(unio
 const two = resolveFinishModelSurface(unionProject, resolveFeatureInstances(unionProject, ['model', 'second']))!.mesh
 assert.equal(two.positions.length, 2 * one.positions.length)
 const op = unionProject.operations[0]
+const withoutSecond = computeOperationToolpath(
+  { ...unionProject, features: unionProject.features.filter((feature) => feature.id !== 'second') }, op)!.result
 const singlePath = computeOperationToolpath(unionProject, op)!.result
+assert.notDeepEqual(singlePath.moves, withoutSecond.moves, 'an untargeted model on the bar is sampled as a neighbour')
 const combinedPath = computeOperationToolpath(unionProject, { ...op, target: { source: 'features', featureIds: ['model', 'second'] } })!.result
-assert.notDeepEqual(combinedPath.moves, singlePath.moves, 'every targeted transformed model reaches rotary sampling')
+assert.notDeepEqual(combinedPath.moves, withoutSecond.moves, 'every targeted transformed model reaches rotary sampling')
 
 // 2026-10-22 decision: a finish emits only its model-following motion, and the
 // operation list changes only its advisory warning. An enabled rotary rough on

@@ -114,6 +114,15 @@ export interface RotaryFinishParams {
    * surface exactly as before.
    */
   readonly region?: RotaryRegionMask | null
+  /**
+   * The other STL models standing on the bar, which this operation must not cut
+   * into (#1155). They are held **apart from** the target `mesh` so the along
+   * range, the `rotaryModelOutsideBar` warning and the target ids stay the
+   * operation's own; the sampler joins them after the target and before the
+   * retained bar stubs. Omitted or empty is the target-only surface, byte for
+   * byte.
+   */
+  readonly neighbours?: readonly RotaryModelMesh[]
 }
 
 /**
@@ -1601,6 +1610,44 @@ interface RotaryTargetPlan {
   readonly prep: RotarySamplingPrep
 }
 
+/**
+ * The mesh a rotary operation samples: the **target**, then the operation's
+ * **neighbours**, then the retained bar stubs (#1155).
+ *
+ * The order is the contract. The neighbours come before the stubs so
+ * `retainedTriangleStart` still marks only wall triangles: the sampler treats a
+ * wall as stock to keep and not as a surface to follow (#1095 slice D), while a
+ * neighbour is exactly a surface to follow. A neighbour appended after a stub
+ * would be read as retained stock and a pass beside it lifted off it.
+ */
+export function rotarySampledMesh(
+  mesh: RotaryModelMesh,
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  stock: BarStock,
+  units: Units,
+  params: Pick<RotaryFinishParams, 'alongStart' | 'alongEnd' | 'passDirection' | 'stockToLeave'>,
+): RotaryModelMesh {
+  const sampledMesh = neighbours !== undefined && neighbours.length > 0
+    ? concatRotaryMeshes([mesh, ...neighbours])
+    : mesh
+  // A square blank's around rings are protected from the retained stub by the
+  // cutter-centre span pull and the exact stub floor, not by the height map;
+  // including the stub here lifted every ring's tip near an end to the blank's
+  // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
+  // Neighbours still go in on a square blank in around mode: they are material,
+  // not retained stock (#1155).
+  const includeSquareStubs = !(isSquareStock(stock) && params.passDirection === 'around')
+  return withRetainedBar(
+    sampledMesh,
+    stock,
+    units,
+    params.alongStart,
+    params.alongEnd,
+    includeSquareStubs,
+    params.stockToLeave,
+  )
+}
+
 /** Preparation, or the warning code that refuses the operation before sampling. */
 function prepareRotaryTargets(
   operationId: string,
@@ -1657,6 +1704,8 @@ function prepareRotaryTargets(
     along = grid.along
   } else {
     const passes = Math.max(1, Math.ceil((2 * Math.PI * maxRadius) / Math.max(params.stepover, 1e-9)))
+    // The target's own mesh: a neighbour's along extent must not widen the
+    // shoulder envelope this refines (#1155).
     const positions = rotaryAlongPositions(mesh, stock, tool, params, span)
     if (positions === null) {
       return { refusal: 'operationStepoverRatioRange' }
@@ -1679,7 +1728,8 @@ function prepareRotaryTargets(
   // One warning per operation, however many vertices stick out: the user can
   // only move the model or pick a bigger bar, and the sampler's answer is the
   // same either way. This judges the model alone -- the retained-bar stubs
-  // below sit on the bar's surface by construction and must not trip it.
+  // below sit on the bar's surface by construction and must not trip it, and a
+  // neighbour that pokes out of the bar is the neighbour's own warning (#1155).
   if (modelOutsideBar(mesh, stock, minRenderHeight(tool.units))) {
     warnings.push({ code: 'rotaryModelOutsideBar', params: { operation: operationId } })
   }
@@ -1702,19 +1752,16 @@ function prepareRotaryTargets(
   // mesh (and its bit-identical output) is unchanged.
   const wallInset = stockToLeave
   const includeSquareStubs = !(isSquareStock(stock) && params.passDirection === 'around')
-  const samplingMesh = withRetainedBar(
-    mesh,
-    stock,
-    tool.units,
-    params.alongStart,
-    params.alongEnd,
-    // A square blank's around rings are protected from the retained stub by the
-    // cutter-centre span pull and the exact stub floor, not by the height map;
-    // including the stub here lifted every ring's tip near an end to the blank's
-    // corner (#1045 slice G). Along mode keeps the stub in the mesh byte for byte.
-    includeSquareStubs,
-    wallInset,
-  )
+  // #1155: every other model standing on the bar is material this operation
+  // must not cut into, so it is joined into the **sampled** mesh right after
+  // the target and before the retained stubs. The sampler, the around
+  // refinement, the helix's raster maps and the ring/helix eligibility then all
+  // read the neighbour through the one mesh, with no second code path -- and
+  // `retainedTriangleStart` still marks only wall triangles, because the stubs
+  // are appended last. The along range, `modelOutsideBar`, the target ids and
+  // the #1096 region stay the target's: the neighbours are a separate argument
+  // on `params`, never part of `mesh`.
+  const samplingMesh = rotarySampledMesh(mesh, params.neighbours, stock, tool.units, params)
   // #1095: the erosion must move the wall's sampled height, not the height-map
   // grid. The un-eroded stubs (the ones the stock-to-leave-zero run sampled) are
   // unioned back into the grid envelope, so every sample more than one cutter
