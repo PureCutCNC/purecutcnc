@@ -547,6 +547,7 @@ export const dialogsEn = {
   'dialogs.machineManager.rotarySummaryBorrowed': 'Bar along {axis}, on the {motor} motor (word {word})',
   'dialogs.machineManager.rotarySummaryOwnFollows': 'Follows the bar (now along {axis}), on its own axis (A)',
   'dialogs.machineManager.rotarySummaryBorrowedFollows': 'Follows the bar (now along {axis}), on the {motor} motor (word {word})',
+  'dialogs.machineManager.legendRotary': 'Rotary',
   'dialogs.machineUpdate.title': 'Machine definition update available',
   'dialogs.machineUpdate.body': 'This project uses an older copy of “{name}.” Updating it may change exported G-code.',
   'dialogs.machineUpdate.review': 'Review update',

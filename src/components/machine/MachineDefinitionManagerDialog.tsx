@@ -31,6 +31,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { platform } from '../../platform'
 import { MachineDefinitionEditorDialog } from './MachineDefinitionEditorDialog'
 import { MachineDiagnosticList } from './MachineDiagnosticList'
+import { Icon } from '../Icon'
 import { machineLibraryNotices } from './machineLibraryNotices'
 import {
   buildMachineManagerRows,
@@ -270,6 +271,10 @@ export function MachineDefinitionManagerDialog({
     [editing, setProjectMachine],
   )
 
+  function kindLabel(definition: MachineDefinition): string {
+    return td(resolveMachineKind(definition) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')
+  }
+
   function renderRow(row: MachineManagerRow) {
     const { definition } = row
     const rowIsActive = projectMachine !== null
@@ -286,26 +291,27 @@ export function MachineDefinitionManagerDialog({
         ].join(' ').trim()}
         onClick={() => { setPreviewKey(row.key); setError(null) }}
       >
-        <div className="machine-manager-item-name">{definition.name}</div>
-        {row.diagnostics.length > 0 ? (
-          <span className="machine-manager-badge machine-manager-badge--invalid">
-            {td('dialogs.machineManager.exportBlocked')}
-          </span>
-        ) : null}
-        <span className="machine-manager-badge machine-manager-badge--kind">
-          {td(resolveMachineKind(definition) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')}
+        {/* One line, ellipsised; the full name stays available as a tooltip.
+          * The kind and the rotary axis are small icons (#1153): the list's
+          * group headings already say built-in or My Machines, and long rotary
+          * names pushed text pills onto a second line in the narrow column. */}
+        <span className="machine-manager-item-name" title={definition.name}>{definition.name}</span>
+        <span className="machine-manager-item-marks">
+          {row.diagnostics.length > 0 ? (
+            <span className="machine-manager-badge machine-manager-badge--invalid">
+              {td('dialogs.machineManager.exportBlocked')}
+            </span>
+          ) : null}
+          {row.projectCopy ? (
+            <span className="machine-manager-badge machine-manager-badge--missing">
+              {td(library.some((entry) => entry.id === definition.id)
+                ? 'dialogs.machineManager.projectCopyBadge'
+                : 'dialogs.machineManager.notInLibrary')}
+            </span>
+          ) : null}
+          <MachineMark kind={resolveMachineKind(definition) === 'plasma' ? 'plasma' : 'router'} label={kindLabel(definition)} />
+          {definition.rotary ? <MachineMark kind="rotary" label={td('dialogs.machineManager.legendRotary')} /> : null}
         </span>
-        {row.projectCopy ? (
-          <span className="machine-manager-badge machine-manager-badge--missing">
-            {td(library.some((entry) => entry.id === definition.id)
-              ? 'dialogs.machineManager.projectCopyBadge'
-              : 'dialogs.machineManager.notInLibrary')}
-          </span>
-        ) : (
-          <span className={definition.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-            {definition.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
-          </span>
-        )}
       </button>
     )
   }
@@ -359,6 +365,11 @@ export function MachineDefinitionManagerDialog({
                 {rows.filter((row) => row.projectCopy).map((row) => renderRow(row))}
               </>
             ) : null}
+            <div className="machine-manager-legend" data-testid="machine-manager-legend">
+              <span><MachineMark kind="router" label={td('dialogs.machineEditor.kindRouter')} decorative /> {td('dialogs.machineEditor.kindRouter')}</span>
+              <span><MachineMark kind="plasma" label={td('dialogs.machineEditor.kindPlasma')} decorative /> {td('dialogs.machineEditor.kindPlasma')}</span>
+              <span><MachineMark kind="rotary" label={td('dialogs.machineManager.legendRotary')} decorative /> {td('dialogs.machineManager.legendRotary')}</span>
+            </div>
           </div>
 
           {/* Right: preview + actions */}
@@ -531,5 +542,28 @@ export function MachineDefinitionManagerDialog({
       ) : null}
     </div>,
     document.body,
+  )
+}
+
+const MACHINE_MARK_ICONS = { router: 'tool-endmill', plasma: 'plasma-torch', rotary: 'face-around' } as const
+
+/**
+ * A machine list mark (#1153): the kind or the rotary axis as a small icon. It
+ * carries its own accessible name and tooltip, except in the legend, where the
+ * text beside it already names it.
+ */
+function MachineMark({ kind, label, decorative = false }: {
+  kind: keyof typeof MACHINE_MARK_ICONS
+  label: string
+  decorative?: boolean
+}) {
+  return (
+    <span
+      className={`machine-manager-mark machine-manager-mark--${kind}`}
+      data-mark={kind}
+      {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label, title: label })}
+    >
+      <Icon id={MACHINE_MARK_ICONS[kind]} size={14} />
+    </span>
   )
 }

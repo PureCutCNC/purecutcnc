@@ -549,6 +549,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.rotarySummaryBorrowed': '棒料沿 {axis}，由 {motor} 电机驱动（字 {word}）',
   'dialogs.machineManager.rotarySummaryOwnFollows': '跟随棒料（当前沿 {axis}），位于自身轴（A）',
   'dialogs.machineManager.rotarySummaryBorrowedFollows': '跟随棒料（当前沿 {axis}），由 {motor} 电机驱动（字 {word}）',
+  'dialogs.machineManager.legendRotary': '旋转轴',
   'dialogs.machineUpdate.title': '机床定义有可用更新',
   'dialogs.machineUpdate.body': '此项目使用的是“{name}”的较旧副本。更新它可能会改变导出的 G 代码。',
   'dialogs.machineUpdate.review': '查看更新',

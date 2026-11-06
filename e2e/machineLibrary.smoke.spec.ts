@@ -309,12 +309,12 @@ for (const tablet of [false, true]) {
     test('QtPlasmaC kind and commands survive focused edits, JSON edits, selection and restart', async ({ app, ui }) => {
       await seedMachineProject(app.page)
       await openManager(app.page, ui)
-      await expect(ui.machineManager.item(app.page, 'GRBL 1.1')).toContainText('Router')
+      // The kind is an icon with its own name since #1153.
+      await expect(ui.machineManager.item(app.page, 'GRBL 1.1').getByRole('img', { name: 'Router' })).toBeVisible()
       const bundled = ui.machineManager.item(app.page, 'QtPlasmaC (experimental)')
-      await expect(bundled).toContainText('Plasma')
-      const kindBadge = bundled.locator('.machine-manager-badge--kind')
-      await expect(kindBadge).toHaveText('Plasma')
-      expect(await kindBadge.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+      const kindMark = bundled.getByRole('img', { name: 'Plasma' })
+      await expect(kindMark).toBeVisible()
+      expect(await kindMark.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
       await bundled.click()
       await ui.machineManager.dialog(app.page).screenshot({ path: test.info().outputPath('plasma-library.png') })
       await ui.machineManager.duplicateButton(app.page).click()
@@ -640,6 +640,43 @@ test.describe('bundled rotary machines (#1153)', () => {
     await expect(ui.properties.machineStatus(app.page)).toBeVisible()
     await expect(notice).toHaveCount(0)
   })
+
+  for (const layout of [
+    { name: 'desktop', viewport: { width: 1280, height: 800 }, hasTouch: false },
+    { name: 'narrow desktop', viewport: { width: 1024, height: 768 }, hasTouch: false },
+    { name: 'landscape tablet', viewport: { width: 1180, height: 820 }, hasTouch: true },
+  ]) {
+    test.describe(`machine list on ${layout.name}`, () => {
+      test.use({ viewport: layout.viewport, hasTouch: layout.hasTouch })
+
+      test('rows keep the name on one line with kind and rotary icons, and a legend', async ({ app, ui }) => {
+        await seedMachineProject(app.page)
+        await openManager(app.page, ui)
+        const rotary = ui.machineManager.item(app.page, BORROWED_ROTARY)
+        await expect(rotary.getByRole('img', { name: 'Router' })).toBeVisible()
+        await expect(rotary.getByRole('img', { name: 'Rotary' })).toBeVisible()
+        await expect(ui.machineManager.item(app.page, 'GRBL 1.1').getByRole('img', { name: 'Rotary' })).toHaveCount(0)
+        // No built-in/custom pill on a row: the group headings say it.
+        await expect(ui.machineManager.dialog(app.page).locator('.machine-manager-item .machine-manager-badge--builtin')).toHaveCount(0)
+        // Every row is one line: the name and its icons share the row's height.
+        for (const name of [BORROWED_ROTARY, 'GRBL 4-axis fork + rotary A', 'GRBL 1.1', 'QtPlasmaC (experimental)']) {
+          const row = ui.machineManager.item(app.page, name)
+          const nameBox = await row.locator('.machine-manager-item-name').boundingBox()
+          const marksBox = await row.locator('.machine-manager-item-marks').boundingBox()
+          expect(nameBox && marksBox, `${name}: name and icons are laid out`).toBeTruthy()
+          if (!nameBox || !marksBox) continue
+          expect(Math.abs((nameBox.y + nameBox.height / 2) - (marksBox.y + marksBox.height / 2)), `${name}: the icons sit on the name's line`).toBeLessThan(4)
+          await expect(row.locator('.machine-manager-item-name')).toHaveAttribute('title', name)
+        }
+        const legend = app.page.getByTestId('machine-manager-legend')
+        await expect(legend).toContainText('Router')
+        await expect(legend).toContainText('Plasma')
+        await expect(legend).toContainText('Rotary')
+        await ui.machineManager.item(app.page, 'GRBL 4-axis fork + rotary A').scrollIntoViewIfNeeded()
+        await ui.machineManager.dialog(app.page).screenshot({ path: test.info().outputPath(`machine-list-${layout.viewport.width}.png`) })
+      })
+    })
+  }
 
   test('the editor offers the inch-scaling checkbox on an own axis only', async ({ app, ui }) => {
     await seedMachineProject(app.page)

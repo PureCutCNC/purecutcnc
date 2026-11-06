@@ -499,6 +499,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.rotarySummaryBorrowed': 'Barra según {axis}, en el motor {motor} (palabra {word})',
   'dialogs.machineManager.rotarySummaryOwnFollows': 'Sigue la barra (ahora según {axis}), en su propio eje (A)',
   'dialogs.machineManager.rotarySummaryBorrowedFollows': 'Sigue la barra (ahora según {axis}), en el motor {motor} (palabra {word})',
+  'dialogs.machineManager.legendRotary': 'Eje rotativo',
   'dialogs.machineUpdate.title': 'Actualización de definición de máquina disponible',
   'dialogs.machineUpdate.body': 'Este proyecto usa una copia anterior de «{name}». Actualizarla puede cambiar el G-code exportado.',
   'dialogs.machineUpdate.review': 'Revisar actualización',
