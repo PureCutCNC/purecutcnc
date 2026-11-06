@@ -91,6 +91,12 @@ export function compileScalarGlsl(
   if (leftover) {
     throw new Error(`compileScalarGlsl: "${leftover[0]}" is outside the scalar subset`)
   }
+  // GLSL ES leaves `%` undefined for a negative operand, while JavaScript's `%`
+  // is always defined, so a run here could pass on code a GPU gets wrong
+  // (issue #1154). Refuse it rather than emulate one GPU's answer.
+  if (script.includes('%')) {
+    throw new Error('compileScalarGlsl: "%" is outside the scalar subset (undefined in GLSL ES for a negative operand)')
+  }
   if (names.length === 0) throw new Error('compileScalarGlsl: no functions found')
 
   const globalNames = Object.keys(globals)

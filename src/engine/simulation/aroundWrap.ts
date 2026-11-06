@@ -83,12 +83,25 @@ export const AROUND_FRAME_GLSL = /* glsl */ `#ifdef AROUND_WRAP
  * Preprocessor-free so `glslScalar.testSupport.ts` can run the very integer
  * code the GPU compiles (issue #395 G3); the `#ifdef` wrapper is added by
  * `AROUND_CELL_GLSL` below.
+ *
+ * No `%`: GLSL ES leaves it undefined for a negative operand, and the cell
+ * before the seam is row -1. Software rendering returned the last row, but a
+ * real GPU could return any row, so the seam wall took that row's height and
+ * stood out of the face as a thin wall the tool passed through (issue #1154).
+ * Callers step at most a few cells past either edge, so one add or subtract
+ * brings the index back.
  */
 export const AROUND_CELL_INDEX_GLSL = /* glsl */ `
+  int aroundIndex(int index, int count) {
+    if (index < 0) return index + count;
+    if (index >= count) return index - count;
+    return index;
+  }
+
   ivec2 aroundCell(ivec2 cell) {
     int count = int(ceil(uAroundPeriod / uCellSize));
-    if (uAroundX) cell.y = ((cell.y % count) + count) % count;
-    else cell.x = ((cell.x % count) + count) % count;
+    if (uAroundX) cell.y = aroundIndex(cell.y, count);
+    else cell.x = aroundIndex(cell.x, count);
     return cell;
   }
 `
