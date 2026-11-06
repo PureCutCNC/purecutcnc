@@ -35,6 +35,8 @@ import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
 import {
   createArcEmitOptions,
   createEmittedValueFormatter,
+  crossAxisHeldByTouchOff,
+  lineCarriesAxisWord,
   planDrillCycles,
   planOperationMotion,
   plannedSafeZ,
@@ -139,42 +141,6 @@ function safeCommentLines(
     .split(/\r?\n/)
     .map((line) => safeCommentText(line, definition))
     .filter((line) => line.length > 0)
-}
-
-/**
- * True when a rendered machine-template line carries `letter` as an axis word
- * (issue #393, rule 3c). A word is a letter followed by a value — `Y0`,
- * `Y-5.0`, `Y 0`, `Y#1` — with or without whitespace between them, so
- * `G53 G0 Y0`, `G92 Y0` and the compact `X0Y0` all match while prose does not.
- *
- * Comments are prose and are removed before the scan: an embedded or leading
- * `( … )` comment, and everything from the definition's own line-comment
- * prefix to the end of the line. Code after a parenthesised comment is still
- * code, which is why a line is never skipped just because it starts with one.
- */
-function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
-  const code = lineCode(line, commentPrefix)
-  for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
-    if (match[1].toUpperCase() === letter) return true
-  }
-  return false
-}
-
-/**
- * A program line with its comments removed: an embedded or leading `( … )`
- * comment, and everything from the definition's own line-comment prefix to the
- * end of the line. Code after a parenthesised comment is still code, which is
- * why a line is never skipped just because it starts with one.
- */
-function lineCode(line: string, commentPrefix: string): string {
-  let code = line.replace(/\([^)]*\)/g, ' ')
-  // `(` is the parenthesised-comment marker, already removed above; slicing at
-  // it would throw away the code that follows.
-  if (commentPrefix.length > 0 && commentPrefix !== '(') {
-    const at = code.indexOf(commentPrefix)
-    if (at >= 0) code = code.slice(0, at)
-  }
-  return code
 }
 
 /**
@@ -406,11 +372,34 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // setup header describes that retract. A machine with no machine-coordinate
   // move refuses the turn instead of writing it, and then posts no program.
   const machineCoordinateRetract = machineRapidCommand !== null
+  // #1156: a program that never moves its cross axis holds it by touch-off —
+  // the operator zeroed it on the bar's centreline — so no motion block writes
+  // that word, and the header tells the operator to zero it there. The decision
+  // is taken once for the program, inside the setup plan, because it governs
+  // every emitted block, the canned-cycle choice below and the header wording;
+  // null means the program keeps every word it wrote before this rule existed.
+  // The plan asks for it while building the header, once it knows the
+  // manual-index angle the decision needs; memoized here so a plan with a header
+  // and a plan without one both evaluate it exactly once.
+  let decidedCrossAxis: 'x' | 'y' | null = null
+  let crossAxisDecided = false
+  const decideCrossAxis = (manualIndexAngle: 0 | 180 | null): 'x' | 'y' | null => {
+    if (!crossAxisDecided) {
+      decidedCrossAxis = crossAxisHeldByTouchOff({
+        project,
+        definition,
+        operations,
+        manualIndexAngle,
+      })
+      crossAxisDecided = true
+    }
+    return decidedCrossAxis
+  }
   // What the program says about its setup, decided once for both the header
   // comments and the manual-index turn that follows them (#1054 slice 2b). It
   // is read here because that turn makes the program one that turns, which the
   // square guard and the template-word check below must both know.
-  const setupPlan = planProgramSetup(input, machineCoordinateRetract)
+  const setupPlan = planProgramSetup(input, machineCoordinateRetract, decideCrossAxis)
   // A manual-index turn about the bar's own axis on a machine whose rotary is
   // about the other horizontal axis would turn the stock the wrong way. The
   // planner refuses such an operation for the same reason; a program whose only
@@ -429,6 +418,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
+  // A plan that builds no header never asked above; the motion rule applies to
+  // the program regardless of what its header says.
+  const heldCrossAxis = decideCrossAxis(setupPlan.manualIndexAngle)
   /** A bar's manual-index program: its own opening turn names the face, so its
    *  retracts are in machine coordinates (#1054 slices 2 and 2b). An Around
    *  program works above the whole bar and needs no such frame. */
@@ -611,10 +603,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       state.motionCommand = motionCmd
     }
 
-    if (axes.x !== undefined) {
+    // A held cross axis (issue #1156) keeps its coordinate everywhere the
+    // emitter decides block shape from it — `splitRapid` and the positional
+    // tracking below see exactly what they saw before the rule — but the word
+    // itself is not written. Omitting the coordinate from the plan instead
+    // would also drop a block that exists only because a sub-format cross
+    // change (`Y0.0001`) made `splitRapid` repeat its X word.
+    if (axes.x !== undefined && heldCrossAxis !== 'x') {
       lineSegments.push(`X${formatGCodeNumber(axes.x, definition, outputUnits)}`)
     }
-    if (axes.y !== undefined) {
+    if (axes.y !== undefined && heldCrossAxis !== 'y') {
       lineSegments.push(`Y${formatGCodeNumber(axes.y, definition, outputUnits)}`)
     }
     if (axes.z !== undefined) {
@@ -1317,6 +1315,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
       && rotaryBorrowedAxis(definition) === null
+      // A canned cycle writes its hole position as X and Y whatever the axis
+      // does (issue #1156), so a program that holds its cross axis by touch-off
+      // expands the cycles instead.
+      && heldCrossAxis === null
       && !toolpathCarriesAngle
       ? planDrillCycles(project, definition, toolpath.drillCycles, operation)
       : null

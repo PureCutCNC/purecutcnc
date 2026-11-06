@@ -382,9 +382,18 @@ console.log('Testing a feed-first operation after a tool change descends to its 
 console.log('Testing a rotary machine states the angle in the restart block...')
 
 {
+  // This machine's own tool change moves the cross axis (`G53 G0 Y-10`), so a
+  // #1156 program on it cannot hold that axis by touch-off: condition 4 fails
+  // and the restart block states the cross word, exactly as it always has.
+  // Without that command the fixture would be a held program and the expected
+  // Y below would have to change; that is a #1156 golden, not this suite's to
+  // move (acceptance item 6 names the goldens that may lose a Y word, and this
+  // file is not one of them).
+  const base = structuredClone(bundled('grbl'))
   const rotaryMachine: MachineDefinition = validateMachineDefinition({
-    ...structuredClone(bundled('grbl')),
+    ...base,
     rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    toolChange: { ...base.toolChange, commands: ['G53 G0 Y-10', ...base.toolChange.commands] },
   })
   const project = newProject('Rotary restart', 'mm')
   project.stock = roundStock(20, 100, 'x')

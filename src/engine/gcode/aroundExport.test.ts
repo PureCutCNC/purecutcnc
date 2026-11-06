@@ -470,12 +470,15 @@ console.log('Testing the Around header and one program per Around setup...')
   const expectedHeader = [
     '; SETUP 01: Around - AROUND THE BAR, BAR ALONG X',
     '; ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
-    '; TOUCH OFF: X30 Y20 MM FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    // #1156: the own-A program holds Y by touch-off, so the measured sentence
+    // names only the along-bar distance, and a line after it says to zero Y there.
+    '; TOUCH OFF: X30 MM FROM THE LEFT END, Y ON THE CENTRELINE OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    "; Y IS NOT WRITTEN: ZERO Y ON THE BAR'S CENTRELINE AND LEAVE IT THERE",
   ]
   const lines = result.gcode.split('\n')
   const headerAt = lines.findIndex((line) => line.includes('SETUP 01'))
-  assert.deepEqual(lines.slice(headerAt, headerAt + 3), expectedHeader,
-    `the Around header, exactly:\n${lines.slice(headerAt, headerAt + 4).join('\n')}`)
+  assert.deepEqual(lines.slice(headerAt, headerAt + 4), expectedHeader,
+    `the Around header, exactly:\n${lines.slice(headerAt, headerAt + 5).join('\n')}`)
   assert.ok(!result.gcode.includes('REGISTRATION'), 'an Around program declares no registration')
 
   // The same header, with the bar along Y, and one more line when the machine
@@ -643,15 +646,13 @@ console.log('Testing every real operation exports with no rotary refusal...')
 console.log('Testing the centreline and the borrowed motor...')
 
 {
-  // Own axis: the bar lies along X, so Y is the across coordinate, and every Y
-  // word written must be the centreline's machine coordinate — zero here,
-  // because the fixture's origin sits on the centreline.
+  // Own axis: the bar lies along X, so Y is the across coordinate. The fixture's
+  // origin sits on the centreline and no operation leaves it, so since #1156 the
+  // program holds that axis by touch-off and writes no Y word at all — writing
+  // one would need the value only a stated centreline can have, which is what
+  // gSender refuses (it counts axis words per line, not axes that move).
   const own = exportFixture(MM, OWN_X)
-  const across = axisWords(own.gcode, 'Y')
-  assert.ok(across.length > 0, 'the across coordinate is written')
-  for (const value of across) {
-    closeTo(value, 0, 1e-9, 'every across word is the centreline')
-  }
+  assert.deepEqual(axisWords(own.gcode, 'Y'), [], 'the across coordinate is held by touch-off, not written')
   const angles = angleWords(own.gcode, 'A')
   assert.ok(angles.length > 0, 'the angle is written under A')
 
@@ -680,10 +681,11 @@ console.log('Testing the centreline and the borrowed motor...')
     }
   }
 
-  // The Y bar is the mirror image: X is the across coordinate, and the
-  // borrowed X motor carries the angle under its own letter.
+  // The Y bar is the mirror image: X is the across coordinate — held by
+  // touch-off on an own-drive machine, for the same reason — and the borrowed X
+  // motor carries the angle under its own letter.
   const ownY = exportFixture(INCH, OWN_Y, false)
-  for (const value of axisWords(ownY.gcode, 'X')) closeTo(value, 0, 1e-9, 'every across word is the centreline')
+  assert.deepEqual(axisWords(ownY.gcode, 'X'), [], 'a Y bar holds its across coordinate too')
   const borrowedX = exportFixture(INCH, BORROWED_X, false)
   assert.equal(rotaryWord(BORROWED_X), 'X', 'the borrowed motor is project X')
   assert.deepEqual(angleWords(borrowedX.gcode, 'X').map((value) => Number(value.toFixed(4))),

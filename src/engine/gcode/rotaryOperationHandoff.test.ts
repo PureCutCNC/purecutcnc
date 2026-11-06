@@ -323,7 +323,7 @@ console.log('Testing that the manual zeroing resets the controller state...')
   assert.ok(pauseAt > 0 && secondAt > pauseAt, 'the pause still separates the two operations')
   const startWord = lines.findIndex((line, index) => index > secondAt && /\bA-?[0-9]/.test(line))
   assert.ok(startWord > secondAt, 'the second operation commands A at all')
-  assert.equal(lines[startWord], 'X0.000 Y0.000 A360.000',
+  assert.equal(lines[startWord], 'X0.000 A360.000',
     'the operation states its own start angle again: the operator zeroed A at the pause, '
     + 'so the emitter must not assume the pre-pause number is still what the controller reads')
   assert.ok(lines.slice(pauseAt + 1).some((line) => /G0 A720\.000/.test(line)),
