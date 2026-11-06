@@ -172,6 +172,12 @@ function modelMesh(): {
 }
 
 interface ConsumedGeometry {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
   zTop: number
   zBottom: number
   height: number
@@ -209,6 +215,12 @@ function consumedGeometry(featureId: string): ConsumedGeometry {
     maxZ = Math.max(maxZ, z)
   }
   return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    minZ,
+    maxZ,
     zTop: maxZ,
     zBottom: minZ,
     height: maxZ - minZ,
@@ -630,6 +642,12 @@ function consumedBoundsMm(featureId: string): ConsumedGeometry {
   const factor = units === 'inch' ? 25.4 : 1
   const geometry = consumedGeometry(featureId)
   return {
+    minX: geometry.minX * factor,
+    maxX: geometry.maxX * factor,
+    minY: geometry.minY * factor,
+    maxY: geometry.maxY * factor,
+    minZ: geometry.minZ * factor,
+    maxZ: geometry.maxZ * factor,
     zTop: geometry.zTop * factor,
     zBottom: geometry.zBottom * factor,
     height: geometry.height * factor,
@@ -642,6 +660,10 @@ function consumedBoundsMm(featureId: string): ConsumedGeometry {
  * Equal within float tolerance. The mesh asset stores positions as Float32, so
  * a millimetre measurement of a ~45 mm model carries ~1e-6 mm of representation
  * error that no unit conversion put there; compare relatively, not bit-exactly.
+ *
+ * Both ends of every axis are compared, not just the extents: a conversion that
+ * displaces a model sideways keeps its width and depth but moves its world-space
+ * bounds, and issue #1157's acceptance is that the bounds do not move.
  */
 function assertSamePhysicalSize(
   actual: ConsumedGeometry,
@@ -649,7 +671,11 @@ function assertSamePhysicalSize(
   message: string,
   epsilon = 1e-6,
 ): void {
-  for (const key of ['width', 'depth', 'height', 'zBottom', 'zTop'] as const) {
+  const compared = [
+    'minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ',
+    'zBottom', 'zTop', 'height', 'width', 'depth',
+  ] as const
+  for (const key of compared) {
     const scale = Math.max(1, Math.abs(actual[key]), Math.abs(expected[key]))
     if (Math.abs(actual[key] - expected[key]) > epsilon * scale) {
       throw new Error(
@@ -663,7 +689,10 @@ test('inch → mm → inch leaves every model the same physical size', () => {
   seedUnitChangeProject()
   const ids = ['hex', 'turn', 'imported'] as const
   const before = new Map(ids.map((id) => [id, consumedBoundsMm(id)]))
-  assert(before.get('hex')!.width > 0, 'the hex model has geometry to measure')
+  assert(
+    before.get('hex')!.width > 0 && before.get('hex')!.depth > 0,
+    'the hex model has geometry on both an X and a Y axis to measure',
+  )
 
   useProjectStore.getState().setUnits('mm', 'convert')
   let project = useProjectStore.getState().project
