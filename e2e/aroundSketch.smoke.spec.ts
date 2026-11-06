@@ -1405,8 +1405,8 @@ test('the rotary group offers Turn and Polygon on every face of a round or squar
   await expect(ui.rotary.flutesButton(page)).toBeVisible()
   await expect(ui.rotary.threadButton(page)).toBeDisabled()
   await expect(ui.rotary.flutesButton(page)).toBeDisabled()
-  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
-  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', 'Not available on a square bar yet')
+  await expect(ui.rotary.threadButton(page)).toHaveAttribute('title', 'Turn a section of the square bar round first')
+  await expect(ui.rotary.flutesButton(page)).toHaveAttribute('title', 'Turn a section of the square bar round first')
 
   // Square blank from Top as well: the model is the same bar model.
   await switchToTop(page)
