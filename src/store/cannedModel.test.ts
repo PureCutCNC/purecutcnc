@@ -29,11 +29,18 @@
  * `loadSTLTransformedGeometry` through every instance's Z span (including a
  * linked copy at its own placement), and a rebuild keeps the user's `stl.scale`
  * and transform instead of resetting them.
+ *
+ * The unit-change cases are issue #1157: a canned model's mesh is regenerated in
+ * the new units from its converted parameters, so its `stl.scale` is the
+ * dimensionless user factor on that mesh, never a unit bridge. A unit change
+ * therefore leaves a canned model the same physical size, and an imported STL
+ * (whose asset stays in its source units) keeps its scale conversion.
  */
 
 import {
   IDENTITY_MATRIX,
   rectProfile,
+  type CannedShapeData,
   type FeatureDefinition,
   type FeatureInstance,
   type Project,
@@ -43,9 +50,11 @@ import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 import { instantiateProjectTemplate } from './helpers/normalize'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
-import { cannedShapeIsExpandable } from '../cannedShapes'
+import { cannedShapeFrame, cannedShapeIsExpandable } from '../cannedShapes'
 import { cannedShapeModelAssetId, rebuildCannedShapeModel } from '../cannedShapes/model'
+import { POLYGON_CANNED_KIND, TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
 import { loadSTLTransformedGeometry } from '../engine/csg'
+import { computeMeshBounds, serializeImportedMesh } from '../engine/importedMesh'
 import { isGhostFeature } from './helpers/activeFace'
 import { readFileSync } from 'node:fs'
 import {
@@ -163,6 +172,12 @@ function modelMesh(): {
 }
 
 interface ConsumedGeometry {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
   zTop: number
   zBottom: number
   height: number
@@ -200,6 +215,12 @@ function consumedGeometry(featureId: string): ConsumedGeometry {
     maxZ = Math.max(maxZ, z)
   }
   return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    minZ,
+    maxZ,
     zTop: maxZ,
     zBottom: minZ,
     height: maxZ - minZ,
@@ -477,6 +498,239 @@ test('a sketch kind still expands', () => {
   // Not a model: the test plate declares no capabilities, so expandable is the
   // default and the shared capability reader must not over-reach.
   assertEqual(cannedShapeIsExpandable({ kind: 'test-plate', params: {} }), true, 'a sketch kind stays expandable')
+})
+
+// ── A unit change keeps models the same physical size (issue #1157) ────────
+
+/**
+ * The bar frame both rotary solids are authored against: a 2 in bar along X
+ * whose axis sits at across = 1. Lengths here are in the project's units at
+ * authoring time (inches for these cases).
+ */
+const UNIT_MODEL_FRAME = {
+  axis: 'x' as const,
+  thickness: 2,
+  alongMin: 0,
+  alongMax: 4,
+  acrossCentre: 1,
+}
+
+function hexCanned(): CannedShapeData {
+  return {
+    kind: POLYGON_CANNED_KIND,
+    params: { start: 0.75, length: 0.5, sides: 6, acrossFlats: 1.5, rotation: 0, frame: UNIT_MODEL_FRAME },
+  }
+}
+
+function turnCanned(): CannedShapeData {
+  return {
+    kind: TURN_CANNED_KIND,
+    params: { start: 1.2, length: 2.55, diameter: 1, segments: 251, frame: UNIT_MODEL_FRAME },
+  }
+}
+
+function cannedDefinition(id: string, canned: CannedShapeData, userScale: number): FeatureDefinition {
+  return {
+    id,
+    kind: 'stl',
+    profile: cannedShapeFrame(canned) ?? rectProfile(0, 0, 1, 1),
+    dimensions: [],
+    text: null,
+    canned,
+    stl: { scale: userScale, axisSwap: 'none' },
+    operation: 'model',
+  }
+}
+
+/** An imported 1 x 1 x 1 inch box, its asset in source (inch) coordinates. */
+function importedBox(): { definition: FeatureDefinition; asset: ReturnType<typeof serializeImportedMesh> } {
+  const positions = new Float32Array([
+    -0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0,
+    -0.5, -0.5, 1, 0.5, -0.5, 1, 0.5, 0.5, 1, -0.5, 0.5, 1,
+  ])
+  const index = new Uint32Array([
+    0, 2, 1, 0, 3, 2,
+    4, 5, 6, 4, 6, 7,
+    0, 1, 5, 0, 5, 4,
+    1, 2, 6, 1, 6, 5,
+    2, 3, 7, 2, 7, 6,
+    3, 0, 4, 3, 4, 7,
+  ])
+  const meshAssetId = 'model-asset-imported-box'
+  return {
+    definition: {
+      id: 'def-imported',
+      kind: 'stl',
+      profile: rectProfile(-0.5, -0.5, 1, 1),
+      dimensions: [],
+      text: null,
+      stl: { format: 'stl', meshAssetId, scale: 1, axisSwap: 'none' },
+      operation: 'model',
+    },
+    asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl'),
+  }
+}
+
+function modelInstance(id: string, definitionId: string, zBottom: number, zTop: number): FeatureInstance {
+  return {
+    id,
+    name: id,
+    definitionId,
+    transform: { ...IDENTITY_MATRIX },
+    constraints: [],
+    folderId: null,
+    z_top: zTop,
+    z_bottom: zBottom,
+    authoringFace: 'top',
+    visible: true,
+    locked: false,
+  }
+}
+
+/**
+ * An inch project holding a Hex and a Turn canned model (their meshes rebuilt as
+ * a save/load would) plus an imported STL box. The canned instance spans are
+ * what the app's own creation/rebuild writes: the generated mesh extent at the
+ * user's scale, anchored where the generator's `modelZAnchor` puts it.
+ */
+function seedUnitChangeProject(hexScale = 1): Project {
+  const hex = cannedDefinition('def-hex', hexCanned(), hexScale)
+  const turn = cannedDefinition('def-turn', turnCanned(), 1)
+  const rebuiltHex = rebuildCannedShapeModel(hex)
+  const rebuiltTurn = rebuildCannedShapeModel(turn)
+  assert(rebuiltHex, 'the hex model generates a mesh')
+  assert(rebuiltTurn, 'the turn model generates a mesh')
+  const imported = importedBox()
+
+  const spanOf = (rebuilt: NonNullable<ReturnType<typeof rebuildCannedShapeModel>>) => ({
+    zBottom: rebuilt.asset.bounds.minZ * rebuilt.scale,
+    zTop: rebuilt.asset.bounds.maxZ * rebuilt.scale,
+  })
+  const hexSpan = spanOf(rebuiltHex)
+  const turnSpan = spanOf(rebuiltTurn)
+
+  const template = instantiateProjectTemplate()
+  const project: Project = {
+    ...template,
+    meta: { ...template.meta, units: 'inch' },
+    modelAssets: {
+      [rebuiltHex.assetId]: rebuiltHex.asset,
+      [rebuiltTurn.assetId]: rebuiltTurn.asset,
+      'model-asset-imported-box': imported.asset,
+    },
+    featureDefinitions: {
+      [hex.id]: rebuiltHex.definition,
+      [turn.id]: rebuiltTurn.definition,
+      [imported.definition.id]: imported.definition,
+    },
+    features: [
+      modelInstance('hex', hex.id, hexSpan.zBottom, hexSpan.zTop),
+      modelInstance('turn', turn.id, turnSpan.zBottom, turnSpan.zTop),
+      modelInstance('imported', imported.definition.id, 0, 1),
+    ],
+  }
+  useProjectStore.setState({
+    project,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+  return project
+}
+
+/** Consumed world-space mesh bounds in millimetres, whatever the project units. */
+function consumedBoundsMm(featureId: string): ConsumedGeometry {
+  const units = useProjectStore.getState().project.meta.units
+  const factor = units === 'inch' ? 25.4 : 1
+  const geometry = consumedGeometry(featureId)
+  return {
+    minX: geometry.minX * factor,
+    maxX: geometry.maxX * factor,
+    minY: geometry.minY * factor,
+    maxY: geometry.maxY * factor,
+    minZ: geometry.minZ * factor,
+    maxZ: geometry.maxZ * factor,
+    zTop: geometry.zTop * factor,
+    zBottom: geometry.zBottom * factor,
+    height: geometry.height * factor,
+    width: geometry.width * factor,
+    depth: geometry.depth * factor,
+  }
+}
+
+/**
+ * Equal within float tolerance. The mesh asset stores positions as Float32, so
+ * a millimetre measurement of a ~45 mm model carries ~1e-6 mm of representation
+ * error that no unit conversion put there; compare relatively, not bit-exactly.
+ *
+ * Both ends of every axis are compared, not just the extents: a conversion that
+ * displaces a model sideways keeps its width and depth but moves its world-space
+ * bounds, and issue #1157's acceptance is that the bounds do not move.
+ */
+function assertSamePhysicalSize(
+  actual: ConsumedGeometry,
+  expected: ConsumedGeometry,
+  message: string,
+  epsilon = 1e-6,
+): void {
+  const compared = [
+    'minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ',
+    'zBottom', 'zTop', 'height', 'width', 'depth',
+  ] as const
+  for (const key of compared) {
+    const scale = Math.max(1, Math.abs(actual[key]), Math.abs(expected[key]))
+    if (Math.abs(actual[key] - expected[key]) > epsilon * scale) {
+      throw new Error(
+        `${message}: ${key} is ${actual[key]} mm, expected ${expected[key]} mm (Δ ${actual[key] - expected[key]} mm)`,
+      )
+    }
+  }
+}
+
+test('inch → mm → inch leaves every model the same physical size', () => {
+  seedUnitChangeProject()
+  const ids = ['hex', 'turn', 'imported'] as const
+  const before = new Map(ids.map((id) => [id, consumedBoundsMm(id)]))
+  assert(
+    before.get('hex')!.width > 0 && before.get('hex')!.depth > 0,
+    'the hex model has geometry on both an X and a Y axis to measure',
+  )
+
+  useProjectStore.getState().setUnits('mm', 'convert')
+  let project = useProjectStore.getState().project
+  assertEqual(project.meta.units, 'mm', 'the project is in millimetres')
+  for (const id of ids) {
+    assertSamePhysicalSize(consumedBoundsMm(id), before.get(id)!, `inch → mm keeps ${id} the same size`)
+  }
+
+  useProjectStore.getState().setUnits('inch', 'convert')
+  project = useProjectStore.getState().project
+  assertEqual(project.meta.units, 'inch', 'the project is back in inches')
+  for (const id of ids) {
+    assertSamePhysicalSize(consumedBoundsMm(id), before.get(id)!, `mm → inch keeps ${id} the same size`)
+  }
+})
+
+test('a canned model with a user scale keeps it, and its doubled size, through a unit change', () => {
+  seedUnitChangeProject(2)
+  const before = consumedBoundsMm('hex')
+
+  useProjectStore.getState().setUnits('mm', 'convert')
+  const project = useProjectStore.getState().project
+  const definition = project.featureDefinitions['def-hex']
+  assert(definition, 'the hex definition survives the unit change')
+  assertEqual(definition.stl?.scale, 2, 'the user scale stays the dimensionless factor 2')
+
+  const assetId = definition.stl?.meshAssetId
+  assert(assetId, 'the definition still references its generated mesh')
+  const asset = project.modelAssets[assetId]
+  assert(asset, 'the regenerated mesh asset exists')
+  const unscaledWidth = asset.bounds.maxX - asset.bounds.minX
+  const unscaledHeight = asset.bounds.maxZ - asset.bounds.minZ
+
+  const after = consumedBoundsMm('hex')
+  assertSamePhysicalSize(after, before, 'a scaled model keeps its physical size through the unit change')
+  const close = (actual: number, expected: number): boolean => Math.abs(actual - expected) <= 1e-6 * Math.max(1, expected)
+  assert(close(after.width, unscaledWidth * 2), `width is twice the unscaled mesh (${after.width} vs ${unscaledWidth * 2})`)
+  assert(close(after.height, unscaledHeight * 2), `height is twice the unscaled mesh (${after.height} vs ${unscaledHeight * 2})`)
 })
 
 if (failCount > 0) {

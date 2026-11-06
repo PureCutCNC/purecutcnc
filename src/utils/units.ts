@@ -235,13 +235,30 @@ function convertTextFeatureData(text: TextFeatureData | null | undefined, from: 
   return text ? { ...text, size: convertLength(text.size, from, to) } : text
 }
 
-function convertStlFeatureData(stl: STLFeatureData | null | undefined, from: Units, to: Units): STLFeatureData | null | undefined {
+/**
+ * Convert a definition's STL record.
+ *
+ * `convertScale` is false for a canned definition: its mesh is regenerated in
+ * the new units from the converted parameters by `rebuildCannedShapeModels`, so
+ * `stl.scale` is the dimensionless user factor applied to that mesh, not a
+ * bridge between two coordinate systems. Converting it too would apply the unit
+ * change twice and grow the model 25.4x on inch -> mm (issue #1157). An imported
+ * model's asset stays in its source coordinates, so its scale does convert.
+ */
+function convertStlFeatureData(
+  stl: STLFeatureData | null | undefined,
+  from: Units,
+  to: Units,
+  convertScale: boolean,
+): STLFeatureData | null | undefined {
   if (!stl) return stl
   return {
     ...stl,
-    // The persisted mesh asset remains in its source coordinate system. Its
-    // per-feature scale is the project-unit bridge and must change with units.
-    scale: convertLength(stl.scale, from, to),
+    ...(convertScale ? { scale: convertLength(stl.scale, from, to) } : {}),
+    // A canned definition has no silhouette of its own: nothing creates one, and
+    // the rebuild regenerates the mesh from the parameters and drops any stored
+    // paths. Converting a stale one is therefore harmless. An imported model's
+    // silhouette is real project-space geometry and must convert.
     silhouettePaths: stl.silhouettePaths?.map((path) =>
       path.map((point) => convertPoint(point, from, to))),
   }
@@ -263,7 +280,9 @@ function convertFeatureDefinition(
     ...(definition.canned
       ? { canned: convertCannedShapeData(definition.canned, (value) => convertLength(value, from, to)) }
       : {}),
-    stl: convertStlFeatureData(definition.stl, from, to),
+    // A canned definition regenerates its mesh in the new units, so its scale
+    // must not be converted with it (issue #1157). Imported models keep theirs.
+    stl: convertStlFeatureData(definition.stl, from, to, !definition.canned),
   }
 }
 
