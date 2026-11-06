@@ -38,7 +38,6 @@ import type { Operation, Project } from '../../types/project'
 import { isSquareStock } from '../../types/barStock'
 import { buildSurfaceIndex } from '../../store/helpers/rotarySurface'
 import {
-  aroundFeatureAlongRange,
   squareSheetRangesBlock,
   squareSheetToolReach,
   type SquareSheetBlock,
@@ -130,12 +129,16 @@ function boundsOf(moves: readonly ToolpathMove[]): ToolpathResult['bounds'] {
 
 /**
  * Rule 2: why a wrapped sheet path's cutter leaves the round sections, or null
- * while it stays on them. A move is judged for the targets it is cutting: the
- * targets whose band, grown by twice the cutter radius (the path runs up to a
- * radius outside a feature, and the body a radius further), meets it. Among
- * those the highest in the tree decides — the one with the fewest Turns above
- * it — so a move never relies on a Turn below work it may belong to. A move
- * near no target is judged for the highest target of all.
+ * while it stays on them. Every move is judged for the **highest** target in
+ * the tree — the one with the fewest Turns above it — so no move can rely on a
+ * Turn that sits below some of the work.
+ *
+ * A move is not tagged with the target it cuts, and guessing that from
+ * distance is not safe: an outside route with stock to leave, a lead or a ramp
+ * can run well clear of its own feature and closer to another, and would then
+ * borrow a Turn that is below its real target (#1131 review). The cost is that
+ * one operation whose targets sit under different Turns, with one of those
+ * Turns between them in the tree, is refused; one operation per Turn cuts.
  */
 export function squareSheetPathBlock(
   project: Project,
@@ -149,35 +152,18 @@ export function squareSheetPathBlock(
   if (target.source !== 'features' || target.featureIds.length === 0) return 'uncut'
   const orders = target.featureIds.map((id) => project.features.findIndex((feature) => feature.id === id))
   if (orders.some((order) => order < 0)) return 'uncut'
+  const before = Math.min(...orders)
   const reach = squareSheetToolReach(project, operation)
-  const bands: Array<{ order: number; band: WorldBand }> = []
-  for (const [position, featureId] of target.featureIds.entries()) {
-    const band = aroundFeatureAlongRange(project, featureId)
-    if (!band) return 'uncut'
-    bands.push({ order: orders[position]!, band: { min: band.min - 2 * reach, max: band.max + 2 * reach } })
-  }
-  const strictest = Math.min(...orders)
   const travelZ = rotaryTravelZ(project.stock, project.meta.units)
   const axis = project.stock.axis
-  // One batch per tree position, so each set of round sections is read once.
-  const byOrder = new Map<number, WorldBand[]>()
+  const ranges: WorldBand[] = []
   for (const move of result.moves) {
     if (Math.min(move.from.z, move.to.z) >= travelZ) continue
     const first = along(move.from, axis)
     const second = along(move.to, axis)
-    const min = Math.min(first, second)
-    const max = Math.max(first, second)
-    const owners = bands.filter(({ band }) => band.max >= min && band.min <= max).map(({ order }) => order)
-    const before = owners.length > 0 ? Math.min(...owners) : strictest
-    const list = byOrder.get(before) ?? []
-    list.push({ min: min - reach, max: max + reach })
-    byOrder.set(before, list)
+    ranges.push({ min: Math.min(first, second) - reach, max: Math.max(first, second) + reach })
   }
-  for (const [before, ranges] of byOrder) {
-    const block = squareSheetRangesBlock(project, index, ranges, before)
-    if (block) return block
-  }
-  return null
+  return squareSheetRangesBlock(project, index, ranges, before)
 }
 
 /** The travel height a square sheet path is lifted to (rule 1). */

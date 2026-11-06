@@ -329,15 +329,17 @@ const generated = computeOperationToolpath(square, pocket)!.result
 
 {
   // Two pockets, each below its own Turn: A under Turn 1 only, B under both.
-  // Each move is judged for the target it cuts, so B's moves may rely on Turn
-  // 2 although A, higher in the tree, may not (#1131 review).
-  const { turnId: firstTurn } = turnedBar('square', [], { start: 5, length: 9 })
-  const second = store().addRotarySolid({ kind: 'turn', start: 16, length: 9, diameter: TURN.diameter })
+  // A move is not tagged with the target it cuts, so the whole path is judged
+  // for A, the higher target: B's moves may not borrow Turn 2, which is below
+  // A (#1131 review — an outside route with stock to leave could otherwise
+  // pass A's moves off as B's). One operation per Turn cuts each.
+  const { turnId: firstTurn } = turnedBar('square', [], { start: 9, length: 7 })
+  const second = store().addRotarySolid({ kind: 'turn', start: 18, length: 8, diameter: TURN.diameter })
   assert.ok(second.ok, 'the second Turn is created')
   const twoTurns = projectWithFeatures(store().project, [
     ...store().project.features,
-    sheetFeature('a', 7, 11, TURN_Z, TURN_Z - 0.5),
-    sheetFeature('b', 19, 22, TURN_Z, TURN_Z - 0.5),
+    sheetFeature('a', 11, 14, TURN_Z, TURN_Z - 0.5),
+    sheetFeature('b', 20, 23, TURN_Z, TURN_Z - 0.5),
   ])
   store().loadProject(twoTurns)
   store().moveFeatureTreeFeature('a', null, second.featureId)
@@ -348,9 +350,14 @@ const generated = computeOperationToolpath(square, pocket)!.result
     id: 'both', setupId: 'around', toolRef: FLAT.id,
   }
   assert.equal(setupGenerationBlock(ordered, both), null, 'each target is over a Turn above it')
-  const cut = computeOperationToolpath(ordered, both)!.result
-  assert(cut.moves.length > 0, `both pockets are cut: ${JSON.stringify(cut.warnings)}`)
-  assert(cut.moves.some((move) => move.kind !== 'rapid' && move.from.x > 18), 'including B over the second Turn')
+  const refused = computeOperationToolpath(ordered, both)!.result
+  assert.equal(refused.moves.length, 0, 'but one path over both is judged for the higher target, and refused')
+  assert.equal(refused.warnings[0]?.code, 'squareSheetNotTurned', 'with the turn-it-first reason')
+  for (const featureId of ['a', 'b']) {
+    const single: Operation = { ...both, id: `only-${featureId}`, target: { source: 'features', featureIds: [featureId] } }
+    const cut = computeOperationToolpath(ordered, single)!.result
+    assert(cut.moves.length > 0, `pocket ${featureId} on its own operation is cut: ${JSON.stringify(cut.warnings)}`)
+  }
 }
 
 // ── 4. Export ─────────────────────────────────────────────────
