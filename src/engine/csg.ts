@@ -18,7 +18,9 @@ import * as THREE from 'three'
 import { buildChuckGeometry } from './chuckGeometry'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
-import { barCentre, barPivotZ, isBarStock } from '../types/barStock'
+import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../types/barStock'
+import { buildSurfaceIndex } from '../store/helpers/rotarySurface'
+import { squareSheetFeatureBlock } from '../store/helpers/turnedSheet'
 import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, SquareStock, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { cannedShapeIsModel } from '../cannedShapes'
@@ -1597,6 +1599,18 @@ interface BooleanModel {
  * model's own highlight mesh cannot cover a cut the bar carries (#1112 rt4-c
  * fix 1). Only the bar path can cut a model, so only it yields those meshes.
  */
+/**
+ * A square blank's Around features as the scene shows them (#1131): every line
+ * and region, and the add/subtract rows that are cut — those over a section a
+ * Turn above them has made round. A round bar's list is returned unchanged.
+ */
+export function squareSheetModelFilter(project: Project, features: SketchFeature[]): SketchFeature[] {
+  if (!isSquareStock(project.stock) || features.length === 0) return features
+  const index = buildSurfaceIndex(project)
+  return features.filter((feature) => (feature.operation !== 'add' && feature.operation !== 'subtract')
+    || squareSheetFeatureBlock(project, feature.id, 0, index) === null)
+}
+
 async function buildBooleanModel(
   project: Project,
   visibleFeatures: SketchFeature[],
@@ -1740,13 +1754,15 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // feature is untouched.
   const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
   const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
-  // The same model filter for the Around half. Only a round bar can wrap, and
-  // only a rotary project works the Around face at all (issue #1028): in any
-  // other type the features stay in the project and the tree but are not
-  // modelled.
-  const aroundFeatures = isRoundStock(project.stock) && aroundFeaturesActive(project)
-    ? modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
-      .filter((feature) => feature.visible)
+  // The same model filter for the Around half. Only a bar can wrap, and only a
+  // rotary project works the Around face at all (issue #1028): in any other
+  // type the features stay in the project and the tree but are not modelled.
+  // A square blank (#1131) draws its sheet lines and regions like a round bar,
+  // and folds an add/subtract into the bar only where Turns above it have made
+  // the section round — elsewhere it is kept, not cut, so it is not modelled.
+  const aroundFeatures = isBarStock(project.stock) && aroundFeaturesActive(project)
+    ? squareSheetModelFilter(project, modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
+      .filter((feature) => feature.visible))
     : []
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)

@@ -56,7 +56,7 @@ import type { MachineDefinition, OperationMotionTrace, PinnedMachineDefinition, 
 import { pinRotaryAxis, rotaryBorrowedAxis, rotaryDirection, rotaryEnforcesMm, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFace, setupFrameForOperation } from '../setupOrientation'
-import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
+import { setupGenerationBlock, squareRotaryWorkAdmitted, squareSheetWorkAdmitted } from '../setupTargets'
 import { computeOperationToolpath } from '../toolpaths/generateOperation'
 import { squareRotaryCutterRefusal } from '../squareRotarySafety'
 import type { EmittedSquareCutter } from '../squareRotarySafety'
@@ -1308,9 +1308,14 @@ function inspectRotaryOperation(args: {
     if (setupGenerationBlock(project, operation)) {
       return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
     }
+    // #1131: a 2D sheet operation over a section Turns above its targets made
+    // round is the one other square job that carries `A`. It is held to the
+    // same cutter and travel rules, and — because its cut turns the bar below
+    // the travel height by design — to the regenerate-and-match rule below.
+    const sheet = squareSheetWorkAdmitted(project, operation)
     if (hasAngle
-      && (!squareRotaryWorkAdmitted(project, operation)
-        || squareRotaryCutterRefusal(project, operation, emittedCutter))) {
+      && (!(squareRotaryWorkAdmitted(project, operation) || sheet)
+        || squareRotaryCutterRefusal(project, operation, emittedCutter, sheet))) {
       return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
     }
     if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
@@ -1348,7 +1353,7 @@ function inspectRotaryOperation(args: {
     if (tracked.lowestTurnRapidZ !== null && tracked.lowestTurnRapidZ < travelZ - roundingAllowance) {
       return { refused: { code: 'postRotarySquareTurnBelowEnvelope', params: { operation: operationName } } }
     }
-    if (around && hasAngle && toolpath.moves.length > 0) {
+    if ((around || sheet) && hasAngle && toolpath.moves.length > 0) {
       let regenerated = staleCache.get(operation.id)
       if (regenerated === undefined) {
         regenerated = computeOperationToolpath(project, operation)?.result ?? null

@@ -97,10 +97,11 @@ const AROUND_REASON = enMessages['sketch.creation.aroundFaceOnly']
 const FEATURE_TARGET_REASON = enMessages['sketch.creation.featureTargetOnly']
 // The exact wording decision 17 asks for. "Needs a round bar" is the string
 // that was there and is wrong about what is missing: turning a square blank
-// works, it is the sheet work that does not.
+// works, it is the sheet work that does not — and since #1131 the sheet works
+// too once a Turn has made a section round, so the reason says what to do.
 assert(
-  SQUARE_BAR_REASON === 'Not available on a square bar yet',
-  `the reason reads "Not available on a square bar yet", got "${SQUARE_BAR_REASON}"`,
+  SQUARE_BAR_REASON === 'Turn a section of the square bar round first',
+  `the reason reads "Turn a section of the square bar round first", got "${SQUARE_BAR_REASON}"`,
 )
 assert(
   BAR_REASON === 'Needs a bar in a rotary project',

@@ -70,10 +70,10 @@ function RotaryPatternActions({ variant = 'drawer', tooltipSide = 'bottom' }: Ro
     ? t('sketch.creation.rotaryBarUnavailable')
     : activeFace(project) !== 'around'
       ? t('sketch.creation.aroundFaceOnly')
-      // Thread and Flutes are round-only sheet authoring (issue #1016 C2-U2):
-      // the unrolled sheet's raw coordinates describe a round bar, so on a
-      // square blank they are refused — but listed and disabled with the
-      // reason, never hidden (issue #1112 decision 17).
+      // Thread and Flutes are sheet authoring (issue #1016 C2-U2): the
+      // unrolled sheet's raw coordinates describe a round surface, so on a
+      // square blank they wait for a Turn to make a section round (#1131) —
+      // listed and disabled with the reason, never hidden (#1112 decision 17).
       : aroundSketchAuthoringAvailable(project)
         ? undefined
         : t('sketch.creation.squareBarUnavailable')

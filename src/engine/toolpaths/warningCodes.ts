@@ -425,6 +425,15 @@ export type ToolpathWarningCode =
    *  turns, grown by the cutter body and the project's clamp clearance
    *  (#1016 C2 F3). Params: operation, clamp. */
   | 'ordinaryClampOverlap'
+  /** Sheet work on a square blank's Around face whose targets — or whose
+   *  cutter's reach along the bar — are over a section no Turn above them has
+   *  made round (#1131). No motion: the standing corners are not the surface
+   *  the sheet describes. An error, like the square refusals it narrows.
+   *  Params: operation. */
+  | 'squareSheetNotTurned'
+  /** The same, over a section a Polygon above the targets shapes into flats
+   *  (#1131). Params: operation. */
+  | 'squareSheetOnFlats'
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */
   | 'postSetupNoRegistration'
@@ -644,6 +653,8 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'workholdingDiameter',
   'workholdingPlacement',
   'ordinaryClampOverlap',
+  'squareSheetNotTurned',
+  'squareSheetOnFlats',
   'postPlasmaMaterialMissing',
   'postPlasmaCutFeedMissing',
   'postPlasmaPlungeFeedMissing',

@@ -410,12 +410,19 @@ const SQUARE_ROTARY_CUTTER_TYPES: readonly ToolType[] = ['flat_endmill', 'ball_e
  * will post. Its type is never inferred from the stored operation or from the
  * moves: only the shape the emitter actually holds can describe what the
  * machine will drive.
+ *
+ * `sheet` is a 2D sheet operation over a turned section (#1131): it is cut by
+ * the ordinary 2D generators, not the turning sampler, so any cutter shape
+ * those generators use (a V-bit engraving, say) is its own — but it must still
+ * be the referenced row, in the project's units, with the same shape and body.
  */
 export function squareRotaryCutterRefusal(
   project: Pick<Project, 'tools' | 'meta'>,
   operation: Pick<Operation, 'toolRef'>,
   emitted: EmittedSquareCutter,
+  sheet = false,
 ): SquareRotarySafetyRefusal | null {
+  const supported = (type: ToolType): boolean => sheet || SQUARE_ROTARY_CUTTER_TYPES.includes(type)
   const tolerance = exportGeometryTolerance(project.meta.units)
   // The row's identity and the system its numbers are in come first: a
   // different tool number or a foreign unit label is a different cutter to the
@@ -424,7 +431,7 @@ export function squareRotaryCutterRefusal(
   if (emitted.units !== project.meta.units) return verdict('cutterStale')
   // The body the emitter writes must be a shape this build turns with, and its
   // own radius/diameter pair must describe that one body.
-  if (!SQUARE_ROTARY_CUTTER_TYPES.includes(emitted.type)) return verdict('cutterStale')
+  if (!supported(emitted.type)) return verdict('cutterStale')
   if (!Number.isFinite(emitted.radius) || emitted.radius <= 0) return verdict('cutterStale')
   if (!Number.isFinite(emitted.diameter) || emitted.diameter <= 0) return verdict('cutterStale')
   if (Math.abs(emitted.diameter / 2 - emitted.radius) > tolerance) return verdict('cutterStale')
@@ -435,7 +442,7 @@ export function squareRotaryCutterRefusal(
   // be supported too, and identical to the emitted body. The comparison is the
   // physical shape and the normalized radius only — not a broad metadata
   // equality over name, feeds or material.
-  if (!SQUARE_ROTARY_CUTTER_TYPES.includes(referenced.type)) return verdict('cutterStale')
+  if (!supported(referenced.type)) return verdict('cutterStale')
   if (referenced.type !== emitted.type) return verdict('cutterStale')
   const referencedRadius = referenced.diameter / 2
   if (!Number.isFinite(referencedRadius) || referencedRadius <= 0) return verdict('cutterStale')

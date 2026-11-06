@@ -53,9 +53,9 @@
  * instead of trusting this constant.
  */
 
-import { getStockBounds, isRoundStock } from '../types/project'
+import { getStockBounds } from '../types/project'
 import type { Point, Project } from '../types/project'
-import { barCentre } from '../types/barStock'
+import { barCentre, isBarStock } from '../types/barStock'
 
 /** Depth of a 60° thread as a fraction of its pitch (the UI default). */
 export const THREAD_DEPTH_PER_PITCH = 0.61
@@ -76,9 +76,16 @@ export interface RotaryPatternFrame {
   alongDirection: 1 | -1
 }
 
-/** The pattern frame for a round bar, or null when the stock is not a bar. */
+/**
+ * The pattern frame for a bar, or null when the stock is not a bar. A square
+ * blank maps through its nominal reference cylinder (radius side / 2,
+ * circumference π · side), exactly as `aroundFrame` does (#1016 C2-S3): the
+ * numbers only mean a surface where a Turn has made the section round, which
+ * is the authoring and generation guards' decision (#1131), not this frame's.
+ * A round bar's frame is unchanged.
+ */
 export function rotaryPatternFrame(project: Pick<Project, 'stock'>): RotaryPatternFrame | null {
-  if (!isRoundStock(project.stock)) return null
+  if (!isBarStock(project.stock)) return null
   const stock = project.stock
   const bounds = getStockBounds(stock)
   // The same chuck end Turn/Polygon use: minX along X, maxY along Y

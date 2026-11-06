@@ -115,8 +115,8 @@ function rowHtml(html: string, featureId: string): string {
   const row = rowHtml(markup, 'sketch')
   assert(row.includes('data-uncut-work="true"'), 'the kept Around sketch row carries the warning marker')
   assert(
-    row.includes(`title="${camT('cam.uncut.aroundNeedsRoundBar')}"`),
-    'its tooltip is the round-bar reason, in the user\'s words',
+    row.includes(`title="${camT('cam.uncut.aroundSquareNotTurned')}"`),
+    'its tooltip is the turn-this-section-first reason, in the user\'s words (#1131)',
   )
   // The model row is still cuttable (a square blank turns it), so it does not warn.
   assert(!rowHtml(markup, 'model').includes('data-uncut-work'), 'the model row is not flagged')
@@ -144,7 +144,7 @@ function rowHtml(html: string, featureId: string): string {
   const done = await renderTo(host, createElement(I18nProvider, null, createElement(UncutWorkNote, { text: warning! })))
   const note = host.querySelector('[data-uncut-work]')
   assert(note, 'the operation note renders the warning')
-  assert(note.textContent === enMessages['cam.uncut.operationNeedsRoundBar'], 'and it is the user-facing sentence')
+  assert(note.textContent === enMessages['cam.uncut.operationSquareNotTurned'], 'and it is the user-facing sentence')
   assert(note.getAttribute('role') === 'note', 'it is announced as a note, not an action')
   done()
 }
@@ -183,7 +183,7 @@ function rowHtml(html: string, featureId: string): string {
   const badge = ghost.querySelector('[data-uncut-work="true"]')
   assert(badge, 'the ghost row carries the uncut-work badge')
   assert(
-    badge.getAttribute('aria-label') === enMessages['cam.uncut.operationNeedsRoundBar'],
+    badge.getAttribute('aria-label') === enMessages['cam.uncut.operationSquareNotTurned'],
     'with the operation reason as its accessible name',
   )
   // The header still collapses it on demand; the reason is one click away.

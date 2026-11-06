@@ -54,7 +54,7 @@ import { getProfileBounds, type DimensionRef, type Point, type Project, type Sto
 import type { MessageKey } from '../../i18n/locales/en'
 import type { RotaryPatternFrame } from '../../engine/rotaryPatterns'
 import { buildRotaryPatternLines, rotaryPatternFrame } from '../../engine/rotaryPatterns'
-import { TURN_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { POLYGON_CANNED_KIND, TURN_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../cannedShapes/generators/kinds'
 import { normalizeTurnCannedParams } from '../../cannedShapes/generators/turn'
 import {
@@ -109,7 +109,7 @@ export interface RotaryPatternBand {
 }
 
 /** A band already placed on the bar: absolute stock-space along positions. */
-interface WorldBand {
+export interface WorldBand {
   min: number
   max: number
 }
@@ -121,7 +121,7 @@ function bandAlong(frame: RotaryPatternFrame, band: RotaryPatternBand): WorldBan
   return { min: Math.min(first, second), max: Math.max(first, second) }
 }
 
-function overlap(first: WorldBand, second: WorldBand): WorldBand | null {
+export function overlap(first: WorldBand, second: WorldBand): WorldBand | null {
   const min = Math.max(first.min, second.min)
   const max = Math.min(first.max, second.max)
   return max - min > TOLERANCE ? { min, max } : null
@@ -135,9 +135,15 @@ function zValue(project: Pick<Project, 'dimensions'>, value: DimensionRef): numb
   return typeof value === 'number' ? value : project.dimensions[value]?.value ?? 0
 }
 
-interface TurnBand {
+export interface TurnBand {
   id: string
   name: string
+  /**
+   * The row's position in the feature tree (`project.features` order). A
+   * Thread, Flutes or sheet feature takes its surface only from Turns above it
+   * (#1131 item 3): a Turn lower in the tree has not cut the bar yet.
+   */
+  order: number
   /** World-space along range, after this instance's placement transform. */
   alongMin: number
   alongMax: number
@@ -182,7 +188,7 @@ function turnBands(project: Project, frame: RotaryPatternFrame): TurnBand[] {
   const worldAxis = frame.axis
   const alongOf = (point: Point): number => (worldAxis === 'x' ? point.x : point.y)
   const acrossOf = (point: Point): number => (worldAxis === 'x' ? point.y : point.x)
-  for (const feature of project.features) {
+  for (const [order, feature] of project.features.entries()) {
     const definition = project.featureDefinitions[feature.definitionId]
     if (definition?.canned?.kind !== TURN_CANNED_KIND) continue
     const params = normalizeTurnCannedParams(definition.canned.params)
@@ -266,6 +272,7 @@ function turnBands(project: Project, frame: RotaryPatternFrame): TurnBand[] {
     bands.push({
       id: feature.id,
       name: feature.name,
+      order,
       alongMin,
       alongMax,
       diameterRadius: localRadius * radiusScale,
@@ -293,9 +300,10 @@ interface TurnOverlap extends TurnBand {
   step: boolean
 }
 
-function turnOverlaps(index: SurfaceIndex, range: WorldBand): TurnOverlap[] {
+function turnOverlaps(index: SurfaceIndex, range: WorldBand, before: number): TurnOverlap[] {
   const overlaps: TurnOverlap[] = []
   for (const turn of index.turns) {
+    if (turn.order >= before) continue
     const overlapRange = overlap(range, { min: turn.alongMin, max: turn.alongMax })
     if (!overlapRange) continue
     if (turn.ambiguity !== null) {
@@ -348,15 +356,19 @@ function turnOverlaps(index: SurfaceIndex, range: WorldBand): TurnOverlap[] {
   return overlaps
 }
 
-interface ModelBand {
+export interface ModelBand {
   name: string
+  /** Tree position, as {@link TurnBand.order}. */
+  order: number
+  /** A canned Polygon: it cuts flats, so the section under it is not round. */
+  polygon: boolean
   alongMin: number
   alongMax: number
 }
 
 function modelBands(project: Project, axis: 'x' | 'y'): ModelBand[] {
   const bands: ModelBand[] = []
-  for (const feature of project.features) {
+  for (const [order, feature] of project.features.entries()) {
     const definition = project.featureDefinitions[feature.definitionId]
     if (!definition) continue
     // The Turn is a model too, and it supplies the diameter rather than
@@ -370,6 +382,8 @@ function modelBands(project: Project, axis: 'x' | 'y'): ModelBand[] {
     const bounds = getProfileBounds(resolved.sketch.profile)
     bands.push({
       name: feature.name,
+      order,
+      polygon: definition.canned?.kind === POLYGON_CANNED_KIND,
       alongMin: axis === 'x' ? bounds.minX : bounds.minY,
       alongMax: axis === 'x' ? bounds.maxX : bounds.maxY,
     })
@@ -383,13 +397,14 @@ function modelBands(project: Project, axis: 'x' | 'y'): ModelBand[] {
  * Thread/Flutes row. On a 1000 Threads + 1000 Turns project that is the
  * difference between a per-write quadratic scan and two linear passes.
  */
-interface SurfaceIndex {
+export interface SurfaceIndex {
   frame: RotaryPatternFrame
   turns: TurnBand[]
   models: ModelBand[]
 }
 
-function buildSurfaceIndex(project: Project): SurfaceIndex | null {
+/** The rotary facts for a bar project (round or square), or null without a bar. */
+export function buildSurfaceIndex(project: Project): SurfaceIndex | null {
   const frame = rotaryPatternFrame(project)
   if (!frame) return null
   return {
@@ -417,7 +432,17 @@ export function rotaryPatternSurface(
   return surfaceAtRange(project, index, range)
 }
 
-function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand): RotaryPatternSurface {
+/**
+ * The surface under a world along range. `before` is the tree position of the
+ * row asking: only Turns above it count (#1131 item 3). A row not in the tree
+ * yet (a new pattern's draft) is appended at the end, so every Turn counts.
+ */
+export function surfaceAtRange(
+  project: Project,
+  index: SurfaceIndex,
+  range: WorldBand,
+  before: number = Number.POSITIVE_INFINITY,
+): RotaryPatternSurface {
   const barDiameter = project.stock.thickness
   const models = index.models
     .map((model) => ({ ...model, overlap: overlap(range, { min: model.alongMin, max: model.alongMax }) }))
@@ -430,7 +455,7 @@ function surfaceAtRange(project: Project, index: SurfaceIndex, range: WorldBand)
     }
   }
 
-  const turns = turnOverlaps(index, range)
+  const turns = turnOverlaps(index, range, before)
   if (turns.length === 0) return { kind: 'bar', diameter: barDiameter }
   if (turns.length > 1) {
     return {
@@ -512,40 +537,66 @@ export function rotaryTurnSurfaceSections(
   const index = buildSurfaceIndex(project)
   if (!index) return sections
   for (const turn of index.turns) {
-    const profile = turn.profile
-    if (!profile || turn.ambiguity !== null) continue
-    const stations = new Set<number>([turn.alongMin, turn.alongMax])
-    for (const contour of profile.contours) {
-      for (const point of contour.points) {
-        const world = turn.toWorldAlong(point.along)
-        if (world > turn.alongMin + TOLERANCE && world < turn.alongMax - TOLERANCE) {
-          stations.add(world)
-        }
-      }
-    }
-    const sorted = [...stations].sort((left, right) => left - right)
-    const rows: RotaryTurnSurfaceSection[] = []
-    for (let station = 0; station < sorted.length - 1; station += 1) {
-      const start = sorted[station]
-      const end = sorted[station + 1]
-      if (start === undefined || end === undefined || end - start <= TOLERANCE) continue
-      const first = turn.toProfileAlong(start)
-      const second = turn.toProfileAlong(end)
-      const sampled = turnProfileRadiusRange(profile, Math.min(first, second), Math.max(first, second))
-      rows.push({
-        featureId: turn.id,
-        name: turn.name,
-        alongMin: start,
-        alongMax: end,
-        // A section whose spans cannot be sampled (a corrupt copy, a closed
-        // profile with no outer envelope) counts as its farthest reach: a
-        // keep-out one section short is a cutter inside material.
-        radius: sampled ? sampled.max * turn.radiusScale : turn.maxRadius,
-      })
-    }
+    if (!turn.profile || turn.ambiguity !== null) continue
+    const rows = profileTurnSections(turn)
     if (rows.length > 0) sections.set(turn.id, rows)
   }
   return sections
+}
+
+/**
+ * One placed Turn's along sections, split where its surface steps. A plain
+ * Turn is one section at its diameter; a copied profile is split at every
+ * station of its outline, each section counted at its highest point. A Turn
+ * whose placement no longer presents one surface (`ambiguity`) has none.
+ */
+export function turnSurfaceSections(turn: TurnBand): RotaryTurnSurfaceSection[] {
+  if (turn.ambiguity !== null) return []
+  if (!turn.profile) {
+    return [{
+      featureId: turn.id,
+      name: turn.name,
+      alongMin: turn.alongMin,
+      alongMax: turn.alongMax,
+      radius: turn.diameterRadius,
+    }]
+  }
+  return profileTurnSections(turn)
+}
+
+function profileTurnSections(turn: TurnBand): RotaryTurnSurfaceSection[] {
+  const profile = turn.profile
+  if (!profile) return []
+  const stations = new Set<number>([turn.alongMin, turn.alongMax])
+  for (const contour of profile.contours) {
+    for (const point of contour.points) {
+      const world = turn.toWorldAlong(point.along)
+      if (world > turn.alongMin + TOLERANCE && world < turn.alongMax - TOLERANCE) {
+        stations.add(world)
+      }
+    }
+  }
+  const sorted = [...stations].sort((left, right) => left - right)
+  const rows: RotaryTurnSurfaceSection[] = []
+  for (let station = 0; station < sorted.length - 1; station += 1) {
+    const start = sorted[station]
+    const end = sorted[station + 1]
+    if (start === undefined || end === undefined || end - start <= TOLERANCE) continue
+    const first = turn.toProfileAlong(start)
+    const second = turn.toProfileAlong(end)
+    const sampled = turnProfileRadiusRange(profile, Math.min(first, second), Math.max(first, second))
+    rows.push({
+      featureId: turn.id,
+      name: turn.name,
+      alongMin: start,
+      alongMax: end,
+      // A section whose spans cannot be sampled (a corrupt copy, a closed
+      // profile with no outer envelope) counts as its farthest reach: a
+      // keep-out one section short is a cutter inside material.
+      radius: sampled ? sampled.max * turn.radiusScale : turn.maxRadius,
+    })
+  }
+  return rows
 }
 
 /** The instance Z span a Thread/Flutes depth gets on this surface. */
@@ -650,6 +701,13 @@ function patternParams(
   return null
 }
 
+/** True for a Thread or Flutes definition: a row that follows its surface by itself. */
+export function isRotaryPatternDefinition(
+  definition: Project['featureDefinitions'][string] | undefined,
+): boolean {
+  return patternParams(definition) !== null
+}
+
 /** True when the placement only translates (the common case, and the cheap one). */
 function isTranslation(feature: Project['features'][number]): boolean {
   const { a, b, c, d } = feature.transform
@@ -725,7 +783,7 @@ export function rotaryPatternSurfaceOfFeature(
   const pattern = patternParams(project.featureDefinitions[feature.definitionId])
   if (!pattern) return null
   const range = patternWorldRange(index.frame, feature, pattern)
-  return range ? surfaceAtRange(project, index, range) : null
+  return range ? surfaceAtRange(project, index, range, project.features.indexOf(feature)) : null
 }
 
 /**
@@ -741,15 +799,16 @@ export function rotaryPatternSurfaceWarnings(
   const index = buildSurfaceIndex(project)
   if (!index) return warnings
   const ids = featureIds ?? project.features.map((feature) => feature.id)
-  const byId = new Map(project.features.map((feature) => [feature.id, feature]))
+  const byId = new Map(project.features.map((feature, order) => [feature.id, { feature, order }]))
   for (const id of ids) {
-    const feature = byId.get(id)
-    if (!feature) continue
+    const row = byId.get(id)
+    if (!row) continue
+    const { feature, order } = row
     const pattern = patternParams(project.featureDefinitions[feature.definitionId])
     if (!pattern) continue
     const range = patternWorldRange(index.frame, feature, pattern)
     if (!range) continue
-    const warning = rotaryPatternSurfaceWarning(surfaceAtRange(project, index, range))
+    const warning = rotaryPatternSurfaceWarning(surfaceAtRange(project, index, range, order))
     if (warning) warnings.set(id, warning)
   }
   return warnings
@@ -760,11 +819,12 @@ function derivedSpan(
   project: Project,
   index: SurfaceIndex,
   feature: Project['features'][number],
+  order: number,
   pattern: PatternParams,
 ): { zTop: number; zBottom: number } | null {
   const range = patternWorldRange(index.frame, feature, pattern)
   if (!range) return null
-  const span = spanForSurface(project, surfaceAtRange(project, index, range), pattern.params.depth)
+  const span = spanForSurface(project, surfaceAtRange(project, index, range, order), pattern.params.depth)
   return { zTop: span.zTop, zBottom: span.zBottom }
 }
 
@@ -823,10 +883,11 @@ export function syncRotaryPatternSurfaces(
   if (!index) return features
 
   let changed = false
-  const next = features.map((feature) => {
+  // `nextProject.features` is `features`, so a row's index is its tree order.
+  const next = features.map((feature, order) => {
     const pattern = patternParams(featureDefinitions[feature.definitionId])
     if (!pattern) return feature
-    const span = derivedSpan(nextProject, index, feature, pattern)
+    const span = derivedSpan(nextProject, index, feature, order, pattern)
     if (!span) return feature
     if (Math.abs(dimensionNumber(feature.z_top) - span.zTop) <= TOLERANCE
       && Math.abs(dimensionNumber(feature.z_bottom) - span.zBottom) <= TOLERANCE) {

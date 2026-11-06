@@ -36,7 +36,8 @@
  */
 
 import type { Manifold as ManifoldSolid, ManifoldToplevel } from 'manifold-3d'
-import { isRoundStock, type Project, type SketchFeature } from '../types/project'
+import type { Project, SketchFeature } from '../types/project'
+import { isBarStock } from '../types/barStock'
 import { aroundFrame, type AroundFrame } from './aroundFrame'
 import { DEFAULT_ARC_STEP_RADIANS, profileToPolygon } from './profilePolyline'
 import { resolveDimensionRef } from './toolpaths/geometry'
@@ -96,7 +97,9 @@ export function buildAroundFeatureSolid(
   if (feature.kind === 'stl') return null
   if (feature.operation !== 'add' && feature.operation !== 'subtract' && feature.operation !== 'region') return null
   if (!feature.sketch.profile.closed) return null
-  if (!isRoundStock(project.stock)) return null
+  // A square blank wraps through its nominal reference cylinder (#1131): the
+  // scene only hands it rows over a section a Turn has made round.
+  if (!isBarStock(project.stock)) return null
 
   const contour = profileToPolygon(feature.sketch.profile, options.arcStepRadians ?? DEFAULT_ARC_STEP_RADIANS)
   if (contour.length < 3) return null

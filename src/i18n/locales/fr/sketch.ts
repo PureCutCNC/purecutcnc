@@ -43,7 +43,7 @@ export const sketchFr: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': 'Annuler l’outil {shape}',
   'sketch.creation.chooseTarget': 'Choisir la forme {target}',
   'sketch.creation.closeDrawer': 'Fermer le tiroir des formes',
-  'sketch.creation.squareBarUnavailable': 'Pas encore disponible sur une barre carrée',
+  'sketch.creation.squareBarUnavailable': "Tournez d'abord une section de la barre carrée",
   'sketch.creation.rotaryBarUnavailable': 'Nécessite une barre dans un projet rotatif',
   'sketch.creation.aroundFaceOnly': 'Disponible uniquement sur la face Autour',
   'sketch.creation.featureTargetOnly': 'Disponible uniquement sur la cible entités',

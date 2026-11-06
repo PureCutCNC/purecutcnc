@@ -263,6 +263,8 @@ export const warningsEn = {
   'warnings.workholdingDiameter': "{operation}: the {clamp} diameter {diameter} is smaller than the square blank's corners ({required}); enlarge it or reset its type to Chuck.",
   'warnings.workholdingPlacement': "{operation}: the {clamp} is not placed at the bar's true pivot; centre it on the centreline and derive its height from the pivot.",
   'warnings.ordinaryClampOverlap': '{operation}: the {clamp} reaches into the corners the square blank sweeps as it turns; move it clear of the blank before machining.',
+  'warnings.squareSheetOnFlats': "{operation}: a target, or the cutter's reach, is over a Polygon's flats on the square bar, so nothing is cut. Sheet work needs a section a Turn has made round.",
+  'warnings.squareSheetNotTurned': "{operation}: Turn this section round first. A target, or the cutter's reach along the bar, is over a section of the square bar no Turn above it has made round, so nothing is cut.",
   'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
   'warnings.exportMachineTypeMismatch': 'The selected machine "{machine}" does not match this {expected} project. Choose a machine that does, or change the project type, before exporting.',
   'warnings.exportMachineMissingRotaryAxis': 'The selected machine "{machine}" has no rotary axis, so it cannot turn the bar this project machines around. Add a rotary axis to that machine (or choose one that has it) before exporting.',

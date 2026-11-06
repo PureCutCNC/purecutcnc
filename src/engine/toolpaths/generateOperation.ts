@@ -80,6 +80,7 @@ import type { AroundMaterialBands } from '../aroundFrame'
 import { setupFrameForOperation } from '../setupOrientation'
 import { operationFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
+import { liftSquareSheetTravel, squareSheetPathBlock, squareSheetTravelZ } from './squareSheetPath'
 
 export interface ComputeOperationOptions {
   /**
@@ -163,6 +164,12 @@ function squareRotaryBlockWarning(
 function setupBlockWarning(block: SetupGenerationBlock, operation: Operation, units: Units): ToolpathWarning {
   if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
   if (block.reason === 'squareRotaryUnsupported') return squareRotaryBlockWarning(block, operation, units)
+  if (block.reason === 'squareSectionNotRound') {
+    return {
+      code: block.section === 'flats' ? 'squareSheetOnFlats' : 'squareSheetNotTurned',
+      params: { operation: operation.name },
+    }
+  }
   if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
   return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
 }
@@ -252,9 +259,29 @@ export function computeOperationToolpath(
     // pattern, and its output stays byte-identical.
     const forward = <T extends typeof envelope.result>(path: T): T =>
       operation.kind === 'follow_line' ? forwardWrappedToolpath(path) : path
+    // A square blank's sheet work (#1131) travels above the standing corners
+    // and must keep the cutter over the turned section. `travelZ` is null on a
+    // round bar, whose path is returned exactly as before.
+    const travelZ = squareSheetTravelZ(project)
+    const finish = <T extends typeof envelope.result>(path: T): T => {
+      const wrapped = forward(wrapToolpath(path, around))
+      return travelZ === null ? wrapped : liftSquareSheetTravel(wrapped, around.axis, travelZ)
+    }
+    const result = finish(envelope.result)
+    if (travelZ !== null) {
+      const section = squareSheetPathBlock(project, operation, result)
+      if (section) {
+        return blockedToolpath(project, operation, {
+          reason: 'squareSectionNotRound',
+          face,
+          features: [],
+          section,
+        })
+      }
+    }
     return {
-      result: forward(wrapToolpath(envelope.result, around)),
-      raw: envelope.raw ? forward(wrapToolpath(envelope.raw, around)) : null,
+      result,
+      raw: envelope.raw ? finish(envelope.raw) : null,
     }
   }
 

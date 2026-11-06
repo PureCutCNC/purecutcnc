@@ -245,6 +245,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.workholdingDiameter': '{operation}：{clamp} 的直径 {diameter} 小于方料的角部直径（{required}）；请加大它，或将其类型重置为卡盘。',
   'warnings.workholdingPlacement': '{operation}：{clamp} 未放置在棒料的真实旋转中心；请将其重新居中到中心线，并根据旋转中心确定其高度。',
   'warnings.ordinaryClampOverlap': '{operation}：{clamp} 伸入了方料旋转时扫过的角部区域；请在加工前将其移离方料。',
+  'warnings.squareSheetOnFlats': '{operation}：某个目标或刀具的覆盖范围位于方料上多边形的平面上，因此不进行任何切削。环绕面加工需要已被车削车圆的区段。',
+  'warnings.squareSheetNotTurned': '{operation}：请先将这一段车圆。某个目标或刀具沿棒料的覆盖范围位于方料上尚未被其上方车削车圆的区段，因此不进行任何切削。',
   'warnings.postSetupNoRegistration': '装夹“{setup}”没有定位基准，因此没有记录翻面后工件如何定位。请在装夹设置中添加定位销、靠山或角点基准。',
   'warnings.exportMachineTypeMismatch': '所选机床“{machine}”与此{expected}项目不匹配。请在导出前选择匹配的机床，或更改项目类型。',
   'warnings.exportMachineMissingRotaryAxis': '所选机床“{machine}”没有旋转轴，无法旋转该项目需要整周加工的棒料。请在导出前为该机床添加旋转轴，或选择一台带旋转轴的机床。',

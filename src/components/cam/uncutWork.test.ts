@@ -87,25 +87,25 @@ const pocket = pocketOn(ROUND, 'sketch', AROUND_SETUP)
 assert(operationUncutWork(ROUND, pocket) === null, 'a pocket on Around sheet work is cuttable on a round bar')
 assert(featureUncutWarning(ROUND, sheet) === null, 'nothing is flagged while the work still cuts')
 
-// ── A square blank keeps it but cannot cut it ──────────────────────────
+// ── A square blank keeps it but cannot cut it until a Turn makes it round ──
 
 assert(
-  featureUncutWork(SQUARE, sheet)?.reason === 'aroundNeedsRoundBar',
-  'Around sheet work says a round bar is needed on a square blank',
+  featureUncutWork(SQUARE, sheet)?.reason === 'aroundSquareNotTurned',
+  'Around sheet work over an uncut square section says to turn it round first (#1131)',
 )
 assert(
-  featureUncutWarning(SQUARE, sheet) === camT('cam.uncut.aroundNeedsRoundBar'),
-  'the feature warning is the translated round-bar sentence',
+  featureUncutWarning(SQUARE, sheet) === camT('cam.uncut.aroundSquareNotTurned'),
+  'the feature warning is the translated turn-it-first sentence',
 )
 assert(featureUncutWork(SQUARE, model) === null, 'a model can still be turned on a square blank')
 
 assert(
-  operationUncutWork(SQUARE, pocket)?.reason === 'operationNeedsRoundBar',
-  'the pocket kept on a square blank says it cannot be cut',
+  operationUncutWork(SQUARE, pocket)?.reason === 'operationSquareNotTurned',
+  'the pocket kept on a square blank says its section is not turned round (#1131)',
 )
 assert(
-  operationUncutWarning(SQUARE, pocket) === camT('cam.uncut.operationNeedsRoundBar'),
-  'the operation warning is the translated square-blank sentence',
+  operationUncutWarning(SQUARE, pocket) === camT('cam.uncut.operationSquareNotTurned'),
+  'the operation warning is the translated turn-it-first sentence',
 )
 
 // ── The other rules the warning reuses ────────────────────────────────
