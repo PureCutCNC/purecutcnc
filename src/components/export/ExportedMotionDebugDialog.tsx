@@ -27,6 +27,7 @@ import {
 import type { PostProcessorResult } from '../../engine/gcode'
 import type { ToolpathGenerationTrace } from '../../engine/toolpaths/types'
 import type { MachineDefinition } from '../../engine/gcode'
+import { pinRotaryAxis } from '../../engine/gcode/types'
 import type { Operation, Project } from '../../types/project'
 import { buildMotionLayerPathD } from './motionDebugSvg'
 import { exportDialectLabels } from './exportDialectLabels'
@@ -126,13 +127,15 @@ export function ExportedMotionDebugDialog({
         if (!postprocessorTrace) {
           throw new Error('no-motion-trace')
         }
-        const parsed = parseExportedMotion(previewResult.gcode, definition)
+        // The bar axis decides a borrowed motor's letter (#1153).
+        const pinned = pinRotaryAxis(definition, project.stock)
+        const parsed = parseExportedMotion(previewResult.gcode, pinned)
         const built = buildExportedMotionDebugModel({
           trace,
           parsed,
           postprocessorTrace,
           origin: project.origin,
-          definition,
+          definition: pinned,
           tolerance,
         })
         if (!cancelled) {

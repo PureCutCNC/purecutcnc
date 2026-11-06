@@ -270,6 +270,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': '机床模板写入了 {axis}，即在此机床上转动旋转轴的词。导出前请将其从机床模板中移除。',
   'warnings.postRotaryDrillNotExpanded': '加工操作“{operation}”未导出：其钻孔没有展开的移动，而旋转轴借用电机时机床不能使用固定循环。',
   'warnings.postRotaryAxisMismatch': '加工操作“{operation}”未导出：机床旋转轴沿 {machineAxis} 方向，而棒料沿 {stockAxis} 方向。',
+  'warnings.postRotaryInchUnits': '加工操作“{operation}”未导出：{machine} 仅以毫米驱动旋转轴。请将项目单位改为 mm。',
   'warnings.postSquareAroundToolpathStale': '加工操作“{operation}”未导出：其刀路对于此项目已过期。请在导出前重新生成。',
   'warnings.postRotarySquareTurnBelowEnvelope': '加工操作“{operation}”未导出：它在刀具低于方料角部包络时转动方料，且切削深度会超过该操作允许的深度，因此直立的角部会扫入刀具。',
   'warnings.postRotaryTurnWithoutClearance': '加工操作“{operation}”未导出：由于没有生效的刀具长度补偿，且该机床没有移动到安全 Z 的机床坐标运动，无法安全转动棒料。请启用刀具长度补偿或为机床添加机床坐标快速移动，然后重新导出。',

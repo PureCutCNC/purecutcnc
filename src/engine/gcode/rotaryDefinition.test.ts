@@ -33,7 +33,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { BUNDLED_DEFINITIONS, getActiveMachineDefinition } from './definitions'
+import { BUNDLED_DEFINITIONS, BUNDLED_ROTARY_DEFINITIONS, getActiveMachineDefinition } from './definitions'
 import {
   MachineDefinitionSchema,
   rotaryBorrowedAxis,
@@ -62,6 +62,7 @@ import {
   resetMachineLibraryForTests,
   saveCustomMachine,
 } from '../../machine/store'
+import { pinRotaryAxis } from './types'
 
 const byId = (id: string): MachineDefinition => {
   const raw = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
@@ -117,7 +118,11 @@ const PRE_393_KEY_ORDER: Record<string, string[]> = {
   'grbl-plasma': ['id', 'name', 'description', 'vendor', 'builtin', 'fileExtension', 'machineKind', 'plasma', 'coordinateSystem', 'numberFormat', 'units', 'program', 'workCoordinates', 'motion', 'feedSpeed', 'toolChange', 'cannedCycles', 'coolant', 'stop'],
 }
 
-for (const raw of BUNDLED_DEFINITIONS) {
+// The bundled rotary machines (#1153) are derived from these and checked in
+// `bundledRotaryMachines.test.ts`; every other bundled definition keeps the
+// shape it had before #393.
+const PRE_393_DEFINITIONS = BUNDLED_DEFINITIONS.filter((definition) => !BUNDLED_ROTARY_DEFINITIONS.includes(definition))
+for (const raw of PRE_393_DEFINITIONS) {
   const validated = validateMachineDefinition(raw)
   assert.ok(!('rotary' in validated), `${validated.id} validates without a rotary key`)
   const expected = PRE_393_KEY_ORDER[validated.id]
@@ -126,7 +131,7 @@ for (const raw of BUNDLED_DEFINITIONS) {
 }
 assert.equal(
   Object.keys(PRE_393_KEY_ORDER).length,
-  BUNDLED_DEFINITIONS.length,
+  PRE_393_DEFINITIONS.length,
   'every bundled definition has a frozen baseline — none was added without updating it',
 )
 
@@ -168,45 +173,45 @@ for (const feed of [{ on: '  ', off: 'G94' }, { on: 'G93', off: '\t' }, { on: ''
 
 // ── 3. rotaryWord ──────────────────────────────────────────────────────────
 
-assert.equal(rotaryWord(ROUTER), null, 'no block means no rotary word')
-assert.equal(rotaryWord(withRotary(ROUTER, { about: 'x', drive: 'own' })), 'A', 'its own axis uses A')
-assert.equal(rotaryWord(withRotary(ROUTER, { about: 'y', drive: 'own' })), 'A', 'its own axis uses A whatever the bar lies along')
-assert.equal(rotaryWord(withRotary(ROUTER, { about: 'x', drive: 'borrowed' })), 'Y', 'a bar along project X borrows the project Y output')
-assert.equal(rotaryWord(withRotary(ROUTER, { about: 'y', drive: 'borrowed' })), 'X', 'a bar along project Y borrows the project X output')
+assert.equal(rotaryWord(pinRotaryAxis(ROUTER, null)), null, 'no block means no rotary word')
+assert.equal(rotaryWord(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'own' }), null)), 'A', 'its own axis uses A')
+assert.equal(rotaryWord(pinRotaryAxis(withRotary(ROUTER, { about: 'y', drive: 'own' }), null)), 'A', 'its own axis uses A whatever the bar lies along')
+assert.equal(rotaryWord(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }), null)), 'Y', 'a bar along project X borrows the project Y output')
+assert.equal(rotaryWord(pinRotaryAxis(withRotary(ROUTER, { about: 'y', drive: 'borrowed' }), null)), 'X', 'a bar along project Y borrows the project X output')
 assert.equal(
-  rotaryWord(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, yAxis: '-X' })),
+  rotaryWord(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, yAxis: '-X' }), null)),
   'X',
   'a non-identity coordinate system is followed and its sign stripped',
 )
 
 // ── 4. rotaryBorrowedAxis and rotaryDirection ──────────────────────────────
 
-assert.equal(rotaryBorrowedAxis(ROUTER), null, 'no block borrows no axis')
-assert.equal(rotaryBorrowedAxis(withRotary(ROUTER, { about: 'x', drive: 'own' })), null, 'its own axis borrows no linear travel')
-assert.equal(rotaryBorrowedAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' })), 'y', 'a bar along X borrows project Y')
-assert.equal(rotaryBorrowedAxis(withRotary(ROUTER, { about: 'y', drive: 'borrowed' })), 'x', 'a bar along Y borrows project X')
+assert.equal(rotaryBorrowedAxis(pinRotaryAxis(ROUTER, null)), null, 'no block borrows no axis')
+assert.equal(rotaryBorrowedAxis(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'own' }), null)), null, 'its own axis borrows no linear travel')
+assert.equal(rotaryBorrowedAxis(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }), null)), 'y', 'a bar along X borrows project Y')
+assert.equal(rotaryBorrowedAxis(pinRotaryAxis(withRotary(ROUTER, { about: 'y', drive: 'borrowed' }), null)), 'x', 'a bar along Y borrows project X')
 
-assert.equal(rotaryDirection(ROUTER), 1, 'no block has no direction')
-assert.equal(rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'own' })), 1)
-assert.equal(rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'own', reversed: true })), -1, 'reversed flips its own axis')
+assert.equal(rotaryDirection(pinRotaryAxis(ROUTER, null)), 1, 'no block has no direction')
+assert.equal(rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'own' }), null)), 1)
+assert.equal(rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'own', reversed: true }), null)), -1, 'reversed flips its own axis')
 assert.equal(
-  rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'own', reversed: true }, { ...ROUTER.coordinateSystem, yAxis: '-Y' })),
+  rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'own', reversed: true }, { ...ROUTER.coordinateSystem, yAxis: '-Y' }), null)),
   -1,
   'its own axis ignores the coordinate-system sign',
 )
-assert.equal(rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'borrowed' })), 1)
+assert.equal(rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }), null)), 1)
 assert.equal(
-  rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, yAxis: '-Y' })),
+  rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, yAxis: '-Y' }), null)),
   -1,
   'a negative borrowed output reverses the rotation',
 )
 assert.equal(
-  rotaryDirection(withRotary(ROUTER, { about: 'x', drive: 'borrowed', reversed: true }, { ...ROUTER.coordinateSystem, yAxis: '-Y' })),
+  rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'x', drive: 'borrowed', reversed: true }, { ...ROUTER.coordinateSystem, yAxis: '-Y' }), null)),
   1,
   'reversed on a negative output is a double negative',
 )
 assert.equal(
-  rotaryDirection(withRotary(ROUTER, { about: 'y', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, xAxis: '-X' })),
+  rotaryDirection(pinRotaryAxis(withRotary(ROUTER, { about: 'y', drive: 'borrowed' }, { ...ROUTER.coordinateSystem, xAxis: '-X' }), null)),
   -1,
   'the bar-along-Y case reads the X output',
 )

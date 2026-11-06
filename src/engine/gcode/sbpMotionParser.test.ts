@@ -32,6 +32,7 @@ import { parseSbpMotion } from './sbpMotionParser'
 import { validateMachineDefinition } from './types'
 import type { MachineDefinition } from './types'
 import { exportGeometryTolerance } from '../../utils/units'
+import { pinRotaryAxis } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -241,10 +242,10 @@ function testDebugModelForSbpExport(): void {
   }
   const model = buildExportedMotionDebugModel({
     trace,
-    parsed: parseExportedMotion(result.gcode, definition),
+    parsed: parseExportedMotion(result.gcode, pinRotaryAxis(definition, null)),
     postprocessorTrace,
     origin: project.origin,
-    definition,
+    definition: pinRotaryAxis(definition, null),
     tolerance: exportGeometryTolerance('mm'),
   })
   assert(model.diagnostic.state === 'verified', `expected verified, got ${JSON.stringify(model.diagnostic.warnings)}`)
@@ -264,7 +265,7 @@ function testDebugModelForSbpExport(): void {
   }
 
   // A G-code parser reading the same text sees none of it: the dispatch matters.
-  const misread = parseExportedMotion(result.gcode, gcode())
+  const misread = parseExportedMotion(result.gcode, pinRotaryAxis(gcode(), null))
   assert(misread.moves.length !== parseSbpMotion(result.gcode).moves.length, 'reading SBP as G-code does not find the same motion')
 }
 

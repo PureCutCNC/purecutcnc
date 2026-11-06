@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { MachineDefinition } from './types'
+import type { MachineDefinition, PinnedMachineDefinition } from './types'
 import { rotaryDirection } from './types'
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -40,7 +40,7 @@ import type { SetupFrame } from '../setupOrientation'
 export function projectToMachinePoint(
   point: ToolpathPoint,
   origin: MachineOrigin,
-  definition: MachineDefinition,
+  definition: PinnedMachineDefinition,
   setup?: SetupFrame,
 ): ToolpathPoint {
   const local = setup ? canonicalToSetupPoint(point, setup) : point
@@ -88,7 +88,7 @@ export function projectToMachinePoint(
 export function machineToProjectPoint(
   point: ToolpathPoint,
   origin: MachineOrigin,
-  definition: MachineDefinition,
+  definition: PinnedMachineDefinition,
   setup?: SetupFrame,
 ): ToolpathPoint {
   const { xAxis, yAxis, zAxis } = definition.coordinateSystem

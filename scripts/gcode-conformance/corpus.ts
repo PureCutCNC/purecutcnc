@@ -498,74 +498,57 @@ function generatedPlasma(
 }
 
 /**
- * A hand-built turning toolpath on a borrowed-Y rotary (issue #393). The bar
- * lies along project X, so project Y is the axis whose motor drives the
- * rotation: `moves` never change project Y, so the operation is allowed, and
- * the angle is written under `Y` while no linear Y word is ever emitted.
+ * A hand-built turning toolpath on a round bar (issue #393), lying along
+ * `axis`. The moves never change the across coordinate, so on a borrowed-motor
+ * machine the operation is allowed: the motor that would drive that axis turns
+ * the bar instead, the angle is written under its letter, and no linear word is
+ * ever emitted for it. On an own-axis machine the angle is written under `A`.
  *
- * The borrowed-motor case runs on every validator that claims its grbl
- * definition. The own-axis case below writes `A`, which plain Grbl rejects, so
- * it carries a `validators` list naming the LinuxCNC validator it runs on; a
- * case with no list runs wherever its machine is claimed. See the README's
- * case table.
+ * Since #1153 every rotary case runs on a bundled rotary machine, and those
+ * follow the bar, so the same toolpath posts for a bar along X and one along Y
+ * without a machine override. A borrowed-motor case runs on every validator
+ * that claims its machine; an own-axis case writes `A`, which plain Grbl
+ * rejects, so it carries a `validators` list. See the README's case table.
  */
-function generatedRotaryBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
-  const project = newProject('Conformance rotary borrowed Y', 'mm')
-  // The bar is a rotary project (issue #1028): the type is stored explicitly
-  // now that `newProject` defaults to milling.
-  project.meta.projectType = 'rotary'
-  project.stock = roundStock(20, 100, 'x')
-  // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
-  project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
-  const { operation } = buildOperation(project)
-  const moves: ToolpathMove[] = [
-    { kind: 'rapid', from: rotaryPt(0, 10, 30, 0), to: rotaryPt(20, 10, 30, 0) },
-    { kind: 'plunge', from: rotaryPt(20, 10, 30, 0), to: rotaryPt(20, 10, 20, 0) },
-    { kind: 'cut', from: rotaryPt(20, 10, 20, 0), to: rotaryPt(40, 10, 20, 90) },
-    { kind: 'cut', from: rotaryPt(40, 10, 20, 90), to: rotaryPt(50, 10, 20, 90) },
-  ]
-  return {
-    project,
-    operation,
-    toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+function generatedRotaryTurning(
+  axis: 'x' | 'y',
+  title: string,
+): () => { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  return () => {
+    const project = newProject(title, 'mm')
+    // The bar is a rotary project (issue #1028): the type is stored explicitly
+    // now that `newProject` defaults to milling.
+    project.meta.projectType = 'rotary'
+    project.stock = roundStock(20, 100, axis)
+    // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
+    project.origin = axis === 'x'
+      ? { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+      : { name: 'Origin', x: 10, y: 0, z: 20, visible: true }
+    const { operation } = buildOperation(project)
+    // `along` runs down the bar; the across coordinate stays on the centreline.
+    const at = (along: number, z: number, a: number): ToolpathPoint =>
+      axis === 'x' ? rotaryPt(along, 10, z, a) : rotaryPt(10, along, z, a)
+    const moves: ToolpathMove[] = [
+      { kind: 'rapid', from: at(0, 30, 0), to: at(20, 30, 0) },
+      { kind: 'plunge', from: at(20, 30, 0), to: at(20, 20, 0) },
+      { kind: 'cut', from: at(20, 20, 0), to: at(40, 20, 90) },
+      { kind: 'cut', from: at(40, 20, 90), to: at(50, 20, 90) },
+    ]
+    return {
+      project,
+      operation,
+      toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+    }
   }
 }
 
-/**
- * A hand-built turning toolpath on an own-axis rotary (issue #393). The
- * program writes the angle under `A` and runs the turning move in inverse time
- * (`G93`), which plain Grbl rejects — the case is therefore restricted to the
- * LinuxCNC validator with `validators` (see the case below).
- */
-function generatedRotaryOwnAxis(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
-  const project = newProject('Conformance rotary own axis', 'mm')
-  // The bar is a rotary project (issue #1028): the type is stored explicitly
-  // now that `newProject` defaults to milling.
-  project.meta.projectType = 'rotary'
-  project.stock = roundStock(20, 100, 'x')
-  // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
-  project.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
-  const { operation } = buildOperation(project)
-  const moves: ToolpathMove[] = [
-    { kind: 'rapid', from: rotaryPt(0, 10, 30, 0), to: rotaryPt(20, 10, 30, 0) },
-    { kind: 'plunge', from: rotaryPt(20, 10, 30, 0), to: rotaryPt(20, 10, 20, 0) },
-    { kind: 'cut', from: rotaryPt(20, 10, 20, 0), to: rotaryPt(40, 10, 20, 90) },
-    { kind: 'cut', from: rotaryPt(40, 10, 20, 90), to: rotaryPt(50, 10, 20, 90) },
-  ]
-  return {
-    project,
-    operation,
-    toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
-  }
-}
-
-/** An Around setup on a round bar lying along X, with no registration (a chuck locates it). */
-function aroundSetup(): MachiningSetup {
+/** An Around setup on a round bar lying along `axis`, with no registration (a chuck locates it). */
+function aroundSetup(axis: 'x' | 'y' = 'x'): MachiningSetup {
   return {
     id: 'around',
     name: 'Around',
     kind: 'around',
-    orientation: { axis: 'x', angleDeg: 0 },
+    orientation: { axis, angleDeg: 0 },
     indexing: 'manual',
     registration: [],
     notes: '',
@@ -846,7 +829,7 @@ export const CORPUS: CorpusCase[] = [
       },
     }),
     moves: [],
-    generated: generatedRotaryBorrowedY,
+    generated: generatedRotaryTurning('x', 'Conformance rotary borrowed Y'),
   },
   {
     name: 'rotary-own-axis-inverse-time',
@@ -866,7 +849,7 @@ export const CORPUS: CorpusCase[] = [
     }),
     validators: ['linuxcnc-rs274'],
     moves: [],
-    generated: generatedRotaryOwnAxis,
+    generated: generatedRotaryTurning('x', 'Conformance rotary own axis'),
   },
   {
     name: 'around-engrave-borrowed-y',

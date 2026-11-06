@@ -510,6 +510,11 @@ export type ToolpathWarningCode =
    *  different motion on this machine, so the operation is not exported
    *  (issue #395). */
   | 'postRotaryAxisMismatch'
+  /** The project is in inch and the machine's controller converts the angle
+   *  like a length under G20 — a borrowed motor, or an own axis flagged
+   *  `angleScalesWithUnits` — so the bar would turn 25.4 times too far. The
+   *  turning operation, or the program, is not exported (issue #1153). */
+  | 'postRotaryInchUnits'
   /** A square blank's corners sweep `barMaxRadius` about the true pivot as the
    *  blank turns. A supplied or stale path that changes A while the cutter's
    *  lowest point is below that corner envelope would drive the standing
@@ -612,7 +617,8 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
  *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
  *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope`,
- *   `postSquareAroundToolpathStale` and `postRotaryTurnWithoutClearance` — a
+ *   `postSquareAroundToolpathStale`, `postRotaryTurnWithoutClearance` and
+ *   `postRotaryInchUnits` — a
  *   rotary operation the machine cannot run, a square around path that is not
  *   the current project's own, or a bar turn with no provable clearance is left
  *   out of the program (issues #393, #1016 C2 M1, #1045, #1054 fix 2). The file
@@ -653,6 +659,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postRotarySquareTurnBelowEnvelope',
   'postSquareAroundToolpathStale',
   'postRotaryTurnWithoutClearance',
+  'postRotaryInchUnits',
 ])
 
 /**

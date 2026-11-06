@@ -288,6 +288,7 @@ export const warningsEn = {
   'warnings.postRotaryTemplateUsesBorrowedAxis': "The machine's templates write {axis}, the word that turns the rotary on this machine. Remove it from the machine's templates before exporting.",
   'warnings.postRotaryDrillNotExpanded': 'Operation "{operation}" was not exported: its drilling has no expanded moves, and canned cycles cannot be used on a machine whose rotary borrows a motor.',
   'warnings.postRotaryAxisMismatch': 'Operation "{operation}" was not exported: the machine\'s rotary axis lies along {machineAxis} but the bar lies along {stockAxis}.',
+  'warnings.postRotaryInchUnits': 'Operation "{operation}" was not exported: {machine} turns the rotary in millimetres only. Change the project units to mm.',
   'warnings.postSquareAroundToolpathStale': 'Operation "{operation}" was not exported: its toolpath is out of date for this project. Regenerate it before exporting.',
   'warnings.postRotarySquareTurnBelowEnvelope': 'Operation "{operation}" was not exported: it turns the square blank while the cutter is below the blank\'s corner envelope and the cut would take more than the operation\'s allowed depth, so the standing corners would sweep into the cutter.',
   'warnings.postRotaryTurnWithoutClearance': 'Operation "{operation}" was not exported: the bar cannot be turned safely because no tool-length compensation is active and this machine has no machine-coordinate move to its safe Z. Apply tool-length compensation or give the machine a machine-coordinate rapid, then export again.',

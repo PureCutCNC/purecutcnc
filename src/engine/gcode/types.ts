@@ -16,7 +16,8 @@
 
 import { z } from 'zod'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import type { Project, Operation } from '../../types/project'
+import type { Project, Operation, Stock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import type { ToolpathResult, NormalizedTool, ToolpathMove } from '../toolpaths/types'
 import type { FittedMoveDescriptor } from './arcFitting'
 import { machineTemplateDiagnostics, templateRuleViolations } from './templateRules'
@@ -130,11 +131,14 @@ const PlasmaDefinitionSchema = z.object({
 ) as typeof block & { thcOnCommand?: string, thcOffCommand?: string, touchOff?: PlasmaTouchOff })
 
 /**
- * How a machine turns a round bar (issue #393). The block is optional and
- * absent on every bundled definition: a definition without it is exactly what
- * it was before the field existed.
+ * How a machine turns a round bar (issue #393). The block is optional: a
+ * definition without it is exactly what it was before the field existed, and
+ * only the bundled rotary machines (#1153) carry one.
  *
- * - `about` — the PROJECT axis the bar lies along and turns about.
+ * - `about` — the PROJECT axis the bar lies along and turns about. Absent means
+ *   the machine follows the project's bar (#1153): the bundled rotary machines
+ *   leave it unset so one machine serves a bar along X and a bar along Y. Read
+ *   it only through `pinRotaryAxis`, which resolves it against the stock.
  * - `drive` — `own` means the controller has a fourth axis and the program
  *   uses the word `A`; `borrowed` means the rotary is plugged into the output
  *   of the other horizontal axis, so the program uses that axis's letter and
@@ -150,9 +154,13 @@ const PlasmaDefinitionSchema = z.object({
  *   makes the emitter pause between rotary operations for the operator to
  *   zero A by hand. Allowed forms are the ones that set the A coordinate to
  *   zero and move no axis (`templateRules.ts` refuses anything else).
+ * - `angleScalesWithUnits` — the controller converts its A word like a length
+ *   under G20 (#1153): a Grbl 1.1 fork with a fourth axis turns `A10` by 254°
+ *   in an inch program. Read it through `rotaryEnforcesMm`, which also covers
+ *   a borrowed motor, whose angle is a linear word on every controller.
  */
 export const RotaryDefinitionSchema = z.object({
-  about: z.enum(['x', 'y']),
+  about: z.enum(['x', 'y']).optional(),
   drive: z.enum(['own', 'borrowed']),
   reversed: z.boolean().default(false),
   inverseTimeFeed: z.object({
@@ -164,8 +172,57 @@ export const RotaryDefinitionSchema = z.object({
   // changes and no migration runs (#1103 slice ca-h). Written only when set,
   // which is also why every bundled definition stays byte-identical.
   zeroA: z.string().optional(),
+  // Optional for the same reason as `zeroA`: absent means false, and it is
+  // written only when true, so a definition without it keeps its bytes.
+  angleScalesWithUnits: z.boolean().optional(),
 })
 export type RotaryDefinition = z.infer<typeof RotaryDefinitionSchema>
+
+/** A rotary block whose bar axis has been resolved (#1153). */
+export type PinnedRotaryDefinition = RotaryDefinition & { about: 'x' | 'y' }
+
+/**
+ * A machine definition whose rotary block, if any, names its bar axis. The
+ * rotary helpers below take only this type, so a definition that follows the
+ * bar cannot reach them without passing through `pinRotaryAxis` first.
+ */
+export type PinnedMachineDefinition = Omit<MachineDefinition, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+
+/**
+ * Resolve a definition's bar axis against the stock it will cut (#1153). An
+ * explicit `about` wins; a machine that follows the bar takes the bar's own
+ * axis, and stock that is not a bar reads as X. This is the only place an
+ * absent `about` is read.
+ */
+export function pinRotaryAxis<T extends Pick<MachineDefinition, 'rotary'>>(
+  definition: T,
+  stock: Stock | null | undefined,
+): Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition } {
+  const rotary = definition.rotary
+  if (!rotary) return definition as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+  if (rotary.about !== undefined) return definition as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+  const about = stock && isBarStock(stock) ? stock.axis : 'x'
+  // Keep the key order a definition with an explicit axis has, so a pinned
+  // copy serializes exactly as a hand-made one would.
+  return { ...definition, rotary: { about, ...rotary } } as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+}
+
+/** True when the machine leaves its bar axis to the project's stock (#1153). */
+export function rotaryFollowsStock(definition: Pick<MachineDefinition, 'rotary'> | null | undefined): boolean {
+  return definition?.rotary != null && definition.rotary.about === undefined
+}
+
+/**
+ * True when a rotary program for this machine must be in millimetres (#1153):
+ * a borrowed motor writes the angle under a linear axis word, which every
+ * controller converts like a length under G20, and an own axis flagged
+ * `angleScalesWithUnits` does the same to `A`.
+ */
+export function rotaryEnforcesMm(definition: Pick<MachineDefinition, 'rotary'> | null | undefined): boolean {
+  const rotary = definition?.rotary
+  if (!rotary) return false
+  return rotary.drive === 'borrowed' || rotary.angleScalesWithUnits === true
+}
 
 /**
  * The schema every persisted definition must satisfy, minus the #1057 template
@@ -317,10 +374,13 @@ export const MachineDefinitionStructureSchema = MachineDefinitionBaseSchema.supe
       context.addIssue({ code: 'custom', path: ['rotary'], message: 'A plasma machine cannot have a rotary axis.' })
     }
     if (definition.rotary.drive === 'borrowed') {
-      const borrowed = definition.rotary.about === 'x'
-        ? definition.coordinateSystem.yAxis
-        : definition.coordinateSystem.xAxis
-      if (borrowed === 'Z' || borrowed === '-Z') {
+      // A machine that follows the bar (#1153) may borrow either horizontal
+      // motor, so both must be able to carry the rotary.
+      const about = definition.rotary.about
+      const candidates = about === undefined
+        ? [definition.coordinateSystem.yAxis, definition.coordinateSystem.xAxis]
+        : [about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis]
+      if (candidates.some((borrowed) => borrowed === 'Z' || borrowed === '-Z')) {
         context.addIssue({ code: 'custom', path: ['rotary', 'drive'], message: 'The rotary cannot borrow the Z motor.' })
       }
     }
@@ -403,15 +463,15 @@ export function machineCoordinateRapidCommand(
  * horizontal project axis from the one the bar lies along.
  */
 function borrowedMotorEntry(
-  definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>,
-): MachineDefinition['coordinateSystem']['xAxis'] | null {
+  definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>,
+): PinnedMachineDefinition['coordinateSystem']['xAxis'] | null {
   const rotary = definition.rotary
   if (!rotary || rotary.drive !== 'borrowed') return null
   return rotary.about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis
 }
 
 /** The letter the program uses for rotation, or null when the machine has no rotary axis. */
-export function rotaryWord(definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>): 'A' | 'X' | 'Y' | null {
+export function rotaryWord(definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>): 'A' | 'X' | 'Y' | null {
   const rotary = definition.rotary
   if (!rotary) return null
   if (rotary.drive === 'own') return 'A'
@@ -422,14 +482,14 @@ export function rotaryWord(definition: Pick<MachineDefinition, 'rotary' | 'coord
 }
 
 /** The PROJECT axis whose linear travel is gone because its motor drives the rotary, or null. */
-export function rotaryBorrowedAxis(definition: Pick<MachineDefinition, 'rotary'>): 'x' | 'y' | null {
+export function rotaryBorrowedAxis(definition: Pick<PinnedMachineDefinition, 'rotary'>): 'x' | 'y' | null {
   const rotary = definition.rotary
   if (!rotary || rotary.drive !== 'borrowed') return null
   return rotary.about === 'x' ? 'y' : 'x'
 }
 
 /** +1 or -1: what a positive angle is multiplied by on its way into the program. */
-export function rotaryDirection(definition: Pick<MachineDefinition, 'rotary' | 'coordinateSystem'>): 1 | -1 {
+export function rotaryDirection(definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>): 1 | -1 {
   const rotary = definition.rotary
   if (!rotary) return 1
   let direction: 1 | -1 = rotary.reversed ? -1 : 1

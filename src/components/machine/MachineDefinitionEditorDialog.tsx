@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { resolveOutputDialect, rotaryWord } from '../../engine/gcode/types'
+import { pinRotaryAxis, resolveOutputDialect, rotaryWord } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { formHasChanges } from '../common/formDraft'
@@ -190,7 +190,9 @@ function renderVar(name: string, desc: string, context?: string) {
   const rotaryAvailable = usesGcodeFields && form.machineKind !== 'plasma'
   // The word follows the edited definition, so a coordinate system that maps
   // project Y to machine X shows that letter instead of a hard-coded one.
-  const rotaryProgramWord = rotaryWord(mergeFormData(mergedDef ?? definition, form))
+  // The editor always holds an explicit axis (the manager pins one on open,
+  // #1153), so the pin only satisfies the type.
+  const rotaryProgramWord = rotaryWord(pinRotaryAxis(mergeFormData(mergedDef ?? definition, form), null))
   // A block error belongs on the Driven by field it names, but only while that
   // field is on screen; otherwise the Advanced section keeps showing it.
   const rotaryFieldVisible = rotaryAvailable && form.rotaryAbout !== 'none'
@@ -346,6 +348,21 @@ function renderVar(name: string, desc: string, context?: string) {
                       />
                       <span>{td('dialogs.machineEditor.rotaryReverse')}</span>
                     </label>
+                    {form.rotaryDrive === 'own' ? (
+                      <label className="machine-editor-check">
+                        <input
+                          type="checkbox"
+                          data-testid="machine-rotary-angle-scales"
+                          checked={form.rotaryAngleScalesWithUnits}
+                          onChange={(event) => handleFormChange({ rotaryAngleScalesWithUnits: event.target.checked })}
+                        />
+                        <span>{td('dialogs.machineEditor.rotaryAngleScales')}</span>
+                      </label>
+                    ) : (
+                      <p className="machine-editor-note" data-testid="machine-rotary-mm-only">
+                        {td('dialogs.machineEditor.rotaryBorrowedMmOnly')}
+                      </p>
+                    )}
                     <label className="machine-editor-field">
                       <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryZeroA')}</span>
                       <input

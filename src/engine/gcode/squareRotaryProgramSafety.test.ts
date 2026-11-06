@@ -61,6 +61,7 @@ import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, MM_PER_INCH } from '../../utils/units'
 import { formatGCodeNumber } from './utils'
+import { pinRotaryAxis } from './types'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -606,7 +607,7 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
       feedFirstAccepted += 1
       feedFirstCoverage.add(`${program.kind}/${program.units}`)
     }
-    const letter = rotaryWord(definition)
+    const letter = rotaryWord(pinRotaryAxis(definition, null))
     assert.ok(letter !== null, `${program.label}: an accepted program has a rotary word`)
     if (letter === null) throw new Error('unreachable')
     const safeZ = emittedTravelZ(stock, units, definition, project)
@@ -621,7 +622,7 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
     const lastMove = program.entries[program.entries.length - 1].moves.at(-1)
     assert.ok(lastMove?.to.a !== undefined, `${program.label}: the last move carries an angle`)
     if (lastMove?.to.a === undefined) throw new Error('unreachable')
-    const machineLast = lastMove.to.a * rotaryDirection(definition)
+    const machineLast = lastMove.to.a * rotaryDirection(pinRotaryAxis(definition, null))
     const endTurn = 360 * Math.ceil((machineLast - 1e-6) / 360)
     assert.ok(endTurn >= machineLast, `${program.label}: the end turn never rewinds`)
     assert.equal(
@@ -673,7 +674,7 @@ console.log('Testing the program keeps its last angle and its own retract...')
   ]
   const result = post(project, definition, [{ operation, tool: normalizedTool(project, operation), moves }])
   assert.deepEqual(result.warnings, [], 'the safe turn, the descent and the retract are accepted')
-  const letter = rotaryWord(definition)!
+  const letter = rotaryWord(pinRotaryAxis(definition, null))!
   const safeZ = emittedTravelZ(stock, 'mm', definition, project)
   const audit = auditProgram(result.gcode, letter, safeZ, emittedHalfStep(definition, 'mm'))
   assert.deepEqual(audit.violations, [], 'no rotary change runs below the travel height')

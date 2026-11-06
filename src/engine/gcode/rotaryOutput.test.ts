@@ -52,6 +52,7 @@ import { stockSpacePoint } from '../rotaryFrame'
 import { generateRotaryFinish, generateRotaryRough } from '../toolpaths/rotaryModel'
 import type { RotaryModelMesh } from '../toolpaths/rotaryModel'
 import { formatGCodeNumber } from './utils'
+import { pinRotaryAxis } from './types'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -1225,7 +1226,7 @@ const NINETY = Math.PI / 2
       centre: rotaryCentreline(bar()),
       tolerance: exportGeometryTolerance('mm'),
       operationName: op.name,
-      direction: rotaryDirection(definition),
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
       effectiveFeed: () => 600,
     }),
     /Mispaired/,
@@ -1249,7 +1250,7 @@ const NINETY = Math.PI / 2
       centre: rotaryCentreline(bar()),
       tolerance: exportGeometryTolerance('mm'),
       operationName: 'Mispaired',
-      direction: rotaryDirection(definition),
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
       effectiveFeed: () => 600,
     }),
     /Mispaired/,

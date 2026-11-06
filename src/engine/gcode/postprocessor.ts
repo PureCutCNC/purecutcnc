@@ -20,7 +20,7 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord, machineCoordinateRapidCommand, machineExportDiagnostics } from './types'
+import { pinRotaryAxis, resolveMachineKind, resolveOutputDialect, rotaryBorrowedAxis, rotaryDirection, rotaryWord, machineCoordinateRapidCommand, machineExportDiagnostics } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -45,6 +45,8 @@ import {
   planPlasmaPath,
   planProgramSequence,
   planProgramSetup,
+  rotaryInchRefused,
+  rotaryInchWarning,
   planRotaryRefusals,
   planStepFeeds,
   plasmaSafeZ,
@@ -270,6 +272,16 @@ function withWarnings(result: PostProcessorResult, warnings: ToolpathWarning[]):
   return { ...result, warnings: [...warnings, ...result.warnings] }
 }
 
+/**
+ * The dialect emitter alone, without the refusal planning `runPostProcessor`
+ * runs first. Export always goes through `runPostProcessor`; this exists so a
+ * test can prove the emitter's own backstops (#1153) hold for an operation the
+ * planner would have dropped.
+ */
+export function emitProgramWithoutPlanning(input: PostProcessorInput): PostProcessorResult {
+  return emitProgramForDialect(input)
+}
+
 function emitProgramForDialect(input: PostProcessorInput): PostProcessorResult {
   switch (resolveOutputDialect(input.definition)) {
     case 'opensbp':
@@ -324,7 +336,9 @@ function lastPlannedAngle(steps: readonly FittedMoveDescriptor[]): number | null
 }
 
 function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
-  const { project, operations, definition, options } = input
+  const { project, operations, options } = input
+  // The bar axis is resolved once, against this program's stock (#1153).
+  const definition = pinRotaryAxis(input.definition, project.stock)
   const lines: string[] = []
   const warnings: ToolpathWarning[] = []
   const outputUnits = project.meta.units
@@ -418,6 +432,19 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
+  // #1153: on a controller that reads the angle as a length, an inch program
+  // that would still turn the bar is refused whole. The planner has already
+  // dropped every turning operation with a named warning, so this refuses a
+  // manual-index Top/Bottom turn — which no operation carries — and is the
+  // backstop for any path that bypassed the planner.
+  if (programTurns && rotaryInchRefused(definition, project)) {
+    return {
+      gcode: '',
+      warnings: [rotaryInchWarning(operations[0]?.operation.name ?? 'program', definition)],
+      stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+      ...(captureTrace ? { motionTraces: [] } : null),
+    }
+  }
   // A plan that builds no header never asked above; the motion rule applies to
   // the program regardless of what its header says.
   const heldCrossAxis = decideCrossAxis(setupPlan.manualIndexAngle)

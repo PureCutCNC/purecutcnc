@@ -56,6 +56,7 @@ import { parseExportedMotion } from '../engine/gcode/motionDebug'
 import { validateMachineDefinition, type MachineDefinition } from '../engine/gcode/types'
 import { projectToMachinePoint } from '../engine/gcode/utils'
 import { buildSimulationSetupInput, type SimulationSetupInput } from './simulationSetup'
+import { pinRotaryAxis } from '../engine/gcode/types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -470,12 +471,12 @@ function testExportParity(spec: FixtureSpec): void {
   assert(unitsCommand !== null, 'fixture: the definition declares a units command')
   assert(program.includes(unitsCommand), `the program declares ${unitsCommand}`)
 
-  const parsed = parseExportedMotion(program, definition)
+  const parsed = parseExportedMotion(program, pinRotaryAxis(definition, null))
   assert(parsed.status === 'verified', `the program parses cleanly, got "${parsed.status}"`)
 
   const expected = localPath.moves
     .filter((move) => move.kind !== 'rapid')
-    .map((move) => projectToMachinePoint(move.to, project.origin, definition))
+    .map((move) => projectToMachinePoint(move.to, project.origin, pinRotaryAxis(definition, null)))
   const actual = parsed.moves.filter((move) => move.kind !== 'rapid').map((move) => move.to)
   assert(expected.length > 0, 'fixture: the Bottom path has emitted non-rapid motion')
   assert(

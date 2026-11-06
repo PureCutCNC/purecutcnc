@@ -48,6 +48,7 @@ import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
 import type { MachineDefinition } from './types'
 import { machineToProjectFlipsArcDirection, machineToProjectPoint, projectToMachinePoint } from './utils'
+import { pinRotaryAxis } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -190,28 +191,28 @@ function testMachineTransform(): void {
   const aboutY = setupFrame(BOTTOM_Y, project.stock)
 
   // Top: (x − ox, oy − y, z − oz), as it always was.
-  const top = projectToMachinePoint(point, project.origin, GRBL)
+  const top = projectToMachinePoint(point, project.origin, pinRotaryAxis(GRBL, null))
   assertEqual(top, { x: 10, y: 10, z: -15 }, 'Top without a frame')
-  assertEqual(projectToMachinePoint(point, project.origin, GRBL, setupFrame({ axis: 'x', angleDeg: 0 }, project.stock)), top, 'Top with a 0° frame')
+  assertEqual(projectToMachinePoint(point, project.origin, pinRotaryAxis(GRBL, null), setupFrame({ axis: 'x', angleDeg: 0 }, project.stock)), top, 'Top with a 0° frame')
 
   // Bottom about X: local = (10, 80 − 70, 20 − 5) = (10, 10, 15) → machine
   // (10, 80 − 10, 15 − 20). The cut 5 above the bottom face is 5 below the
   // face that is now up.
-  assertEqual(projectToMachinePoint(point, project.origin, GRBL, aboutX), { x: 10, y: 70, z: -5 }, 'Bottom about X')
+  assertEqual(projectToMachinePoint(point, project.origin, pinRotaryAxis(GRBL, null), aboutX), { x: 10, y: 70, z: -5 }, 'Bottom about X')
   // Bottom about Y: local = (100 − 10, 70, 15) → machine (90, 10, −5).
-  assertEqual(projectToMachinePoint(point, project.origin, GRBL, aboutY), { x: 90, y: 10, z: -5 }, 'Bottom about Y')
+  assertEqual(projectToMachinePoint(point, project.origin, pinRotaryAxis(GRBL, null), aboutY), { x: 90, y: 10, z: -5 }, 'Bottom about Y')
 
   console.log('Testing machine → project round trip...')
   const mirroredMachine = bundled('grbl', { coordinateSystem: { xAxis: '-X', yAxis: 'Y', zAxis: 'Z' } })
   for (const definition of [GRBL, mirroredMachine]) {
     for (const frame of [undefined, aboutX, aboutY]) {
-      const machine = projectToMachinePoint(point, project.origin, definition, frame)
-      assertEqual(machineToProjectPoint(machine, project.origin, definition, frame), point, `machine → project round trip (${definition.coordinateSystem.xAxis}, ${frame?.orientation.axis ?? 'top'})`)
+      const machine = projectToMachinePoint(point, project.origin, pinRotaryAxis(definition, null), frame)
+      assertEqual(machineToProjectPoint(machine, project.origin, pinRotaryAxis(definition, null), frame), point, `machine → project round trip (${definition.coordinateSystem.xAxis}, ${frame?.orientation.axis ?? 'top'})`)
     }
   }
   // Without the frame the inverse lands on the setup-local point, not the stock one.
   assertEqual(
-    machineToProjectPoint(projectToMachinePoint(point, project.origin, GRBL, aboutX), project.origin, GRBL),
+    machineToProjectPoint(projectToMachinePoint(point, project.origin, pinRotaryAxis(GRBL, null), aboutX), project.origin, pinRotaryAxis(GRBL, null)),
     { x: 10, y: 10, z: 15 },
     'machine → project without the frame is setup-local',
   )
@@ -230,7 +231,7 @@ function testSharedOrigin(): void {
   const originAt = (x: number, y: number): MachineOrigin => ({ name: 'Origin', x, y, z: 20, visible: true })
   /** The stock-space XY that reads as machine (0, 0). */
   const zeroPoint = (origin: MachineOrigin, frame?: ReturnType<typeof setupFrame>) => {
-    const stock = machineToProjectPoint({ x: 0, y: 0, z: 0 }, origin, GRBL, frame)
+    const stock = machineToProjectPoint({ x: 0, y: 0, z: 0 }, origin, pinRotaryAxis(GRBL, null), frame)
     return { x: stock.x, y: stock.y }
   }
 
@@ -242,8 +243,8 @@ function testSharedOrigin(): void {
   assertEqual(zeroPoint(originAt(0, 80), aboutX), { x: 0, y: 0 }, 'off-centre origin, Bottom')
 
   // Machine Z zero is the top of whichever face is up: stock Z 20 for Top, 0 for Bottom.
-  assertEqual(machineToProjectPoint({ x: 0, y: 0, z: 0 }, originAt(0, 80), GRBL).z, 20, 'Z zero, Top')
-  assertEqual(machineToProjectPoint({ x: 0, y: 0, z: 0 }, originAt(0, 80), GRBL, aboutX).z, 0, 'Z zero, Bottom')
+  assertEqual(machineToProjectPoint({ x: 0, y: 0, z: 0 }, originAt(0, 80), pinRotaryAxis(GRBL, null)).z, 20, 'Z zero, Top')
+  assertEqual(machineToProjectPoint({ x: 0, y: 0, z: 0 }, originAt(0, 80), pinRotaryAxis(GRBL, null), aboutX).z, 0, 'Z zero, Bottom')
 }
 
 // ── The pipeline ──────────────────────────────────────────────
@@ -255,7 +256,7 @@ function testBottomOperationExportsTurned(): void {
     const project = withBottomSetup(makeProject(['op1']), { axis: orientation.axis, operationIds: ['op1'] })
     assertEqual(project.operations[0].setupId, BOTTOM_SETUP_ID, 'fixture: the operation is in the Bottom setup')
     const frame = setupFrame(orientation, project.stock)
-    const expected = MOVES.map((move) => projectToMachinePoint(move.to, project.origin, GRBL, frame))
+    const expected = MOVES.map((move) => projectToMachinePoint(move.to, project.origin, pinRotaryAxis(GRBL, null), frame))
     // Both branches of the planner: with arc fitting and without.
     assertEqual(planSteps(project, GRBL), expected, `a Bottom operation exports turned about ${orientation.axis} (arc machine)`)
     assertEqual(planSteps(project, noArcs), expected, `a Bottom operation exports turned about ${orientation.axis} (no-arc machine)`)

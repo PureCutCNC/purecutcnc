@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { resolveMachineKind, rotaryWord, type MachineDefinition } from '../../engine/gcode/types'
+import { pinRotaryAxis, resolveMachineKind, rotaryFollowsStock, rotaryWord, type MachineDefinition } from '../../engine/gcode/types'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import {
   duplicateMachineAsCustom,
@@ -124,6 +124,22 @@ export function MachineDefinitionManagerDialog({
     ?? rows[0]
     ?? null
   const previewDef = safePreviewRow?.definition ?? null
+  // A bundled rotary machine follows the bar (#1153), so its summary names the
+  // axis it resolves to for the open project, and says that it follows.
+  const pinnedPreview = previewDef ? pinRotaryAxis(previewDef, project.stock) : null
+  const previewRotary = pinnedPreview?.rotary
+  const previewFollows = rotaryFollowsStock(previewDef)
+  const previewRotarySummary = previewRotary && pinnedPreview
+    ? previewRotary.drive === 'own'
+      ? td(previewFollows ? 'dialogs.machineManager.rotarySummaryOwnFollows' : 'dialogs.machineManager.rotarySummaryOwn', {
+          axis: previewRotary.about === 'x' ? 'X' : 'Y',
+        })
+      : td(previewFollows ? 'dialogs.machineManager.rotarySummaryBorrowedFollows' : 'dialogs.machineManager.rotarySummaryBorrowed', {
+          axis: previewRotary.about === 'x' ? 'X' : 'Y',
+          motor: previewRotary.about === 'x' ? 'Y' : 'X',
+          word: rotaryWord(pinnedPreview) ?? '',
+        })
+    : null
   const previewDiagnostics = safePreviewRow?.diagnostics ?? []
   const isProjectCopy = safePreviewRow?.projectCopy ?? false
   /** A project copy may be edited only to repair it; a valid one is not an editor target. */
@@ -167,15 +183,16 @@ export function MachineDefinitionManagerDialog({
 
   const handleSaveToMyMachines = useCallback(() => {
     if (!previewDef) return
-    const result = saveCustomMachine(previewDef)
+    // A machine that follows the bar is saved with the open project's axis (#1153).
+    const result = saveCustomMachine(pinRotaryAxis(previewDef, project.stock) as MachineDefinition)
     setError(result.error ?? null)
     if (result.ok) setPreviewKey(machineManagerRowKey(result.ok, false))
-  }, [previewDef])
+  }, [previewDef, project.stock])
 
   const handleImportJson = useCallback(async () => {
     const content = await platform.pickJsonFile()
     if (!content) return
-    const parsed = parseMachineImport(content, customMachines)
+    const parsed = parseMachineImport(content, customMachines, project.stock)
     if (parsed.error !== undefined) {
       setError(td('dialogs.machineManager.invalidImport', { message: parsed.error }))
       return
@@ -184,7 +201,7 @@ export function MachineDefinitionManagerDialog({
     setError(saved.error ?? null)
     if (saved.ok) setPreviewKey(machineManagerRowKey(saved.ok, false))
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [customMachines, languageTag])
+  }, [customMachines, languageTag, project.stock])
 
   const handleEdit = useCallback(() => {
     // The project's own copy is editable while it still breaks a template rule,
@@ -193,19 +210,22 @@ export function MachineDefinitionManagerDialog({
     // definition stays read-only, and a *valid* project copy keeps the old
     // "Save to my machines, then edit" route.
     if (!canEditPreview || !previewDef) return
-    setEditing({ definition: previewDef, projectCopy: isProjectCopy })
-  }, [canEditPreview, previewDef, isProjectCopy])
+    // The editor offers X or Y only, so a project copy that follows the bar is
+    // opened with the bar's axis (#1153); the form would otherwise read it as
+    // having no rotary axis and drop the block on save.
+    setEditing({ definition: pinRotaryAxis(previewDef, project.stock) as MachineDefinition, projectCopy: isProjectCopy })
+  }, [canEditPreview, previewDef, isProjectCopy, project.stock])
 
   const handleDuplicateToEdit = useCallback(() => {
     if (!previewDef) return
-    const duplicate = duplicateMachineAsCustom(previewDef, customMachines)
+    const duplicate = duplicateMachineAsCustom(previewDef, customMachines, project.stock)
     const saved = saveCustomMachine(duplicate)
     setError(saved.error ?? null)
     if (saved.ok) {
       setPreviewKey(machineManagerRowKey(saved.ok, false))
       setEditing({ definition: saved.ok, projectCopy: false })
     }
-  }, [previewDef, customMachines])
+  }, [previewDef, customMachines, project.stock])
 
   const handleExportJson = useCallback(() => {
     if (!previewDef) return
@@ -383,15 +403,7 @@ export function MachineDefinitionManagerDialog({
                     <>
                       <dt>{td('dialogs.machineEditor.rotary')}</dt>
                       <dd data-testid="machine-manager-rotary">
-                        {previewDef.rotary.drive === 'own'
-                          ? td('dialogs.machineManager.rotarySummaryOwn', {
-                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
-                            })
-                          : td('dialogs.machineManager.rotarySummaryBorrowed', {
-                              axis: previewDef.rotary.about === 'x' ? 'X' : 'Y',
-                              motor: previewDef.rotary.about === 'x' ? 'Y' : 'X',
-                              word: rotaryWord(previewDef) ?? '',
-                            })}
+                        {previewRotarySummary}
                       </dd>
                     </>
                   ) : null}

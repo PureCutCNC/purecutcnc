@@ -23,6 +23,7 @@ import {
   mergeFormData,
   validateDef,
 } from './machineDefinitionForm'
+import { pinRotaryAxis } from '../../engine/gcode/types'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -428,15 +429,15 @@ for (const about of ['x', 'y'] as const) {
   // The program word is read from the definition's coordinate system, not
   // hard-coded: project Y mapped to machine X is still the Y motor.
   const identity = makeTestDef({ rotary: makeRotary({ drive: 'borrowed' }) })
-  assert(rotaryWord(identity) === 'Y', 'rotaryWord: identity mapping borrows the Y motor')
+  assert(rotaryWord(pinRotaryAxis(identity, null)) === 'Y', 'rotaryWord: identity mapping borrows the Y motor')
   const mapped = makeTestDef({
     coordinateSystem: { xAxis: 'X', yAxis: 'X', zAxis: 'Z' },
     rotary: makeRotary({ drive: 'borrowed' }),
   })
   const form = toFormData(mapped)
-  assert(rotaryWord(mergeFormData(mapped, form)) === 'X', 'mergeFormData: mapped coordinate system shows the machine letter X')
+  assert(rotaryWord(pinRotaryAxis(mergeFormData(mapped, form), null)) === 'X', 'mergeFormData: mapped coordinate system shows the machine letter X')
   form.rotaryDrive = 'own'
-  assert(rotaryWord(mergeFormData(mapped, form)) === 'A', 'mergeFormData: its own axis always shows A')
+  assert(rotaryWord(pinRotaryAxis(mergeFormData(mapped, form), null)) === 'A', 'mergeFormData: its own axis always shows A')
 }
 
 {
