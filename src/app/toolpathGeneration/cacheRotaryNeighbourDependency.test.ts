@@ -46,17 +46,19 @@
  *   repro, with the fresh hashes to prove the miss was a wrong path.
  * - **Fix 1, the store and the service.** Sections 1–5 call the generator
  *   directly. Section 6 loads the fixture into `useProjectStore`, generates
- *   through `createToolpathGenerationService` (inline executor), moves the Hex
- *   with the store's own drag-move gesture (`startMoveFeature` →
+ *   both Turn operations through `createToolpathGenerationService` (inline
+ *   executor) and requires both cached entries, moves the Hex with the store's
+ *   own drag-move gesture (`startMoveFeature` →
  *   `setPendingMoveFrom` → `completePendingMove`), and asks the service again:
- *   the rough it returns must equal a fresh generation of the edited project.
- *   Without a footprint that sees the move the service answers from its cache
- *   with the pre-move path.
+ *   the rough and the finish it returns must each equal a fresh generation of
+ *   the edited project. Without a footprint that sees the move the service
+ *   answers from its cache with the pre-move path.
  *
  * Mutations this file is checked with (applied, seen to fail, and restored):
  * restore the target-bbox footprint for the rotary kinds -> sections 1–4 fail;
  * restore the stock-clipped across bound -> section 5 and section 6's returned-
- * rough check fail.
+ * path checks fail; drop section 6's finish request -> the both-cached check
+ * fails, because acceptance 2 is about both Turn operations being generated.
  *
  * Run with: npx tsx src/app/toolpathGeneration/cacheRotaryNeighbourDependency.test.ts
  */
@@ -294,13 +296,17 @@ async function storeAndServicePath(): Promise<void> {
     executor: 'inline',
   })
   try {
-    const first = await service.request(context(), storedRough.id, { purpose: 'export' })
+    const roughBefore = await service.request(context(), storedRough.id, { purpose: 'export' })
+    const finishBefore = await service.request(context(), storedFinish.id, { purpose: 'export' })
     check(
-      'the service generates and caches the rough before the edit',
-      first.status === 'completed' && service.peekCurrent(context(), storedRough.id) !== null,
-      `first outcome ${first.status}`,
+      'the service generates and caches both Turn operations before the edit',
+      roughBefore.status === 'completed' && finishBefore.status === 'completed'
+        && service.peekCurrent(context(), storedRough.id) !== null
+        && service.peekCurrent(context(), storedFinish.id) !== null,
+      `rough ${roughBefore.status}, finish ${finishBefore.status}; cached ${service.peekCurrent(context(), storedRough.id) !== null ? 'rough' : 'no rough'} + ${service.peekCurrent(context(), storedFinish.id) !== null ? 'finish' : 'no finish'}`,
     )
-    const roughHashBefore = first.status === 'completed' ? movesHash(first.result.moves) : ''
+    const roughHashBefore = roughBefore.status === 'completed' ? movesHash(roughBefore.result.moves) : ''
+    const finishHashBefore = finishBefore.status === 'completed' ? movesHash(finishBefore.result.moves) : ''
 
     const hexRow = storedProject.features.find((feature) => feature.id === stored.hexId)
     if (!hexRow) throw new Error('fixture premise: the Hex row exists in the store')
@@ -331,24 +337,38 @@ async function storeAndServicePath(): Promise<void> {
       `changed ${[...diff.changedFeatureIds].join(',')}, every-operation ${diff.invalidatesEveryOperation}`,
     )
 
-    const regenerated = await service.request(context(), storedRough.id, { purpose: 'export' })
+    const regeneratedRough = await service.request(context(), storedRough.id, { purpose: 'export' })
+    const regeneratedFinish = await service.request(context(), storedFinish.id, { purpose: 'export' })
     check(
       'the service regenerates the rough instead of serving the pre-move path',
-      regenerated.status === 'completed' && movesHash(regenerated.result.moves) !== roughHashBefore,
-      `outcome ${regenerated.status}`,
+      regeneratedRough.status === 'completed' && movesHash(regeneratedRough.result.moves) !== roughHashBefore,
+      `outcome ${regeneratedRough.status}`,
+    )
+    check(
+      'the service regenerates the finish instead of serving the pre-move path',
+      regeneratedFinish.status === 'completed' && movesHash(regeneratedFinish.result.moves) !== finishHashBefore,
+      `outcome ${regeneratedFinish.status}`,
     )
     // Fresh generation of the edited project: a deep copy, so no generator-side
     // identity cache from the service's run can be recycled.
     const freshProject = structuredClone(useProjectStore.getState().project)
     const freshRough = freshProject.operations.find((operation) => operation.id === storedRough.id)
+    const freshFinish = freshProject.operations.find((operation) => operation.id === storedFinish.id)
     check(
       'the service-returned rough equals a fresh generation (same moves hash)',
-      regenerated.status === 'completed' && freshRough !== undefined
-        && movesHash(regenerated.result.moves) === movesHash(generate(freshProject, freshRough)),
-      regenerated.status === 'completed' ? `returned ${movesHash(regenerated.result.moves)}` : 'no result',
+      regeneratedRough.status === 'completed' && freshRough !== undefined
+        && movesHash(regeneratedRough.result.moves) === movesHash(generate(freshProject, freshRough)),
+      regeneratedRough.status === 'completed' ? `returned ${movesHash(regeneratedRough.result.moves)}` : 'no result',
     )
-    if (regenerated.status === 'completed') {
-      console.log(`   store rough sha256 ${roughHashBefore.slice(0, 16)} → ${movesHash(regenerated.result.moves).slice(0, 16)}`)
+    check(
+      'the service-returned finish equals a fresh generation (same moves hash)',
+      regeneratedFinish.status === 'completed' && freshFinish !== undefined
+        && movesHash(regeneratedFinish.result.moves) === movesHash(generate(freshProject, freshFinish)),
+      regeneratedFinish.status === 'completed' ? `returned ${movesHash(regeneratedFinish.result.moves)}` : 'no result',
+    )
+    if (regeneratedRough.status === 'completed' && regeneratedFinish.status === 'completed') {
+      console.log(`   store rough sha256 ${roughHashBefore.slice(0, 16)} → ${movesHash(regeneratedRough.result.moves).slice(0, 16)}`)
+      console.log(`   store finish sha256 ${finishHashBefore.slice(0, 16)} → ${movesHash(regeneratedFinish.result.moves).slice(0, 16)}`)
     }
   } finally {
     service.dispose()
