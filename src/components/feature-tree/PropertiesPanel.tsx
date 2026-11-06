@@ -1868,24 +1868,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               <span>{t('featureTree.properties.constructionNote.text')}</span>
             </div>
           ) : null}
-          {surfaceStart ? (
-            <div className="properties-note" data-testid="around-surface-start">
-              <p>{aroundSurfaceStartText(t, surfaceStart, project.meta.units)}</p>
-              {surfaceStart.kind === 'above' ? (
-                <button
-                  className="feat-btn"
-                  type="button"
-                  data-testid="around-surface-start-fix"
-                  onClick={() => updateFeature(selectedFeature.id, {
-                    z_top: surfaceStart.zTop,
-                    z_bottom: surfaceStart.zBottom,
-                  })}
-                >
-                  {t('featureTree.surfaceStart.fix')}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
           {linkedOnOtherFace > 0 ? (
             <p className="properties-note" data-testid="linked-other-face-note">
               {t(
@@ -2022,6 +2004,26 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         {exceedsStock ? (
           <div className="properties-warning">
             {t('featureTree.properties.warning.exceedsStock')}
+          </div>
+        ) : null}
+        {/* Outside the collapsed sections, like the other warnings: a cut that
+            starts in air must be seen without opening anything (#1131). */}
+        {surfaceStart ? (
+          <div className="properties-warning" data-testid="around-surface-start">
+            <p>{aroundSurfaceStartText(t, surfaceStart, project.meta.units)}</p>
+            {surfaceStart.kind === 'above' ? (
+              <button
+                className="feat-btn"
+                type="button"
+                data-testid="around-surface-start-fix"
+                onClick={() => updateFeature(selectedFeature.id, {
+                  z_top: surfaceStart.zTop,
+                  z_bottom: surfaceStart.zBottom,
+                })}
+              >
+                {t('featureTree.surfaceStart.fix')}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
