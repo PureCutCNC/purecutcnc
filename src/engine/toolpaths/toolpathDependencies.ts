@@ -47,7 +47,8 @@ import type {
   ProjectMeta,
   SketchProfile,
 } from '../../types/project'
-import { getProfileBounds, getStockBounds } from '../../types/project'
+import { getProfileBounds, getStockBounds, isRotaryOperationKind } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { projectsEqual } from '../../store/helpers/normalize'
 import { isConstruction, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
@@ -300,6 +301,11 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
  * plasma operations that run after it, and its cut order starts from the
  * machine origin (issue #958). Both are captured the same way, outside this
  * model, by `plasmaCutOrderInputs` in `cacheInputsValid`.
+ *
+ * Around-the-bar rotary rough/finish are the one place the region is not the
+ * target's box grown by the tool: since rn-a they read every model across the
+ * bar that overlaps their along span, so their box is the whole cross-section
+ * over that span (`rotaryReadBounds`).
  */
 export interface OperationFootprint {
   /** World XY region in which a feature change can affect this operation. `null` = unknown. */
@@ -366,6 +372,18 @@ export function operationFootprint(project: Project, operation: Operation): Oper
   )
   if (targetUnion === null) {
     return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+
+  // An around-the-bar rotary rough or finish also reads every neighbour model
+  // on the bar (#1155 rn-b), which the target's own box does not cover. Its
+  // footprint is a different shape, with its own reasoning — see
+  // `rotaryReadBounds`.
+  if (isRotaryOperationKind(operation.kind)) {
+    return {
+      bounds: rotaryReadBounds(project, targetUnion),
+      targetFeatureIds,
+      readsWholeModel: false,
+    }
   }
 
   // Reach through chained non-target subtracts (#751 §3).
@@ -596,6 +614,42 @@ function growBoundsThroughTouchingSubtracts(
     const joinedIds = new Set(joined.map((entry) => entry.id))
     remaining = remaining.filter((entry) => !joinedIds.has(entry.id))
   }
+}
+
+/**
+ * The world region an around-the-bar rotary rough or finish reads (#1155 rn-b).
+ *
+ * Since rn-a these kinds sample every STL model standing on the bar whose along
+ * extent overlaps their cut range, not only the models they target, and the cut
+ * range is clamped to the target's own along extent. Inside that span the
+ * operation reads the bar's **whole cross-section**: any model anywhere across
+ * the bar is material it must not cut, whether or not the model's profile box
+ * touches the target's. That is the hole this footprint closes — a neighbour
+ * moved off the target's box while still overlapping the span left a stale
+ * rotary path cutting its old shape.
+ *
+ * The along figure is the resolved targets' own profile-bounds extent, the same
+ * source `featureWorldBounds` measures a changed feature with, so both sides of
+ * the test live in one frame. The across figure is the stock's extent
+ * perpendicular to the bar axis.
+ *
+ * Neither direction is grown, and the along direction is deliberately *not*
+ * widened: the generator's overlap cull is exact, so a model wholly outside the
+ * span is not read, and a change to it must stay free. That is also why the
+ * target-bbox-plus-tool-diameter footprint this replaces is wrong here — it is
+ * generous across the bar only up to two tool diameters past the target, which
+ * is nothing on a thin turning target, and generous along the bar, which costs
+ * invalidation for models the operation cannot see.
+ *
+ * A non-bar stock names no cross-section, and the rotary generator refuses such
+ * an operation anyway, so the footprint is unknown and the change invalidates.
+ */
+function rotaryReadBounds(project: Project, targetUnion: Bounds2D): Bounds2D | null {
+  if (!isBarStock(project.stock)) return null
+  const stock = getStockBounds(project.stock)
+  return project.stock.axis === 'x'
+    ? { minX: targetUnion.minX, maxX: targetUnion.maxX, minY: stock.minY, maxY: stock.maxY }
+    : { minX: stock.minX, maxX: stock.maxX, minY: targetUnion.minY, maxY: targetUnion.maxY }
 }
 
 /** Union of profile bounds; `null` when `profiles` is empty. */

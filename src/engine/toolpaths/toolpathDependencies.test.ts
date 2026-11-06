@@ -56,6 +56,14 @@ import type {
 import { newProject } from '../../types/project'
 import type { LegacyFeatureRow } from '../../store/helpers/projectFormat'
 import { projectWithFeatures, resolvedFeature } from '../../test/projectFixtures'
+import {
+  BOLT_BAR_DIAMETER,
+  BOLT_TURN_LENGTH,
+  BOLT_TURN_START,
+  rotaryBoltFixture,
+  rotaryBoltOperation,
+  translateAcrossBar,
+} from '../../test/rotaryBoltFixture'
 import { projectsEqual } from '../../store/helpers/normalize'
 import { getFeatureGeometryProfiles } from '../../text'
 import {
@@ -1540,6 +1548,153 @@ function s6bPair(
     operationAffectedByChange(footprint, previous, next, new Set(['l-target'])),
     'a newly added targeted line must regenerate the operation',
   )
+}
+
+// ── #1155 rn-b: the around-the-bar rotary footprint ───────────────
+//
+// After rn-a a rotary rough or finish samples every STL model on the bar whose
+// along extent overlaps its cut range, and the range is clamped to its target's
+// own along extent. So the region it reads is the bar's whole cross-section over
+// that span — not the target's box grown by the tool, which lets a neighbour
+// moved across the bar fall out of the footprint and leaves a stale path.
+//
+// Mutations this block is checked with (each was applied, seen to fail, and
+// restored):
+//   1. restore the target-bbox footprint for the rotary kinds (the pre-rn-b
+//      code path: the target union grown by two tool diameters) → R2 and R2b
+//      fail, because the moved/off-centre Hex sits outside that box;
+//   2. mark the rotary kinds `readsWholeModel` → R3 fails, because a model
+//      wholly outside the along span then invalidates.
+
+/** Inclusive bbox overlap, deliberately independent of the module's own helper. */
+function boundsOverlap(left: Bounds2D, right: Bounds2D): boolean {
+  return left.minX <= right.maxX && left.maxX >= right.minX
+    && left.minY <= right.maxY && left.maxY >= right.minY
+}
+
+/** World bounds of one resolved feature, measured as `featureWorldBounds` does. */
+function worldBoundsOf(project: Project, featureId: string): Bounds2D {
+  return getProfileBounds(getFeatureGeometryProfiles(resolvedFeature(project, featureId))[0])
+}
+
+{
+  console.log('R1 The rotary footprint is the bar cross-section over the target along span...')
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const { project, turnId } = rotaryBoltFixture()
+    const operation = rotaryBoltOperation(project, [turnId], kind)
+    const footprint = operationFootprint(project, operation)
+    assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
+    // The Turn spans along 10..50 across 8..12; the bar is 0..60 across 0..20.
+    assertClose(footprint.bounds.minX, BOLT_TURN_START, 1e-9, `${kind}: the along span starts with the Turn`)
+    assertClose(footprint.bounds.maxX, BOLT_TURN_START + BOLT_TURN_LENGTH, 1e-9, `${kind}: the along span ends with the Turn`)
+    assertClose(footprint.bounds.minY, 0, 1e-9, `${kind}: the cross-section starts at the bar surface`)
+    assertClose(footprint.bounds.maxY, BOLT_BAR_DIAMETER, 1e-9, `${kind}: the cross-section ends at the bar surface`)
+    assert(!footprint.readsWholeModel, `${kind}: the footprint is bounded, not the whole model`)
+    assert(setEquals(footprint.targetFeatureIds, [turnId]), `${kind}: the footprint still names its own target`)
+  }
+}
+
+{
+  console.log('R2 Moving the Hex across the bar invalidates the Turn rotary rough and finish...')
+  // The Hex stands on the far side of the bar (across +6), which is the case the
+  // handoff's cause names: "a neighbour moved so its profile no longer touches
+  // the target's box while it still overlaps along the bar". It has to start
+  // there for the move to discriminate at all, because
+  // `operationAffectedByChange` measures a changed feature on **both** snapshots:
+  // a centred Hex (its box contains the bar centreline, which a centred target's
+  // box also contains) is reported relevant by the pre-rn-b footprint before the
+  // move and after it, whatever the box grows to. Both endpoints here are off the
+  // Turn's band and inside the bar's, so only a cross-section footprint sees that
+  // the operation read either of them.
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const { project, turnId, hexId } = rotaryBoltFixture({ hexAcross: 6 })
+    const operation = rotaryBoltOperation(project, [turnId], kind)
+    const footprint = operationFootprint(project, operation)
+    assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
+    const hexBefore = worldBoundsOf(project, hexId)
+    const turnBounds = worldBoundsOf(project, turnId)
+    // Premise: the Hex is real material — on the bar, overlapping the along
+    // span — and its profile box misses the Turn's box.
+    assert(
+      !boundsOverlap(hexBefore, turnBounds),
+      `${kind}: fixture premise: the Hex box must miss the Turn box (${JSON.stringify(hexBefore)})`,
+    )
+    assert(
+      hexBefore.minY > 0 && hexBefore.maxY < BOLT_BAR_DIAMETER,
+      `${kind}: fixture premise: the Hex stands on the bar, not outside it`,
+    )
+    assert(
+      hexBefore.minX < BOLT_TURN_START + BOLT_TURN_LENGTH && hexBefore.maxX > BOLT_TURN_START,
+      `${kind}: fixture premise: the Hex overlaps the Turn's along span`,
+    )
+    const moved = translateAcrossBar(project, hexId, 1.5)
+    const hexAfter = worldBoundsOf(moved, hexId)
+    assert(
+      !boundsOverlap(hexAfter, turnBounds) && hexAfter.maxY < BOLT_BAR_DIAMETER,
+      `${kind}: fixture premise: the moved Hex stays on the bar and off the Turn box`,
+    )
+    assert(
+      operationAffectedByChange(footprint, project, moved, new Set([hexId])),
+      `${kind}: the Hex moved across the bar while it still overlaps the along span, so the `
+      + 'cached Turn path would cut its old shape',
+    )
+    // Deleting the neighbour is the same read from the other side: the presence
+    // side is checked, so a missing row contributes nothing.
+    const deleted = { ...project, features: project.features.filter((feature) => feature.id !== hexId) }
+    assert(
+      operationAffectedByChange(footprint, project, deleted, new Set([hexId])),
+      `${kind}: deleting the Hex must invalidate as well`,
+    )
+  }
+}
+
+{
+  console.log('R2b A neighbour whose profile box never touches the target box invalidates...')
+  // The Hex is off-centre from the start, so this is a plain edit (its Z span)
+  // that still has to reach the operation: the Hex is material the around
+  // operation samples, and its box sits 5.7 mm across the bar from the Turn's.
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const { project, turnId, hexId } = rotaryBoltFixture({ hexAcross: 6 })
+    const operation = rotaryBoltOperation(project, [turnId], kind)
+    const footprint = operationFootprint(project, operation)
+    assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
+    assert(
+      !boundsOverlap(worldBoundsOf(project, hexId), worldBoundsOf(project, turnId)),
+      `${kind}: fixture premise: the off-centre Hex box must miss the Turn box`,
+    )
+    const edited = patchFeature(project, hexId, { z_top: 18 })
+    assert(
+      operationAffectedByChange(footprint, project, edited, new Set([hexId])),
+      `${kind}: editing a neighbour outside the target box but inside the along span must regenerate`,
+    )
+  }
+}
+
+{
+  console.log('R3 A model wholly outside the target along span does not invalidate...')
+  // The far Turn stands on the bare bar at along 51.2..55.2, wholly beyond the
+  // Turn operation's span (which ends at 50). The generator's own neighbour cull
+  // uses that same span, so the far model is not material this operation reads.
+  // It *is* inside the grown target box the pre-rn-b footprint used, so this is
+  // also the invalidation win the narrower along span keeps.
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const { project, turnId, hexId } = rotaryBoltFixture({ farTurnStart: 51.2 })
+    const operation = rotaryBoltOperation(project, [turnId], kind)
+    const footprint = operationFootprint(project, operation)
+    assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
+    const far = project.features.find((feature) => feature.id !== turnId && feature.id !== hexId)
+    assert(far !== undefined, `${kind}: fixture premise: the far Turn exists`)
+    const farBounds = worldBoundsOf(project, far.id)
+    assert(
+      farBounds.minX > BOLT_TURN_START + BOLT_TURN_LENGTH,
+      `${kind}: fixture premise: the far Turn is wholly beyond the along span (${JSON.stringify(farBounds)})`,
+    )
+    const edited = patchFeature(project, far.id, { z_top: 12 })
+    assert(
+      !operationAffectedByChange(footprint, project, edited, new Set([far.id])),
+      `${kind}: a model the generator culls from the along span must not regenerate`,
+    )
+  }
 }
 
 console.log('toolpathDependencies.test.ts: all tests passed')
