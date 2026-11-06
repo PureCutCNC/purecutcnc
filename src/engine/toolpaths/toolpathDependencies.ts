@@ -303,9 +303,9 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
  * model, by `plasmaCutOrderInputs` in `cacheInputsValid`.
  *
  * Around-the-bar rotary rough/finish are the one place the region is not the
- * target's box grown by the tool: since rn-a they read every model across the
- * bar that overlaps their along span, so their box is the whole cross-section
- * over that span (`rotaryReadBounds`).
+ * target's box grown by the tool: since rn-a they read every model that
+ * overlaps their along span, wherever it stands across the bar, so their
+ * region is that along span with no across limit (`rotaryReadBounds`).
  */
 export interface OperationFootprint {
   /** World XY region in which a feature change can affect this operation. `null` = unknown. */
@@ -617,39 +617,52 @@ function growBoundsThroughTouchingSubtracts(
 }
 
 /**
- * The world region an around-the-bar rotary rough or finish reads (#1155 rn-b).
+ * The world region an around-the-bar rotary rough or finish reads (#1155 rn-b,
+ * corrected in fix 1).
  *
- * Since rn-a these kinds sample every STL model standing on the bar whose along
- * extent overlaps their cut range, not only the models they target, and the cut
- * range is clamped to the target's own along extent. Inside that span the
- * operation reads the bar's **whole cross-section**: any model anywhere across
- * the bar is material it must not cut, whether or not the model's profile box
- * touches the target's. That is the hole this footprint closes — a neighbour
- * moved off the target's box while still overlapping the span left a stale
- * rotary path cutting its old shape.
+ * Since rn-a these kinds sample every STL model whose along extent overlaps
+ * their cut range, not only the models they target, and the cut range is
+ * clamped to the target's own along extent. The generator's neighbour cull
+ * (`rotaryNeighbourModels` in `rotaryOperation.ts`) tests **only** that along
+ * overlap: a model's across position never excludes it. So the read set is the
+ * along span with **no across restriction at all**.
  *
  * The along figure is the resolved targets' own profile-bounds extent, the same
  * source `featureWorldBounds` measures a changed feature with, so both sides of
- * the test live in one frame. The across figure is the stock's extent
- * perpendicular to the bar axis.
- *
- * Neither direction is grown, and the along direction is deliberately *not*
+ * the test live in one frame, and the generator's cut range lies inside it
+ * (`rotaryAlongRange` clamps to the target extent). It is deliberately *not*
  * widened: the generator's overlap cull is exact, so a model wholly outside the
- * span is not read, and a change to it must stay free. That is also why the
- * target-bbox-plus-tool-diameter footprint this replaces is wrong here — it is
- * generous across the bar only up to two tool diameters past the target, which
- * is nothing on a thin turning target, and generous along the bar, which costs
- * invalidation for models the operation cannot see.
+ * span is not read, and a change to it must stay free.
+ *
+ * The across direction must not be bounded by the stock's rectangle, and that
+ * was fix 1's defect: Y on the Around face is the unrolled sheet's across
+ * coordinate, one circumference wide (`π·diameter`, centred on the bar's
+ * centreline — `aroundFrame`), not the stock's own across extent. A neighbour
+ * moved to across 15 on a Ø20 bar sits outside the stock rectangle yet squarely
+ * on the sheet, still overlaps the along span, and still changes the regenerated
+ * path; the stock-clipped bound reported both cache checks valid. Leaving the
+ * across direction open is the exact inverse of the generator's cull — it can
+ * over-invalidate only for a model the generator would still join, which is the
+ * conservative direction.
  *
  * A non-bar stock names no cross-section, and the rotary generator refuses such
  * an operation anyway, so the footprint is unknown and the change invalidates.
  */
 function rotaryReadBounds(project: Project, targetUnion: Bounds2D): Bounds2D | null {
   if (!isBarStock(project.stock)) return null
-  const stock = getStockBounds(project.stock)
   return project.stock.axis === 'x'
-    ? { minX: targetUnion.minX, maxX: targetUnion.maxX, minY: stock.minY, maxY: stock.maxY }
-    : { minX: stock.minX, maxX: stock.maxX, minY: targetUnion.minY, maxY: targetUnion.maxY }
+    ? {
+        minX: targetUnion.minX,
+        maxX: targetUnion.maxX,
+        minY: Number.NEGATIVE_INFINITY,
+        maxY: Number.POSITIVE_INFINITY,
+      }
+    : {
+        minX: Number.NEGATIVE_INFINITY,
+        maxX: Number.POSITIVE_INFINITY,
+        minY: targetUnion.minY,
+        maxY: targetUnion.maxY,
+      }
 }
 
 /** Union of profile bounds; `null` when `profiles` is empty. */

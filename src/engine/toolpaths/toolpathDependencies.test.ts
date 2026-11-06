@@ -1552,11 +1552,14 @@ function s6bPair(
 
 // ── #1155 rn-b: the around-the-bar rotary footprint ───────────────
 //
-// After rn-a a rotary rough or finish samples every STL model on the bar whose
-// along extent overlaps its cut range, and the range is clamped to its target's
-// own along extent. So the region it reads is the bar's whole cross-section over
-// that span — not the target's box grown by the tool, which lets a neighbour
-// moved across the bar fall out of the footprint and leaves a stale path.
+// After rn-a a rotary rough or finish samples every STL model whose along extent
+// overlaps its cut range, and the range is clamped to its target's own along
+// extent. The generator's neighbour cull tests only that along overlap: the
+// model's across position never excludes it, so the region read is the along
+// span with no across restriction. Bounding across by the stock's rectangle (the
+// first cut of this slice) let a neighbour outside that rectangle — but on the
+// unrolled sheet, which is one circumference wide — fall out of the footprint and
+// left a stale path; R2c is that correction's test.
 //
 // Mutations this block is checked with (each was applied, seen to fail, and
 // restored):
@@ -1564,7 +1567,9 @@ function s6bPair(
 //      code path: the target union grown by two tool diameters) → R2 and R2b
 //      fail, because the moved/off-centre Hex sits outside that box;
 //   2. mark the rotary kinds `readsWholeModel` → R3 fails, because a model
-//      wholly outside the along span then invalidates.
+//      wholly outside the along span then invalidates;
+//   3. restore the stock-clipped across bound (minY..maxY = the stock's
+//      rectangle) → R2c fails, because the far-side Hex lies outside it.
 
 /** Inclusive bbox overlap, deliberately independent of the module's own helper. */
 function boundsOverlap(left: Bounds2D, right: Bounds2D): boolean {
@@ -1578,17 +1583,15 @@ function worldBoundsOf(project: Project, featureId: string): Bounds2D {
 }
 
 {
-  console.log('R1 The rotary footprint is the bar cross-section over the target along span...')
+  console.log('R1 The rotary footprint is the target along span...')
   for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
     const { project, turnId } = rotaryBoltFixture()
     const operation = rotaryBoltOperation(project, [turnId], kind)
     const footprint = operationFootprint(project, operation)
     assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
-    // The Turn spans along 10..50 across 8..12; the bar is 0..60 across 0..20.
+    // The Turn spans along 10..50; the bar is 0..60.
     assertClose(footprint.bounds.minX, BOLT_TURN_START, 1e-9, `${kind}: the along span starts with the Turn`)
     assertClose(footprint.bounds.maxX, BOLT_TURN_START + BOLT_TURN_LENGTH, 1e-9, `${kind}: the along span ends with the Turn`)
-    assertClose(footprint.bounds.minY, 0, 1e-9, `${kind}: the cross-section starts at the bar surface`)
-    assertClose(footprint.bounds.maxY, BOLT_BAR_DIAMETER, 1e-9, `${kind}: the cross-section ends at the bar surface`)
     assert(!footprint.readsWholeModel, `${kind}: the footprint is bounded, not the whole model`)
     assert(setEquals(footprint.targetFeatureIds, [turnId]), `${kind}: the footprint still names its own target`)
   }
@@ -1666,6 +1669,56 @@ function worldBoundsOf(project: Project, featureId: string): Bounds2D {
     assert(
       operationAffectedByChange(footprint, project, edited, new Set([hexId])),
       `${kind}: editing a neighbour outside the target box but inside the along span must regenerate`,
+    )
+  }
+}
+
+{
+  console.log('R2c A neighbour outside the stock rectangle but on the sheet invalidates...')
+  // Fix 1 of this slice. Y on the Around face is the unrolled sheet's across
+  // coordinate, one circumference wide and centred on the bar's centreline
+  // (`aroundFrame`), not the stock's own across extent. A Hex moved to across 15
+  // on a Ø20 bar is outside the stock rectangle (0..20) and squarely on the
+  // sheet; the generator's neighbour cull still joins it (its along extent
+  // overlaps), so a further move changes the sampled surface while a stock-clipped
+  // footprint reports both snapshots outside it.
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const { project, turnId, hexId } = rotaryBoltFixture({ hexAcross: 15 })
+    const operation = rotaryBoltOperation(project, [turnId], kind)
+    const footprint = operationFootprint(project, operation)
+    assert(footprint.bounds !== null, `${kind}: footprint bounds must not be null`)
+    // The across contract itself: no restriction. Y on the Around face is the
+    // unrolled sheet's across coordinate (one circumference wide, centred on the
+    // bar's centreline), so the stock's 0..20 across extent is the wrong measure,
+    // and the generator's neighbour cull has no across test at all.
+    assert(
+      footprint.bounds.minY === Number.NEGATIVE_INFINITY && footprint.bounds.maxY === Number.POSITIVE_INFINITY,
+      `${kind}: the footprint carries no across restriction (got ${footprint.bounds.minY}..${footprint.bounds.maxY})`,
+    )
+    const hexBefore = worldBoundsOf(project, hexId)
+    // Premise: the Hex is wholly past the stock's across bounds yet still
+    // overlapping the Turn's along span, so only the across restriction is at
+    // issue. It is on the sheet: one circumference (π·Ø) either side of the
+    // centreline, which is what the generator samples.
+    assert(
+      hexBefore.minY > BOLT_BAR_DIAMETER,
+      `${kind}: fixture premise: the Hex must lie outside the stock rectangle (${JSON.stringify(hexBefore)})`,
+    )
+    const sheetHalfWidth = Math.PI * BOLT_BAR_DIAMETER / 2
+    const centreline = BOLT_BAR_DIAMETER / 2
+    assert(
+      hexBefore.minY > centreline - sheetHalfWidth && hexBefore.maxY < centreline + sheetHalfWidth,
+      `${kind}: fixture premise: the Hex must lie on the unrolled sheet (${JSON.stringify(hexBefore)})`,
+    )
+    assert(
+      hexBefore.minX < BOLT_TURN_START + BOLT_TURN_LENGTH && hexBefore.maxX > BOLT_TURN_START,
+      `${kind}: fixture premise: the Hex overlaps the Turn's along span`,
+    )
+    const moved = translateAcrossBar(project, hexId, 1.5)
+    assert(
+      operationAffectedByChange(footprint, project, moved, new Set([hexId])),
+      `${kind}: the generator samples this neighbour, so moving it nowhere along the bar still `
+      + 'changes the path the cached entry describes',
     )
   }
 }

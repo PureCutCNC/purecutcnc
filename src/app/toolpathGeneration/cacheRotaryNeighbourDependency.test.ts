@@ -16,15 +16,16 @@
 
 /**
  * The toolpath cache's rotary neighbour-model dependency, end to end through the
- * real generator (#1155 rn-b).
+ * real generator and, for the store path, through the shipped generation service
+ * (#1155 rn-b, corrected in fix 1).
  *
- * Since rn-a an around-the-bar rotary rough or finish samples every STL model on
- * the bar whose along extent overlaps its cut range. The cache never modelled
- * that read: `operationFootprint` was the target's own box grown by two tool
- * diameters, which on a thin turning target covers only a little of the bar's
- * cross-section. A Hex standing on the far side of the bar, outside that grown
- * box but still overlapping the Turn's along span, could be moved with the
- * cached Turn path staying "valid" — and served, cutting the Hex's old shape.
+ * Since rn-a an around-the-bar rotary rough or finish samples every STL model
+ * whose along extent overlaps its cut range. The cache never modelled that read:
+ * `operationFootprint` was the target's own box grown by two tool diameters,
+ * which on a thin turning target covers only a little of the bar's cross-section.
+ * A Hex standing on the far side of the bar, outside that grown box but still
+ * overlapping the Turn's along span, could be moved with the cached Turn path
+ * staying "valid" — and served, cutting the Hex's old shape.
  *
  * This drives the shipped pipeline, not a stand-in: `captureCacheInputs` (what a
  * submission stamps), `cacheInputsValid` (the hit test), and
@@ -35,19 +36,41 @@
  * the stale one, which is what makes the stale entry a wrong toolpath rather
  * than a harmless one.
  *
- * Mutation this file is checked with (applied, seen to fail, and restored):
- * restore the target-bbox footprint for the rotary kinds -> the two "invalidates"
- * checks fail, because the moved Hex never touches the grown target box.
+ * Two corrections ride on top of that original shape:
+ *
+ * - **Fix 1, across the bar is unbounded.** The generator's neighbour cull is
+ *   along-only, and Y on the Around face is the unrolled sheet's across
+ *   coordinate (one circumference wide), not the stock's rectangle. A Hex moved
+ *   to across 15 on a Ø20 bar is outside that rectangle and still sampled; a
+ *   stock-clipped footprint called both cache checks valid. Section 5 is the
+ *   repro, with the fresh hashes to prove the miss was a wrong path.
+ * - **Fix 1, the store and the service.** Sections 1–5 call the generator
+ *   directly. Section 6 loads the fixture into `useProjectStore`, generates
+ *   through `createToolpathGenerationService` (inline executor), moves the Hex
+ *   with the store's own drag-move gesture (`startMoveFeature` →
+ *   `setPendingMoveFrom` → `completePendingMove`), and asks the service again:
+ *   the rough it returns must equal a fresh generation of the edited project.
+ *   Without a footprint that sees the move the service answers from its cache
+ *   with the pre-move path.
+ *
+ * Mutations this file is checked with (applied, seen to fail, and restored):
+ * restore the target-bbox footprint for the rotary kinds -> sections 1–4 fail;
+ * restore the stock-clipped across bound -> section 5 and section 6's returned-
+ * rough check fail.
  *
  * Run with: npx tsx src/app/toolpathGeneration/cacheRotaryNeighbourDependency.test.ts
  */
 
 import { createHash } from 'node:crypto'
 import type { Operation, Project } from '../../types/project'
+import type { ProjectStore } from '../../store/types'
+import { useProjectStore } from '../../store/projectStore'
 import { rotaryBoltFixture, rotaryBoltOperation, translateAcrossBar } from '../../test/rotaryBoltFixture'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
+import { diffToolpathInputs } from '../../engine/toolpaths/toolpathDependencies'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { captureCacheInputs, cacheInputsValid } from './cacheInputs'
+import { createToolpathGenerationService, type GenerationContext } from './service'
 
 let passed = 0
 let failed = 0
@@ -175,5 +198,169 @@ const finishAfter = generate(editedProject, finish)
   )
 }
 
-console.log(`\n${passed} passed, ${failed} failed`)
-if (failed > 0) process.exit(1)
+// ── 5. Fix 1: a neighbour outside the stock rectangle ────────────────
+//
+// Y on the Around face is the unrolled sheet's across coordinate (one
+// circumference wide, centred on the bar's centreline), not the stock's across
+// extent, and the generator's neighbour cull is along-only. A Hex at across 15
+// on a Ø20 bar is outside the stock rectangle (0..20) and squarely on the sheet;
+// the stock-clipped footprint this slice first shipped reported both cache
+// checks valid while the sampled surface had moved. This is the review's repro.
+{
+  const far = rotaryBoltFixture({ hexAcross: 15 })
+  const farRough: Operation = {
+    ...rotaryBoltOperation(far.project, [far.turnId], 'rotary_rough'),
+    id: 'far-rough',
+    name: 'Far turn rough',
+  }
+  const farFinish: Operation = {
+    ...rotaryBoltOperation(far.project, [far.turnId], 'rotary_finish'),
+    id: 'far-finish',
+    name: 'Far turn finish',
+  }
+  const farProject = withOperations(far.project, [farRough, farFinish])
+  const farRoughBefore = generate(farProject, farRough)
+  const farFinishBefore = generate(farProject, farFinish)
+  const farEdited = translateAcrossBar(farProject, far.hexId, 1.5)
+  check(
+    'fix 1 - the far-side rough invalidates when its neighbour moves across the sheet',
+    !cacheInputsValid(captureCacheInputs(farProject, farRough), farRough, farEdited),
+    'the Hex is on the sheet and overlaps the along span, so the generator samples it',
+  )
+  check(
+    'fix 1 - the far-side finish invalidates when its neighbour moves across the sheet',
+    !cacheInputsValid(captureCacheInputs(farProject, farFinish), farFinish, farEdited),
+    'the finish reads the same neighbour set',
+  )
+  // The invalidation is only worth anything if the move really changes the path.
+  check(
+    'fix 1 - the far-side samples are a genuinely different path',
+    movesHash(generate(farEdited, farRough)) !== movesHash(farRoughBefore)
+      && movesHash(generate(farEdited, farFinish)) !== movesHash(farFinishBefore),
+    'a move that changed no output would make the invalidation untestable',
+  )
+}
+
+// ── 6. Fix 1: the same path through the store and the service ────────
+//
+// Sections 1-5 call the generator and the cache predicates directly. The shipped
+// path is different: an edit lands through `useProjectStore`, and the result comes
+// back from `createToolpathGenerationService`. That service answers a request
+// from its cache when `cacheInputsValid` says the entry still holds. This section
+// drives exactly that: generate both Turn operations through the service, move
+// the Hex with the store's own drag-move gesture (`startMoveFeature` →
+// `setPendingMoveFrom` → `completePendingMove`), request the rough again, and
+// require the returned moves to equal a fresh generation of the edited project.
+async function storeAndServicePath(): Promise<void> {
+  const stored = rotaryBoltFixture({ hexAcross: 15 })
+  const hexInstance = stored.project.features.find((feature) => feature.id === stored.hexId)
+  if (!hexInstance) throw new Error('fixture premise: the Hex row exists')
+  const hexDefinition = stored.project.featureDefinitions[hexInstance.definitionId]
+  // The fixture's Hex is a *canned* Polygon, and the store's rotary drag projects
+  // a canned band along the bar's axis (`rotaryMoveDelta`), so a canned solid
+  // cannot be dragged across the sheet — it is always planned centred on the
+  // axis. Strip `canned` to leave the same row as an imported model: the mesh
+  // asset and profile are unchanged, it is still a `model` neighbour, and its
+  // drag is the ordinary free placement `translateAcrossBar` models.
+  const importedProject: Project = {
+    ...stored.project,
+    featureDefinitions: {
+      ...stored.project.featureDefinitions,
+      [hexInstance.definitionId]: { ...hexDefinition, canned: undefined },
+    },
+  }
+  const storedRough: Operation = {
+    ...rotaryBoltOperation(importedProject, [stored.turnId], 'rotary_rough'),
+    id: 'store-rough',
+    name: 'Store turn rough',
+  }
+  const storedFinish: Operation = {
+    ...rotaryBoltOperation(importedProject, [stored.turnId], 'rotary_finish'),
+    id: 'store-finish',
+    name: 'Store turn finish',
+  }
+  const storedProject = withOperations(importedProject, [storedRough, storedFinish])
+  useProjectStore.setState({
+    project: storedProject,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const context = (): GenerationContext => ({
+    project: useProjectStore.getState().project,
+    documentKey: 1,
+  })
+  const service = createToolpathGenerationService({
+    getCurrentContext: context,
+    executor: 'inline',
+  })
+  try {
+    const first = await service.request(context(), storedRough.id, { purpose: 'export' })
+    check(
+      'the service generates and caches the rough before the edit',
+      first.status === 'completed' && service.peekCurrent(context(), storedRough.id) !== null,
+      `first outcome ${first.status}`,
+    )
+    const roughHashBefore = first.status === 'completed' ? movesHash(first.result.moves) : ''
+
+    const hexRow = storedProject.features.find((feature) => feature.id === stored.hexId)
+    if (!hexRow) throw new Error('fixture premise: the Hex row exists in the store')
+    // Move the Hex through the store's own drag-move gesture: start the move on
+    // the feature, anchor it, then commit a 1.5 mm across-the-bar translation.
+    // This is the path a user's move takes, not a hand-built project variant.
+    useProjectStore.getState().startMoveFeature(stored.hexId)
+    useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
+    useProjectStore.getState().completePendingMove({ x: 0, y: 1.5 })
+    const editedProject = useProjectStore.getState().project
+    const hexAfter = editedProject.features.find((feature) => feature.id === stored.hexId)
+    check(
+      'the store move gesture moves the Hex across the sheet and nothing else',
+      editedProject !== storedProject
+        && hexAfter !== undefined
+        && hexAfter.transform.f === hexRow.transform.f + 1.5
+        && editedProject.features.length === storedProject.features.length,
+      'the edit must be one row, or the cache test would pass for the wrong reason',
+    )
+    // Premise: this is a per-feature move, not a project-wide invalidation
+    // (`invalidatesEveryOperation` would bypass the footprint entirely).
+    const diff = diffToolpathInputs(storedProject, editedProject)
+    check(
+      'the store edit is a single-feature change, so the footprint decides',
+      !diff.invalidatesEveryOperation
+        && diff.changedFeatureIds.size === 1
+        && diff.changedFeatureIds.has(stored.hexId),
+      `changed ${[...diff.changedFeatureIds].join(',')}, every-operation ${diff.invalidatesEveryOperation}`,
+    )
+
+    const regenerated = await service.request(context(), storedRough.id, { purpose: 'export' })
+    check(
+      'the service regenerates the rough instead of serving the pre-move path',
+      regenerated.status === 'completed' && movesHash(regenerated.result.moves) !== roughHashBefore,
+      `outcome ${regenerated.status}`,
+    )
+    // Fresh generation of the edited project: a deep copy, so no generator-side
+    // identity cache from the service's run can be recycled.
+    const freshProject = structuredClone(useProjectStore.getState().project)
+    const freshRough = freshProject.operations.find((operation) => operation.id === storedRough.id)
+    check(
+      'the service-returned rough equals a fresh generation (same moves hash)',
+      regenerated.status === 'completed' && freshRough !== undefined
+        && movesHash(regenerated.result.moves) === movesHash(generate(freshProject, freshRough)),
+      regenerated.status === 'completed' ? `returned ${movesHash(regenerated.result.moves)}` : 'no result',
+    )
+    if (regenerated.status === 'completed') {
+      console.log(`   store rough sha256 ${roughHashBefore.slice(0, 16)} → ${movesHash(regenerated.result.moves).slice(0, 16)}`)
+    }
+  } finally {
+    service.dispose()
+  }
+}
+
+void storeAndServicePath()
+  .catch((error: unknown) => {
+    failed += 1
+    console.log(`   ✗ store/service path threw: ${error instanceof Error ? error.message : String(error)}`)
+  })
+  .then(() => {
+    console.log(`\n${passed} passed, ${failed} failed`)
+    if (failed > 0) process.exit(1)
+  })
