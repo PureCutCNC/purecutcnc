@@ -403,8 +403,10 @@ console.log('Testing a rotary machine states the angle in the restart block...')
   assert.equal(blocks[0]?.motion, 'G0', 'the restart retract is a rapid')
   closeTo(blocks[0]?.z, 10, 'the retract is above the bar')
   closeTo(blocks[1]?.a, 45, 'the restart states the operation start angle')
-  closeTo(blocks[1]?.x, 0, 'and its plane')
-  closeTo(blocks[1]?.y, 0, 'and its plane')
+  closeTo(blocks[1]?.x, 0, 'and its along coordinate')
+  // #1156: this program holds its cross axis by touch-off, so the restart block
+  // states no cross word — the bar's centreline is where the operator zeroed it.
+  assert.equal(blocks[1]?.y, undefined, 'and no cross word at all')
 }
 
 // ── 7. Tool changes off: no block ───────────────────────────

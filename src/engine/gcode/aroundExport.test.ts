@@ -643,15 +643,13 @@ console.log('Testing every real operation exports with no rotary refusal...')
 console.log('Testing the centreline and the borrowed motor...')
 
 {
-  // Own axis: the bar lies along X, so Y is the across coordinate, and every Y
-  // word written must be the centreline's machine coordinate — zero here,
-  // because the fixture's origin sits on the centreline.
+  // Own axis: the bar lies along X, so Y is the across coordinate. The fixture's
+  // origin sits on the centreline and no operation leaves it, so since #1156 the
+  // program holds that axis by touch-off and writes no Y word at all — writing
+  // one would need the value only a stated centreline can have, which is what
+  // gSender refuses (it counts axis words per line, not axes that move).
   const own = exportFixture(MM, OWN_X)
-  const across = axisWords(own.gcode, 'Y')
-  assert.ok(across.length > 0, 'the across coordinate is written')
-  for (const value of across) {
-    closeTo(value, 0, 1e-9, 'every across word is the centreline')
-  }
+  assert.deepEqual(axisWords(own.gcode, 'Y'), [], 'the across coordinate is held by touch-off, not written')
   const angles = angleWords(own.gcode, 'A')
   assert.ok(angles.length > 0, 'the angle is written under A')
 
@@ -680,10 +678,11 @@ console.log('Testing the centreline and the borrowed motor...')
     }
   }
 
-  // The Y bar is the mirror image: X is the across coordinate, and the
-  // borrowed X motor carries the angle under its own letter.
+  // The Y bar is the mirror image: X is the across coordinate — held by
+  // touch-off on an own-drive machine, for the same reason — and the borrowed X
+  // motor carries the angle under its own letter.
   const ownY = exportFixture(INCH, OWN_Y, false)
-  for (const value of axisWords(ownY.gcode, 'X')) closeTo(value, 0, 1e-9, 'every across word is the centreline')
+  assert.deepEqual(axisWords(ownY.gcode, 'X'), [], 'a Y bar holds its across coordinate too')
   const borrowedX = exportFixture(INCH, BORROWED_X, false)
   assert.equal(rotaryWord(BORROWED_X), 'X', 'the borrowed motor is project X')
   assert.deepEqual(angleWords(borrowedX.gcode, 'X').map((value) => Number(value.toFixed(4))),

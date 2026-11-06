@@ -228,7 +228,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   #983),
   `foldFullCircleArcs` (a complete
   counter-clockwise circle as one block, so QtPlasmaC's hole handling can
-  recognise it), `planOperationMotion`
+  recognise it), `crossAxisHeldByTouchOff` (issue #1156: the machine field a
+  program holds by touch-off, or null — see "The cross axis" below),
+  `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `plannedSafeZ` (the highest
@@ -241,7 +243,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rapid is never dropped — the angle rides the XY block when there is one and
   otherwise a block of its own, never a Z block, in either direction of Z; a
   borrowed motor's letter is the angle, not a coordinate, so it never invents
-  an XY block), `planStepFeeds` / `inverseTimeFeedValue` and
+  an XY block), `suppressAxisInSteps` (drop one machine coordinate from a
+  planned sequence — a borrowed motor's linear letter, or the program's cross
+  axis when it is held by touch-off), `planStepFeeds` / `inverseTimeFeedValue` and
   `planRotaryRefusals`
   (issue #393: each move's feed word — inverse-time `feed / length` for a
   turning move, where `length` is the true length of the path the tip draws in
@@ -419,7 +423,15 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   angle, and a square bar restart uses G53),
   `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
-  against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
+  against one sequence), `crossAxisHeldByTouchOff.test.ts` (issue #1156: the
+  programs `src/test/crossAxisPrograms.ts` builds are posted against
+  `crossAxisHeldPrograms.golden.json`, frozen from the base commit — each
+  rule-holding program's text is that golden with every cross word removed,
+  byte for byte, the gSender axis-word test finds none, and `parseGcodeMotion`
+  reads the same X/Y/Z/A after every block; a bar along Y drops X and keeps Y;
+  and each control — a tool-change template naming Y, an origin off the
+  centreline, a manual-index Top setup — is byte-identical and still writes the
+  word), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
   `trochoidalArcExport.test.ts`, `rotaryDefinition.test.ts` (the optional
@@ -436,8 +448,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   errors), `aroundExport.test.ts` (exporting an Around setup, #395: the Around
   header for both bar axes and both rotary drives, every real generated
   operation — pocket, Engrave, edge route and drilling — exported with no
-  refusal, the across coordinate left on the centreline or the borrowed letter
-  devoted to the angle, the establishing rapid, `G93`/`G94` with a
+  refusal, the across coordinate held by touch-off (since #1156 no own-drive
+  program writes it) or the borrowed letter devoted to the angle, the establishing rapid, `G93`/`G94` with a
   hand-checked inverse-time word, no arc and no canned cycle, the multi-turn
   angle with no closing unwind, `postRotaryAxisMismatch`, and the program read
   back through `parseGcodeMotion` onto the flat toolpath; since #1103 slice
@@ -512,6 +524,52 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   unwind). Focused cases pin the template Z-unknown rule, the restored
   whole-operation turning-feed precedence on a round bar, and the program
   ending on its own retract (#1091).
+
+## The cross axis (#1156)
+
+A bar program's cross coordinate — `Y` for a bar along X, `X` for a bar along
+Y — used to be written on every motion block even though an Around program's
+operations never leave the bar's centreline. gSender refuses such a file as
+four-axis: it removes only `( … )` comments and then asks whether the whole
+text matches an A word **and** a Y word anywhere, so one positioning line is
+enough (Frank's busto-round rough carried 2,080 `Y0.0000` words and would not
+load).
+
+`crossAxisHeldByTouchOff` decides once per program that the axis is *held by
+touch-off* — the operator zeroed it on the centreline and the program never
+moves it — and returns `'x'`/`'y'` for the machine field to drop, or `null`.
+All four conditions must hold, and if any fails the program's bytes are
+exactly what they were before the rule:
+
+1. `rotary.drive === 'own'`. A borrowed motor's coordinate is already dropped,
+   because there the letter carries the angle.
+2. Bar stock, the program writes A, and it is not a manual-index Top/Bottom
+   program (`planProgramSetup`'s `manualIndexAngle === null`).
+3. Every move endpoint and drill-cycle point of every operation has a
+   machine-frame cross coordinate that formats as the machine's own zero, and
+   the export arc-fitting probe finds no run. An arc block writes both X and Y
+   whatever the axis does (`emitArcLine`), and a point off the centreline is
+   real cross travel the program must state. (With the cross pinned to zero
+   the probe cannot in fact fit anything — every candidate point lies on the
+   machine's cross line — so the test is a guard, never a decision.)
+4. No template the program writes names the cross letter as an axis word, and
+   none homes the machine with `G28`/`G30`. The scan covers the program header,
+   the operation header, the tool change and its pause, the footer and the
+   program end, plus the modal and rotary commands written into the same file;
+   scanning more machine text can only withhold the rule.
+
+When it holds, `planOperationMotion` drops the coordinate with
+`suppressAxisInSteps`, `plannedStepStart` drops it from the operation's first
+move, and a drilling operation is expanded instead of written as a canned
+cycle (a cycle writes its hole position as an X and a Y whatever the axis
+does). The emitter's other blocks — the restart reposition after a tool
+change, the rapid split and every feed move — then write no cross word without
+knowing why. The operator's contract is the borrowed-motor one: zero the cross
+axis on the bar's centreline and leave it there.
+
+Two programs stay refused by gSender and are not regressions: a bar along **Y**
+writes real travel on its Y word, and a manual-index Top/Bottom program needs
+the cross axis. Neither ever satisfied the rule.
 
 ## Adding a dialect
 

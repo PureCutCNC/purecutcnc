@@ -35,6 +35,8 @@ import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
 import {
   createArcEmitOptions,
   createEmittedValueFormatter,
+  crossAxisHeldByTouchOff,
+  lineCarriesAxisWord,
   planDrillCycles,
   planOperationMotion,
   plannedSafeZ,
@@ -139,42 +141,6 @@ function safeCommentLines(
     .split(/\r?\n/)
     .map((line) => safeCommentText(line, definition))
     .filter((line) => line.length > 0)
-}
-
-/**
- * True when a rendered machine-template line carries `letter` as an axis word
- * (issue #393, rule 3c). A word is a letter followed by a value — `Y0`,
- * `Y-5.0`, `Y 0`, `Y#1` — with or without whitespace between them, so
- * `G53 G0 Y0`, `G92 Y0` and the compact `X0Y0` all match while prose does not.
- *
- * Comments are prose and are removed before the scan: an embedded or leading
- * `( … )` comment, and everything from the definition's own line-comment
- * prefix to the end of the line. Code after a parenthesised comment is still
- * code, which is why a line is never skipped just because it starts with one.
- */
-function lineCarriesAxisWord(line: string, letter: string, commentPrefix: string): boolean {
-  const code = lineCode(line, commentPrefix)
-  for (const match of code.matchAll(/([A-Za-z])\s*[-+]?(?=[0-9.#[])/g)) {
-    if (match[1].toUpperCase() === letter) return true
-  }
-  return false
-}
-
-/**
- * A program line with its comments removed: an embedded or leading `( … )`
- * comment, and everything from the definition's own line-comment prefix to the
- * end of the line. Code after a parenthesised comment is still code, which is
- * why a line is never skipped just because it starts with one.
- */
-function lineCode(line: string, commentPrefix: string): string {
-  let code = line.replace(/\([^)]*\)/g, ' ')
-  // `(` is the parenthesised-comment marker, already removed above; slicing at
-  // it would throw away the code that follows.
-  if (commentPrefix.length > 0 && commentPrefix !== '(') {
-    const at = code.indexOf(commentPrefix)
-    if (at >= 0) code = code.slice(0, at)
-  }
-  return code
 }
 
 /**
@@ -429,6 +395,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
+  // #1156: a program that never moves its cross axis holds it by touch-off —
+  // the operator zeroed it on the bar's centreline — so no block writes it. The
+  // decision is taken once for the program, here, because it governs every
+  // operation's plan and the canned-cycle choice below; null means the program
+  // keeps every coordinate it wrote before this rule existed.
+  const heldCrossAxis = crossAxisHeldByTouchOff({
+    project,
+    definition,
+    operations,
+    manualIndexAngle: setupPlan.manualIndexAngle,
+  })
   /** A bar's manual-index program: its own opening turn names the face, so its
    *  retracts are in machine coordinates (#1054 slices 2 and 2b). An Around
    *  program works above the whole bar and needs no such frame. */
@@ -1156,6 +1133,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       arcEmitOptions,
       startPosition: emittedPosition,
       captureTrace,
+      heldCrossAxis,
     })
     warnings.push(...plan.warnings)
     const travelTo = (point: ToolpathPoint) => {
@@ -1317,6 +1295,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
       && rotaryBorrowedAxis(definition) === null
+      // A canned cycle writes its hole position as X and Y whatever the axis
+      // does (issue #1156), so a program that holds its cross axis by touch-off
+      // expands the cycles instead.
+      && heldCrossAxis === null
       && !toolpathCarriesAngle
       ? planDrillCycles(project, definition, toolpath.drillCycles, operation)
       : null
@@ -1335,6 +1317,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       arcEmitOptions,
       startPosition: emittedPosition,
       captureTrace,
+      heldCrossAxis,
     })
     // The height the restart retracts to: the operation's own clearance (the
     // height its rapids travel at), never a cutting point. A canned cycle
@@ -1344,7 +1327,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       : cannedCycles![0].clear.z
     const restartStart = plan !== null
       ? plan.steps.length > 0
-        ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0)
+        ? plannedStepStart(project, definition, operation, toolpath, plan.steps, 0, heldCrossAxis)
         : null
       : cannedCycles![0].clear
     // A feed or an arc that starts the operation states its own plane after

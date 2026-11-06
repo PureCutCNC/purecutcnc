@@ -1029,7 +1029,7 @@ const NINETY = Math.PI / 2
     ],
   }])
   assert.deepEqual(motionLines(rising.gcode).filter((line) => line.startsWith('G0') || /A20\b/.test(line)),
-    ['G0 Z10.000', 'X0.000 Y0.000 A20.000', 'G0 A360.000'],
+    ['G0 Z10.000', 'X0.000 A20.000', 'G0 A360.000'],
     `a rising rapid writes Z first, then the XY block with the angle:\n${motionLines(rising.gcode).join('\n')}`)
 
   // Z falls: the XY block carrying the angle comes first, then the Z block. A
@@ -1044,7 +1044,7 @@ const NINETY = Math.PI / 2
   }])
   assert.deepEqual(motionLines(falling.gcode).filter((line) => line.startsWith('G0')
     || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A30\b/.test(line)),
-    ['G0 Z10.000', 'X0.000 Y0.000 A0.000', 'X10.000 Y0.000 A30.000', 'Z0.000', 'G0 A360.000'],
+    ['G0 Z10.000', 'X0.000 A0.000', 'X10.000 A30.000', 'Z0.000', 'G0 A360.000'],
     `a falling rapid turns across first, then drops:\n${motionLines(falling.gcode).join('\n')}`)
 
   // Z rises and XY moves in the same rapid: still Z first, angle on the XY
@@ -1059,7 +1059,7 @@ const NINETY = Math.PI / 2
   }])
   assert.deepEqual(motionLines(both.gcode).filter((line) => line.startsWith('G0')
     || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A(15|0)\./.test(line)),
-    ['G0 Z20.000', 'X30.000 Y0.000 A15.000', 'X10.000 Y0.000 A0.000', 'Z10.000'],
+    ['G0 Z20.000', 'X30.000 A15.000', 'X10.000 A0.000', 'Z10.000'],
     `a rising rapid puts the angle on the XY block, a falling one turns first:\n${motionLines(both.gcode).join('\n')}`)
 
   // No Z change at all: one XY block, angle and all; and a rotation-only rapid
@@ -1073,7 +1073,7 @@ const NINETY = Math.PI / 2
     ],
   }])
   assert.deepEqual(motionLines(flatTurn.gcode).filter((line) => /A(25|40)\./.test(line)),
-    ['X10.000 Y0.000 A25.000', 'A40.000'],
+    ['X10.000 A25.000', 'A40.000'],
     `an XY-only rapid carries the angle, and a rotation-only rapid writes it alone:\n${motionLines(flatTurn.gcode).join('\n')}`)
 }
 
@@ -1519,7 +1519,8 @@ const NINETY = Math.PI / 2
 // The canned-cycle command words are cycle selectors by schema now (#1057
 // slice F), so the only canned-cycle output that reaches the axis-word check is
 // a legal cycle. The control pins that it still exports on an own-axis machine
-// with a turning operation elsewhere in the program.
+// with a turning operation elsewhere in the program — and, since #1156, that a
+// program holding its cross axis by touch-off expands it instead.
 {
   const project = projectWith(bar())
   const drillOp = operation('Drill', { kind: 'drilling' })
@@ -1542,13 +1543,27 @@ const NINETY = Math.PI / 2
       moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }]),
     },
   ]
-  const control = exportProgram(project, validateMachineDefinition({
+  const definition = validateMachineDefinition({
     ...structuredClone(LINUXCNC),
     rotary: OWN_AXIS,
     cannedCycles: structuredClone(LINUXCNC.cannedCycles),
-  }), entries)
+  })
+  const control = exportProgram(project, definition, entries)
   assert.deepEqual(control.warnings, [], 'an ordinary canned cycle does not refuse the program')
-  assert.match(control.gcode, /G81\b/, 'and the cycle is written')
+  // #1156: a cycle writes its hole position as X and Y whatever the axis does,
+  // and this program holds its cross axis by touch-off, so the cycle's own
+  // moves are written instead — exactly as on a borrowed-motor machine.
+  assert.doesNotMatch(control.gcode, /G81\b/, 'the cycle is expanded, not written, when the cross axis is held')
+  assert.match(control.gcode, /G0 |G1 /, 'its expanded moves are written instead')
+
+  // The guarantee this block was added for still holds where the rule does not:
+  // an origin off the centreline is real cross travel the program must state,
+  // so the cycle is written as before.
+  const offCentre = exportProgram({
+    ...project,
+    origin: { ...project.origin, y: 0 },
+  }, definition, entries)
+  assert.match(offCentre.gcode, /G81\b/, 'an off-centreline program still writes the cycle')
 }
 
 // A definition template holding several physical lines is judged line by line
@@ -2153,8 +2168,10 @@ console.log('Testing that the generated helix posts as long forward G1 moves...'
   // The along-the-bar path is the untouched control: its **motion** is the
   // pre-slice bytes, captured at 8fd5b18f (the post-#1117 base of this branch).
   // Its posted text gained only #1103 ca-h's end turn and instruction, which
-  // every rotary program now carries; the motion hash below still pins the
-  // path itself.
+  // every rotary program now carries — and, for #1156, lost only its `Y0.000`
+  // words (verified by diffing both posts: same line count, and the old text
+  // with every Y word removed equals the new one byte for byte). The motion
+  // hash below still pins the path itself.
   const alongRough = generateRotaryRough('along-rough', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
     ...CONTINUOUS_BASE, stepdown: 2,
   }, {})
@@ -2165,9 +2182,9 @@ console.log('Testing that the generated helix posts as long forward G1 moves...'
       .replace(/(Generated by PureCutCNC on )\d{4}-\d{2}-\d{2}/, '$1<date>'))
     .digest('hex')
   assert.equal(movesDigest(alongRough.moves), '87220486974a10424c9f6ca4dfea7d5877b000ef4f40181b91e8088257f69269', 'the along rough motion is byte-identical')
-  assert.equal(postedDigest(alongRough.moves), 'de0a938966d3acca84e54ecfcef2db2283e519bd695aab52b6d4d3f1520ff14a', 'the along rough program is byte-identical')
+  assert.equal(postedDigest(alongRough.moves), '3dbf71bd48b3881dc32f0b91583d0d0969ff3a4a4ef4f5489915f39cd0a7fd10', 'the along rough program is byte-identical')
   assert.equal(movesDigest(alongFinish.moves), 'ac15561f4d33f3357cbe296893257094482eb611d919f85225d71467148f07b0', 'the along finish motion is byte-identical')
-  assert.equal(postedDigest(alongFinish.moves), '32a5e899cea34d94610d887e17ea5c59ac7fb40af7f4a5ee3afb6dc41f792490', 'the along finish program is byte-identical')
+  assert.equal(postedDigest(alongFinish.moves), '316d3db1d3802443739fa698694cafa6fee594cac6e434ab1ba1295791978b2a', 'the along finish program is byte-identical')
   // A non-rotary operation never sees the rotary emitter: its bytes are pinned
   // with no rotary block at all, so a change to the rotary path cannot reach it.
   const flat: ToolpathMove[] = [
