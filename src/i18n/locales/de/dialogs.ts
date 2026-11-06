@@ -430,7 +430,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'Der X-Motor',
   'dialogs.machineEditor.rotaryWord': 'Programmwort: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Richtung umkehren',
-  'dialogs.machineEditor.rotaryAngleScales': 'Steuerung skaliert A mit Zoll (G20): Rundachsen-Programme werden nur in mm exportiert',
+  'dialogs.machineEditor.rotaryAngleScales': 'Steuerung skaliert A mit Zoll: Rundachsen-Programme werden nur in mm exportiert',
   'dialogs.machineEditor.rotaryBorrowedMmOnly': 'Ein geliehener Motor liest den Winkel als Länge, daher werden Rundachsen-Programme nur in mm exportiert.',
   'dialogs.machineEditor.rotaryZeroA': 'Null-A-Zeile (optional)',
   'dialogs.machineEditor.rotaryZeroAHint': 'Wird vor jeder Drehoperation ausgeführt; leer lassen, um anzuhalten und A von Hand zu nullen.',

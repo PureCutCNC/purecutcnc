@@ -436,7 +436,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'X 电机',
   'dialogs.machineEditor.rotaryWord': '程序字：{word}',
   'dialogs.machineEditor.rotaryReverse': '反转方向',
-  'dialogs.machineEditor.rotaryAngleScales': '控制器在英制（G20）下缩放 A：旋转程序仅以 mm 导出',
+  'dialogs.machineEditor.rotaryAngleScales': '控制器在英制下缩放 A：旋转程序仅以 mm 导出',
   'dialogs.machineEditor.rotaryBorrowedMmOnly': '借用的电机把角度当作长度读取，因此旋转程序仅以 mm 导出。',
   'dialogs.machineEditor.rotaryZeroA': 'A 轴归零行（可选）',
   'dialogs.machineEditor.rotaryZeroAHint': '在每个旋转工序前执行；留空则暂停并手动将 A 归零。',

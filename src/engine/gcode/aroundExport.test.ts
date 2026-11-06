@@ -484,15 +484,23 @@ console.log('Testing the Around header and one program per Around setup...')
 
   // The same header, with the bar along Y, and one more line when the machine
   // borrows a motor instead of having its own axis.
+  // A borrowed motor turns in millimetres only (#1153), so the inch program is
+  // refused; the header it would carry is read from the same header lines.
   const inch = exportFixture(INCH, BORROWED_X, false)
-  const inchLines = inch.gcode.split('\n')
-  const inchAt = inchLines.findIndex((line) => line.includes('SETUP 01'))
-  assert.deepEqual(inchLines.slice(inchAt, inchAt + 4), [
-    '; SETUP 01: Around - AROUND THE BAR, BAR ALONG Y',
-    '; ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
-    '; TOUCH OFF: X1 Y5 IN FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
-    "; THE X MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND",
-  ], `the Y-bar borrowed-motor header, exactly:\n${inchLines.slice(inchAt, inchAt + 5).join('\n')}`)
+  assert.equal(
+    inch.warnings.filter((warning) => warning.code === 'postRotaryInchUnits').length,
+    INCH.operations.length,
+    'every turning operation of an inch program on a borrowed motor is refused for units (#1153)',
+  )
+  assert.ok(!/\bG93\b/.test(inch.gcode), 'and nothing turns the bar')
+  const inchAround = INCH.project.setups.find((setup) => setup.kind === 'around')
+  assert.ok(inchAround, 'the inch fixture has an Around setup')
+  assert.deepEqual(setupHeaderLines(INCH.project, inchAround, BORROWED_X).slice(0, 4), [
+    'SETUP 01: Around - AROUND THE BAR, BAR ALONG Y',
+    'ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
+    'TOUCH OFF: X1 Y5 IN FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    "THE X MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND",
+  ], 'the Y-bar borrowed-motor header, exactly')
 
   // An own-axis Y machine writes no borrowed-motor line.
   const ownInch = exportFixture(INCH, OWN_Y, false)
@@ -687,11 +695,11 @@ console.log('Testing the centreline and the borrowed motor...')
   // motor carries the angle under its own letter.
   const ownY = exportFixture(INCH, OWN_Y, false)
   assert.deepEqual(axisWords(ownY.gcode, 'X'), [], 'a Y bar holds its across coordinate too')
-  const borrowedX = exportFixture(INCH, BORROWED_X, false)
+  // The borrowed X letter is the angle; an inch program on it is refused
+  // (#1153), and the mm Y-bar angle words are covered by the conformance
+  // corpus's `-bar-y` borrowed cases.
   assert.equal(rotaryWord(pinRotaryAxis(BORROWED_X, null)), 'X', 'the borrowed motor is project X')
-  assert.deepEqual(angleWords(borrowedX.gcode, 'X').map((value) => Number(value.toFixed(4))),
-    expectedAngleWrites(INCH, BORROWED_X).map((value) => Number(value.toFixed(4))),
-    'the borrowed X carries the angle once per change')
+  assert.deepEqual(angleWords(exportFixture(INCH, BORROWED_X, false).gcode, 'X'), [], 'an inch borrowed-X program turns nothing (#1153)')
 }
 
 // ── 4. inverse time (rule 6 / #393 rule 4) ────────────────────

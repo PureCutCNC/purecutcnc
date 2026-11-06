@@ -1412,8 +1412,8 @@ export function planRotaryRefusals(
   const kept: PostProcessorInput['operations'] = []
   // A controller that reads the angle as a length turns the bar 25.4 times too
   // far in an inch program (#1153), so on such a machine an operation that
-  // turns is refused before anything else is asked of it. The emitter refuses
-  // a turning inch program whole as the backstop (`postprocessor.ts`).
+  // turns is refused. The emitter refuses a turning inch program whole as the
+  // backstop (`postprocessor.ts`).
   const inchTurnsRefused = rotaryInchRefused(definition, project)
   // Rule 2 and rule 3a both span the program: the angle the controller is at
   // and the borrowed coordinate carry from one operation to the next.
@@ -1424,10 +1424,6 @@ export function planRotaryRefusals(
   // regenerating an operation twice if a caller ever repeats one.
   const staleCache = new Map<string, ToolpathResult | null>()
   for (const entry of operations) {
-    if (inchTurnsRefused && toolpathTurns(entry.toolpath)) {
-      warnings.push(rotaryInchWarning(entry.operation.name, definition))
-      continue
-    }
     const verdict = inspectRotaryOperation({
       definition,
       project,
@@ -1447,6 +1443,12 @@ export function planRotaryRefusals(
     })
     if (verdict.refused !== null) {
       warnings.push(verdict.refused)
+      continue
+    }
+    // Asked after the rules above, so an operation this machine cannot run at
+    // all keeps the reason that names why (an axis mismatch, say).
+    if (inchTurnsRefused && toolpathTurns(entry.toolpath)) {
+      warnings.push(rotaryInchWarning(entry.operation.name, definition))
       continue
     }
     trackedAngle = verdict.trackedAngle

@@ -266,7 +266,9 @@ function bruteForceStockPathLength(
     { kind: 'plunge', from: at(10, 10, 30), to: at(10, 10, 20) },
     { kind: 'cut', from: at(10, 10, 20), to: at(30, 10, 20) },
   ]
-  for (const raw of BUNDLED_DEFINITIONS) {
+  // The machines that ship without a rotary block; the bundled rotary machines
+  // (#1153) carry their own and are covered in `bundledRotaryMachines.test.ts`.
+  for (const raw of BUNDLED_DEFINITIONS.filter((candidate) => candidate.rotary === undefined)) {
     const definition = validateMachineDefinition(raw)
     const project = projectWith(definition.machineKind === 'plasma' ? block() : bar())
     const op = operation('Plain')

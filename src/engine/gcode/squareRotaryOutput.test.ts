@@ -71,7 +71,7 @@ import { BUNDLED_DEFINITIONS } from './definitions'
 import { inverseTimeFeedValue, rotaryCentreline } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
 import { formatGCodeNumber } from './utils'
-import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
+import { rotaryDirection, rotaryWord, validateMachineDefinition, rotaryEnforcesMm } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { stockSpacePoint } from '../rotaryFrame'
@@ -454,6 +454,11 @@ for (const cell of MATRIX_CELLS) {
     }
   }
   const result = post(project, definition, operation, envelope.result)
+  // A borrowed motor turns in millimetres only (#1153): its inch cells are refused.
+  if (cell.units === 'inch' && rotaryEnforcesMm(definition)) {
+    assert.ok(result.warnings.some((warning) => warning.code === 'postRotaryInchUnits'), `${label}: refused for inch units (#1153)`)
+    continue
+  }
   assert.deepEqual(result.warnings, [], `${label}: the program posts with no refusal`)
   assert.ok(result.gcode.length > 0, `${label}: program text is written`)
   // A turning feed is posted in inverse time, and the machine's own rotary
@@ -529,6 +534,9 @@ for (const cell of MATRIX_CELLS) {
   const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.machine}`
   const expected = ROUND_BASELINE[key]
   assert.ok(expected, `fixture: a captured round baseline for ${key}`)
+  // An inch cell on a borrowed motor is refused since #1153 (section 1 asserts
+  // the refusal); its baseline records the program that is no longer written.
+  if (cell.units === 'inch' && rotaryEnforcesMm(machine(cell.machine, cell.axis))) continue
   assert.equal(fingerprint(project, machine(cell.machine, cell.axis), operation), expected, `${key}: the round bar is unchanged`)
 }
 

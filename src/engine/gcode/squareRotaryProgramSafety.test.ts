@@ -645,10 +645,12 @@ console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
   // every drive/unit pair so a mutation of that call cannot pass on one
   // machine configuration alone.
   assert.ok(feedFirstAccepted > 20, `fixture: accepted programs turn on a feed first after a template (${feedFirstAccepted})`)
-  assert.equal(
-    feedFirstCoverage.size,
-    6,
-    `fixture: feed-first entries cover own/borrowed/reversed in mm and inch (${[...feedFirstCoverage].sort().join(', ')})`,
+  // A borrowed motor turns in millimetres only (#1153), so its inch programs
+  // are refused and borrowed/inch can never be accepted.
+  assert.deepEqual(
+    [...feedFirstCoverage].sort(),
+    ['borrowed/mm', 'own/inch', 'own/mm', 'reversed/inch', 'reversed/mm'],
+    `fixture: feed-first entries cover own/borrowed/reversed in mm and inch, borrowed in mm only (${[...feedFirstCoverage].sort().join(', ')})`,
   )
   console.log(`   ${audited} accepted, ${refused} refused, ${turns} rotary changes proven, ${lowEndings} low endings, ${templated} templated`)
   console.log(`   ${feedFirstAccepted} accepted feed-first turns (${[...feedFirstCoverage].sort().join(', ')})`)

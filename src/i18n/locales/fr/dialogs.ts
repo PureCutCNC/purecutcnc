@@ -385,7 +385,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'Le moteur X',
   'dialogs.machineEditor.rotaryWord': 'Mot programme : {word}',
   'dialogs.machineEditor.rotaryReverse': 'Inverser le sens',
-  'dialogs.machineEditor.rotaryAngleScales': "Le contrôleur convertit A en pouces (G20) : les programmes rotatifs sont exportés en mm uniquement",
+  'dialogs.machineEditor.rotaryAngleScales': 'Le contrôleur convertit A en pouces : les programmes rotatifs sont exportés en mm uniquement',
   'dialogs.machineEditor.rotaryBorrowedMmOnly': "Un moteur emprunté lit l'angle comme une longueur : les programmes rotatifs sont exportés en mm uniquement.",
   'dialogs.machineEditor.rotaryZeroA': 'Ligne de mise à zéro de A (facultative)',
   'dialogs.machineEditor.rotaryZeroAHint': 'Exécutée avant chaque opération rotative ; laisser vide pour s’arrêter et mettre A à zéro à la main.',
