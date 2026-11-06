@@ -305,8 +305,12 @@ console.log('Testing that a square blank links whole and model-split rings at th
   // #1103 ca-j re-recorded these from the same fixture: 63 whole-ring links
   // became 32 (the rest were on bands that are now helices) and the 38
   // A-changing links became the helix. Nothing else moved.
-  assert.equal(whole.length, 32, `whole-ring links (${whole.length})`)
-  assert.equal(wideTurns.length, 2, `wide transitions that keep their retract (${wideTurns.length})`)
+  // #1155 rn-c re-recorded both counts once more: the conservative read reaches
+  // a whole cell past each sample now, so two of these boundaries no longer
+  // clear the at-layer proof's own bound and keep their raised link instead (30),
+  // and one transition that used to be wider than 45 degrees no longer is (1).
+  assert.equal(whole.length, 30, `whole-ring links (${whole.length})`)
+  assert.equal(wideTurns.length, 1, `wide transitions that keep their retract (${wideTurns.length})`)
   console.log(`  ${whole.length} whole-ring and ${split.length} split-ring links, `
     + `${helixMoves.size} helix moves; `
     + `${wideTurns.length} wide turns and ${skips.length} skipped-ring transitions keep their retract`)
@@ -404,8 +408,10 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   assert.ok(wideGroups.some((group) => group.length > 1), 'a model-gap link is the row proof\'s sampled cut')
   // #1103 ca-j re-recorded this: the fixture's whole-ring bands are helices, so
   // the at-layer links here are the gate-gap transitions the ring layers keep
-  // (42 became 64 as the bands stopped covering them).
-  assert.equal(across.length, 64, `gate-gap links on the dense grid (${across.length})`)
+  // (42 became 64 as the bands stopped covering them). #1155 rn-c re-recorded it
+  // once more: the conservative read reaches a whole cell past each sample, one
+  // more gate-gap boundary clears the proof (65).
+  assert.equal(across.length, 65, `gate-gap links on the dense grid (${across.length})`)
   console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, `
     + `${wideGroups.filter((group) => group.length > 1).length} of them row-proven`)
 }

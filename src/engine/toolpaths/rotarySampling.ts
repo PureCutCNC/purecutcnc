@@ -1326,8 +1326,18 @@ export function runRotaryAngleJob(
   for (let i = 0; i < along.length; i++) {
     const x = stock.axis === 'x' ? along[i] : centre
     const y = stock.axis === 'x' ? centre : along[i]
-    const z = safeToolTipZAt(x, y, heightMap, tool,
-      conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
+    // #1155 rn-c: the conservative read reaches a **full** cell past the sample,
+    // not half a diagonal. A map records each cell's surface at the cell's
+    // centre, so material that ends inside the next cell -- a neighbour's end
+    // face, a Hex corner -- is recorded only when that cell's centre is inside
+    // it. A face just below a cell centre therefore leaves the cell at the lower
+    // surface, and the last centre that does hold the material can be a whole
+    // cell from the face. The half-diagonal pad stopped short of that by up to
+    // `cell / 2 - cell * (√2 - 1)`, and the cutter body entered a neighbour's
+    // end face by that much (0.073 mm measured on Frank's bolt, whose Turn
+    // starts 0.05 in inside the Hex, so the face sits in a cell the sampler
+    // reads as the Turn).
+    const z = safeToolTipZAt(x, y, heightMap, tool, conservativeCellBounds ? cellSize : 0)
     row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
   }
   return {

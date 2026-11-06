@@ -454,9 +454,15 @@ for (const axis of AXES) {
   // The recorded grid, as a digest: it pins **which** midpoints are kept and in
   // what order. Re-record it only with a deliberate change to the refinement
   // rule, and expect the emitted motion to move with it.
+  //
+  // #1155 slice rn-c re-recorded it: the conservative read now reaches a whole
+  // cell past each sample (`runRotaryAngleJob`), so this prism's tips beside its
+  // raised edges are a cell higher and a different set of segments fails the
+  // refinement's own bound. The rule, the order and the every-base-angle-survives
+  // property below are unchanged; the set it selects is not.
   assert.equal(
     createHash('sha256').update(JSON.stringify(refined.angles)).digest('hex'),
-    'e675da3980c0cdf64a8c7009805da3fef71cfcd98adb017a991ca618fc574b14',
+    '968d4c4c794379d4dd6560015db6d97c8155cc8dd834f83c6b3bf4a1be5569fd',
     'the refined grid changed: which midpoints survive, or their order, moved',
   )
   // Every added angle lies strictly inside the base segment it bisects, which is

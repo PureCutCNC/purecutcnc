@@ -93,6 +93,8 @@ import type { RotaryFinishParams } from './rotaryModel'
 import { alongExtremes } from './rotarySampling'
 import type { ToolpathMove, ToolpathResult } from './types'
 import { compareRotaryDepth } from '../../test/rotaryDepthCompare'
+import { deepestCutterGouge } from '../../test/rotaryCutterGouge'
+import type { CutterGougeReport } from '../../test/rotaryCutterGouge'
 
 // ── fixture ───────────────────────────────────────────────────────────────
 
@@ -267,133 +269,14 @@ function hexDepth(along: number, across: number, up: number, hex: HexSolid): num
   )
 }
 
-/** One point of the cutter body, relative to the tip: lateral and along offsets, and rise up the axis. */
-interface BodyPoint {
-  readonly lateral: number
-  readonly along: number
-  readonly rise: number
-}
-
-/**
- * The real cutter's body, sampled in the tool's own frame: `lateral` and
- * `along` are the two directions perpendicular to the tool axis (the bar's
- * cross-section and its axial direction), `rise` is distance up the axis from
- * the tip.
- *
- * A flat endmill is a cylinder of the tool radius standing on the tip disc; a
- * ball endmill is a sphere whose lowest point is the tip, with the shank's
- * cylinder of the tool radius above its equator. The **along extent** is part
- * of the body and not a detail: the cutter is a disc in the bar's axial
- * direction too, so a pass whose centre is a full radius past a neighbour's end
- * face still has its body touching that face, and a checker that samples only
- * the lateral direction cannot see the overlap.
- */
-function cutterBody(radius: number, type: 'flat' | 'ball'): BodyPoint[] {
-  const points: BodyPoint[] = []
-  const longitudes = 16
-  const rises = [0, radius / 2, radius, 2 * radius]
-  if (type === 'flat') {
-    for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
-      const rr = radius * fraction
-      for (let i = 0; i < longitudes; i++) {
-        const theta = (i / longitudes) * Math.PI * 2
-        for (const rise of rises) {
-          points.push({ lateral: rr * Math.cos(theta), along: rr * Math.sin(theta), rise })
-        }
-      }
-    }
-    return points
-  }
-  // The ball: its lower hemisphere, centred one radius up the axis.
-  for (let latitude = 0; latitude <= 8; latitude++) {
-    const phi = (latitude / 8) * Math.PI / 2
-    for (let i = 0; i < longitudes; i++) {
-      const theta = (i / longitudes) * Math.PI * 2
-      points.push({
-        lateral: radius * Math.sin(phi) * Math.cos(theta),
-        along: radius * Math.sin(phi) * Math.sin(theta),
-        rise: radius * (1 - Math.cos(phi)),
-      })
-    }
-  }
-  // The shank above the equator: a cylinder of the tool radius.
-  for (let i = 0; i < longitudes; i++) {
-    const theta = (i / longitudes) * Math.PI * 2
-    for (const rise of [radius, 2 * radius]) {
-      points.push({ lateral: radius * Math.cos(theta), along: radius * Math.sin(theta), rise })
-    }
-  }
-  return points
-}
-
-interface GougeReport {
-  /** Deepest penetration into the Hex prism, mm; negative means wholly outside. */
-  readonly depth: number
-  /** Where the deepest body point was, for a failing message. */
-  readonly where: string
-}
-
-/**
- * Sweep the real cutter body along `moves` and report the deepest penetration
- * into the Hex solid.
- *
- * A rotary move's motion is straight in `(along, A, tip radius)`, not in XYZ
- * (a ring's chord would cut through the bar), so the pose is interpolated in
- * those three coordinates and rebuilt in the stock frame. `A` rotates the
- * **model** into the tool's frame -- `centre + across cos - up sin` across and
- * `pivot + across sin + up cos` up, the sampler's own `turnModelInto`
- * arithmetic -- so the cutter body is mapped back by the inverse.
- *
- * The step is at most a quarter tool radius of tool-centre travel, so no gap
- * between two emitted points can hide an overlap.
- */
+/** The same sweep the #1155 suites share, against this fixture's Hex solid. */
 function deepestGouge(
   moves: readonly ToolpathMove[],
   stock: BarStock,
   tool: { readonly radius: number; readonly type: 'flat' | 'ball' },
   hex: HexSolid,
-): GougeReport {
-  const centre = barCentre(stock)
-  const pivot = barPivotZ(stock)
-  const body = cutterBody(tool.radius, tool.type)
-  const step = tool.radius / 4
-  let depth = Number.NEGATIVE_INFINITY
-  let where = 'nowhere'
-  for (let index = 0; index < moves.length; index++) {
-    const move = moves[index]
-    if (move.kind === 'rapid') continue
-    const alongFrom = stock.axis === 'x' ? move.from.x : move.from.y
-    const alongTo = stock.axis === 'x' ? move.to.x : move.to.y
-    const angleFrom = (move.from.a ?? 0) * Math.PI / 180
-    const angleTo = (move.to.a ?? 0) * Math.PI / 180
-    const radiusFrom = move.from.z - pivot
-    const radiusTo = move.to.z - pivot
-    const arc = Math.abs(angleTo - angleFrom) * Math.max(Math.abs(radiusFrom), Math.abs(radiusTo))
-    const steps = Math.max(1, Math.ceil(Math.hypot(alongTo - alongFrom, arc, radiusTo - radiusFrom) / step))
-    for (let pose = 0; pose <= steps; pose++) {
-      const t = pose / steps
-      const along = alongFrom + (alongTo - alongFrom) * t
-      const angle = angleFrom + (angleTo - angleFrom) * t
-      const radius = radiusFrom + (radiusTo - radiusFrom) * t
-      const cos = Math.cos(angle)
-      const sin = Math.sin(angle)
-      for (const point of body) {
-        // The stock frame is the tool frame rotated by `-A`: the tip's own
-        // position is `(r sin A, r cos A)` off the bar's centreline, and a body
-        // point `(lateral, along, rise)` moves with it.
-        const across = centre + cos * point.lateral + sin * (radius + point.rise)
-        const up = pivot - sin * point.lateral + cos * (radius + point.rise)
-        const candidate = hexDepth(along + point.along, across, up, hex)
-        if (candidate > depth) {
-          depth = candidate
-          where = `move ${index} (${move.kind}) at along ${(along + point.along).toFixed(3)}, `
-            + `A ${(angle * 180 / Math.PI).toFixed(1)}°, tip radius ${radius.toFixed(3)}, `
-            + `body offset (${point.lateral.toFixed(3)}, ${point.along.toFixed(3)}, ${point.rise.toFixed(3)})`
-        }
-      }
-    }
-  }
-  return { depth, where }
+): CutterGougeReport {
+  return deepestCutterGouge(moves, stock, tool, (along, across, up) => hexDepth(along, across, up, hex))
 }
 
 function assertNoGouge(
@@ -637,8 +520,13 @@ check('the shank band helices while the head band falls back to rings', () => {
     && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9
     && Math.abs(alongOf(move.to) - alongOf(move.from)) <= 1e-9
     && alongOf(move.from) >= HEX_START && alongOf(move.from) <= HEX_END)
-  // Measured on this fixture: 441 ring moves cut the head band.
-  assert.equal(headRings.length, 441, `the head band is cut by rings, found ${headRings.length}`)
+  // Measured on this fixture: 415 ring moves cut the head band (441 before the
+  // #1155 rn-c correction widened the conservative read to a whole cell:
+  // `runRotaryAngleJob` now lifts a sample near the Hex's far face to the Hex,
+  // and the extra height turns 26 of the head band's ring samples into air the
+  // layer skips). What this asserts is the split, not the count: the head band
+  // is cut by rings, never helixed through.
+  assert.equal(headRings.length, 415, `the head band is cut by rings, found ${headRings.length}`)
   const pivot = barPivotZ(stock)
   const headFloor = HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6
   for (const ring of headRings) {
@@ -710,7 +598,13 @@ check('a model outside the target\u2019s along range changes nothing', () => {
     movesDigest(withNeighbour), movesDigest(aloneMoves),
     'an overlapping neighbour must move the output (otherwise this control proves nothing)',
   )
-  assert.equal(withNeighbour.length, 6658, 'the overlapping neighbour moves the output: the measured bolt run')
+  // The overlapping neighbour must move the output, and this pins the run it
+  // produces. The count is 6798 since the #1155 rn-c correction read the height
+  // map a whole cell past each sample (the fix for a neighbour's end face that
+  // lands in a cell whose centre reads the target): the tips beside the Hex's
+  // far face are lifted to the Hex, which both re-splits the rings there and
+  // emits a few more of them. The no-neighbour control below is unchanged.
+  assert.equal(withNeighbour.length, 6798, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

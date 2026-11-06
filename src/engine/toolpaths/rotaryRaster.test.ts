@@ -111,7 +111,12 @@ for (const axis of ['x', 'y'] as const) {
         }
       }
       // The tip row the sampler reads must be the one the old turned-mesh path
-      // would produce, lift included.
+      // would produce, lift included. The pad is the sampler's own: **one cell**,
+      // since #1155 rn-c widened the conservative read from half a cell diagonal
+      // (see `runRotaryAngleJob`). A map records each cell's surface at the
+      // cell's centre, so material that ends inside the next cell is recorded
+      // only when that cell's centre is inside it, and the last centre that does
+      // hold it can be a whole cell from the material's edge.
       const window = axis === 'x'
         ? { minRow: cross - margin, maxRow: cross + margin }
         : { minCol: cross - margin, maxCol: cross + margin }
@@ -119,7 +124,7 @@ for (const axis of ['x', 'y'] as const) {
       const along = [0, 0.2, 1, 5.2, 10, 19, 20]
       const expected = new Float32Array(along.map((position) => {
         const z = safeToolTipZAt(axis === 'x' ? position : centre,
-          axis === 'x' ? centre : position, map, tool, cellSize * Math.SQRT1_2)
+          axis === 'x' ? centre : position, map, tool, cellSize)
         const raw = Math.fround(z === -Infinity ? NaN : z - pivot)
         return Number.isFinite(raw) ? Math.fround(raw + Math.min(map.cellRise ?? 0, cellSize)) : raw
       }))

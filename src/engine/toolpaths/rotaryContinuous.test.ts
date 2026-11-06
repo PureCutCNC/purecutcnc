@@ -1563,7 +1563,17 @@ function entryLink(
     (_, i) => spanStart + (spanEnd - spanStart) * i / ringCount,
   )
   assert.equal(ringCount, 12, '23 mm at a 2 mm stepover is twelve ring intervals')
-  const allowance = 0.02
+  // The allowance covers the **reference's** own conservativeness, not a gouge.
+  // `supportAt` samples the same surface at a 0.05 mm cell while the operation
+  // runs at 0.1667 mm (`min(radius / 3, stepover / 2)`), and the conservative
+  // read reaches a whole cell past the sample since the #1155 rn-c correction
+  // (`runRotaryAngleJob`), so at a sector's steep edge the fine reference reads
+  // higher than the coarse generator can: 7.2014 against the emitted 7.1751 at
+  // along 14.25, A 14.4 deg. The converged support at that pose is 6.9728, so
+  // the emitted tip is 0.20 mm above the surface it must clear; 0.02 was just
+  // under the reference's own reading there. A real gouge is elsewhere by
+  // orders of magnitude -- the straight-link mutation below is 3.00 mm.
+  const allowance = 0.03
   // The pose-by-pose tip check is skipped here on purpose: a one-pose re-sample
   // of the sampler moves by a whole cell at a sector's steep edge, which is a
   // property of the reference, not of the ring. The feature's own plateau is
