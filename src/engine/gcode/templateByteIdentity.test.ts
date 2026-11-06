@@ -100,7 +100,10 @@ const MOVES = [
 
 console.log('Testing every bundled definition posts a tool-change-free program byte-identically...')
 
-for (const bundled of BUNDLED_DEFINITIONS) {
+// The frozen fingerprints cover the machines that existed before #1153; the
+// bundled rotary machines are checked against their base profiles in
+// `bundledRotaryMachines.test.ts`.
+for (const bundled of BUNDLED_DEFINITIONS.filter((candidate) => candidate.rotary === undefined)) {
   const expected = BASE_SHA256[bundled.id]
   assert.ok(expected, `fixture: ${bundled.id} has a captured fingerprint`)
   const definition = validateMachineDefinition(structuredClone(bundled))
