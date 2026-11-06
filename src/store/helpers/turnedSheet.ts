@@ -199,6 +199,34 @@ export function squareSheetHasRoundSection(project: Project): boolean {
   return index !== null && roundIntervals(project, index, Number.POSITIVE_INFINITY).length > 0
 }
 
+/**
+ * The lowest surface under an Around feature, as a radius from the bar axis:
+ * the bar's own (the inscribed radius on a square blank) or a smaller section
+ * of a Turn above the feature in the tree. The 3D view pushes a subtract whose
+ * top reaches this surface out past it, so the cut breaks through instead of
+ * leaving a skin coplanar with the Turn (#1131 retest). Null without a bar or
+ * a resolvable band.
+ */
+export function aroundLowestSurfaceRadius(
+  project: Project,
+  featureId: string,
+  index: SurfaceIndex | null = buildSurfaceIndex(project),
+): number | null {
+  if (!isBarStock(project.stock) || !index) return null
+  const order = project.features.findIndex((feature) => feature.id === featureId)
+  const range = order >= 0 ? aroundFeatureAlongRange(project, featureId) : null
+  if (!range) return null
+  const band = range.max - range.min > POINT_BAND ? range : { min: range.min - POINT_BAND, max: range.max + POINT_BAND }
+  let lowest = barInscribedRadius(project.stock)
+  for (const turn of index.turns) {
+    if (turn.order >= order) continue
+    for (const section of turnSurfaceSections(turn)) {
+      if (overlap(band, { min: section.alongMin, max: section.alongMax })) lowest = Math.min(lowest, section.radius)
+    }
+  }
+  return lowest
+}
+
 // ── "Starts above its surface" (Frank, 2026-10-31) ─────────────
 
 /**

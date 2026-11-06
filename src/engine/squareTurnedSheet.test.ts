@@ -63,7 +63,8 @@ import { normalizeToolForProject } from './toolpaths/geometry'
 import { warningSeverity } from './toolpaths/warningCodes'
 import type { ToolpathResult } from './toolpaths/types'
 import { featureReachableFromFace, setupGenerationBlock, targetAllowedInSetup } from './setupTargets'
-import { squareSheetModelFilter } from './csg'
+import { buildBarModelSolid, getManifoldModule, squareSheetModelFilter } from './csg'
+import { modelFeatures } from '../store/helpers/featureRoles'
 import { BUNDLED_DEFINITIONS } from './gcode/definitions'
 import { runPostProcessor } from './gcode/postprocessor'
 import { validateMachineDefinition } from './gcode/types'
@@ -512,6 +513,77 @@ for (const shape of ['round', 'square'] as const) {
   const { project: round } = turnedBar('round', [sheetFeature('off', 26, 29, SIDE, SIDE - 1)])
   const roundRows = resolvedProjectFeatures(round).filter((feature) => feature.authoringFace === 'around')
   assert.equal(squareSheetModelFilter(round, roundRows), roundRows, 'a round bar keeps its list unchanged')
+}
+
+// ── 8. A pocket that starts on the Turn surface opens in 3D ───
+//
+// Frank's retest of #1163: a pocket whose Z top is exactly the Turn's surface
+// (what "Start at turn surface" writes) was drawn under a skin, because the cut
+// was coplanar with the Turn. The 3D build pushes such a subtract past its top;
+// the stored span and the toolpath are untouched. The check: inside the
+// pocket's footprint the folded model keeps only the floor — no face is left
+// near the Turn's radius.
+
+const manifold = await getManifoldModule()
+
+/** Largest radius of any model face whose centre lies inside the footprint (inset). */
+function highestFaceInside(project: Project, from: number, to: number, halfAcross: number, below = Number.POSITIVE_INFINITY): number {
+  const resolved = resolvedProjectFeatures(project).filter((feature) => feature.visible)
+  const flat = modelFeatures(resolved.filter((feature) => feature.authoringFace !== 'around'))
+  const around = squareSheetModelFilter(project, modelFeatures(resolved.filter((feature) => feature.authoringFace === 'around')))
+  const solid = buildBarModelSolid(manifold, project, flat, around)
+  assert(solid, 'the bar folds into a model')
+  const mesh = solid.getMesh()
+  const centre = SIDE / 2
+  let highest = 0
+  for (let tri = 0; tri < mesh.numTri; tri += 1) {
+    let x = 0
+    let y = 0
+    let z = 0
+    for (let corner = 0; corner < 3; corner += 1) {
+      const offset = mesh.triVerts[tri * 3 + corner]! * mesh.numProp
+      x += mesh.vertProperties[offset]! / 3
+      y += mesh.vertProperties[offset + 1]! / 3
+      z += mesh.vertProperties[offset + 2]! / 3
+    }
+    const across = y - centre
+    const up = z - centre
+    const radius = Math.hypot(across, up)
+    // The footprint's across extent is sheet length on the reference cylinder
+    // (radius SIDE / 2), centred on the top line (a = 0).
+    const sheetAcross = Math.atan2(across, up) * (SIDE / 2)
+    if (x > from + 0.5 && x < to - 0.5 && Math.abs(sheetAcross) < halfAcross - 0.5 && radius < below) {
+      highest = Math.max(highest, radius)
+    }
+  }
+  solid.delete()
+  return highest
+}
+
+for (const shape of ['round', 'square'] as const) {
+  const turnRadius = TURN.diameter / 2
+  const { project } = turnedBar(shape, [sheetFeature('flush', 10, 20, TURN_Z, TURN_Z - 1)])
+  const top = highestFaceInside(project, 10, 20, 3)
+  assert(top < turnRadius - 0.5,
+    `${shape}: a pocket at the Turn surface is open — the highest face inside it is at r ${top.toFixed(3)}, the floor is ${turnRadius - 1}`)
+}
+
+{
+  // A pocket at the plain round bar's surface keeps opening as before.
+  const { project } = turnedBar('round', [sheetFeature('plain', 27, 29.5, SIDE, SIDE - 1)])
+  const top = highestFaceInside(project, 27, 29.5, 3)
+  assert(top < SIDE / 2 - 0.5, `a pocket at the bar surface is open (highest face r ${top.toFixed(3)})`)
+}
+
+{
+  // A pocket that starts below the Turn surface is not pushed: its top stays
+  // where it is drawn, with material above it.
+  const { project } = turnedBar('round', [sheetFeature('buried', 10, 20, TURN_Z - 0.5, TURN_Z - 1)])
+  const top = highestFaceInside(project, 10, 20, 3)
+  assert(Math.abs(top - (TURN.diameter / 2)) < 0.3, `a buried pocket leaves the Turn surface over it (highest face r ${top.toFixed(3)})`)
+  // Its own ceiling is where it was drawn (r 4.5), not pushed outward.
+  const ceiling = highestFaceInside(project, 10, 20, 3, TURN.diameter / 2 - 0.3)
+  assert(Math.abs(ceiling - (TURN.diameter / 2 - 0.5)) < 0.02, `the buried pocket's ceiling stays at r ${TURN.diameter / 2 - 0.5} (got ${ceiling.toFixed(3)})`)
 }
 
 console.log('squareTurnedSheet: all assertions passed.')

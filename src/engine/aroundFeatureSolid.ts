@@ -67,7 +67,9 @@ const BAND_OVERLAP_FRACTION = 0.01
 /**
  * How far past the surface (as a fraction of the bar radius) a slab whose top
  * reaches the surface is pushed, so a subtract breaks through instead of
- * leaving a skin coplanar with the bar's own facets.
+ * leaving a skin coplanar with the bar's own facets. A subtract whose top sits
+ * on a Turn's smaller surface is pushed the same distance past its own top
+ * (#1131 retest): the Turn's facets are as coplanar with it as the bar's are.
  */
 const SURFACE_MARGIN_FRACTION = 0.02
 
@@ -80,6 +82,13 @@ export interface AroundSlabOptions {
    */
   readonly minHeight: number
   readonly arcStepRadians?: number
+  /**
+   * The lowest surface under the feature, as a radius from the bar axis
+   * (`aroundLowestSurfaceRadius`). A subtract whose top reaches it is pushed
+   * past it like one at the bar surface. Display only: the stored span and the
+   * toolpath never see it.
+   */
+  readonly surfaceRadius?: number | null
 }
 
 /**
@@ -112,7 +121,13 @@ export function buildAroundFeatureSolid(
   const depth = Math.max(Math.abs(zTop - zBottom), options.minHeight)
   const rBottom = Math.max(lowerRadius, options.minHeight)
   const rTopRaw = lowerRadius + depth
-  const rTop = rTopRaw >= frame.radius - 1e-9 ? frame.radius * (1 + SURFACE_MARGIN_FRACTION) : rTopRaw
+  const surfaceRadius = options.surfaceRadius
+  const onSmallerSurface = feature.operation === 'subtract'
+    && typeof surfaceRadius === 'number' && Number.isFinite(surfaceRadius)
+    && rTopRaw >= surfaceRadius - 1e-9
+  const rTop = rTopRaw >= frame.radius - 1e-9
+    ? frame.radius * (1 + SURFACE_MARGIN_FRACTION)
+    : onSmallerSurface ? rTopRaw + frame.radius * SURFACE_MARGIN_FRACTION : rTopRaw
   if (!(rTop > rBottom)) return null
 
   return sweepOntoBar(module, frame, contour, rBottom, rTop)

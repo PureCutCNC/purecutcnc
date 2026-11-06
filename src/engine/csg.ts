@@ -20,7 +20,7 @@ import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel }
 import { getStockBounds, isRoundStock, rectProfile, roundStockCentre, roundStockDiameter, roundStockLength } from '../types/project'
 import { barCentre, barPivotZ, isBarStock, isSquareStock } from '../types/barStock'
 import { buildSurfaceIndex } from '../store/helpers/rotarySurface'
-import { squareSheetFeatureBlock } from '../store/helpers/turnedSheet'
+import { aroundLowestSurfaceRadius, squareSheetFeatureBlock } from '../store/helpers/turnedSheet'
 import type { BarStock, Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, RoundStock, SketchFeature, SketchProfile, Segment, SquareStock, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { cannedShapeIsModel } from '../cannedShapes'
@@ -1259,10 +1259,15 @@ export function buildBarModelSolid(
     index: number
     around: boolean
     feature: SketchFeature
+    /** Around rows: the lowest surface under the source row (`aroundLowestSurfaceRadius`). */
+    surfaceRadius?: number | null
     /** A canned model that shapes the bar's surface rather than cutting it. */
     turningModel: boolean
   }
   const rowIndex = new Map(project.features.map((feature, index) => [feature.id, index]))
+  // Read the Turns once for every Around row's lowest surface (#1131 retest).
+  const surfaceIndex = visibleAroundFeatures.length > 0 ? buildSurfaceIndex(project) : null
+  const surfaceRadiusOf = (id: string): number | null => aroundLowestSurfaceRadius(project, id, surfaceIndex)
   const stages: BarStage[] = []
   for (const around of [false, true] as const) {
     for (const source of around ? visibleAroundFeatures : visibleFeatures) {
@@ -1279,7 +1284,7 @@ export function buildBarModelSolid(
         continue
       }
       for (const feature of expandFeatureGeometry(source, false)) {
-        stages.push({ index, around, feature, turningModel: false })
+        stages.push({ index, around, feature, turningModel: false, ...(around ? { surfaceRadius: surfaceRadiusOf(source.id) } : {}) })
       }
     }
   }
@@ -1307,7 +1312,7 @@ export function buildBarModelSolid(
       if (!stage.around) continue
       const { feature } = stage
       if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
-      const slab = buildAroundFeatureSolid(module, project, feature, options)
+      const slab = buildAroundFeatureSolid(module, project, feature, { ...options, surfaceRadius: stage.surfaceRadius })
       if (slab) slabs.set(feature, slab)
     }
   } catch (error) {
