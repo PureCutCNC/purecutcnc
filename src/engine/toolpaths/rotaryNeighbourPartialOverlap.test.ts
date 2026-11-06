@@ -53,6 +53,43 @@
  * in clear; the rough's passes stop short of the face, so it is regression
  * coverage of the required setting rather than a second reproducer).
  *
+ * ## The wall's foot (#1155 rn-d, Frank's second retest)
+ *
+ * Clearing the face is not enough. The finish's band begins one cutter radius
+ * inside its along range, so its first ring sits beside the Hex's far face and
+ * **rides** the Hex: at 1.325 in the ring spans 1.200..1.450 and the Hex is what
+ * the tool follows. The tool first reaches the Turn's own surface at 1.375, one
+ * cutter radius past the face, and from there the helix advances about one
+ * stepover per turn -- so every angle crosses 1.375 on a different turn and the
+ * material between the face and that crossing is left standing: a stair-step
+ * ledge up to one stepover wide, which is what Frank saw in the simulation. The
+ * rough has the same wall but its layers' first full rings land a grid position
+ * past the reach, leaving a smaller version of the same step.
+ *
+ * The rule now is one ring at the wall's foot, at `face + leave + radius`: the
+ * cutter's body is **tangent** to the face there, so that ring may read the
+ * target's own surface (`wallFootPreps` samples it on the mesh without the
+ * neighbour it is tangent to) and it clears everything above the target from
+ * `face + leave` on. The ring is cut as its own ring, never as a helix boundary,
+ * because the helix resamples each pose on the operation's mesh and a helix
+ * starting at the tangent pose rides the wall for a turn. The sections below
+ * measure that with `src/test/rotaryWallFootSweep.ts` -- one radial material
+ * profile per degree of A, cut by the real cutter body at every emitted pose --
+ * and report the leftover beside the face per angle:
+ *
+ * | op | before | after |
+ * | --- | --- | --- |
+ * | flat finish, leave 0 | 0.08594 in | 0.00000 in |
+ * | flat rough, leave 0.02 | 0.00977 in | 0.00000 in |
+ * | flat rough, leave 0 | 0.03027 in | 0.00000 in |
+ * | ball finish on the rough's material | 0.20066 in | 0.11570 in |
+ *
+ * The ball's figure is its own fillet at the foot -- a ball's section cannot
+ * reach below `tip + r - sqrt(r² - d²)`, so it leaves a band at a wall that no
+ * placement removes (0.115 in for this 1/4 in ball) -- which is why the ball is
+ * held to `<= its own radius` and to the ring's position, while the flat cutters
+ * are held to the surface tolerance.
+ *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourPartialOverlap.test.ts
  */
 
@@ -71,8 +108,12 @@ import { computeOperationToolpath } from './generateOperation'
 import { resolveFinishModelSurface, resolveRotaryNeighbourMesh } from './finishModelSurface'
 import { rotarySampledMesh } from './rotaryModel'
 import { createRotarySamplingPrep, runRotaryAngleJob } from './rotarySampling'
-import type { ToolpathMove } from './types'
+import type { NormalizedTool, ToolpathMove } from './types'
 import { deepestCutterGouge } from '../../test/rotaryCutterGouge'
+import {
+  blankProfile, cutterPosesByAngle, leftoverLevel, sweepProfile, wallFootLeftover, wallFootWindow,
+} from '../../test/rotaryWallFootSweep'
+import type { WallFootProfile } from '../../test/rotaryWallFootSweep'
 
 // ── fixture: Frank's bolt, in code ────────────────────────────────────────
 
@@ -558,6 +599,271 @@ for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
   const atFace = moves.filter((move) => move.kind !== 'rapid'
     && [move.from, move.to].some((point) => point.x <= HEX_END + tool.radius))
   assert.ok(atFace.length > 0, 'the zero-leave Turn rough cuts within one cutter radius of the Hex')
+}
+
+// ── the wall's foot (#1155 rn-d) ──────────────────────────────────────────
+
+/** The Turn's own surface radius: the level these operations leave at the foot. */
+const TURN_RADIUS = TURN_DIAMETER / 2
+
+/**
+ * How much commanded A the operation turns at each along position where it does
+ * **not** move along: one whole turn (360 degrees) is a full ring there.
+ */
+function ringTurns(moves: readonly ToolpathMove[]): Map<number, number> {
+  const turns = new Map<number, number>()
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    if (Math.abs(move.to.x - move.from.x) > 1e-12 || Math.abs(move.to.y - move.from.y) > 1e-12) continue
+    const delta = Math.abs((move.to.a ?? 0) - (move.from.a ?? 0))
+    if (!(delta > 1e-9)) continue
+    const key = Math.round(move.from.x * 1e6) / 1e6
+    turns.set(key, (turns.get(key) ?? 0) + delta)
+  }
+  return turns
+}
+
+/** The leftover beside a wall, over every angle, and the material it was read from. */
+interface WallFootSweepResult {
+  readonly ledge: number
+  readonly edgeOffset: number
+  readonly worstAngle: number
+  readonly angles: number
+  readonly profile: WallFootProfile
+}
+
+/**
+ * The material left beside a neighbour's wall, per angle (#1155 rn-d).
+ *
+ * `previous` is the material an earlier operation of the job leaves, so a finish
+ * is measured on what its rough left rather than on a blank no real job starts
+ * from. `direction` is the side the operation cuts on: `+1` past the face (the
+ * Turn's band starting beside the Hex's far face) or `-1` before it (the mirror).
+ */
+function sweepWallFoot(
+  project: Project,
+  operation: Operation,
+  face: number,
+  direction: 1 | -1,
+  previous: WallFootProfile | null,
+): WallFootSweepResult {
+  const stock = project.stock as BarStock
+  const tool = toolOf(project, operation)
+  const tolerance = minRenderHeight(project.meta.units)
+  const leave = operation.stockToLeaveRadial ?? 0
+  const moves = generate(project, operation)
+  const window = wallFootWindow(face, tool, direction)
+  const boundary = face + direction * leave
+  const angles = cutterPosesByAngle(moves, stock, tool)
+  let ledge = Number.NEGATIVE_INFINITY
+  let edgeOffset = 0
+  let worstAngle = 0
+  let profile: WallFootProfile | null = null
+  for (const entry of angles) {
+    const base = previous === null
+      ? blankProfile(stock, window.from, window.to, tool, boundary)
+      : { along: previous.along, top: [...previous.top] }
+    const swept = sweepProfile(base, entry.poses, tool)
+    const leftover = wallFootLeftover(swept, face, direction, leftoverLevel(swept), leave, tolerance)
+    if (leftover.ledge > ledge) {
+      ledge = leftover.ledge
+      worstAngle = entry.angle
+    }
+    const offset = Math.abs(leftover.edge - boundary)
+    if (offset > edgeOffset) edgeOffset = offset
+    profile ??= swept
+  }
+  return {
+    ledge,
+    edgeOffset,
+    worstAngle,
+    angles: angles.length,
+    profile: profile ?? blankProfile(stock, window.from, window.to, tool, boundary),
+  }
+}
+
+/** The cutter-centre position the wall's foot is cut from: `face + leave + radius`. */
+function wallFoot(face: number, leave: number, direction: 1 | -1, tool: NormalizedTool): number {
+  return face + direction * (leave + tool.radius)
+}
+
+/**
+ * A full ring sits at the wall's foot, and the material the operation leaves
+ * beside the face ends on the leave boundary at **every** angle (#1155 rn-d).
+ *
+ * The Turn's own band starts 0.05 in inside the Hex's far face, so the tool's
+ * first ring rides the Hex and the helix has to reach the Turn's surface a turn
+ * at a time; the foot ring exists to cut the step that leaves. The numbers are in
+ * the file header.
+ */
+for (const item of [
+  { kind: 'rotary_finish' as const, leave: 0, toolRef: FLAT_TOOL_ID, label: 'flat finish' },
+  { kind: 'rotary_rough' as const, leave: 0.02, toolRef: FLAT_TOOL_ID, label: 'flat rough, 0.02 leave' },
+  { kind: 'rotary_rough' as const, leave: 0, toolRef: FLAT_TOOL_ID, label: 'flat rough, zero leave' },
+]) {
+  const { project, turnId } = boltFixture()
+  const operation = rotaryOperation(project, [turnId], item.kind, {
+    name: item.label, toolRef: item.toolRef, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: item.leave,
+  })
+  const tool = toolOf(project, operation)
+  const tolerance = minRenderHeight(project.meta.units)
+  const moves = generate(project, operation)
+  const foot = wallFoot(HEX_END, item.leave, 1, tool)
+  // The ring is there, at the exact cutter-centre position, and it is a full turn.
+  const turns = ringTurns(moves)
+  let atFoot = 0
+  for (const [along, total] of turns) {
+    if (Math.abs(along - foot) < 1e-6) atFoot = total
+  }
+  assert.ok(
+    atFoot >= 360 - 1e-6,
+    `${item.label}: a full ring at the wall's foot ${foot.toFixed(4)} in (found ${atFoot.toFixed(3)}° of turn)`,
+  )
+  const report = sweepWallFoot(project, operation, HEX_END, 1, null)
+  assert.ok(
+    report.edgeOffset <= 0.001,
+    `${item.label}: the leftover beside the Hex ends ${report.edgeOffset.toFixed(5)} in off the `
+      + `${item.leave} leave's boundary at A${report.worstAngle}°`,
+  )
+  assert.ok(
+    report.ledge <= tolerance,
+    `${item.label}: ${report.ledge.toFixed(5)} in of material left past the leave at A${report.worstAngle}° `
+      + `(tolerance ${tolerance.toFixed(6)} in) -- the ledge #1155 rn-d removes`,
+  )
+}
+
+/**
+ * The ball finish, measured on the material the flat rough leaves.
+ *
+ * A ball's section cannot reach below `tip + r - sqrt(r² - d²)`, so at a wall's
+ * foot it always leaves a fillet of its own; what the fix owes the ball is that
+ * the leftover is **that fillet** and not a placement error. The figure fell with
+ * the fix (0.20066 in to 0.11570 in, the fillet's own 0.115 in) and is now inside
+ * one cutter radius, where a foot left one helix turn late would put it a
+ * stepover wider than the fillet the ball's own shape leaves.
+ */
+{
+  const { project, turnId } = boltFixture()
+  const stock = project.stock as BarStock
+  const rough = rotaryOperation(project, [turnId], 'rotary_rough', {
+    name: 'ball case rough', toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: 0.02,
+  })
+  const finish = rotaryOperation(project, [turnId], 'rotary_finish', {
+    name: 'ball finish', toolRef: BALL_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: 0,
+  })
+  const tool = toolOf(project, finish)
+  const tolerance = minRenderHeight(project.meta.units)
+  const foot = wallFoot(HEX_END, 0, 1, tool)
+  const turns = ringTurns(generate(project, finish))
+  let atFoot = 0
+  for (const [along, total] of turns) {
+    if (Math.abs(along - foot) < 1e-6) atFoot = total
+  }
+  assert.ok(
+    atFoot >= 360 - 1e-6,
+    `the ball finish cuts a full ring at the wall's foot ${foot.toFixed(4)} in (found ${atFoot.toFixed(3)}° of turn)`,
+  )
+  const roughProfile = sweepWallFoot(project, rough, HEX_END, 1, null)
+  const roughLedge = roughProfile.ledge
+  assert.ok(
+    roughLedge <= tolerance,
+    `the ball case's rough leaves ${roughLedge.toFixed(5)} in of ledge past the leave (tolerance `
+      + `${tolerance.toFixed(6)} in), so the ball's figure is its own fillet`,
+  )
+  const report = sweepWallFoot(project, finish, HEX_END, 1, roughProfile.profile)
+  assert.ok(
+    report.ledge <= tool.radius + tolerance,
+    `the ball finish leaves ${report.ledge.toFixed(5)} in past the leave at A${report.worstAngle}°, wider than `
+      + `its own fillet (one cutter radius, ${tool.radius} in)`,
+  )
+  // And it still comes to the face: the ring at the foot is a real cut at the
+  // target's surface, not a lift onto the Hex.
+  const atFootMoves = generate(project, finish).filter((move) => Math.abs(move.from.x - foot) < 1e-6)
+  assert.ok(atFootMoves.length > 0, 'the ball finish emits cut moves at the wall foot')
+  const lowest = Math.min(...atFootMoves.map((move) => move.from.z - barPivotZ(stock)))
+  assert.ok(
+    lowest <= TURN_RADIUS + 0.02,
+    `the ball ring at the foot cuts to ${lowest.toFixed(4)} in from the axis, at the Turn's `
+      + `${TURN_RADIUS.toFixed(3)} in surface rather than on the Hex`,
+  )
+}
+
+/**
+ * The mirror: a Turn whose **far end** is 0.05 in inside the Hex's near face, so
+ * the neighbour rises at the band's far end and the foot is
+ * `Hex near face - leave - radius`.
+ */
+for (const item of [
+  { kind: 'rotary_finish' as const, leave: 0 },
+  { kind: 'rotary_rough' as const, leave: 0.02 },
+]) {
+  const { project, turnId } = mirroredBoltFixture()
+  const operation = rotaryOperation(project, [turnId], item.kind, {
+    name: `mirror ${item.kind}`, toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125,
+    stockToLeaveRadial: item.leave,
+  })
+  const tool = toolOf(project, operation)
+  const tolerance = minRenderHeight(project.meta.units)
+  const foot = wallFoot(HEX_START, item.leave, -1, tool)
+  const turns = ringTurns(generate(project, operation))
+  let atFoot = 0
+  for (const [along, total] of turns) {
+    if (Math.abs(along - foot) < 1e-6) atFoot = total
+  }
+  assert.ok(
+    atFoot >= 360 - 1e-6,
+    `the mirror ${item.kind}: a full ring at the far wall's foot ${foot.toFixed(4)} in `
+      + `(found ${atFoot.toFixed(3)}° of turn)`,
+  )
+  const report = sweepWallFoot(project, operation, HEX_START, -1, null)
+  assert.ok(
+    report.ledge <= tolerance,
+    `the mirror ${item.kind}: ${report.ledge.toFixed(5)} in of material left past the leave on the band's `
+      + `far side at A${report.worstAngle}° (tolerance ${tolerance.toFixed(6)} in)`,
+  )
+  assert.ok(
+    report.edgeOffset <= 0.001,
+    `the mirror ${item.kind}: the leftover ends ${report.edgeOffset.toFixed(5)} in off the `
+      + `${item.leave} leave's boundary`,
+  )
+}
+
+/**
+ * The control: a neighbour that does **not** rise out of the band adds no foot.
+ *
+ * The Hex's own operations have the Turn as a neighbour, and its surface is
+ * 0.25 in below the Hex's apothem, so nothing steps up inside the Hex's band --
+ * the emitted rings must stay on the plain stepover grid the operation has always
+ * sampled.
+ */
+{
+  const { project, turnId, hexId } = boltFixture()
+  const operation = rotaryOperation(project, [hexId], 'rotary_finish', {
+    name: 'the Hex finish', toolRef: SMALL_BALL_TOOL_ID, stepover: 0.16, stepdown: 0.03, stockToLeaveRadial: 0,
+  })
+  const tool = toolOf(project, operation)
+  const moves = generate(project, operation)
+  assert.ok(moves.length > 0, 'the Hex finish emits motion')
+  // The cutter span of the Hex's band, exactly as `rotaryCutterSpan` pulls it in,
+  // and the uniform grid `aroundGrid` builds over it: the operation's own
+  // `ceil(span / stepover)` intervals, both endpoints included.
+  const start = HEX_START + tool.radius
+  const end = HEX_END - tool.radius
+  const stepover = operation.stepover * tool.diameter
+  const intervals = Math.ceil((end - start) / stepover)
+  const onGrid = (along: number): boolean => {
+    const index = Math.round(((along - start) / (end - start)) * intervals)
+    return Math.abs(start + ((end - start) * index) / intervals - along) <= 1e-6
+  }
+  for (const along of ringTurns(moves).keys()) {
+    assert.ok(onGrid(along), `the Hex finish's ring at ${along.toFixed(4)} in is on its stepover grid`)
+  }
+  // And its own band starts at the Hex's near face, where the Turn below it is
+  // no wall at all.
+  const wallFootRing = [...ringTurns(moves).keys()].some((along) =>
+    Math.abs(along - wallFoot(HEX_END, 0, 1, tool)) < 1e-6)
+  assert.ok(!wallFootRing, "no wall-foot ring is cut where the neighbour does not rise")
+  void turnId
 }
 
 console.log('rotary partial-overlap neighbour tests passed')

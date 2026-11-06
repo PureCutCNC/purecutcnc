@@ -603,8 +603,12 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // map a whole cell past each sample (the fix for a neighbour's end face that
   // lands in a cell whose centre reads the target): the tips beside the Hex's
   // far face are lifted to the Hex, which both re-splits the rings there and
-  // emits a few more of them. The no-neighbour control below is unchanged.
-  assert.equal(withNeighbour.length, 6798, 'the overlapping neighbour moves the output: the measured bolt run')
+  // emits a few more of them. It is 6997 since #1155 rn-d put a full ring at that
+  // face's wall foot (along 22, one cutter radius past it): that ring replaces
+  // the helix boundary at the foot and adds one more turn of its own, because a
+  // helix starting at the tangent pose reads the Hex and would ride the wall for
+  // a turn. The no-neighbour control below is unchanged.
+  assert.equal(withNeighbour.length, 6997, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

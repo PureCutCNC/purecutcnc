@@ -1567,6 +1567,13 @@ interface RotaryTargets {
    */
   prep: RotarySamplingPrep | null
   stockToLeave: number
+  /**
+   * The columns in `along` that carry a neighbour's wall foot (#1155 rn-d). Each
+   * one is cut as its **own** ring -- no helix band starts, ends or runs through
+   * it -- because the helix resamples every pose on the operation's mesh, where
+   * the conservative read lifts the tangent pose onto the wall.
+   */
+  wallFootIndices: readonly number[]
   stopped: boolean
   refusal: ToolpathWarningCode | null
 }
@@ -1575,7 +1582,7 @@ interface RotaryTargets {
 function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
   return {
     angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, stopped: false, refusal: code,
+    prep: null, stockToLeave: 0, wallFootIndices: [], stopped: false, refusal: code,
   }
 }
 
@@ -1583,7 +1590,7 @@ function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
 function targetStopped(angles: number[], along: number[]): RotaryTargets {
   return {
     angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, stopped: true, refusal: null,
+    prep: null, stockToLeave: 0, wallFootIndices: [], stopped: true, refusal: null,
   }
 }
 
@@ -1608,6 +1615,12 @@ interface RotaryTargetPlan {
   readonly gridExtra?: RotaryModelMesh
   readonly workspace: RotarySamplingWorkspace
   readonly prep: RotarySamplingPrep
+  /**
+   * The neighbour wall-foot rings (#1155 rn-d): their columns in `along` and the
+   * prep that reads each one on the target's own surface. Empty when no
+   * neighbour rises out of the band, so an ordinary operation reads nothing.
+   */
+  readonly wallFootReads: readonly RotaryWallFootRead[]
 }
 
 /**
@@ -1679,6 +1692,256 @@ export function rotaryConservativeSampling(
   params: Pick<RotaryFinishParams, 'passDirection' | 'neighbours'>,
 ): boolean {
   return params.passDirection === 'around' || (params.neighbours !== undefined && params.neighbours.length > 0)
+}
+
+/** Two along positions closer than this are the same ring (#1155 rn-d). */
+const WALL_FOOT_EPSILON = 1e-9
+
+/**
+ * A neighbour's wall rising out of the band, and the cutter-centre position its
+ * foot is cut from (#1155 slice rn-d).
+ *
+ * The finish's band starts one cutter radius inside its along range, so its
+ * first ring sits beside a neighbour's end face and **rides** that neighbour's
+ * surface: at Frank's bolt the Hex's far face at 1.25 is 0.05 in inside the
+ * Turn's 1.2 range cut, so the ring at 1.325 spans 1.200..1.450 and reads the
+ * Hex. The tool can first follow the Turn's own surface at centre 1.375, one
+ * cutter radius past that face, and from there the helix advances about one
+ * stepover per turn -- so each angle crosses 1.375 on a different turn and the
+ * material between the face and that crossing is left standing, a stair-step
+ * ledge up to one stepover wide. The rough has the same wall but starts its
+ * layers' full rings a grid position past the reach, which leaves the same
+ * defect smaller.
+ *
+ * The fix is one ring at the wall's foot. A ring at `face + leave + radius`
+ * reaches exactly to the face -- the cutter's body is **tangent** to it, never
+ * inside it -- so it may read the target's own surface there instead of the
+ * neighbour-lifted one, and it clears the material above the target from
+ * `face + leave` on. `direction` says which side the neighbour's material is
+ * on: `+1` for material at `along <= face` (the wall rises towards -x, so the
+ * band is on the face's +x side and the foot is at `face + leave + radius`),
+ * `-1` for the mirror (a neighbour rising at the band's far end).
+ */
+interface RotaryWallFoot {
+  /** The neighbour's end face, in along coordinates. */
+  readonly face: number
+  /** The cutter-centre position whose body just clears the face by the leave. */
+  readonly foot: number
+  /** `+1` when the neighbour's material lies at `along <= face`, `-1` when at `along >= face`. */
+  readonly direction: 1 | -1
+}
+
+/**
+ * The largest radius from the bar's axis over the triangles of `mesh` that reach
+ * into the along window `[from, to]`, or `-Infinity` when none does.
+ *
+ * A triangle counts when its own along span overlaps the window, so a coarse
+ * mesh -- a canned cylinder whose only vertices are at its two ends -- still
+ * reports the surface it carries across the window. Reading the vertices' radius
+ * over a triangle that overlaps the window over-estimates it, which is the
+ * direction that keeps the wall test conservative: an over-estimated target
+ * surface hides a wall rather than inventing one.
+ */
+function meshTopBeside(mesh: RotaryModelMesh, stock: BarStock, from: number, to: number): number {
+  const positions = mesh.positions
+  const index = mesh.index
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const xAxis = stock.axis === 'x'
+  const triangles = Math.floor(index.length / 3)
+  let top = Number.NEGATIVE_INFINITY
+  for (let t = 0; t < triangles; t++) {
+    let alongMin = Number.POSITIVE_INFINITY
+    let alongMax = Number.NEGATIVE_INFINITY
+    let radius = Number.NEGATIVE_INFINITY
+    for (let corner = 0; corner < 3; corner++) {
+      const vertex = index[t * 3 + corner] * 3
+      const px = positions[vertex]
+      const py = positions[vertex + 1]
+      const along = xAxis ? px : py
+      const across = (xAxis ? py : px) - centre
+      const r = Math.hypot(across, positions[vertex + 2] - pivot)
+      if (along < alongMin) alongMin = along
+      if (along > alongMax) alongMax = along
+      if (r > radius) radius = r
+    }
+    if (alongMax < from || alongMin > to) continue
+    if (radius > top) top = radius
+  }
+  return top
+}
+
+/**
+ * Every neighbour wall that rises out of this operation's band (#1155 rn-d), in
+ * along order, with the cutter-centre position its foot is cut from.
+ *
+ * A neighbour's end face is a wall when it stands **inside** the cutter-centre
+ * span -- a face the band already clears needs no ring, and one the whole band
+ * stands on has no foot to step out of -- and when the neighbour's own surface
+ * beside that face stands more than the surface tolerance above the target's
+ * surface on the band's side of it, which is what "the surface the tool follows
+ * steps up" means. The position comes from the neighbour's **mesh**, never from
+ * where the conservative height-map read happens to drop: the read reaches a
+ * whole cell past its sample, so a position taken from it is pushed out by up to
+ * a cell, and the wall's foot would miss by that much.
+ *
+ * Around mode only. The ring and helix placement this fixes is around mode's;
+ * along mode's passes are at fixed angles and keep their output byte for byte.
+ */
+function rotaryWallFeet(
+  mesh: RotaryModelMesh,
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  span: { readonly start: number; readonly end: number },
+): RotaryWallFoot[] {
+  if (neighbours === undefined || neighbours.length === 0) return []
+  if (params.passDirection !== 'around') return []
+  const tolerance = minRenderHeight(tool.units)
+  const leave = Math.max(0, params.stockToLeave)
+  // One cutter radius along the bar, the window the handoff's "within one tool
+  // radius along the bar" names: the surface beside the face on each side.
+  const window = tool.radius + leave
+  const feet: RotaryWallFoot[] = []
+  for (const neighbour of neighbours) {
+    const extremes = alongExtremes(neighbour.positions, stock)
+    if (!Number.isFinite(extremes.min) || !Number.isFinite(extremes.max)) continue
+    for (const direction of [1, -1] as const) {
+      const face = direction > 0 ? extremes.max : extremes.min
+      const foot = face + direction * (leave + tool.radius)
+      if (!(foot >= span.start - WALL_FOOT_EPSILON && foot <= span.end + WALL_FOOT_EPSILON)) continue
+      const neighbourSide = direction > 0 ? [face - window, face] : [face, face + window]
+      const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
+      const neighbourTop = meshTopBeside(neighbour, stock, neighbourSide[0], neighbourSide[1])
+      const targetTop = meshTopBeside(mesh, stock, bandSide[0], bandSide[1])
+      if (!Number.isFinite(neighbourTop) || !Number.isFinite(targetTop)) continue
+      if (!(neighbourTop > targetTop + tolerance)) continue
+      feet.push({ face, foot, direction })
+    }
+  }
+  return feet.sort((a, b) => a.foot - b.foot)
+}
+
+/**
+ * `base` extended with the wall feet, sorted, plus the index each foot landed on
+ * (#1155 rn-d). A foot that coincides with a grid position keeps its column and
+ * only marks it; the grid position before a foot is otherwise untouched, so an
+ * operation with neighbours but no wall foot is byte for byte what it was.
+ */
+function mergeWallFootPositions(
+  base: readonly number[],
+  feet: readonly RotaryWallFoot[],
+): { along: number[]; footReads: Array<{ index: number; foot: RotaryWallFoot }> } {
+  const along: number[] = []
+  const footReads: Array<{ index: number; foot: RotaryWallFoot }> = []
+  const push = (x: number): number => {
+    if (along.length === 0 || x - along[along.length - 1] > WALL_FOOT_EPSILON) along.push(x)
+    return along.length - 1
+  }
+  let b = 0
+  let f = 0
+  while (b < base.length || f < feet.length) {
+    const baseX = b < base.length ? base[b] : Number.POSITIVE_INFINITY
+    const footX = f < feet.length ? feet[f].foot : Number.POSITIVE_INFINITY
+    if (baseX <= footX + WALL_FOOT_EPSILON) {
+      const index = push(baseX)
+      b++
+      while (f < feet.length && Math.abs(feet[f].foot - baseX) <= WALL_FOOT_EPSILON) {
+        footReads.push({ index, foot: feet[f] })
+        f++
+      }
+      continue
+    }
+    const index = push(footX)
+    while (f < feet.length && Math.abs(feet[f].foot - footX) <= WALL_FOOT_EPSILON) {
+      footReads.push({ index, foot: feet[f] })
+      f++
+    }
+  }
+  return { along, footReads }
+}
+
+/**
+ * One wall-foot ring's own read (#1155 rn-d): the prep that samples the target's
+ * surface at the ring, the column it belongs to in the operation's grid, and its
+ * position within that prep's (foot-only) along list.
+ */
+interface RotaryWallFootRead {
+  /** The column in the operation's `along` grid this ring sits at. */
+  readonly index: number
+  /** The prep the ring's own row is read from, shared by the feet it covers. */
+  readonly prep: RotarySamplingPrep
+  /** This ring's position within `prep.along`. */
+  readonly position: number
+}
+
+/**
+ * The preps that read the wall-foot rings on the target's own surface (#1155
+ * rn-d), one per distinct set of neighbours the cutter can reach at its feet.
+ *
+ * Almost always there is one: every foot is tangent to the neighbour that owns
+ * it, so that neighbour drops out of the mesh and the ring reads the target
+ * exactly as a no-neighbour run would. A neighbour that **does** reach the
+ * cutter at some other foot stays in, so no ring is read below material the
+ * body would enter. The prep is the operation's own -- same enlarged tool, same
+ * cell size, same grid envelope, same retained stubs -- built over the foot
+ * positions only, so it costs one angle row per angle and never a second pass
+ * over the band.
+ */
+function wallFootPreps(
+  footReads: readonly { readonly index: number; readonly foot: RotaryWallFoot }[],
+  mesh: RotaryModelMesh,
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  stock: BarStock,
+  samplingTool: NormalizedTool,
+  params: RotaryFinishParams,
+  along: readonly number[],
+  gridExtra: RotaryModelMesh | undefined,
+): RotaryWallFootRead[] {
+  if (footReads.length === 0 || neighbours === undefined || neighbours.length === 0) return []
+  // The cutter's own axial reach at the ring: the sampling tool carries the
+  // stock to leave as radius, and the leave is what keeps the body off the face.
+  const reach = samplingTool.radius
+  const extents = neighbours.map((neighbour) => alongExtremes(neighbour.positions, stock))
+  const groups = new Map<string, {
+    readonly kept: RotaryModelMesh[]
+    readonly members: Array<{ readonly index: number; readonly foot: RotaryWallFoot }>
+  }>()
+  for (const member of footReads) {
+    const kept: RotaryModelMesh[] = []
+    const key: number[] = []
+    neighbours.forEach((neighbour, i) => {
+      const extent = extents[i]
+      if (!Number.isFinite(extent.min) || !Number.isFinite(extent.max)) return
+      if (extent.min < member.foot.foot + reach - WALL_FOOT_EPSILON
+        && extent.max > member.foot.foot - reach + WALL_FOOT_EPSILON) {
+        kept.push(neighbour)
+        key.push(i)
+      }
+    })
+    const id = key.join(',')
+    const group = groups.get(id) ?? { kept, members: [] }
+    group.members.push(member)
+    groups.set(id, group)
+  }
+  const reads: RotaryWallFootRead[] = []
+  for (const group of groups.values()) {
+    const footMesh = rotarySampledMesh(mesh, group.kept, stock, samplingTool.units, params)
+    const prep = createRotarySamplingPrep(footMesh, stock, samplingTool, {
+      along: group.members.map((member) => along[member.index]),
+      requestedCellSize: params.requestedCellSize,
+      ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
+      ...((gridExtra !== undefined) ? { gridExtra } : {}),
+      ...(footMesh.retainedTriangleStart !== undefined
+        ? { wallTriangleStart: footMesh.retainedTriangleStart }
+        : {}),
+    })
+    group.members.forEach((member, position) => {
+      reads.push({ index: member.index, prep, position })
+    })
+  }
+  return reads
 }
 
 /** Preparation, or the warning code that refuses the operation before sampling. */
@@ -1806,6 +2069,18 @@ function prepareRotaryTargets(
     ? retainedBarStubs(stock, tool.units, params.alongStart, params.alongEnd)
     : []
   const gridExtra = unErodedStubs.length > 0 ? concatRotaryMeshes(unErodedStubs) : undefined
+  // #1155 rn-d: a neighbour's wall inside the band gets a ring at its foot. The
+  // positions come from the neighbours' meshes and are merged into the along
+  // grid, so the ring exists at every angle; the foot's own tip is read on the
+  // target's surface below (`wallFootReads`), because the conservative read
+  // reaches a whole cell past its sample and would lift the tangent ring onto
+  // the neighbour it is tangent to. An operation with no wall foot keeps the
+  // exact grid, the exact rows and the exact motion it had.
+  const walls = rotaryWallFeet(mesh, params.neighbours, stock, tool, params, span)
+  const merged = walls.length === 0
+    ? { along, footReads: [] as Array<{ index: number; foot: RotaryWallFoot }> }
+    : mergeWallFootPositions(along, walls)
+  along = merged.along
   // One workspace for the base grid and every refinement round: the mesh, tool
   // and along positions are the same in all of them, so the hull, the strip
   // index and the candidate buffer are built once (issue #1045 slice T).
@@ -1838,10 +2113,19 @@ function prepareRotaryTargets(
       : {}),
     workspace,
   })
+  // The foot rings' own rows: the target's surface, read on a mesh that keeps
+  // only the neighbours the cutter can actually reach at that position. The
+  // wall's own neighbour is tangent there (the foot is exactly one leave plus
+  // one cutter radius off its face), so it drops out and the ring reads the
+  // target -- while any other neighbour genuinely under the cutter keeps its
+  // lift, so the ring can never be read lower than the material it must clear.
+  const wallFootReads = wallFootPreps(merged.footReads, mesh, params.neighbours, stock, samplingTool,
+    params, along, gridExtra)
   return {
     plan: {
       angles, along, stockToLeave, maxRadius,
       samplingMesh, samplingTool, workspace, prep,
+      wallFootReads,
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
     },
   }
@@ -1891,6 +2175,32 @@ function completeRotaryTargets(
   // on a round bar the cap is the surface it always was.
   const tips = tipRows.map((row) => Array.from(row, (raw) =>
     Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN))
+  // #1155 rn-d: a wall-foot ring follows the **target's** surface. The ring sits
+  // exactly one leave plus one cutter radius off the neighbour's face, so its
+  // body is tangent to that face and never inside it -- but the conservative
+  // read reaches a whole cell past its sample, so the shared row lifts it onto
+  // the neighbour it is tangent to and the ring would leave the ledge it exists
+  // to remove. Its own row is read here, on the mesh without the neighbour the
+  // ring is tangent to (see `wallFootPreps`), through the same stock offset and
+  // clamp as every other sample.
+  if (plan.wallFootReads.length > 0) {
+    const rowsByPrep = new Map<RotarySamplingPrep, readonly Float32Array[]>()
+    for (const read of plan.wallFootReads) {
+      let rows = rowsByPrep.get(read.prep)
+      if (rows === undefined) {
+        const sampled = sampleAnglesWithPrep(read.prep, angles, warnings)
+        if (!sampled.valid) continue
+        rows = sampled.tipRadius
+        rowsByPrep.set(read.prep, rows)
+      }
+      for (let k = 0; k < tips.length && k < rows.length; k++) {
+        const raw = rows[k][read.position]
+        tips[k][read.index] = Number.isFinite(raw)
+          ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius)
+          : NaN
+      }
+    }
+  }
   // The retained end stubs are stock the cutter's side must never enter, and
   // the sampler's discrete footprint can miss a thin axial overlap between the
   // cutter's rim and a stub's end face (#1016 C2-F6): Codex's 25 mm repro read
@@ -2034,7 +2344,9 @@ function completeRotaryTargets(
     linkRows(turnAngle(angleDeg), bucket)
   return {
     angles, along, tips, stubFloor, linkRowAt: linkRowAtPhysical, prep: plan.prep,
-    stockToLeave: plan.stockToLeave, stopped: false, refusal: null,
+    stockToLeave: plan.stockToLeave,
+    wallFootIndices: plan.wallFootReads.map((read) => read.index),
+    stopped: false, refusal: null,
   }
 }
 
@@ -2564,6 +2876,14 @@ function finishFromTargets(
     // The A cursor: the commanded angle every point of the next unit is built
     // from. A ring advances it by one turn, a helix by its own complete turns.
     let angleBase = 0
+    // #1155 rn-d: a wall-foot column is cut as its own ring, and no helix band
+    // starts, ends or runs through it. The foot is the position from which the
+    // tool first follows the target's own surface, so a band crossing it would
+    // interpolate its turns across the step -- exactly the stair-step ledge the
+    // ring exists to remove.
+    const wallFootAt = sampling.wallFootIndices.length > 0
+      ? new Set(sampling.wallFootIndices)
+      : null
     // One forward-only ring at the cursor's angle. A split ring is partial arcs:
     // its last run can still reach the ring end, but the issue's contract is
     // that a split ring retracts rather than feeding to the next ring. Only a
@@ -2583,9 +2903,20 @@ function finishFromTargets(
     let ring = 0
     while (ring < along.length) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+      // #1155 rn-d: a wall-foot ring is cut as its own ring, never as a helix
+      // boundary. The helix samples every pose on the operation's own mesh, and
+      // the conservative read lifts a pose at the foot onto the neighbour it is
+      // tangent to -- so a helix starting there would ride the wall for one turn
+      // and leave exactly the ledge the ring removes.
+      if (wallFootAt !== null && wallFootAt.has(ring)) {
+        emitRing(ring)
+        ring++
+        continue
+      }
       if (rings[ring].eligible) {
         let band = ring
-        while (band + 1 < along.length && rings[band + 1].eligible) band++
+        while (band + 1 < along.length && rings[band + 1].eligible
+          && (wallFootAt === null || !wallFootAt.has(band + 1))) band++
         // A band of one ring is just a ring: a helix needs an axial step to turn
         // into a pitch, and its two complete end rings would otherwise add a
         // full turn over no advance at all.
@@ -3889,6 +4220,14 @@ function roughFromTargets(
     // starts at the smallest whole-turn representative of its own first angle
     // that is at or ahead of this (#1103 ca-d fix 1): see `unitBase`.
     let lastCommandedA: number | undefined
+    // #1155 rn-d: a wall-foot column is cut as its own ring, and no layer's
+    // helix band starts, ends or runs through it. The foot is the position from
+    // which the tool first follows the target's own surface at that depth, and a
+    // helix pose there is resampled onto the wall it is tangent to (which the
+    // layer's air rule then refuses outright, dropping the whole band to rings).
+    const wallFootAt = sampling.wallFootIndices.length > 0
+      ? new Set(sampling.wallFootIndices)
+      : null
     const roughBand = continuousRoughInput(sampling, params, tool, warnings, hooks)
     for (let layer = 1; layer <= layers; layer++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
@@ -4011,9 +4350,20 @@ function roughFromTargets(
       let ringIndex = 0
       while (ringIndex < along.length) {
         if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+        // #1155 rn-d: a wall-foot ring is cut as its own ring, never as a helix
+        // boundary -- the helix resamples its poses on the operation's mesh, so
+        // one starting at the foot rides the wall it is tangent to (and, at a
+        // roughing layer below the wall's top, the layer's air rule refuses the
+        // whole band instead).
+        if (wallFootAt !== null && wallFootAt.has(ringIndex)) {
+          emitRing(ringIndex)
+          ringIndex++
+          continue
+        }
         if (layerRings[ringIndex].full) {
           let band = ringIndex
-          while (band + 1 < along.length && layerRings[band + 1].full) band++
+          while (band + 1 < along.length && layerRings[band + 1].full
+            && (wallFootAt === null || !wallFootAt.has(band + 1))) band++
           // A band of one ring is just a ring: a helix needs an axial step to
           // turn into a pitch, and its two complete end rings would otherwise
           // add a full turn over no advance at all.
