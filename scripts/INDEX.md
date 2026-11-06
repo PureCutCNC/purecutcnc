@@ -67,4 +67,5 @@ have special inputs or emit local artifacts. They are outside the default lint
 gate; use `npm run lint:scripts` when intentionally maintaining them.
 
 - `issue-947-dsh-handoff.md` — bounded DSH simulation-input execution handoff for approved #947; the issue remains the plan of record.
+- `issue-1155-rn-a-handoff.md`, `issue-1155-rn-b-handoff.md` — DSH slice handoffs for approved #1155 (rotary rough/finish keep clear of neighbour models; neighbour edits refresh rotary toolpaths); the issue remains the plan of record.
 - `issue-1103-baseline.md` — the #1103 continuous-A baseline (post-#1117): per-operation moves, rapids, cutting A reversals, three serial generation timings and the normalised posted-text hash for the three benchmark fixtures, plus the along-mode byte-identical controls and the candidate-column table ca-e fills. Measured on the unchanged branch; the fixtures themselves stay in the ignored `work/` directory.
