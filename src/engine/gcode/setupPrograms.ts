@@ -45,6 +45,7 @@
 
 import { getStockBounds, isAroundSetup } from '../../types/project'
 import type { MachiningSetup, Project, RegistrationReference, SetupFace } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { setupFace, setupForOperation } from '../setupOrientation'
 import { manualIndexingApplies } from '../../store/helpers/projectType'
 import { rotaryWord } from './types'
@@ -179,8 +180,20 @@ function formatLength(value: number, units: Project['meta']['units']): string {
  * An Around setup (issue #395) reads the same placement as Top — the sheet is
  * never turned, only wrapped — and its Z zero is the top of the bar, which is
  * `stock.thickness`: the bar's diameter.
+ *
+ * `crossAxisHeld` says the program never writes its cross axis (#1156): the
+ * operator zeroed it on the bar's centreline, so the fallback sentence names
+ * only the along-bar distance instead of writing an `X… Y…` pair. It must not
+ * spell `Y<digit>` or `Y <digit>` in any form — gSender strips only `( … )`
+ * comments before its four-axis test, so a `;` comment that spells a Y word is
+ * read as a fourth-axis coordinate and the file is refused. A bar along Y is
+ * the same case for `X<digit>` in the engine's own text.
  */
-export function describeTouchOff(project: Pick<Project, 'origin' | 'stock' | 'meta'>, face: SetupFace): string {
+export function describeTouchOff(
+  project: Pick<Project, 'origin' | 'stock' | 'meta'>,
+  face: SetupFace,
+  crossAxisHeld = false,
+): string {
   const bounds = getStockBounds(project.stock)
   const { origin } = project
   const units = project.meta.units
@@ -207,7 +220,16 @@ export function describeTouchOff(project: Pick<Project, 'origin' | 'stock' | 'me
     // Measured from the front-left corner, in machine directions: +X right, +Y away from the operator.
     const dx = formatLength(origin.x - bounds.minX, units)
     const dy = formatLength(bounds.maxY - origin.y, units)
-    place = `X${dx} Y${dy} ${units === 'inch' ? 'IN' : 'MM'} FROM THE FRONT-LEFT CORNER`
+    const length = units === 'inch' ? 'IN' : 'MM'
+    // A held cross axis is on the centreline by the rule's own condition, so
+    // its number is always zero and only the along-bar distance locates the
+    // part. The free coordinate is written as a distance from its named end —
+    // never as a Y word, whichever bar direction this is (#1156, see above).
+    place = !crossAxisHeld || !isBarStock(project.stock)
+      ? `X${dx} Y${dy} ${length} FROM THE FRONT-LEFT CORNER`
+      : project.stock.axis === 'x'
+        ? `X${dx} ${length} FROM THE LEFT END, Y ON THE CENTRELINE`
+        : `${dy} ${length} FROM THE FRONT, X ON THE CENTRELINE`
   }
 
   const dz = origin.z - project.stock.thickness
@@ -284,6 +306,18 @@ const MANUAL_INDEX_BOTTOM_LINE = 'ROTARY: SET A TO 180° - TURN THE BAR ABOUT IT
 const RETRACT_BEFORE_TURNING_LINE = 'ROTARY: RETRACT THE SPINDLE CLEAR OF THE BAR BEFORE TURNING A'
 
 /**
+ * The operator line of a program that never writes its cross axis (#1156),
+ * written once, right after the touch-off line. The program holds that axis
+ * wherever the operator zeroed it, so the header says where that is and that
+ * nothing in the file will move it. The letter is the program's own cross word:
+ * `Y` for a bar along X, `X` for a bar along Y. Wording is deliberately free of
+ * `Y<digit>`/`Y <digit>` — gSender reads `;` comments too.
+ */
+function crossAxisHeldLine(letter: 'X' | 'Y'): string {
+  return `${letter} IS NOT WRITTEN: ZERO ${letter} ON THE BAR'S CENTRELINE AND LEAVE IT THERE`
+}
+
+/**
  * The operator line of a program that turns the bar itself (#1054 slice 2b).
  * The retract and the turn are in the motion that follows, so the comment says
  * what they are and what the operator still has to check. The letter is the
@@ -344,20 +378,30 @@ export function setupStatesManualIndexing(
  * can write the machine-coordinate manual-index retract, so the operator line
  * describes what the program actually writes (#1054 fix 3); a machine without
  * one is refused at emission rather than turned.
+ *
+ * `heldCrossAxis` is the cross axis this program holds by touch-off (#1156),
+ * decided by the caller — 'x'/'y' as the machine field it drops, or null for
+ * every other program. When it holds, the touch-off sentence names only the
+ * along-bar distance and one more line says the axis must stay where it was
+ * zeroed.
  */
 export function setupHeaderLines(
   project: Project,
   setup: MachiningSetup,
   definition: MachineDefinition,
   machineCoordinateRetract = true,
+  heldCrossAxis: 'x' | 'y' | null = null,
 ): string[] {
   const number = formatProgramNumber(setupProgramNumber(project, setup.id))
   const around = isAroundSetup(setup)
   const lines = [
     `SETUP ${number}: ${setup.name} - ${describeSetupTurn(setup)}`,
     around ? ROTARY_ZERO_LINE : `REGISTRATION: ${describeRegistration(project, setup)}`,
-    `TOUCH OFF: ${describeTouchOff(project, setupFace(setup))}`,
+    `TOUCH OFF: ${describeTouchOff(project, setupFace(setup), heldCrossAxis !== null)}`,
   ]
+  if (heldCrossAxis !== null) {
+    lines.push(crossAxisHeldLine(heldCrossAxis.toUpperCase() as 'X' | 'Y'))
+  }
   if (setupStatesManualIndexing(project, setup)) {
     const word = rotaryWord(definition)
     if (word === null) {

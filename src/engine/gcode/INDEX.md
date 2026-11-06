@@ -329,7 +329,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   letter), and the emitter writes the retract and the turn under it. The
   single-setup file name is unchanged, and `planProgramSetup` warns (naming
   the setup) when a Bottom setup flips about the other axis than the bar lies
-  along instead of rewriting it.
+  along instead of rewriting it. Since #1156 slice ny-b, a program that holds
+  its cross axis by touch-off passes that decision in as `heldCrossAxis`: the
+  header gains one line after `TOUCH OFF:` (`Y IS NOT WRITTEN: ZERO Y ON THE
+  BAR'S CENTRELINE AND LEAVE IT THERE`, with the program's own cross letter),
+  and the measured fallback sentence names the along-bar distance instead of
+  an `X… Y…` pair, so the engine's `;` comments carry no `Y<digit>`/`Y
+  <digit>` word either.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -428,12 +434,17 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   against one sequence), `crossAxisHeldByTouchOff.test.ts` (issue #1156: the
   programs `src/test/crossAxisPrograms.ts` builds are posted against
   `crossAxisHeldPrograms.golden.json`, frozen from the base commit — each
-  rule-holding program's text is that golden with every cross word removed,
-  byte for byte, the gSender axis-word test finds none, and `parseGcodeMotion`
-  reads the same X/Y/Z/A after every block; a bar along Y drops X and keeps Y;
-  and each control — a tool-change template naming Y, an origin off the
-  centreline, a manual-index Top setup — is byte-identical and still writes the
-  word. A multi-line tool-change entry and a compact/leading-zero home
+  rule-holding program's text is that golden with every cross word removed and
+  the ny-b operator line added, byte for byte, the gSender axis-word test finds
+  none, and `parseGcodeMotion` reads the same X/Y/Z/A after every block; a bar
+  along Y drops X and keeps Y; and each control — a tool-change template naming
+  Y, an origin off the centreline, a manual-index Top setup — is byte-identical,
+  still writes the word and gets no operator line. Slice ny-b's own cases: the
+  measured touch-off fallback on a bar along X and along Y is reworded with no
+  `Y<digit>`/`X<digit>` word while a block program at the same off-named origin
+  keeps `X… Y… FROM THE FRONT-LEFT CORNER`; a borrowed-Y machine and every
+  bundled (non-rotary) machine carry no operator line. A multi-line tool-change
+  entry and a compact/leading-zero home
   (`G90G28`, `G028`, `G90G30`) each withhold the rule; a sub-format cross move
   keeps its block, and the X repetition on it, in a differential control whose
   origin is shifted off the centreline; and a 5 mm machine-plane arc program
@@ -462,7 +473,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   angle with no closing unwind, `postRotaryAxisMismatch`, and the program read
   back through `parseGcodeMotion` onto the flat toolpath; since #1103 slice
   ca-h the read-back reports the per-operation end turns as machine-coordinate
-  blocks, and the engrave control pins the posted text with that turn).
+  blocks, and the engrave control pins the posted text with that turn; since
+  #1156 slice ny-b an own-drive header is pinned with its held-axis line and
+  the measured touch-off on the centreline).
 - `rotaryOperationHandoff.test.ts` — #1103 slice ca-h parts 2 and 3, plus the
   correction round: the forward end turn to 0 up (after a machine-coordinate
   retract, never a rewind, no move when already on a turn, the instruction
@@ -582,6 +595,18 @@ taking their X repetition with them. A drilling operation is expanded instead
 of written as a canned cycle (a cycle writes its hole position as an X and a
 Y). The operator's contract is the borrowed-motor one: zero the cross axis on
 the bar's centreline and leave it there.
+
+Since #1156 slice ny-b the header says that contract. A rule program gets one
+line after `TOUCH OFF:` — `Y IS NOT WRITTEN: ZERO Y ON THE BAR'S CENTRELINE
+AND LEAVE IT THERE`, `X` for a bar along Y — and its measured touch-off
+sentence names only the along-bar distance (`X7 MM FROM THE LEFT END, Y ON THE
+CENTRELINE`, or `23 MM FROM THE FRONT, X ON THE CENTRELINE` on a bar along Y)
+instead of an `X… Y…` pair. gSender removes only `( … )` comments before its
+axis test, so a `;` comment that spells `Y<digit>` or `Y <digit>` (or, on a
+bar along Y, `X<digit>`) still marks the file four-axis; the wording avoids
+all of them. User text — project, operation and tool names and setup notes —
+is not sanitised and can still spell one; only the engine's own comments are
+covered.
 
 Two programs stay refused by gSender and are not regressions: a bar along **Y**
 writes real travel on its Y word, and a manual-index Top/Bottom program needs

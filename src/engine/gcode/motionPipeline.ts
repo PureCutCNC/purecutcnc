@@ -578,12 +578,23 @@ export interface ProgramSetupPlan {
  * which say how the bar is turned (#1054 slices 2 and 2b): by the operator
  * when the machine cannot, and by the program's own opening rapids when it
  * can.
+ *
+ * `heldCrossAxisFor`, when given, is asked for the cross axis the program holds
+ * by touch-off (#1156) once the plan knows its manual-index angle, which the
+ * decision itself needs. The G-code emitter passes it so the header's wording
+ * and the emitter's omitted word are one decision; the ShopBot emitter passes
+ * nothing, because the rule is gSender's and its bytes stay as they were. A
+ * plan with no header never asks, and the caller still evaluates the decision
+ * for the motion.
  */
 export function planProgramSetup(
   input: Pick<PostProcessorInput, 'project' | 'operations' | 'definition'>,
   /** Whether the machine can write the machine-coordinate manual-index retract
    *  (#1054 fix 2/fix 3). Absent means yes. */
   machineCoordinateRetract = true,
+  /** The cross axis held by touch-off for a program that turns the bar to this
+   *  manual-index angle (#1156); absent means the caller has no such rule. */
+  heldCrossAxisFor?: (manualIndexAngle: 0 | 180 | null) => 'x' | 'y' | null,
 ): ProgramSetupPlan {
   const { project, operations } = input
   const warnings: ToolpathWarning[] = []
@@ -656,9 +667,16 @@ export function planProgramSetup(
       },
     })
   }
+  const angle = turns && !turnAxisMismatch ? manualIndexAngle(setup) : null
   return {
-    headerComments: setupHeaderLines(project, setup, input.definition, machineCoordinateRetract),
-    manualIndexAngle: turns && !turnAxisMismatch ? manualIndexAngle(setup) : null,
+    headerComments: setupHeaderLines(
+      project,
+      setup,
+      input.definition,
+      machineCoordinateRetract,
+      heldCrossAxisFor?.(angle) ?? null,
+    ),
+    manualIndexAngle: angle,
     warnings,
   }
 }

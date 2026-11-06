@@ -372,11 +372,34 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // setup header describes that retract. A machine with no machine-coordinate
   // move refuses the turn instead of writing it, and then posts no program.
   const machineCoordinateRetract = machineRapidCommand !== null
+  // #1156: a program that never moves its cross axis holds it by touch-off —
+  // the operator zeroed it on the bar's centreline — so no motion block writes
+  // that word, and the header tells the operator to zero it there. The decision
+  // is taken once for the program, inside the setup plan, because it governs
+  // every emitted block, the canned-cycle choice below and the header wording;
+  // null means the program keeps every word it wrote before this rule existed.
+  // The plan asks for it while building the header, once it knows the
+  // manual-index angle the decision needs; memoized here so a plan with a header
+  // and a plan without one both evaluate it exactly once.
+  let decidedCrossAxis: 'x' | 'y' | null = null
+  let crossAxisDecided = false
+  const decideCrossAxis = (manualIndexAngle: 0 | 180 | null): 'x' | 'y' | null => {
+    if (!crossAxisDecided) {
+      decidedCrossAxis = crossAxisHeldByTouchOff({
+        project,
+        definition,
+        operations,
+        manualIndexAngle,
+      })
+      crossAxisDecided = true
+    }
+    return decidedCrossAxis
+  }
   // What the program says about its setup, decided once for both the header
   // comments and the manual-index turn that follows them (#1054 slice 2b). It
   // is read here because that turn makes the program one that turns, which the
   // square guard and the template-word check below must both know.
-  const setupPlan = planProgramSetup(input, machineCoordinateRetract)
+  const setupPlan = planProgramSetup(input, machineCoordinateRetract, decideCrossAxis)
   // A manual-index turn about the bar's own axis on a machine whose rotary is
   // about the other horizontal axis would turn the stock the wrong way. The
   // planner refuses such an operation for the same reason; a program whose only
@@ -395,17 +418,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       (move) => move.from.a !== undefined || move.to.a !== undefined,
     ),
   )
-  // #1156: a program that never moves its cross axis holds it by touch-off —
-  // the operator zeroed it on the bar's centreline — so no motion block writes
-  // that word. The decision is taken once for the program, here, because it
-  // governs every emitted block and the canned-cycle choice below; null means
-  // the program keeps every word it wrote before this rule existed.
-  const heldCrossAxis = crossAxisHeldByTouchOff({
-    project,
-    definition,
-    operations,
-    manualIndexAngle: setupPlan.manualIndexAngle,
-  })
+  // A plan that builds no header never asked above; the motion rule applies to
+  // the program regardless of what its header says.
+  const heldCrossAxis = decideCrossAxis(setupPlan.manualIndexAngle)
   /** A bar's manual-index program: its own opening turn names the face, so its
    *  retracts are in machine coordinates (#1054 slices 2 and 2b). An Around
    *  program works above the whole bar and needs no such frame. */

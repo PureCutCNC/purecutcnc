@@ -28,9 +28,18 @@
  * The golden this suite reads was frozen from the base commit **before** the
  * rule existed (`work/` script, one freeze, then this file). For a program the
  * rule holds, the emitted text must be that golden with every cross word
- * removed, byte for byte — not merely "no cross word", which a lost motion line
- * would also satisfy. For a control, one of the rule's four conditions fails and
- * the bytes must be exactly the golden's.
+ * removed, plus the operator line slice ny-b adds, byte for byte — not merely
+ * "no cross word", which a lost motion line would also satisfy. For a control,
+ * one of the rule's four conditions fails and the bytes must be exactly the
+ * golden's.
+ *
+ * Slice ny-b gives the rule programs a header line after `TOUCH OFF:` telling
+ * the operator to zero that axis on the centreline, and rewords the measured
+ * touch-off fallback so its `;` comment carries no `Y<digit>`/`Y <digit>` (or,
+ * on a bar along Y, `X<digit>`) word. gSender strips only `( … )` comments
+ * before its four-axis test, so the engine's own comment text has to pass it
+ * too. User text — project, operation and tool names, setup notes — is not
+ * sanitised; this suite's fixtures are chosen to carry none.
  *
  * Run with: npx tsx src/engine/gcode/crossAxisHeldByTouchOff.test.ts
  */
@@ -53,6 +62,16 @@ import {
   renderCrossAxisProgram,
 } from '../../test/crossAxisPrograms'
 import type { CrossAxisProgram } from '../../test/crossAxisPrograms'
+import { BUNDLED_DEFINITIONS } from './definitions'
+import { validateMachineDefinition } from './types'
+import type { MachineDefinition, PostProcessorInput } from './types'
+import { defaultTool, newProject, rectProfile } from '../../types/project'
+import type { MachineOrigin, Project } from '../../types/project'
+import { setupHeaderLines } from './setupPrograms'
+import { runPostProcessor } from './postprocessor'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import type { ToolpathMove } from '../toolpaths/types'
 
 /** The rotary options every program here is parsed with: own-A grbl. */
 const ROTARY_PARSE = {
@@ -100,6 +119,26 @@ function positions(moves: readonly ParsedGcodeMove[]): Array<Record<string, numb
 
 const PROGRAMS = crossAxisPrograms()
 
+/** The operator line slice ny-b writes into a rule program's header. */
+function heldCrossAxisLine(letter: 'X' | 'Y'): string {
+  return `${letter} IS NOT WRITTEN: ZERO ${letter} ON THE BAR'S CENTRELINE AND LEAVE IT THERE`
+}
+
+/** The base commit's text with the operator line added after `TOUCH OFF:`. All
+ *  the frozen rule programs sit on a named origin, so their touch-off text is
+ *  unchanged by ny-b; the reworded fallback has its own case below. */
+function withHeldCrossAxisLine(text: string, letter: 'X' | 'Y'): string {
+  const lines = text.split('\n')
+  const at = lines.findIndex((line) => line.includes('TOUCH OFF:'))
+  assert.ok(at >= 0, 'the frozen program carries a touch-off line')
+  return [...lines.slice(0, at + 1), `; ${heldCrossAxisLine(letter)}`, ...lines.slice(at + 1)].join('\n')
+}
+
+/** Every `IS NOT WRITTEN` line a program carries. */
+function heldCrossAxisLinesIn(text: string): string[] {
+  return text.split('\n').filter((line) => line.includes('IS NOT WRITTEN'))
+}
+
 // ── The frozen programs ───────────────────────────────────────
 
 console.log('Testing every frozen program against the base commit...')
@@ -117,12 +156,13 @@ for (const program of PROGRAMS) {
   const gcodeOnly = withoutParenthesisedComments(text)
 
   if (program.holdsCrossAxis) {
-    // 1. Today's text minus the cross words, exactly. This is the assertion a
-    //    lost motion line or a re-spaced block cannot sneak past.
+    // 1. Today's text minus the cross words, plus the ny-b operator line,
+    //    exactly. This is the assertion a lost motion line or a re-spaced block
+    //    cannot sneak past.
     assert.equal(
       text,
-      withoutCrossWords(base, letter),
-      `${program.name}: the program is the base commit's with every ${letter} word removed`,
+      withHeldCrossAxisLine(withoutCrossWords(base, letter), letter),
+      `${program.name}: the program is the base commit's with every ${letter} word removed and the operator line added`,
     )
     assert.notEqual(text, base, `${program.name}: the base text really did write the cross axis`)
     // 2. The controller's own test: the whole file, with only parenthesised
@@ -136,7 +176,13 @@ for (const program of PROGRAMS) {
       !new RegExp(`${letter} \\d`).test(gcodeOnly),
       `${program.name}: no spaced ${letter} <digit> word either`,
     )
-    // 3. The position is unchanged: the parser reads the same X, Y, Z and A
+    // 3. The header says it once, and only a rule program gets it.
+    assert.deepEqual(
+      heldCrossAxisLinesIn(text),
+      [`; ${heldCrossAxisLine(letter)}`],
+      `${program.name}: exactly one operator line names the held axis`,
+    )
+    // 4. The position is unchanged: the parser reads the same X, Y, Z and A
     //    after every block of the new text as after the base commit's.
     const after = positions(parsed(text))
     const before = positions(parsed(base))
@@ -154,6 +200,11 @@ for (const program of PROGRAMS) {
     assert.ok(
       new RegExp(`${letter}-?\\d`).test(gcodeOnly),
       `${program.name}: and still writes the cross axis`,
+    )
+    assert.deepEqual(
+      heldCrossAxisLinesIn(text),
+      [],
+      `${program.name}: a control gets no operator line`,
     )
   }
 }
@@ -173,6 +224,193 @@ console.log('Testing a bar along Y: the cross axis is X, the travel axis is Y...
     (motion.match(/\bY-?[0-9.]+/g) ?? []).length > 10,
     'the along-the-bar travel survives on many blocks',
   )
+}
+
+// ── The measured touch-off sentence (#1156 ny-b) ─────────────
+
+console.log('Testing the reworded touch-off and the block control...')
+{
+  const grbl = bundledDefinition('grbl')
+  const moved = (name: string, origin: Partial<MachineOrigin>): CrossAxisProgram => {
+    const found = PROGRAMS.find((entry) => entry.name === name)
+    assert.ok(found, `${name} is in the fixture set`)
+    return {
+      ...found,
+      project: { ...found.project, origin: { ...found.project.origin, ...origin } },
+    }
+  }
+
+  // A bar along X whose origin is 7 mm from the left end, on the centreline: the
+  // named corner/edge positions do not describe it, so the measured fallback is
+  // used — and a rule program must say the measured distance without spelling a
+  // Y word in its `;` comment.
+  const barX = moved('around-rough-mm', { x: 7 })
+  const barXText = normalizeDate(renderCrossAxisProgram(barX).gcode)
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: barX.project,
+      definition: barX.definition,
+      operations: barX.operations,
+      manualIndexAngle: null,
+    }),
+    'y',
+    'an origin off the named X positions still holds Y on the centreline',
+  )
+  assert.ok(
+    barXText.includes('; TOUCH OFF: X7 MM FROM THE LEFT END, Y ON THE CENTRELINE OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR'),
+    `the reworded touch-off line, exactly:\n${barXText.split('\n').slice(0, 8).join('\n')}`,
+  )
+  assert.ok(
+    barXText.includes(`; ${heldCrossAxisLine('Y')}`),
+    'and the header still names the held axis',
+  )
+
+  // A bar along Y: the cross axis is X and the along-bar distance is Y, which
+  // may not be spelled as a Y word either. The sentence names the distance
+  // without a letter and puts X on the centreline.
+  const barY = moved('along-bar-y-rough-mm', { y: 7 })
+  const barYText = normalizeDate(renderCrossAxisProgram(barY).gcode)
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: barY.project,
+      definition: barY.definition,
+      operations: barY.operations,
+      manualIndexAngle: null,
+    }),
+    'x',
+    'an origin off the named Y positions still holds X on the centreline',
+  )
+  assert.ok(
+    barYText.includes('; TOUCH OFF: 23 MM FROM THE FRONT, X ON THE CENTRELINE OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR'),
+    `the reworded touch-off line on a bar along Y:\n${barYText.split('\n').slice(0, 8).join('\n')}`,
+  )
+
+  // The control: the same off-named placement on block stock, which the rule
+  // never covers. Its header keeps today's `X… Y… FROM THE FRONT-LEFT CORNER`.
+  const block = blockControlProgram()
+  const blockHeader = setupHeaderLines(block.project, block.project.setups[0], grbl)
+  assert.deepEqual(blockHeader, [
+    'SETUP 01: Top - TOP FACE UP',
+    'REGISTRATION: NONE DECLARED',
+    'TOUCH OFF: X7 Y10 MM FROM THE FRONT-LEFT CORNER OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE',
+  ], 'a block program keeps the measured corner sentence')
+  const blockText = normalizeDate(runPostProcessor({
+    project: block.project,
+    definition: grbl,
+    operations: block.operations,
+    options: { emitToolChanges: false, emitCoolant: false, programName: block.project.meta.name },
+  }).gcode)
+  assert.ok(
+    blockText.includes('; TOUCH OFF: X7 Y10 MM FROM THE FRONT-LEFT CORNER OF THE TOP FACE AS MOUNTED, Z0 ON THAT FACE'),
+    'the block program really writes that sentence',
+  )
+  assert.deepEqual(heldCrossAxisLinesIn(blockText), [], 'and no operator line')
+}
+
+// ── The operator line only where the rule holds ──────────────
+
+console.log('Testing that the operator line appears only in a rule program...')
+{
+  const holds = PROGRAMS.find((entry) => entry.name === 'smoke-rule-holds')
+  assert.ok(holds, 'the smoke program is in the fixture set')
+  const borrowedMachine: MachineDefinition = validateMachineDefinition({
+    ...ownAMachine('x'),
+    rotary: { ...ownAMachine('x').rotary!, drive: 'borrowed' },
+  })
+  const borrowedDecision = crossAxisHeldByTouchOff({
+    project: holds.project,
+    definition: borrowedMachine,
+    operations: holds.operations,
+    manualIndexAngle: null,
+  })
+  assert.equal(borrowedDecision, null, 'a borrowed-Y program is not the rule\'s (condition 1)')
+  const borrowedHeader = setupHeaderLines(
+    holds.project,
+    holds.project.setups.find((setup) => setup.id === holds.project.activeSetupId)!,
+    borrowedMachine,
+    true,
+    borrowedDecision,
+  )
+  assert.deepEqual(
+    heldCrossAxisLinesIn(borrowedHeader.join('\n')),
+    [],
+    'so its header carries no operator line',
+  )
+
+  // Every bundled machine is non-rotary: a flat program on any of them can never
+  // hold a cross axis, whatever the stock.
+  const { project, operations } = blockControlProgram()
+  for (const definition of BUNDLED_DEFINITIONS) {
+    const decision = crossAxisHeldByTouchOff({
+      project,
+      definition,
+      operations,
+      manualIndexAngle: null,
+    })
+    assert.equal(decision, null, `${definition.id}: a non-rotary machine holds no cross axis`)
+    const header = setupHeaderLines(project, project.setups[0], definition, true, decision)
+    assert.deepEqual(
+      heldCrossAxisLinesIn(header.join('\n')),
+      [],
+      `${definition.id}: and its header carries no operator line`,
+    )
+  }
+}
+
+/** One bundled machine definition, cloned and validated for a fixture. */
+function bundledDefinition(id: string): MachineDefinition {
+  const found = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
+  assert.ok(found, `bundled definition ${id} exists`)
+  return validateMachineDefinition(structuredClone(found))
+}
+
+/**
+ * A block-stock project with two setups, so its program carries a header, and a
+ * short flat toolpath — the control a rule program is compared with. Its origin
+ * is off the named positions on both axes, like the rule program above.
+ */
+function blockControlProgram(): {
+  project: Project
+  operations: PostProcessorInput['operations']
+} {
+  const base = newProject('Block control', 'mm')
+  const stock = { ...base.stock, profile: rectProfile(0, 0, 100, 80), thickness: 20 }
+  const tool = {
+    ...defaultTool('mm', 1),
+    id: 't1',
+    name: 'Flat',
+    units: 'mm' as const,
+    type: 'flat_endmill' as const,
+    diameter: 3,
+  }
+  const secondSetup = { ...base.setups[0], id: 'setup-2', name: 'Second' }
+  const project: Project = {
+    ...base,
+    stock,
+    origin: { name: 'Origin', x: 7, y: 70, z: 20, visible: true },
+    tools: [tool],
+    setups: [base.setups[0], secondSetup],
+    activeSetupId: base.setups[0].id,
+  }
+  const operation = {
+    ...defaultOperationForTarget({ ...project, stock }, 'pocket', 'rough', { source: 'stock' }, 0),
+    id: 'flat',
+    name: 'Flat',
+    setupId: base.setups[0].id,
+    toolRef: 't1',
+  }
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 10, y: 10, z: 20 }, to: { x: 20, y: 10, z: 20 } },
+    { kind: 'cut', from: { x: 20, y: 10, z: 20 }, to: { x: 40, y: 20, z: 15 } },
+  ]
+  return {
+    project: { ...project, operations: [operation] },
+    operations: [{
+      operation,
+      tool: normalizeToolForProject(tool, project),
+      toolpath: { operationId: operation.id, warnings: [], bounds: null, moves },
+    }],
+  }
 }
 
 // ── The decision itself ───────────────────────────────────────

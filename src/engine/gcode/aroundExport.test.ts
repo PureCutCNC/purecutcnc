@@ -470,12 +470,15 @@ console.log('Testing the Around header and one program per Around setup...')
   const expectedHeader = [
     '; SETUP 01: Around - AROUND THE BAR, BAR ALONG X',
     '; ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
-    '; TOUCH OFF: X30 Y20 MM FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    // #1156: the own-A program holds Y by touch-off, so the measured sentence
+    // names only the along-bar distance, and a line after it says to zero Y there.
+    '; TOUCH OFF: X30 MM FROM THE LEFT END, Y ON THE CENTRELINE OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    "; Y IS NOT WRITTEN: ZERO Y ON THE BAR'S CENTRELINE AND LEAVE IT THERE",
   ]
   const lines = result.gcode.split('\n')
   const headerAt = lines.findIndex((line) => line.includes('SETUP 01'))
-  assert.deepEqual(lines.slice(headerAt, headerAt + 3), expectedHeader,
-    `the Around header, exactly:\n${lines.slice(headerAt, headerAt + 4).join('\n')}`)
+  assert.deepEqual(lines.slice(headerAt, headerAt + 4), expectedHeader,
+    `the Around header, exactly:\n${lines.slice(headerAt, headerAt + 5).join('\n')}`)
   assert.ok(!result.gcode.includes('REGISTRATION'), 'an Around program declares no registration')
 
   // The same header, with the bar along Y, and one more line when the machine
