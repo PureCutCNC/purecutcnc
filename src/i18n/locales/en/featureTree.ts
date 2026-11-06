@@ -62,7 +62,7 @@ export const featureTreeEn = {
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ First 2.5D feature must be ',
   'featureTree.tree.warning.firstFeatureSuffix': '. The 3D model will not build until this is fixed.',
   'featureTree.treeRow.warning.noEffect': 'No effect on the final shape: later features cover it.',
-  'featureTree.surfaceStart.fix': 'Start at Turn surface',
+  'featureTree.surfaceStart.fix': 'Start at turn surface',
   'featureTree.surfaceStart.crossing': 'Crosses a diameter change on {turn}: part of it starts above the surface, and there is no single surface to start from.',
   'featureTree.surfaceStart.above': 'Starts {distance} above the surface of {turn}: the first pass cuts air.',
 

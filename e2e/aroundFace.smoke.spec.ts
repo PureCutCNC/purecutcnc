@@ -601,7 +601,7 @@ test('a square bar cuts sheet work over a Turn above it and offers Start at Turn
   await selectFeatures(page, [pocket.id])
   const fix = page.getByTestId('around-surface-start-fix')
   await expect(fix).toBeVisible()
-  await expect(fix).toHaveText('Start at Turn surface')
+  await expect(fix).toHaveText('Start at turn surface')
   const before = (await getProject(page) as unknown as SavedProject).features.find((feature) => feature.id === pocket.id)!
   await fix.click()
   const after = (await getProject(page) as unknown as SavedProject).features.find((feature) => feature.id === pocket.id)!
@@ -618,7 +618,7 @@ test('a square bar cuts sheet work over a Turn above it and offers Start at Turn
     const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
     useProjectStore.getState().moveFeatureTreeFeature(id, null, null)
   }, turnId!)
-  await expect(row.locator('[data-uncut-work]')).toHaveAttribute('title', /^Kept, but it cannot be cut: Turn this section round first\./)
+  await expect(row.locator('[data-uncut-work]')).toHaveAttribute('title', /^Kept, but it cannot be cut: turn this section round first\./)
 })
 
 test('kept Around sheet work warns on its tree row and operation after the bar turns square (#1112 K)', async ({ app, ui }) => {
@@ -658,13 +658,13 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   await expect(featureWarning).toBeVisible()
   await expect(featureWarning).toHaveAttribute(
     'title',
-    /^Kept, but it cannot be cut: Turn this section round first\./,
+    /^Kept, but it cannot be cut: turn this section round first\./,
   )
   const operationWarning = pocketOp.locator('[data-uncut-work]')
   await expect(operationWarning).toBeVisible()
   await expect(operationWarning).toHaveAttribute(
     'title',
-    /^Kept, but it cannot be cut: Turn this section round first\. A target/,
+    /^Kept, but it cannot be cut: turn this section round first\. A target/,
   )
 
   // The stock-blocked rows are in the menu itself, disabled with the reason:
@@ -687,7 +687,7 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   }
   await expect(pocketOp).toHaveClass(/tree-row--selected/)
   await expect(page.locator('.cam-operation-properties [data-uncut-work]')).toContainText(
-    'Kept, but it cannot be cut: Turn this section round first.',
+    'Kept, but it cannot be cut: turn this section round first.',
   )
 
   // A ghost operation keeps its warning: switching to Top hides the row's
