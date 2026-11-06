@@ -626,8 +626,8 @@ assert(
 )
 assertEqual(
   setupGenerationBlock(squareProject, { ...operation('engrave', ['wrapped']), kind: 'follow_line', setupId: 'around' })?.reason,
-  'squareRotaryUnsupported',
-  'generation refuses a wrapped 2D operation on a square blank',
+  'squareSectionNotRound',
+  'generation refuses a wrapped 2D operation over a section no turn made round (#1131)',
 )
 assertEqual(
   setupGenerationBlock(squareProject, { ...operation('finish', ['wrapped']), kind: 'rotary_finish', setupId: 'around' })?.reason,

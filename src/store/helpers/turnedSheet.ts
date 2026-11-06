@@ -58,6 +58,8 @@ import {
 
 /** Numeric slack for along and radius comparisons, as in `rotarySurface.ts`. */
 const TOLERANCE = 1e-6
+/** Half-width given to a band with no along extent, so overlap tests can see it. */
+const POINT_BAND = 1e-5
 
 /**
  * Why square-bar sheet work is not cut. `uncut` is a section no Turn above the
@@ -242,8 +244,13 @@ export function aroundSurfaceStarts(
     const zTop = zNumber(project, feature.z_top)
     const zBottom = zNumber(project, feature.z_bottom)
     if (zTop === null || zBottom === null) continue
-    const range = aroundFeatureAlongRange(project, feature.id)
-    if (!range || range.max - range.min <= TOLERANCE) continue
+    const placed = aroundFeatureAlongRange(project, feature.id)
+    if (!placed) continue
+    // A line around the bar at one axial position has no along extent; it
+    // still sits on whatever surface is at that station.
+    const range = placed.max - placed.min > POINT_BAND
+      ? placed
+      : { min: placed.min - POINT_BAND, max: placed.max + POINT_BAND }
     const surface = surfaceAtRange(project, index, range, order)
     if (surface.kind === 'turn') {
       const surfaceZ = rotarySurfaceZ(project.stock, surface.diameter)

@@ -1318,7 +1318,10 @@ function inspectRotaryOperation(args: {
         || squareRotaryCutterRefusal(project, operation, emittedCutter, sheet))) {
       return { refused: { code: 'postSetupOperationRefused', params: { operation: operationName } } }
     }
-    if (isRotaryOperationKind(operation.kind) && toolpath.moves.length > 0 && !hasAngle) {
+    // An admitted sheet path is wrapped too: every generated move carries `A`,
+    // so one that carries none is stale XYZ motion that would skip the cutter
+    // and regenerate-and-match checks below (#1131 review).
+    if ((isRotaryOperationKind(operation.kind) || sheet) && toolpath.moves.length > 0 && !hasAngle) {
       return { refused: { code: 'postRotaryAngleNotEstablished', params: { operation: operationName } } }
     }
     // A move that commands a new controller angle below the generators' travel

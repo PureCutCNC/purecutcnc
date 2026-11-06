@@ -327,6 +327,32 @@ const generated = computeOperationToolpath(square, pocket)!.result
   assert.equal(block?.refusal?.reason, 'workholdingDiameter', 'and names the chuck')
 }
 
+{
+  // Two pockets, each below its own Turn: A under Turn 1 only, B under both.
+  // Each move is judged for the target it cuts, so B's moves may rely on Turn
+  // 2 although A, higher in the tree, may not (#1131 review).
+  const { turnId: firstTurn } = turnedBar('square', [], { start: 5, length: 9 })
+  const second = store().addRotarySolid({ kind: 'turn', start: 16, length: 9, diameter: TURN.diameter })
+  assert.ok(second.ok, 'the second Turn is created')
+  const twoTurns = projectWithFeatures(store().project, [
+    ...store().project.features,
+    sheetFeature('a', 7, 11, TURN_Z, TURN_Z - 0.5),
+    sheetFeature('b', 19, 22, TURN_Z, TURN_Z - 0.5),
+  ])
+  store().loadProject(twoTurns)
+  store().moveFeatureTreeFeature('a', null, second.featureId)
+  const ordered = store().project
+  assert.deepEqual(ordered.features.map((feature) => feature.id), [firstTurn, 'a', second.featureId, 'b'], 'the tree is Turn 1, A, Turn 2, B')
+  const both: Operation = {
+    ...defaultOperationForTarget(ordered, 'pocket', 'rough', { source: 'features', featureIds: ['a', 'b'] }, 0),
+    id: 'both', setupId: 'around', toolRef: FLAT.id,
+  }
+  assert.equal(setupGenerationBlock(ordered, both), null, 'each target is over a Turn above it')
+  const cut = computeOperationToolpath(ordered, both)!.result
+  assert(cut.moves.length > 0, `both pockets are cut: ${JSON.stringify(cut.warnings)}`)
+  assert(cut.moves.some((move) => move.kind !== 'rapid' && move.from.x > 18), 'including B over the second Turn')
+}
+
 // ── 4. Export ─────────────────────────────────────────────────
 
 {
@@ -349,6 +375,16 @@ const generated = computeOperationToolpath(square, pocket)!.result
   low.moves[turning]!.to = { ...low.moves[turning]!.to, z: TURN_Z + 1 }
   const lowProgram = post(square, pocket, low)
   assert(lowProgram.warnings.some((warning) => warning.code === 'postRotarySquareTurnBelowEnvelope'), 'a low turning rapid is refused')
+
+  // The same path with every angle stripped is stale XYZ motion, not a
+  // shortcut past the checks above (#1131 review).
+  const flat = structuredClone(generated)
+  for (const move of flat.moves) {
+    delete move.from.a
+    delete move.to.a
+  }
+  const flatProgram = post(square, pocket, flat)
+  assert(flatProgram.warnings.some((warning) => warning.code === 'postRotaryAngleNotEstablished'), 'an angle-free sheet path is refused')
 
   // An uncut section's operation never posts, whatever path it carries.
   const offProgram = post(square, off, generated)
@@ -428,6 +464,24 @@ for (const shape of ['round', 'square'] as const) {
   assert.equal(starts.has('onTurn'), false, `${shape}: a pocket at the Turn surface does not warn`)
   assert.equal(starts.get('crossing')?.kind, 'crossing', `${shape}: a pocket across the Turn end says so, with no fix`)
   assert.equal(starts.has('plain'), false, `${shape}: a pocket on the plain bar does not warn`)
+
+  // A Polygon below the pocket in the tree has not shaped the bar yet: the
+  // pocket still sits on the Turn (#1131 review).
+  const polygon = store().addRotarySolid({ kind: 'polygon', start: 12, length: 4, sides: 6, acrossFlats: 8 })
+  assert.ok(polygon.ok, `${shape}: the Polygon is created below the pockets`)
+  assert.equal(aroundSurfaceStarts(store().project).get('high')?.kind, 'above', `${shape}: a Polygon below the pocket does not change its surface`)
+
+  // A line around the bar at one station has no along extent; it still sits
+  // on the Turn and starts above it.
+  const ring = {
+    ...sheetFeature('ring', 20, 20, SIDE, SIDE - 0.5, 'line'),
+    sketch: {
+      profile: { start: { x: 20, y: SIDE / 2 - 3 }, segments: [{ type: 'line' as const, to: { x: 20, y: SIDE / 2 + 3 } }], closed: false },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [],
+    },
+  }
+  store().loadProject(projectWithFeatures(store().project, [...store().project.features, ring]))
+  assert.equal(aroundSurfaceStarts(store().project).get('ring')?.kind, 'above', `${shape}: a circumferential line over the Turn warns too`)
 
   // The one-click fix is one write, so one undo step.
   const fix = high?.kind === 'above' ? high : null

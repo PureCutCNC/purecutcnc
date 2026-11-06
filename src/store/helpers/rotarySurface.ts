@@ -444,7 +444,10 @@ export function surfaceAtRange(
   before: number = Number.POSITIVE_INFINITY,
 ): RotaryPatternSurface {
   const barDiameter = project.stock.thickness
+  // A model below the row in the tree has not shaped the bar yet either
+  // (#1131 item 3, the same rule as the Turns).
   const models = index.models
+    .filter((model) => model.order < before)
     .map((model) => ({ ...model, overlap: overlap(range, { min: model.alongMin, max: model.alongMax }) }))
     .filter((model) => model.overlap !== null)
   if (models.length > 0) {

@@ -605,8 +605,8 @@ console.log('Testing square output refusals...')
   }
   assert.equal(
     setupGenerationBlock(project, wrappedEngrave)?.reason,
-    'squareRotaryUnsupported',
-    'generation refuses a wrapped 2D Engrave on the square Around face',
+    'squareSectionNotRound',
+    'generation refuses a wrapped 2D Engrave over an unturned square section (#1131)',
   )
   assert.deepEqual(
     codes(post(project, machine('own', 'x'), wrappedEngrave, envelope.result)),
