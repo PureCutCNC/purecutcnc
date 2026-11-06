@@ -27,8 +27,9 @@
  *
  * A point no baseline segment passes through -- a ring the candidate cuts
  * between two turns of a baseline helix, say -- is compared with the baseline
- * **across along**: the deepest baseline crossings of the same angle on either
- * side, at most `maxAlongGap` away, interpolated linearly. A point with neither
+ * **across along**: the adjacent baseline crossings of the same angle on either
+ * side (the nearest position, the deepest layer there), at most `maxAlongGap`
+ * away, interpolated linearly. A point with neither
  * is not skipped: it must be in the air (at or above `airRadius`, the blank's
  * largest radius), or it counts as an uncovered point in material, which fails
  * the comparison just like a point that is too deep.
@@ -129,24 +130,33 @@ export function compareRotaryDepth(
 
   /**
    * The deepest baseline tip through (along, angle), and failing that the
-   * baseline interpolated across along between its nearest crossings of the
+   * baseline interpolated across along between its adjacent crossings of the
    * angle on either side. `kind` says which one answered.
    */
   const floorAt = (pointAlong: number, angle: number): { floor: number; kind: 'exact' | 'bracket' | 'none' } => {
     let floor = Number.POSITIVE_INFINITY
-    // The deepest crossing of this angle within `maxAlongGap` below and above the
-    // point, across along. The deepest, not the nearest: a rough crosses the same
-    // angle once per layer, and the nearest crossing can be a shallower layer.
+    // The adjacent crossing of this angle on each side, within `maxAlongGap`: the
+    // nearest along position, and at that position the deepest tip (a rough
+    // crosses the same place once per layer). Only adjacent positions: bridging
+    // to a deeper crossing further away would pass under a raised baseline
+    // section between them and hide a cut into it.
     // Held in an object: TypeScript does not see the closure below assign them.
     const side: { below: Crossing | null; above: Crossing | null } = { below: null, above: null }
+    const adjacent = (current: Crossing | null, crossAlong: number, tip: number): Crossing => {
+      if (current === null) return { along: crossAlong, tip }
+      const nearer = Math.abs(crossAlong - pointAlong) - Math.abs(current.along - pointAlong)
+      if (nearer < -alongTolerance) return { along: crossAlong, tip }
+      if (nearer <= alongTolerance && tip < current.tip) return { along: current.along, tip }
+      return current
+    }
     const crossing = (crossAlong: number, tip: number): void => {
       const gap = crossAlong - pointAlong
       if (Math.abs(gap) <= alongTolerance) {
         floor = Math.min(floor, tip)
       } else if (gap < 0 && -gap <= options.maxAlongGap) {
-        if (side.below === null || tip < side.below.tip) side.below = { along: crossAlong, tip }
+        side.below = adjacent(side.below, crossAlong, tip)
       } else if (gap > 0 && gap <= options.maxAlongGap) {
-        if (side.above === null || tip < side.above.tip) side.above = { along: crossAlong, tip }
+        side.above = adjacent(side.above, crossAlong, tip)
       }
     }
     for (const s of bins.get(Math.floor(pointAlong / binWidth)) ?? []) {
