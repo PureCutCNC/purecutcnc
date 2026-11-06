@@ -1776,6 +1776,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     const templateDrivesRotary = templateLines.some(
       (line) => lineCarriesAxisWord(line, rotaryLetter, prefix),
     )
+    // #1153: a template that writes the rotary word turns the bar whether or
+    // not the program's operations do, so on a controller that reads the angle
+    // as a length an inch program carrying one is refused outright.
+    if (templateDrivesRotary && rotaryInchRefused(definition, project)) {
+      return {
+        gcode: '',
+        warnings: [rotaryInchWarning(operations[0]?.operation.name ?? 'program', definition)],
+        stats: { lineCount: 0, operationCount: 0, moveCount: 0 },
+        ...(captureTrace ? { motionTraces: [] } : null),
+      }
+    }
     if (templateDrivesRotary && (rotaryBorrowedAxis(definition) !== null || programTurns)) {
       return {
         gcode: '',

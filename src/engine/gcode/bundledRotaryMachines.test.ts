@@ -378,6 +378,21 @@ for (const id of ['grblhal-rotary', 'mach3-rotary', 'uccnc-rotary', 'linuxcnc-ro
   assert.ok(allowed.gcode.length > 0, 'backstop: an own axis that allows inch is not refused')
 }
 
+// A template that turns the bar is refused in inch too, even when no operation
+// turns (Codex review of #1153): a footer `G0 A90` on the fork would turn 2286°.
+{
+  const fork = duplicateMachineAsCustom(bundled('grbl-rotary-a'), [], barX)
+  const turningFooter = validateMachineDefinition({ ...fork, program: { ...fork.program, footer: ['G0 A90'] } })
+  const inch = exportSmoke(turningFooter, { units: 'inch', flatOnly: true })
+  assert.equal(inch.gcode, '', 'inch, a footer that writes A on the fork: no program')
+  assert.deepEqual(codes(inch), ['postRotaryInchUnits'], 'refused for units')
+  const mm = exportSmoke(turningFooter, { flatOnly: true })
+  assert.ok(mm.gcode.includes('G0 A90'), 'the same footer in mm is left alone, as before')
+  const hal = duplicateMachineAsCustom(bundled('grblhal-rotary'), [], barX)
+  const halFooter = validateMachineDefinition({ ...hal, program: { ...hal.program, footer: ['G0 A90'] } })
+  assert.ok(exportSmoke(halFooter, { units: 'inch', flatOnly: true }).gcode.includes('G0 A90'), 'a machine that allows inch keeps its footer')
+}
+
 // A program with no angle is never refused for units, on any rotary machine.
 for (const id of Object.keys(ROTARY_BASES)) {
   const result = exportSmoke(bundled(id), { units: 'inch', flatOnly: true })
