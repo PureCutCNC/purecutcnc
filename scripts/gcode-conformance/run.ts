@@ -76,7 +76,9 @@ const VALIDATORS: Validator[] = [
     // and uccnc output on the %% wrapper, O program number and N line numbers
     // long before reaching any arc. grbl-plasma is grbl word syntax plus the
     // G38.2/G10 L20 touch-off and M3/M5 torch words (issue #983).
-    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma'],
+    // `grbl-rotary` is the borrowed-motor machine (#1153): its angle is a Y or X
+    // word Grbl reads. The own-axis rotary machines write A, which Grbl rejects.
+    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma', 'grbl-rotary'],
     args: (file) => [file],
     rejection: (output, status) => {
       // gvalidate prints `error:NN` and exits with that code.
@@ -89,7 +91,9 @@ const VALIDATORS: Validator[] = [
     name: 'linuxcnc-rs274',
     description: "LinuxCNC's standalone RS-274NGC interpreter",
     binary: process.env.RS274_BIN ?? 'rs274',
-    machines: ['linuxcnc', 'generic'],
+    // grblHAL's rotary dialect is RS-274 too; reading it here proves syntax and
+    // G93, not grblHAL itself (#1153).
+    machines: ['linuxcnc', 'generic', 'linuxcnc-rotary', 'grblhal-rotary'],
     args: (file) => ['-g', file],
     rejection: (output, status) => {
       // rs274 reports parse failures on stderr and exits non-zero.

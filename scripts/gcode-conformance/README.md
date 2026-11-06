@@ -32,23 +32,37 @@ the two half turns a Bottom toolpath takes (into stock space when generated,
 back out when exported), which is exact only up to floating-point rounding.
 One case is a pocket drawn on the bottom face and generated end to end.
 
-The `rotary-*` cases (issue #393) export a turning program on a round bar.
-`rotary-borrowed-y-inverse-time` runs on every validator that claims its grbl
-definition: the angle is written under the borrowed motor's letter and no
-linear word uses it. `rotary-own-axis-inverse-time` writes the angle under `A`
-and puts the turning move in inverse time (`G93`), which plain Grbl rejects
-outright — a dialect verdict, not an arc one — so it names the one validator it
-runs on. Each case may carry a `validators` list; a case without one runs on
-every validator that claims its machine, exactly as before.
+The `rotary-*` and `around-*` cases (issues #393, #395, #1015, #1153) run on
+the **bundled rotary machines**, with no machine override. Those machines
+follow the bar, so every case is posted for a bar along X and again for a bar
+along Y (`-bar-y`):
 
-| case | machine | validators | what it shows |
+- `grbl-rotary` borrows a motor. For a bar along X the Y motor turns it and
+  the angle is written as `Y`; for a bar along Y it is the X motor and `X`.
+  The borrowed letter carries angles only, never a linear coordinate. These
+  cases run on every validator that claims `grbl-rotary`, Grbl's own parser
+  included.
+- `linuxcnc-rotary` and `grblhal-rotary` write `A` and turn in inverse time
+  (`G93`), which plain Grbl rejects. That is a dialect verdict, not an arc
+  one, so these cases name the LinuxCNC interpreter. There is no grblHAL
+  validator: the interpreter proves the syntax and `G93`, not grblHAL itself.
+- `mach3-rotary`, `uccnc-rotary` and `grbl-rotary-a` (a Grbl fork with its own
+  A) have no interpreter here that reads them (`%`/`O`/`N` line numbers, `A`),
+  so they are exported and reported as **not validated**.
+
+A case may carry a `validators` list. A case without one runs on every
+validator that claims its machine, exactly as before.
+
+| case (bar along X; `-bar-y` twin for Y) | machine | validators | what it shows |
 |---|---|---|---|
-| `rotary-borrowed-y-inverse-time` | grbl | all claiming grbl | the angle under the borrowed `Y`, `G93` and an inverse-time `F`, and no linear `Y` |
-| `rotary-own-axis-inverse-time` | linuxcnc | `linuxcnc-rs274` | the angle under `A` and `G93` — a program Grbl cannot read |
-| `around-engrave-borrowed-y` | grbl | all claiming grbl | a wrapped Engrave (#395): the Around header, the angle under the borrowed `Y`, inverse time, the last angle kept at the end |
-| `around-pocket-own-axis` | linuxcnc | `linuxcnc-rs274` | a wrapped pocket (#395): every ring turns the bar, the angle under `A`, inverse time throughout |
-| `rotary-model-finish-borrowed-y` | grbl | all claiming grbl | a model-in-a-bar finish (#1015): the angle carried by the borrowed `Y`, inverse time around each turning link |
-| `rotary-model-rough-own-axis` | linuxcnc | `linuxcnc-rs274` | a model-in-a-bar rough (#1015) in layers: the angle under `A`, inverse time throughout |
+| `rotary-borrowed-y-inverse-time` / `rotary-borrowed-x-bar-y-inverse-time` | grbl-rotary | all claiming it | the angle under `Y` / `X`, `G93` and an inverse-time `F`, no linear word for that letter |
+| `rotary-own-axis-inverse-time` / `rotary-own-axis-bar-y-inverse-time` | linuxcnc-rotary | `linuxcnc-rs274` | the angle under `A` and `G93` |
+| `around-engrave-borrowed-y` / `around-engrave-borrowed-x-bar-y` | grbl-rotary | all claiming it | a wrapped Engrave (#395): the Around header, the angle under the borrowed letter, inverse time, the last angle kept at the end |
+| `around-pocket-own-axis` / `around-pocket-own-axis-bar-y` | linuxcnc-rotary | `linuxcnc-rs274` | a wrapped pocket (#395): every ring turns the bar, the angle under `A`, inverse time throughout |
+| `rotary-model-finish-borrowed-y` / `rotary-model-finish-borrowed-x-bar-y` | grbl-rotary | all claiming it | a model-in-a-bar finish (#1015): the angle carried by the borrowed motor, inverse time around each turning link |
+| `rotary-model-rough-own-axis` / `rotary-model-rough-own-axis-bar-y` | linuxcnc-rotary | `linuxcnc-rs274` | a model-in-a-bar rough (#1015) in layers: the angle under `A`, inverse time throughout |
+| `rotary-grblhal-own-axis` (+ `-bar-y`) | grblhal-rotary | `linuxcnc-rs274` | grblHAL's `A`/`G93` program, syntax only |
+| `rotary-mach3-own-axis`, `rotary-uccnc-own-axis`, `rotary-grbl-fork-own-axis` (+ `-bar-y`) | mach3-rotary, uccnc-rotary, grbl-rotary-a | none | exported, reported not validated |
 
 The `around-*` cases (issue #395) are generated end to end, not hand-built: an
 Around toolpath is produced on the unrolled sheet and carried onto the bar by
@@ -67,9 +81,9 @@ validator exactly as the #393/#395 own-axis programs are.
 
 | validator | what it is | dialects |
 |---|---|---|
-| `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc |
+| `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc, grbl-rotary |
 | `fabmo-opensbp` | pinned [FabMo-Engine](https://github.com/FabMo/FabMo-Engine) OpenSBP grammar, built with Peggy 4.0.3 | shopbot (syntax only) |
-| `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic |
+| `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic, linuxcnc-rotary, grblhal-rotary |
 
 `rs274` has no macOS build and `linuxcnc-uspace` is absent from the Ubuntu
 runner's sources, so CI runs it in a **Debian container** as a separate job.

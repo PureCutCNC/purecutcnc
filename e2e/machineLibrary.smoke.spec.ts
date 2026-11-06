@@ -33,6 +33,10 @@ import {
   openMachineManager as openManager,
   seedMachineProject,
 } from './machineLibrary.helpers'
+import { seedProject, selectMachine } from './helpers'
+import { defaultOrigin, defaultTool, newProject, roundStock } from '../src/types/project'
+import { defaultOperationForTarget } from '../src/store/helpers/operationDefaults'
+import { convertLength } from '../src/utils/units'
 
 const CUSTOM_MACHINES_KEY = 'purecutcnc.machines.customMachines'
 
@@ -561,4 +565,113 @@ test('the rotary axis group writes, persists and clears a rotary block (#393)', 
   await expect(ui.machineEditor.rotaryAxis(app.page)).toHaveCount(0)
   await expect(ui.machineEditor.rotaryDrive(app.page)).toHaveCount(0)
   await ui.machineEditor.cancelButton(app.page).click()
+})
+
+// ── Bundled rotary machines (#1153) ───────────────────────────────────────
+//
+// The rotary machines follow the project's bar, and on the borrowed GRBL motor
+// and the Grbl fork a rotary project must be in millimetres. The engine side is
+// unit-tested (`bundledRotaryMachines.test.ts`); this proves what the user sees:
+// the notice under the machine picker, the export dialog's notes, and the
+// editor's one checkbox.
+
+const BORROWED_ROTARY = 'GRBL 1.1 + rotary (borrowed motor)'
+const GRBLHAL_ROTARY = 'grblHAL + rotary A'
+
+function rotaryProjectJson(options: { units: 'mm' | 'inch'; axis: 'x' | 'y'; type?: 'rotary' | 'milling' }): string {
+  const { units, axis, type = 'rotary' } = options
+  const len = (mm: number) => convertLength(mm, 'mm', units)
+  const project = newProject('Bundled rotary e2e', units)
+  project.meta.projectType = type
+  if (type === 'rotary') {
+    project.stock = roundStock(len(20), len(100), axis)
+    project.origin = defaultOrigin(project.stock)
+    const around = { ...project.setups[0], id: 'around', name: 'Around', kind: 'around' as const, orientation: { axis, angleDeg: 0 as const } }
+    project.setups = [...project.setups, around]
+    project.activeSetupId = 'around'
+  }
+  project.tools = [{ ...defaultTool(units, 1), id: 't1' }]
+  project.operations = [{
+    ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'stock' }, 0),
+    id: 'op1',
+    name: 'Rotary op',
+    setupId: project.activeSetupId,
+    toolRef: 't1',
+  }]
+  return JSON.stringify(project)
+}
+
+async function openExportDialog(page: Page, ui: typeof import('./selectors')): Promise<void> {
+  await ui.operations.headerExportButton(page).click()
+  await expect(ui.exportDialog.root(page)).toBeVisible()
+}
+
+test.describe('bundled rotary machines (#1153)', () => {
+  for (const axis of ['x', 'y'] as const) {
+    test(`an inch rotary project on the borrowed motor, bar along ${axis.toUpperCase()}, is told to use mm`, async ({ app, ui }) => {
+      await seedProject(app.page, rotaryProjectJson({ units: 'inch', axis }))
+      await selectMachine(app.page, ui, BORROWED_ROTARY)
+      const notice = app.page.getByTestId('machine-rotary-mm-required')
+      await expect(notice).toBeVisible()
+      await expect(notice).toContainText('millimetres only')
+
+      await openExportDialog(app.page, ui)
+      await expect(app.page.getByTestId('export-rotary-mm-notice')).toContainText('Change the project units to mm')
+      const motor = axis === 'x' ? 'Y' : 'X'
+      await expect(app.page.getByTestId('export-rotary-axis-note'))
+        .toHaveText(`The rotary follows the stock: it turns about ${axis.toUpperCase()} and is driven by the ${motor} motor.`)
+    })
+  }
+
+  test('no mm notice for a mm project, an inch-capable machine, or a project that is not rotary', async ({ app, ui }) => {
+    const notice = app.page.getByTestId('machine-rotary-mm-required')
+
+    await seedProject(app.page, rotaryProjectJson({ units: 'mm', axis: 'x' }))
+    await selectMachine(app.page, ui, BORROWED_ROTARY)
+    await expect(ui.properties.machineStatus(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+
+    await seedProject(app.page, rotaryProjectJson({ units: 'inch', axis: 'y' }))
+    await selectMachine(app.page, ui, GRBLHAL_ROTARY)
+    await expect(ui.properties.machineStatus(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+    await openExportDialog(app.page, ui)
+    await expect(app.page.getByTestId('export-rotary-mm-notice')).toHaveCount(0)
+    await expect(app.page.getByTestId('export-rotary-axis-note'))
+      .toHaveText('The A orientation follows the stock: the rotary turns about Y, the bar\'s axis.')
+    await app.page.keyboard.press('Escape')
+
+    await seedProject(app.page, rotaryProjectJson({ units: 'inch', axis: 'x', type: 'milling' }))
+    await selectMachine(app.page, ui, BORROWED_ROTARY)
+    await expect(ui.properties.machineTypeMismatch(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+  })
+
+  test('the editor offers the inch-scaling checkbox on an own axis only', async ({ app, ui }) => {
+    await seedMachineProject(app.page)
+    await openManager(app.page, ui)
+
+    await ui.machineManager.item(app.page, GRBLHAL_ROTARY).click()
+    await expect(ui.machineManager.rotarySummary(app.page)).toContainText('Follows the bar')
+    await ui.machineManager.duplicateButton(app.page).click()
+    const editor = ui.machineEditor.dialog(app.page)
+    await expect(editor).toBeVisible()
+    // A copy names its axis, so the editor shows X or Y, never "no rotary".
+    await expect(ui.machineEditor.rotaryAxis(app.page)).not.toHaveValue('none')
+    const scales = editor.getByTestId('machine-rotary-angle-scales')
+    await expect(scales).not.toBeChecked()
+    await scales.check()
+    await ui.machineEditor.saveButton(app.page).click()
+    await expect(editor).toHaveCount(0)
+    const stored = JSON.parse(await readStorage(app.page, CUSTOM_MACHINES_KEY) ?? '{}') as { machines?: Array<{ name: string; rotary?: { about?: string; angleScalesWithUnits?: boolean } }> }
+    const copy = stored.machines?.find((machine) => machine.name.startsWith(GRBLHAL_ROTARY))
+    expect(copy?.rotary?.angleScalesWithUnits).toBe(true)
+    expect(copy?.rotary?.about).toMatch(/^[xy]$/)
+
+    await ui.machineManager.item(app.page, BORROWED_ROTARY).click()
+    await ui.machineManager.duplicateButton(app.page).click()
+    await expect(editor).toBeVisible()
+    await expect(editor.getByTestId('machine-rotary-angle-scales')).toHaveCount(0)
+    await expect(editor.getByTestId('machine-rotary-mm-only')).toContainText('mm only')
+  })
 })

@@ -565,6 +565,7 @@ function generatedAround(
   feature: SketchFeature,
   operation: Operation,
   tool: ReturnType<typeof defaultTool>,
+  axis: 'x' | 'y' = 'x',
 ): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const base = newProject('Conformance around', 'mm')
   // A wrapped toolpath is Around work, which exists only in a rotary project
@@ -572,15 +573,19 @@ function generatedAround(
   // to milling. Without it the generation gate refuses the Around face with
   // `aroundStockMismatch` and the case proves nothing.
   base.meta.projectType = 'rotary'
-  base.stock = roundStock(20, 100, 'x')
+  base.stock = roundStock(20, 100, axis)
   // The bar's centreline: across the bar at the stock centre, at Z = thickness/2.
-  base.origin = { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+  base.origin = axis === 'x'
+    ? { name: 'Origin', x: 0, y: 10, z: 20, visible: true }
+    : { name: 'Origin', x: 10, y: 0, z: 20, visible: true }
   base.tools = [tool]
-  const built = projectWithFeatures(base, [feature])
+  // The unrolled sheet keeps the along-bar coordinate on the bar's own axis, so
+  // a bar along Y draws the same feature with X and Y exchanged (#1153).
+  const built = projectWithFeatures(base, [axis === 'x' ? feature : swapFeatureAxes(feature)])
   const project: Project = {
     ...built,
     features: built.features.map((row) => ({ ...row, authoringFace: 'around' as const })),
-    setups: [aroundSetup()],
+    setups: [aroundSetup(axis)],
     activeSetupId: 'around',
     operations: [operation],
   }
@@ -593,6 +598,23 @@ function generatedAround(
     throw new Error('around corpus fixture is not a wrapped toolpath — the case would prove nothing')
   }
   return { project, operation: generated, toolpath: envelope.result }
+}
+
+/**
+ * The feature drawn with X and Y exchanged: the same Around sketch on a bar
+ * along Y. Exchanging the axes mirrors the sketch, so an arc turns the other way.
+ */
+function swapFeatureAxes(feature: SketchFeature): SketchFeature {
+  const swap = (point: { x: number; y: number }) => ({ x: point.y, y: point.x })
+  const profile = feature.sketch.profile
+  const segments = profile.segments.map((segment): (typeof profile.segments)[number] => {
+    switch (segment.type) {
+      case 'arc': return { ...segment, to: swap(segment.to), center: swap(segment.center), clockwise: !segment.clockwise }
+      case 'bezier': return { ...segment, to: swap(segment.to), control1: swap(segment.control1), control2: swap(segment.control2) }
+      default: return { ...segment, to: swap(segment.to) }
+    }
+  })
+  return { ...feature, sketch: { ...feature.sketch, profile: { ...profile, start: swap(profile.start), segments } } }
 }
 
 function aroundFeature(id: string, kind: SketchFeature['kind'], profile: SketchFeature['sketch']['profile'], operation: SketchFeature['operation'], zTop: number, zBottom: number): SketchFeature {
@@ -647,7 +669,7 @@ function aroundOperation(kind: Operation['kind'], featureId: string, overrides: 
  * along it: `G93`, one inverse-time `F` on the turning block, the angle under
  * `Y` and never a linear `Y` word, ending on its last angle.
  */
-function generatedAroundEngraveBorrowedY(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+function generatedAroundEngraveBorrowed(axis: 'x' | 'y'): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const feature = aroundFeature('line', 'polygon', {
     start: { x: 20, y: 13 },
     segments: [{ type: 'line', to: { x: 60, y: 21 } }],
@@ -657,6 +679,7 @@ function generatedAroundEngraveBorrowedY(): { project: Project; operation: Opera
     feature,
     aroundOperation('follow_line', 'line', { pass: 'finish', carveDepth: 1, maxCarveDepth: 1 }),
     { ...defaultTool('mm', 1), id: 't1', name: 'Conformance Tool', diameter: 3 },
+    axis,
   )
 }
 
@@ -666,12 +689,13 @@ function generatedAroundEngraveBorrowedY(): { project: Project; operation: Opera
  * inverse time throughout, writes `A`, and keeps every across word on the
  * centreline.
  */
-function generatedAroundPocketOwnAxis(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+function generatedAroundPocketOwnAxis(axis: 'x' | 'y'): { project: Project; operation: Operation; toolpath: ToolpathResult } {
   const feature = aroundFeature('pocket', 'rect', rectProfile(40, 5, 20, 12), 'subtract', 20, 16)
   return generatedAround(
     feature,
     aroundOperation('pocket', 'pocket', { stepdown: 2, stepover: 0.4 }),
     { ...defaultTool('mm', 1), id: 't1', name: 'Conformance Tool', diameter: 3 },
+    axis,
   )
 }
 
@@ -685,9 +709,10 @@ function generatedAroundPocketOwnAxis(): { project: Project; operation: Operatio
 function generatedRotaryModel(
   kind: 'rotary_rough' | 'rotary_finish',
   caseName: string,
+  axis: 'x' | 'y' = 'x',
 ): () => { project: Project; operation: Operation; toolpath: ToolpathResult } {
   return () => {
-    const fixture = rotaryOperationFixture('x', kind)
+    const fixture = rotaryOperationFixture(axis, kind)
     const operation: Operation = { ...fixture.operations[0], stepover: 1.5 }
     // A larger cutter than the fixture's: `sampleSpacing` and the angular pass
     // count both scale with the tool, so this keeps each program short.
@@ -711,6 +736,104 @@ function generatedRotaryModel(
     return { project, operation, toolpath: envelope.result }
   }
 }
+
+/**
+ * The rotary cases (issues #393, #395, #1015, #1153). Each runs on a bundled
+ * rotary machine, which follows the bar, so every case is posted for a bar
+ * along X and again for a bar along Y with no machine override:
+ *
+ * - the borrowed GRBL motor writes the angle under `Y` for a bar along X and
+ *   under `X` for a bar along Y, and never that letter as a linear word; it
+ *   runs on every validator that claims `grbl-rotary`;
+ * - an own axis writes `A`, which plain Grbl rejects, so those cases name the
+ *   LinuxCNC interpreter. grblHAL has no validator of its own; its dialect is
+ *   read by the same interpreter, which proves syntax and `G93`, not grblHAL.
+ * - Mach3, UCCNC and the GRBL fork with its own A have no interpreter that can
+ *   read them (`%`/`O`/`N` line numbers, `A`), so they are exported and
+ *   reported as not validated.
+ *
+ * The bar-along-X cases keep the names they had before #1153.
+ */
+const OWN_AXIS_VALIDATORS = ['linuxcnc-rs274'] as const
+
+function rotaryCase(
+  name: string,
+  covers: string,
+  machineId: string,
+  generated: CorpusCase['generated'],
+  validators?: readonly string[],
+): CorpusCase {
+  return { name, covers, units: 'mm', machineId, moves: [], generated, ...(validators ? { validators } : {}) }
+}
+
+const ROTARY_CASES: CorpusCase[] = [
+  rotaryCase('rotary-borrowed-y-inverse-time',
+    'issue #393 - a turning cut on the borrowed GRBL motor, bar along X: G93 before it, an '
+      + 'inverse-time F word on the turning move, the angle written under Y and no linear Y word.',
+    'grbl-rotary', generatedRotaryTurning('x', 'Conformance rotary borrowed Y')),
+  rotaryCase('rotary-borrowed-x-bar-y-inverse-time',
+    'issue #1153 - the same machine with the bar along Y: the X motor turns the bar, so the '
+      + 'angle is written under X and no linear X word is.',
+    'grbl-rotary', generatedRotaryTurning('y', 'Conformance rotary borrowed X')),
+  rotaryCase('rotary-own-axis-inverse-time',
+    'issue #393 - an own-axis program: the angle written under A, G93 before the turning move '
+      + 'and an inverse-time F on it. Restricted to the LinuxCNC validator because plain Grbl '
+      + 'rejects the A word, which is a dialect verdict, not an arc one.',
+    'linuxcnc-rotary', generatedRotaryTurning('x', 'Conformance rotary own axis'), OWN_AXIS_VALIDATORS),
+  rotaryCase('rotary-own-axis-bar-y-inverse-time',
+    'issue #1153 - the same own-axis program with the bar along Y: still A, turning about Y.',
+    'linuxcnc-rotary', generatedRotaryTurning('y', 'Conformance rotary own axis Y'), OWN_AXIS_VALIDATORS),
+  rotaryCase('around-engrave-borrowed-y',
+    'issue #395 - a wrapped Engrave on the borrowed motor, bar along X: the Around header, the '
+      + 'angle written under Y once per change and never as a linear word, G93 with an '
+      + 'inverse-time F on the turning cut, and the last angle kept at the end.',
+    'grbl-rotary', () => generatedAroundEngraveBorrowed('x')),
+  rotaryCase('around-engrave-borrowed-x-bar-y',
+    'issue #1153 - the same wrapped Engrave on a bar along Y: the angle under X.',
+    'grbl-rotary', () => generatedAroundEngraveBorrowed('y')),
+  rotaryCase('around-pocket-own-axis',
+    'issue #395 - a wrapped pocket on an own-axis rotary: every ring turns the bar, so the '
+      + 'angle is written under A and the turning cuts run in inverse time.',
+    'linuxcnc-rotary', () => generatedAroundPocketOwnAxis('x'), OWN_AXIS_VALIDATORS),
+  rotaryCase('around-pocket-own-axis-bar-y',
+    'issue #1153 - the same wrapped pocket on a bar along Y.',
+    'linuxcnc-rotary', () => generatedAroundPocketOwnAxis('y'), OWN_AXIS_VALIDATORS),
+  rotaryCase('rotary-model-finish-borrowed-y',
+    'issue #1015 - a finish pass over an imported model inside a round bar on the borrowed '
+      + 'motor: the Around header, the angle carried by the borrowed motor and never written as '
+      + 'a linear Y, and inverse time around each turning link.',
+    'grbl-rotary', generatedRotaryModel('rotary_finish', 'rotary-model-finish-borrowed-y')),
+  rotaryCase('rotary-model-finish-borrowed-x-bar-y',
+    'issue #1153 - the same model finish on a bar along Y: the angle carried by the X motor.',
+    'grbl-rotary', generatedRotaryModel('rotary_finish', 'rotary-model-finish-borrowed-x-bar-y', 'y')),
+  rotaryCase('rotary-model-rough-own-axis',
+    'issue #1015 - a roughing pass over the same model on an own-axis rotary: the angle '
+      + 'written under A over several layers.',
+    'linuxcnc-rotary', generatedRotaryModel('rotary_rough', 'rotary-model-rough-own-axis'), OWN_AXIS_VALIDATORS),
+  rotaryCase('rotary-model-rough-own-axis-bar-y',
+    'issue #1153 - the same model rough on a bar along Y.',
+    'linuxcnc-rotary', generatedRotaryModel('rotary_rough', 'rotary-model-rough-own-axis-bar-y', 'y'), OWN_AXIS_VALIDATORS),
+  // The other bundled own-axis controllers (#1153), both bar axes.
+  ...(['x', 'y'] as const).flatMap((axis): CorpusCase[] => {
+    const suffix = axis === 'x' ? '' : '-bar-y'
+    const bar = `bar along ${axis.toUpperCase()}`
+    return [
+      rotaryCase(`rotary-grblhal-own-axis${suffix}`,
+        `issue #1153 - grblHAL + rotary A, ${bar}: A and G93, read by the LinuxCNC interpreter `
+          + 'for syntax; no grblHAL validator exists.',
+        'grblhal-rotary', generatedRotaryTurning(axis, `Conformance grblHAL rotary ${axis}`), OWN_AXIS_VALIDATORS),
+      rotaryCase(`rotary-mach3-own-axis${suffix}`,
+        `issue #1153 - Mach3 + rotary A, ${bar}. No interpreter here reads Mach3, so not validated.`,
+        'mach3-rotary', generatedRotaryTurning(axis, `Conformance Mach3 rotary ${axis}`)),
+      rotaryCase(`rotary-uccnc-own-axis${suffix}`,
+        `issue #1153 - UCCNC + rotary A, ${bar}. No interpreter here reads UCCNC, so not validated.`,
+        'uccnc-rotary', generatedRotaryTurning(axis, `Conformance UCCNC rotary ${axis}`)),
+      rotaryCase(`rotary-grbl-fork-own-axis${suffix}`,
+        `issue #1153 - GRBL 4-axis fork + rotary A, ${bar}. Plain Grbl rejects A, so not validated.`,
+        'grbl-rotary-a', generatedRotaryTurning(axis, `Conformance Grbl fork rotary ${axis}`)),
+    ]
+  }),
+]
 
 export const CORPUS: CorpusCase[] = [
   {
@@ -811,125 +934,7 @@ export const CORPUS: CorpusCase[] = [
     moves: leadInAndCut(issue447Points()),
     operationOverrides: { arcFittingEnabled: false },
   },
-  {
-    name: 'rotary-borrowed-y-inverse-time',
-    covers: 'issue #393 - a turning cut on a borrowed-Y rotary: G93 before it, an '
-      + 'inverse-time F word on the turning move, the angle written under Y and no '
-      + 'linear Y word. An own-axis A program is unit-tested instead; see the '
-      + 'helper note above.',
-    units: 'mm',
-    machineId: 'grbl',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'borrowed',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    moves: [],
-    generated: generatedRotaryTurning('x', 'Conformance rotary borrowed Y'),
-  },
-  {
-    name: 'rotary-own-axis-inverse-time',
-    covers: 'issue #393 - an own-axis program: the angle written under A, G93 before the '
-      + 'turning move and an inverse-time F on it. Restricted to the LinuxCNC validator '
-      + 'because plain Grbl rejects the A word, which is a dialect verdict, not an arc one.',
-    units: 'mm',
-    machineId: 'linuxcnc',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'own',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    validators: ['linuxcnc-rs274'],
-    moves: [],
-    generated: generatedRotaryTurning('x', 'Conformance rotary own axis'),
-  },
-  {
-    name: 'around-engrave-borrowed-y',
-    covers: 'issue #395 - a wrapped Engrave on a borrowed-Y rotary: the Around header, the '
-      + 'angle written under Y once per change and never as a linear word, G93 with an '
-      + 'inverse-time F on the turning cut, and the last angle kept at the end.',
-    units: 'mm',
-    machineId: 'grbl',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'borrowed',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    moves: [],
-    generated: generatedAroundEngraveBorrowedY,
-  },
-  {
-    name: 'around-pocket-own-axis',
-    covers: 'issue #395 - a wrapped pocket on an own-axis rotary: every ring turns the bar, '
-      + 'so the angle is written under A and the turning cuts run in inverse time. Restricted '
-      + 'to the LinuxCNC validator because plain Grbl rejects the A word, a dialect verdict '
-      + 'rather than an arc one.',
-    units: 'mm',
-    machineId: 'linuxcnc',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'own',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    validators: ['linuxcnc-rs274'],
-    moves: [],
-    generated: generatedAroundPocketOwnAxis,
-  },
-  {
-    name: 'rotary-model-finish-borrowed-y',
-    covers: 'issue #1015 - a finish pass over an imported model inside a round bar on a '
-      + 'borrowed-Y rotary: the Around header, the angle carried by the borrowed motor and '
-      + 'never written as a linear Y, and inverse time around each turning link.',
-    units: 'mm',
-    machineId: 'grbl',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'borrowed',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    moves: [],
-    generated: generatedRotaryModel('rotary_finish', 'rotary-model-finish-borrowed-y'),
-  },
-  {
-    name: 'rotary-model-rough-own-axis',
-    covers: 'issue #1015 - a roughing pass over the same model on an own-axis rotary: the '
-      + 'angle written under A over several layers. Restricted to the LinuxCNC validator '
-      + 'because plain Grbl rejects the A word, a dialect verdict rather than a motion one.',
-    units: 'mm',
-    machineId: 'linuxcnc',
-    definitionOverrides: (base) => ({
-      ...base,
-      rotary: {
-        about: 'x',
-        drive: 'own',
-        reversed: false,
-        inverseTimeFeed: { on: 'G93', off: 'G94' },
-      },
-    }),
-    validators: ['linuxcnc-rs274'],
-    moves: [],
-    generated: generatedRotaryModel('rotary_rough', 'rotary-model-rough-own-axis'),
-  },
+  ...ROTARY_CASES,
   {
     name: 'trochoidal-edge-outside',
     covers: 'issue #448 - arcs fitted to real trochoidal orbit sampling; GRBL has '

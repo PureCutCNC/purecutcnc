@@ -30,8 +30,9 @@
 import assert from 'node:assert/strict'
 import { CORPUS, caseRunsOnValidator, renderCase } from './corpus'
 
-const GRBL_MACHINES = ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma']
-const LINUXCNC_MACHINES = ['linuxcnc', 'generic']
+// The claims `run.ts` gives each validator, including the #1153 rotary machines.
+const GRBL_MACHINES = ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma', 'grbl-rotary']
+const LINUXCNC_MACHINES = ['linuxcnc', 'generic', 'linuxcnc-rotary', 'grblhal-rotary']
 
 // ── 1. The rule itself ────────────────────────────────────────
 
@@ -58,11 +59,37 @@ assert.equal(caseRunsOnValidator({ machineId: 'grbl', validators: ['linuxcnc-rs2
 // (the #393 rotary case and the #395 Around pocket, which also writes `A`).
 
 const restrictedCases = CORPUS.filter((entry) => entry.validators !== undefined)
+// Since #1153 every own-axis case runs on a bundled rotary machine, on both bar
+// axes; the restricted ones are those a validator here can read.
 assert.deepEqual(
   restrictedCases.map((entry) => entry.name),
-  ['rotary-own-axis-inverse-time', 'around-pocket-own-axis', 'rotary-model-rough-own-axis'],
-  'the own-axis A programs are the only cases restricted to a validator subset',
+  [
+    'rotary-own-axis-inverse-time', 'rotary-own-axis-bar-y-inverse-time',
+    'around-pocket-own-axis', 'around-pocket-own-axis-bar-y',
+    'rotary-model-rough-own-axis', 'rotary-model-rough-own-axis-bar-y',
+    'rotary-grblhal-own-axis', 'rotary-grblhal-own-axis-bar-y',
+  ],
+  'the own-axis A programs a validator can read are the only cases restricted to a validator subset',
 )
+for (const entry of restrictedCases) {
+  assert.deepEqual(entry.validators, ['linuxcnc-rs274'], `${entry.name} runs only on the LinuxCNC interpreter`)
+  assert.equal(caseRunsOnValidator(entry, 'grbl-gvalidate', GRBL_MACHINES), false, `${entry.name} is never fed to Grbl`)
+}
+// The own-axis machines no interpreter here reads are exported and reported as
+// not validated: no validator claims them.
+for (const machineId of ['mach3-rotary', 'uccnc-rotary', 'grbl-rotary-a']) {
+  const cases = CORPUS.filter((entry) => entry.machineId === machineId)
+  assert.equal(cases.length, 2, `${machineId} has a case for each bar axis`)
+  for (const entry of cases) {
+    for (const [validator, machines] of [['grbl-gvalidate', GRBL_MACHINES], ['linuxcnc-rs274', LINUXCNC_MACHINES]] as const) {
+      assert.equal(caseRunsOnValidator(entry, validator, machines), false, `${entry.name} is not claimed by ${validator}`)
+    }
+  }
+}
+// No rotary case overrides its machine: each runs on the bundled definition.
+for (const entry of CORPUS.filter((candidate) => candidate.machineId.endsWith('-rotary') || candidate.machineId === 'grbl-rotary-a')) {
+  assert.equal(entry.definitionOverrides, undefined, `${entry.name} runs on the bundled machine as shipped`)
+}
 
 for (const entry of CORPUS) {
   if (entry.validators !== undefined) continue
@@ -78,7 +105,7 @@ for (const entry of CORPUS) {
 // ── 3. The own-axis case, specifically ────────────────────────
 
 const ownAxis = restrictedCases[0]
-assert.equal(ownAxis.machineId, 'linuxcnc', 'the own-axis program runs on the LinuxCNC machine definition')
+assert.equal(ownAxis.machineId, 'linuxcnc-rotary', 'the own-axis program runs on the bundled LinuxCNC rotary machine')
 assert.deepEqual(ownAxis.validators, ['linuxcnc-rs274'], 'and only on the LinuxCNC validator')
 assert.equal(caseRunsOnValidator(ownAxis, 'grbl-gvalidate', GRBL_MACHINES), false,
   'Grbl rejects the A word, so the own-axis program is never fed to it')
@@ -107,8 +134,10 @@ assert.equal(caseRunsOnValidator(ownAxis, 'fabmo-opensbp', ['shopbot']), false,
 // short of the pass end and the between-pass move was a rapid.)
 
 const ROTARY_MODEL_CASES: ReadonlyArray<[name: string, machineId: string, angleWord: RegExp, turnsInFeed: boolean]> = [
-  ['rotary-model-finish-borrowed-y', 'grbl', /\bY-?\d/, true],
-  ['rotary-model-rough-own-axis', 'linuxcnc', /\bA-?\d/, true],
+  ['rotary-model-finish-borrowed-y', 'grbl-rotary', /\bY-?\d/, true],
+  ['rotary-model-finish-borrowed-x-bar-y', 'grbl-rotary', /\bX-?\d/, true],
+  ['rotary-model-rough-own-axis', 'linuxcnc-rotary', /\bA-?\d/, true],
+  ['rotary-model-rough-own-axis-bar-y', 'linuxcnc-rotary', /\bA-?\d/, true],
 ]
 
 for (const [name, machineId, angleWord, turnsInFeed] of ROTARY_MODEL_CASES) {
@@ -153,10 +182,31 @@ assert.equal(caseRunsOnValidator(rotaryRoughOwnAxis, 'linuxcnc-rs274', LINUXCNC_
 
 const ROTARY_FAMILY_CASES: ReadonlyArray<[name: string, angleWord: RegExp]> = [
   ['rotary-borrowed-y-inverse-time', /\bY-?\d/],
+  ['rotary-borrowed-x-bar-y-inverse-time', /\bX-?\d/],
   ['rotary-own-axis-inverse-time', /\bA-?\d/],
+  ['rotary-own-axis-bar-y-inverse-time', /\bA-?\d/],
   ['around-engrave-borrowed-y', /\bY-?\d/],
+  ['around-engrave-borrowed-x-bar-y', /\bX-?\d/],
   ['around-pocket-own-axis', /\bA-?\d/],
+  ['around-pocket-own-axis-bar-y', /\bA-?\d/],
+  ...(['', '-bar-y'] as const).flatMap((suffix): Array<[string, RegExp]> => [
+    [`rotary-grblhal-own-axis${suffix}`, /\bA-?\d/],
+    [`rotary-mach3-own-axis${suffix}`, /\bA-?\d/],
+    [`rotary-uccnc-own-axis${suffix}`, /\bA-?\d/],
+    [`rotary-grbl-fork-own-axis${suffix}`, /\bA-?\d/],
+  ]),
 ]
+
+// A borrowed motor's letter carries only angles, whichever axis the bar lies
+// along (#1153): the turning cases write 0, 90 and the closing whole turn, and
+// never the bar's 10 mm centreline as a linear word.
+for (const [name, letter] of [['rotary-borrowed-y-inverse-time', 'Y'], ['rotary-borrowed-x-bar-y-inverse-time', 'X']] as const) {
+  const entry = CORPUS.find((candidate) => candidate.name === name)
+  assert.ok(entry, `${name} is registered in the corpus`)
+  const values = [...renderCase(entry).gcode.matchAll(new RegExp(`\\b${letter}(-?\\d+(?:\\.\\d+)?)`, 'g'))].map((match) => Number(match[1]))
+  assert.ok(values.length > 0, `${name} writes ${letter}`)
+  assert.ok(values.every((value) => value % 90 === 0), `${name}: every ${letter} word is an angle (${values.join(', ')})`)
+}
 
 for (const [name, angleWord] of ROTARY_FAMILY_CASES) {
   const entry = CORPUS.find((candidate) => candidate.name === name)
