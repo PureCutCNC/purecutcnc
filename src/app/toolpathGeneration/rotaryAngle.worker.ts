@@ -46,6 +46,7 @@ import type { RotaryAngleKernel } from '../../engine/toolpaths/rotaryAngleKernel
 import {
   ROTARY_ANGLE_PROTOCOL_VERSION,
   isRotaryAngleWorkerRequest,
+  rotaryAngleSampleTransfer,
 } from '../../engine/toolpaths/rotaryAngleProtocol'
 import type {
   RotaryAnglePlanPayload,
@@ -123,12 +124,14 @@ function serve(request: unknown): void {
       case 'batch': {
         if (kernel === null) throw new Error('rotary angle worker: a batch arrived before the setup')
         const samples = kernel.run(request.jobs)
-        // The rows are this worker's own freshly allocated arrays, so handing
-        // their buffers over costs nothing and saves a copy per angle. Nothing
-        // here reads a row after it has been posted.
-        const transfer: Transferable[] = []
-        for (const sample of samples) transfer.push(sample.row.buffer as ArrayBuffer)
-        post({ kind: 'result', epoch: request.epoch, batchId: request.batchId, samples }, transfer)
+        // The rows -- and, when the parent asked for them, the height maps this
+        // batch built (#1103 slice ca-i) -- are this worker's own freshly
+        // allocated arrays, so handing their buffers over costs nothing and saves
+        // a copy per angle. Nothing here reads one after it has been posted.
+        post(
+          { kind: 'result', epoch: request.epoch, batchId: request.batchId, samples },
+          rotaryAngleSampleTransfer(samples) as Transferable[],
+        )
         return
       }
       case 'dispose':

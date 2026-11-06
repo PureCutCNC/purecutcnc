@@ -110,7 +110,11 @@
  * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
  * this suite exists to catch (and far inside both the around allowance and the
  * along stage's exact-geometry radial bound). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
- * is pinned by hand-computed unit cases before the seeded run. Every ray keeps
+ * is pinned by hand-computed unit cases before the seeded run. #1103 slice ca-a
+ * adds the diagonal case: a move whose along sweep crosses the cell only in its
+ * interior, with both endpoints outside the cutter's axial footprint, so an
+ * endpoint-only reference would remove nothing and the swept one cuts the cell
+ * to the bottom face. Every ray keeps
  * all occupied intervals, including cavities below an unchanged outer surface.
  * Engagement sums newly removed material over the whole swept move; interior
  * material counts against the same bound and retained ends must keep every span.
@@ -244,11 +248,14 @@ function regionMask(stock: BarStock, region: CaseRegionSpec): RotaryRegionMask {
     ? { along: point.x, across: point.y }
     : { along: point.y, across: point.x })
   const coversAcross = (across: number, rect: CaseRegion): boolean => {
-    for (let turn = -1; turn <= 1; turn++) {
-      const shifted = across + turn * circumference
-      if (shifted >= rect.acrossFrom && shifted <= rect.acrossTo) return true
-    }
-    return false
+    // The mask is periodic in the across coordinate: `across` may be measured
+    // from any commanded turn (a helix reaches A720 while the sheet repeats
+    // every circumference). Solve for the turns whose shifted value lands in the
+    // rectangle instead of assuming the commanded A is within one turn of it
+    // (#1103 ca-d fix 1: a full-turn helix was read as outside its own band).
+    const first = Math.ceil((rect.acrossFrom - across) / circumference - 1e-9)
+    const last = Math.floor((rect.acrossTo - across) / circumference + 1e-9)
+    return first <= last
   }
   return {
     containsPoint(point: { x: number; y: number }): boolean {
@@ -823,7 +830,6 @@ function referenceMove(
   const allAngles = windowHi - windowLo >= 360 - 1e-9
   const firstBin = allAngles ? 0 : Math.floor(windowLo / angleDeg)
   const lastBin = allAngles ? angleBins - 1 : Math.ceil(windowHi / angleDeg)
-  const midAngle = fromAngle + dAngle / 2
   referenceStats.moves++
   let engagement = 0
   moveInteriorWorst = 0
@@ -845,23 +851,11 @@ function referenceMove(
       let interiorRemoved = 0
       let surfaceBite = 0
       const materialRadius = startMaterial
-      // The representative of this cell's angle nearest the move's own angle
-      // span: the move can sweep past 0/360 and the cell is one direction.
-      const target = cellAngle + 360 * Math.round((midAngle - cellAngle) / 360)
-      const angularHalfDeg = bodyAngularReachDeg(ball, cutterRadius, tipMin, materialRadius)
-      // The interval of the move that can reach this cell at all.
+      // The body's contact is never below the tip, so a tip above the standing
+      // material removes nothing. The along and tip windows do not depend on
+      // which turn of a multi-turn helix reaches this cell, so they are once.
       let lo = 0
       let hi = 1
-      if (Math.abs(dAngle) > 1e-12) {
-        const a = (target - angularHalfDeg - fromAngle) / dAngle
-        const b = (target + angularHalfDeg - fromAngle) / dAngle
-        lo = Math.max(lo, Math.min(a, b))
-        hi = Math.min(hi, Math.max(a, b))
-        if (hi < lo) continue
-      } else {
-        const delta = Math.abs(((target - fromAngle + 180) % 360 + 360) % 360 - 180)
-        if (delta > angularHalfDeg + angleDeg) continue
-      }
       if (Math.abs(dAlong) > 1e-12) {
         const a = (cellAlong - cutterRadius - fromAlong) / dAlong
         const b = (cellAlong + cutterRadius - fromAlong) / dAlong
@@ -871,8 +865,6 @@ function referenceMove(
       } else if (Math.abs(cellAlong - fromAlong) > cutterRadius) {
         continue
       }
-      // The body's contact is never below the tip, so a tip above the standing
-      // material removes nothing.
       if (Math.abs(dTip) > 1e-12) {
         const boundary = (materialRadius - fromTip) / dTip
         if (dTip > 0) hi = Math.min(hi, boundary)
@@ -884,103 +876,138 @@ function referenceMove(
       if (hi < 0 || lo > 1) continue
       lo = Math.max(0, lo)
       hi = Math.min(1, hi)
-      // Steps no coarser than the reference's own resolution in angle, along
-      // and Z.
-      // At fixed along and tip, ray/body intervals nest as |delta| grows:
-      // contact rises and exit falls. The closest angle therefore gives the
-      // exact union over a turning move. A pure plunge has the same nesting
-      // as tip rises, so its deepest endpoint is the exact swept union too.
-      // Slanted moves still require the full fine-grid continuous sweep.
-      const fixedRing = dAlong === 0 && dTip === 0
-      const purePlunge = dAlong === 0 && dAngle === 0
-      const exactT = fixedRing && dAngle !== 0
-        ? Math.max(lo, Math.min(hi, (target - fromAngle) / dAngle))
-        : dTip <= 0 ? hi : lo
-      const steps = fixedRing || purePlunge ? 0 : Math.max(1, Math.ceil(Math.max(
-        Math.abs(dAngle) * (hi - lo) / angleDeg,
-        Math.abs(dAlong) * (hi - lo) / alongBin,
-        Math.abs(dTip) * (hi - lo) / alongBin,
-      )))
-      referenceStats.steps += steps + 1
-      for (let step = 0; step <= steps; step++) {
-        const t = steps === 0 ? exactT : lo + (hi - lo) * step / steps
-        const toolAlong = fromAlong + dAlong * t
-        const dx = cellAlong - toolAlong
-        if (dx * dx >= cutterRadius * cutterRadius) continue
-        const toolAngle = fromAngle + dAngle * t
-        let delta = cellAngle - toolAngle
-        while (delta > 180) delta -= 360
-        while (delta < -180) delta += 360
-        const tip = fromTip + dTip * t
-        const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
-        if (!span || span.contact >= standing - 1e-12) continue
-        const cavity = reference.occupied.get(index)
-        if (!cavity && span.exit >= standing) {
-          // Most samples lower one solid surface. Preserve the scalar form
-          // without allocating occupied/subtraction lists on this hot path.
-          const next = Math.min(standing, span.contact)
-          removed += standing - next
-          surfaceBite += standing - next
-          standing = next
-          material[index] = next
-          if (removed > engagement) {
-            engagement = removed
-            Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: next })
+      const angularHalfDeg = bodyAngularReachDeg(ball, cutterRadius, tipMin, materialRadius)
+      // Every representative of this cell's angle the move's A span can reach.
+      // A multi-turn helix visits the same physical angle once per turn at a
+      // different along position, so the turn that reaches this cell is not the
+      // one nearest the move's midpoint: a nine-turn rough helix left the
+      // reference's material at the blank on every turn but one, and the next
+      // layer was read as a 3.58 mm first cut (#1103 ca-d fix 1).
+      const targets: number[] = []
+      if (Math.abs(dAngle) > 1e-12) {
+        const minA = Math.min(fromAngle, toAngle)
+        const maxA = Math.max(fromAngle, toAngle)
+        const first = Math.ceil((minA - angularHalfDeg - cellAngle) / 360)
+        const last = Math.floor((maxA + angularHalfDeg - cellAngle) / 360)
+        for (let turn = first; turn <= last; turn++) targets.push(cellAngle + 360 * turn)
+      } else {
+        targets.push(cellAngle + 360 * Math.round((fromAngle - cellAngle) / 360))
+      }
+      for (const target of targets) {
+        // The interval of the move that can reach this cell on this turn.
+        let turnLo = lo
+        let turnHi = hi
+        if (Math.abs(dAngle) > 1e-12) {
+          const a = (target - angularHalfDeg - fromAngle) / dAngle
+          const b = (target + angularHalfDeg - fromAngle) / dAngle
+          turnLo = Math.max(turnLo, Math.min(a, b))
+          turnHi = Math.min(turnHi, Math.max(a, b))
+          if (turnHi < turnLo) continue
+        } else {
+          const delta = Math.abs(((target - fromAngle + 180) % 360 + 360) % 360 - 180)
+          if (delta > angularHalfDeg + angleDeg) continue
+        }
+        turnLo = Math.max(0, turnLo)
+        turnHi = Math.min(1, turnHi)
+        if (turnHi < turnLo) continue
+        // Steps no coarser than the reference's own resolution in angle, along
+        // and Z.
+        // At fixed along and tip, ray/body intervals nest as |delta| grows:
+        // contact rises and exit falls. The closest angle therefore gives the
+        // exact union over a turning move. A pure plunge has the same nesting
+        // as tip rises, so its deepest endpoint is the exact swept union too.
+        // Slanted moves still require the full fine-grid continuous sweep.
+        const fixedRing = dAlong === 0 && dTip === 0
+        const purePlunge = dAlong === 0 && dAngle === 0
+        const exactT = fixedRing && dAngle !== 0
+          ? Math.max(turnLo, Math.min(turnHi, (target - fromAngle) / dAngle))
+          : dTip <= 0 ? turnHi : turnLo
+        const steps = fixedRing || purePlunge ? 0 : Math.max(1, Math.ceil(Math.max(
+          Math.abs(dAngle) * (turnHi - turnLo) / angleDeg,
+          Math.abs(dAlong) * (turnHi - turnLo) / alongBin,
+          Math.abs(dTip) * (turnHi - turnLo) / alongBin,
+        )))
+        referenceStats.steps += steps + 1
+        for (let step = 0; step <= steps; step++) {
+          const t = steps === 0 ? exactT : turnLo + (turnHi - turnLo) * step / steps
+          const toolAlong = fromAlong + dAlong * t
+          const dx = cellAlong - toolAlong
+          if (dx * dx >= cutterRadius * cutterRadius) continue
+          const toolAngle = fromAngle + dAngle * t
+          let delta = cellAngle - toolAngle
+          while (delta > 180) delta -= 360
+          while (delta < -180) delta += 360
+          const tip = fromTip + dTip * t
+          const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
+          if (!span || span.contact >= standing - 1e-12) continue
+          const cavity = reference.occupied.get(index)
+          if (!cavity && span.exit >= standing) {
+            // Most samples lower one solid surface. Preserve the scalar form
+            // without allocating occupied/subtraction lists on this hot path.
+            const next = Math.min(standing, span.contact)
+            removed += standing - next
+            surfaceBite += standing - next
+            standing = next
+            material[index] = next
+            if (removed > engagement) {
+              engagement = removed
+              Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: next })
+            }
+            if (span.contact < lowestContact.contact) {
+              Object.assign(lowestContact, { contact: span.contact, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+            }
+            // The fast path is the ordinary case (material removed from the
+            // outermost solid), so it must update the same radial-bite counter the
+            // slow path does (#1045 slice P, Codex pass 9): a 1.95 mm removal was
+            // reporting zero here because this branch jumped straight back to the
+            // next step.
+            if (surfaceBite > moveSurfaceWorst) {
+              moveSurfaceWorst = surfaceBite
+              moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: next }
+            }
+            continue
           }
-          if (span.contact < lowestContact.contact) {
-            Object.assign(lowestContact, { contact: span.contact, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+          let occupied = cavity ?? [{ contact: 0, exit: standing }]
+          const next: Array<{ contact: number; exit: number }> = []
+          for (const solid of occupied) {
+            const low = Math.max(solid.contact, span.contact)
+            const high = Math.min(solid.exit, span.exit)
+            if (high <= low + 1e-12) { next.push(solid); continue }
+            const depth = high - low
+            removed += depth
+            if (high < standing - 1e-12) interiorRemoved += depth
+            else if (high >= solid.exit - 1e-12) surfaceBite += solid.exit - low
+            if (solid.contact < low) next.push({ contact: solid.contact, exit: low })
+            if (high < solid.exit) next.push({ contact: high, exit: solid.exit })
+            if (low < lowestContact.contact) {
+              Object.assign(lowestContact, { contact: low, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+            }
           }
-          // The fast path is the ordinary case (material removed from the
-          // outermost solid), so it must update the same radial-bite counter the
-          // slow path does (#1045 slice P, Codex pass 9): a 1.95 mm removal was
-          // reporting zero here because this branch jumped straight back to the
-          // next step.
+          occupied = next
+          standing = occupied.length ? occupied[occupied.length - 1].exit : 0
+          material[index] = standing
+          // A single interval starting at zero needs only the scalar fast path.
+          if (occupied.length <= 1 && (!occupied.length || occupied[0].contact === 0)) reference.occupied.delete(index)
+          else reference.occupied.set(index, occupied)
+          moveInteriorWorst = Math.max(moveInteriorWorst, interiorRemoved)
+          if (interiorRemoved > interiorWorst.depth) {
+            Object.assign(interiorWorst, {
+              depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind,
+              label: currentCaseLabel, seed: currentCaseSeed, fromAngle, toAngle, fromAlong, toAlong, fromTip, toTip,
+              material: startMaterial, standing,
+              stepover: currentCaseStepover, diameter: currentCaseDiameter,
+            })
+          }
           if (surfaceBite > moveSurfaceWorst) {
             moveSurfaceWorst = surfaceBite
-            moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: next }
+            moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: material[index] }
           }
-          continue
-        }
-        let occupied = cavity ?? [{ contact: 0, exit: standing }]
-        const next: Array<{ contact: number; exit: number }> = []
-        for (const solid of occupied) {
-          const low = Math.max(solid.contact, span.contact)
-          const high = Math.min(solid.exit, span.exit)
-          if (high <= low + 1e-12) { next.push(solid); continue }
-          const depth = high - low
-          removed += depth
-          if (high < standing - 1e-12) interiorRemoved += depth
-          else if (high >= solid.exit - 1e-12) surfaceBite += solid.exit - low
-          if (solid.contact < low) next.push({ contact: solid.contact, exit: low })
-          if (high < solid.exit) next.push({ contact: high, exit: solid.exit })
-          if (low < lowestContact.contact) {
-            Object.assign(lowestContact, { contact: low, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+          if (removed > engagement) {
+            engagement = removed
+            Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: standing })
           }
+          if (!(standing > 0)) break
         }
-        occupied = next
-        standing = occupied.length ? occupied[occupied.length - 1].exit : 0
-        material[index] = standing
-        // A single interval starting at zero needs only the scalar fast path.
-        if (occupied.length <= 1 && (!occupied.length || occupied[0].contact === 0)) reference.occupied.delete(index)
-        else reference.occupied.set(index, occupied)
-        moveInteriorWorst = Math.max(moveInteriorWorst, interiorRemoved)
-        if (interiorRemoved > interiorWorst.depth) {
-          Object.assign(interiorWorst, {
-            depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind,
-            label: currentCaseLabel, seed: currentCaseSeed, fromAngle, toAngle, fromAlong, toAlong, fromTip, toTip,
-            material: startMaterial, standing,
-            stepover: currentCaseStepover, diameter: currentCaseDiameter,
-          })
-        }
-        if (surfaceBite > moveSurfaceWorst) {
-          moveSurfaceWorst = surfaceBite
-          moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: material[index] }
-        }
-        if (removed > engagement) {
-          engagement = removed
-          Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: standing })
-        }
-        if (!(standing > 0)) break
       }
     }
   }
@@ -1234,6 +1261,48 @@ console.log('Testing the continuous reference against hand-computed values...')
 // seeded run always follows them; an environment variable must not be able to
 // skip the 300 programs CI is meant to check.
 interiorWorst.depth = 0
+
+// ---------------------------------------------------------------------------
+// #1103 slice ca-a: diagonal moves sample the actual combined path.
+//
+// A diagonal cut changes the along position and A together. The move below
+// crosses the reference cell in along only in its **interior**: at the start
+// and at the end the cutter's axial footprint is 1.5 mm away from the cell,
+// outside its 0.6 mm radius, so an endpoint-only sweep removes nothing. Between
+// them the body is over the cell while A is within the flat's angular reach,
+// and the cell is cut to the bottom face's own contact. This is the property a
+// helix depends on (slice ca-c): the reference must walk the commanded path,
+// not swap in one endpoint's pose.
+// ---------------------------------------------------------------------------
+{
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const reference = singleCellReference(10, 0)
+  const k = 10 // cell angle 5.25 deg
+  reference.material[k] = 9.95
+  const engagement = referenceMove(reference, {
+    kind: 'cut',
+    from: { x: 8.5, y: 10, z: 2, a: 0 },
+    to: { x: 11.5, y: 10, z: 2, a: 10 },
+  }, 0, 0.6, false, alongOf, 0, 10)
+  assert.ok(reference.material[k] < 2.01 && reference.material[k] > 1.99,
+    `diagonal combined path: material ${reference.material[k].toFixed(4)}, expected the 2.0 mm bottom face`)
+  assert.ok(engagement > 7.9,
+    `diagonal combined path: engagement ${engagement.toFixed(4)} is the cell's full removal`)
+  // Both endpoints' own poses leave the cell untouched: the removal above can
+  // only have come from an interior sample.
+  const endpoints = singleCellReference(10, 0)
+  endpoints.material[k] = 9.95
+  for (const pose of [
+    { x: 8.5, a: 0 }, { x: 11.5, a: 10 },
+  ]) {
+    referenceMove(endpoints, {
+      kind: 'cut', from: { x: pose.x, y: 10, z: 2, a: pose.a },
+      to: { x: pose.x, y: 10, z: 2, a: pose.a },
+    }, 0, 0.6, false, alongOf, pose.a, pose.a)
+  }
+  assert.equal(endpoints.material[k], 9.95, 'neither endpoint pose reaches the cell')
+  console.log('  diagonal combined-path repro: the interior sweep reaches a cell both endpoints miss')
+}
 
 // ── the seeded cases ──────────────────────────────────────────────────────
 
@@ -2819,6 +2888,19 @@ function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
   // accuracy bound; the estimate over-counts a wide angular window and is
   // deliberately not asserted. The grid itself must fit, because it is the
   // material map the reference actually allocates.
+  // Coarsening the height-map cell must not coarsen a cutting case into emitting
+  // nothing. On a bar only a few cutter radii wide the sampler's conservative
+  // cell lift, plus a positive leave, can raise every sampled tip to the blank:
+  // the fitted program then has no rough at all. The wall-leave sequence met
+  // this at a 0.429 mm cell and replayed a program with no motion, measuring
+  // nothing. Revert to the case's own grid, which its replay budget affords.
+  if (initial.programKind !== 'finish' && program.roughMoves.length === 0) {
+    const own = generate(initial)
+    if (own.roughMoves.length > 0) {
+      assert.ok(fitsGrid(initial), `${initial.label}: the case's own cell keeps the rough it measures`)
+      return { entry: initial, program: own }
+    }
+  }
   assert.ok(fitsGrid(entry), `${entry.label}: the reference grid does not fit its cell cap`)
   return { entry, program }
 }
@@ -2907,10 +2989,17 @@ function alongRadialBiteBound(ball: boolean, radius: number, stepdown: number, t
  *
  * The formula is the reference's own body contact for the near side of the
  * sphere (`centre * cos - sqrt(...)`), the shank's entry, and a flat's bottom
- * face; `tip` is the fallback when the ray is outside the body, since the
- * body's contact is never below its tip. Using the reference's standing
- * material and this contact cannot hide a bite: the measured bite is the
- * removal from the outermost solid down to the body's contact or above it.
+ * face. It is `bodyInterval`'s own contact, so the two cannot disagree about
+ * which rays the body reaches.
+ *
+ * **No intersection is `null`, never the tip** (#1103 ca-d correction 2, review
+ * P2). A ray the body misses entirely carries no contact, and returning the tip
+ * let `footprintStanding` credit that sample as material already removed: a
+ * Ø4 ball at tip 9 misses the ray 1.99 mm along its axis and 5 degrees off it,
+ * yet the descent checker then treated a 1.9 mm drop from the raw blank as a
+ * covered, later cut and accepted it against a 1 mm stepdown. `null` says the
+ * pass left nothing on this ray, so the cut stays a first cut and is judged by
+ * the one-stepdown rule.
  */
 function alongRayContact(
   ball: boolean,
@@ -2918,22 +3007,9 @@ function alongRayContact(
   tip: number,
   deltaDeg: number,
   dx: number,
-): number {
-  const delta = deltaDeg * Math.PI / 180
-  const cos = Math.cos(delta)
-  const sin = Math.sin(delta)
-  if (cos <= 0) return tip
-  const reachSq = radius * radius - dx * dx
-  if (reachSq < 0) return tip
-  if (!ball) return Math.max(tip, tip / cos)
-  const centre = tip + radius
-  const discriminant = reachSq - centre * centre * sin * sin
-  let contact = Number.POSITIVE_INFINITY
-  if (discriminant >= 0) contact = Math.max(0, centre * cos - Math.sqrt(discriminant))
-  const shankStart = centre / cos
-  const shankExit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
-  if (shankExit >= shankStart) contact = Math.min(contact, shankStart)
-  return Number.isFinite(contact) ? contact : tip
+): number | null {
+  const interval = bodyInterval(ball, radius, tip, deltaDeg * Math.PI / 180, dx)
+  return interval === null ? null : interval.contact
 }
 
 // ── the emitted motion's own layer descent (#1045 slice S) ────────────────
@@ -2964,6 +3040,8 @@ const DESCENT_KEY_BASE = 40_000_000
 interface DescentSample {
   readonly along: number
   readonly angle: number
+  /** The verified cut tip; a covering pass bounds the material it left. */
+  readonly tip: number
 }
 
 interface StageDescent {
@@ -3062,6 +3140,41 @@ function assertStageDescent(
   const angleSamples = [...angleGrid.values()].sort((a, b) => a - b)
   const standing = new Map<number, number>()
   const samples = new Map<number, DescentSample>()
+  // #1103 ca-d fix 1 (review P1): the key grid cannot line up every pass. A
+  // helix's refined pose grid depends on the layer's tips, so a later layer's
+  // sampled pose often has no earlier cut at its exact (along, angle) key even
+  // though an earlier pass's cutter body swept that ray. Judging such a pose as
+  // a **first** cut against the raw blank charges the whole blank instead of
+  // the one stepdown the previous layer left (seed 1 of the round set: 3.8483
+  // mm against the 3.001 mm allowance). The body's own contact at the offset is
+  // the same bound the along-stage standing allowance uses, and it is an upper
+  // bound on the material left, so a pass here still proves the real drop is
+  // inside the allowance. Bucket the samples by along so the lookup stays local.
+  const sampleBins = new Map<number, DescentSample[]>()
+  const sampleBinOf = (value: number): number => Math.floor(value / Math.max(cutterRadius, 1e-9))
+  const footprintStanding = (along: number, angleDeg: number, raw: number): number | null => {
+    const bin = sampleBinOf(along)
+    let material = Number.POSITIVE_INFINITY
+    for (let candidate = bin - 1; candidate <= bin + 1; candidate++) {
+      const bucket = sampleBins.get(candidate)
+      if (bucket === undefined) continue
+      for (const sample of bucket) {
+        if (Math.abs(sample.along - along) >= cutterRadius) continue
+        let delta = ((sample.angle - angleDeg) % 360 + 360) % 360
+        if (delta > 180) delta = 360 - delta
+        // The reach shrinks as the cut tip rises, so each sample's own tip
+        // decides whether its body covered this ray.
+        const reach = bodyAngularReachDeg(ball, cutterRadius, sample.tip, Math.max(raw, cutterRadius))
+        if (delta > reach + 1e-9) continue
+        // No intersection means this pass left nothing on the ray (#1103 ca-d
+        // correction 2, review P2); `null` must not become a material height.
+        const contact = alongRayContact(ball, cutterRadius, sample.tip, delta, Math.abs(sample.along - along))
+        if (contact === null) continue
+        material = Math.min(material, contact)
+      }
+    }
+    return material === Number.POSITIVE_INFINITY ? null : material
+  }
   let cuts = 0
   let margin = Number.POSITIVE_INFINITY
   let marginLabel = ''
@@ -3077,8 +3190,30 @@ function assertStageDescent(
       standing.set(key, raw)
     }
     if (!(tip < current - 1e-12)) return
-    const drop = current - tip
-    const first = !samples.has(key)
+    let drop = current - tip
+    let first = !samples.has(key)
+    // #1103 ca-j: a square blank's layer can be a **helix**, and one layer's
+    // passes at a ray sit on that band's own axial phase (the pitch follows the
+    // band's length, which changes as the qualifying rings change). The pose that
+    // established the material at this exact key is therefore not always the
+    // immediately preceding layer's pose at the same key, so a phase-shifted
+    // pose could read the layer-above height instead of what the passes actually
+    // left. `footprintStanding` is the existing answer to exactly that -- it
+    // finds the pass whose **body** covered the ray and returns that body's
+    // contact, an upper bound on the material left -- and it used to run only for
+    // a first cut. Run it whenever the drop is over the one-stepdown bound: a
+    // contact can only lower the measured drop, so this cannot hide a deep cut.
+    if (drop > stepdown + DESCENT_TOLERANCE + 1e-9) {
+      const covered = footprintStanding(along, angle, raw)
+      if (covered !== null) {
+        current = Math.min(current, covered)
+        first = false
+        drop = current - tip
+        // The covering pass already left the material at or below this pose:
+        // nothing is removed here.
+        if (!(drop > 1e-12)) return
+      }
+    }
     const cap = first ? 0 : Math.max(0, alongRadialBiteBound(ball, cutterRadius, stepdown, tip) - stepdown)
     const allowed = stepdown + cap + DESCENT_TOLERANCE
     cuts++
@@ -3097,7 +3232,12 @@ function assertStageDescent(
         + `+ cutter cap ${cap.toFixed(4)})`}`,
       )
     }
-    samples.set(key, { along, angle })
+    const sample: DescentSample = { along, angle, tip }
+    samples.set(key, sample)
+    const bin = sampleBinOf(along)
+    const bucket = sampleBins.get(bin)
+    if (bucket === undefined) sampleBins.set(bin, [sample])
+    else bucket.push(sample)
     standing.set(key, tip)
   }
   for (const move of moves) {
@@ -3146,7 +3286,7 @@ function assertStageDescent(
       // meet a sample the earlier layer's straight link had already lowered as
       // if it were the raw blank (117 false first-cut misses on flat cones once
       // square whole rings link). Sampling it judges more of the motion, not
-      // less; a move that also changes A keeps its endpoint judgement.
+      // less.
       if (Math.abs(dAlong) > 1e-9 && Math.abs(dAngle) <= 1e-9) {
         const low = Math.min(fromAlong, toAlong)
         const high = Math.max(fromAlong, toAlong)
@@ -3157,22 +3297,109 @@ function assertStageDescent(
         }
         continue
       }
-      if (Math.abs(dAlong) > 1e-9) {
-        visit(fromAlong, fromAngle, fromTip)
-        visit(toAlong, toAngle, toTip)
-        continue
-      }
+      // A cut that advances along **and** A is a link or a helix segment. It
+      // used to be judged at its two endpoints only, which let a coalesced
+      // helix hide its whole thread from the replay: the layer below sampled
+      // the thread at its own merged endpoints, so the layer above met poses
+      // with no recorded cut and was read as a first cut after a 3.85 mm drop
+      // (#1103 ca-d fix 1). Sample the segment at the reference angle grid
+      // instead, interpolating along and Z exactly as the commanded move does.
       const low = Math.min(fromAngle, toAngle)
       const high = Math.max(fromAngle, toAngle)
-      for (const angle of angleSamples) {
-        if (angle < low - DESCENT_TOLERANCE) continue
-        if (angle > high + DESCENT_TOLERANCE) break
-        const fraction = dAngle === 0 ? 0 : (angle - fromAngle) / dAngle
-        visit(fromAlong, angle, fromTip + (toTip - fromTip) * fraction)
+      // #1103 slice ca-d fix 1 (review P1): commanded A grows a turn per ring, so
+      // a later layer's ring is commanded at A > 360 while the reference samples
+      // stay inside one turn. Sampling only the raw 0..360 grid skipped every
+      // later-turn interior: the pose that had established standing material at
+      // that physical ray was never visited, and a later cut there was judged as
+      // the **first** cut against the raw blank. The seeded replay failed on
+      // seed 1 that way (3.0655 mm against the 3.001 mm one-stepdown allowance).
+      // Shift the reference samples into each commanded turn the move spans; the
+      // key `visit` builds still normalises to the physical ray, so the standing
+      // material is the same one a one-turn program records.
+      const firstTurn = Math.floor((low - DESCENT_TOLERANCE) / 360)
+      const lastTurn = Math.floor((high + DESCENT_TOLERANCE) / 360)
+      for (let turn = firstTurn; turn <= lastTurn; turn++) {
+        const shift = 360 * turn
+        const from = Math.max(low - DESCENT_TOLERANCE, shift)
+        const to = Math.min(high + DESCENT_TOLERANCE, shift + 360)
+        for (const sample of angleSamples) {
+          const angle = sample + shift
+          if (angle < from) continue
+          if (angle > to) break
+          const fraction = dAngle === 0 ? 0 : (angle - fromAngle) / dAngle
+          visit(fromAlong + dAlong * fraction, angle, fromTip + (toTip - fromTip) * fraction)
+        }
       }
     }
   }
   return { samples, cuts, margin, marginLabel }
+}
+
+// #1103 ca-d correction 2 (review P2): the descent footprint may only credit a
+// pass whose cutter body actually intersects the ray.
+//
+// A Ø4 ball at tip 9 sits 1.99 mm along and 5 degrees away from a pose on a
+// 16 mm square blank. Its footprint reach admits the sample (10.48 degrees), but
+// its sphere and shank both miss the ray: `alongRayContact` used to return the
+// tip 9 there, so `footprintStanding` reported 9 mm of standing material and the
+// checker treated a 1.9 mm drop from the raw blank (10.21 -> 8.31) as a covered,
+// later cut. The allowed drop became one stepdown plus the cutter cap (1.81 mm)
+// and the motion passed a 1 mm stepdown. With the intersection required the
+// sample contributes nothing, the cut stays a **first** cut, and its 1.9 mm drop
+// against the 1.001 mm one-stepdown allowance is rejected -- which is the
+// regression: on the old code this `assert.throws` never fires.
+{
+  const stock = squareStock(16, 20, 'x', { x: 0, y: 0 })
+  const radius = 2
+  const ball = true
+  const stepdown = 1
+  const rawAt = (angle: number): number => rawStockSurface(stock, angle, radius, ball)
+  const previousTip = 9
+  const targetAngle = 35
+  const targetTip = rawAt(targetAngle) - 1.9
+  const entry: Case = {
+    label: 'descent footprint repro',
+    stock,
+    profile: [{ along: 0, radius: 0 }],
+    type: 'ball_endmill',
+    diameter: 2 * radius,
+    stepdown,
+    stepover: 1,
+    roughSpacing: 1,
+    finishSpacing: 1,
+    requestedCellSize: 0.2,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: 20,
+    defaultParams: false,
+    compact: false,
+  }
+  // The first pose cuts 0.55 mm below the blank on its own ray, so it is a
+  // recorded sample inside one stepdown. The second is the repro.
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: previousTip, a: 30 }, to: { x: 0, y: 0, z: previousTip, a: 30 } },
+    { kind: 'cut', from: { x: 1.99, y: 0, z: targetTip, a: targetAngle }, to: { x: 1.99, y: 0, z: targetTip, a: targetAngle } },
+  ]
+  assert.ok(rawAt(30) > previousTip && rawAt(30) - previousTip <= stepdown + 1e-9,
+    'the previous pose is a legal first cut on its own ray')
+  assert.ok(Math.abs(rawAt(targetAngle) - targetTip - 1.9) < 1e-9,
+    'the repro pose sits 1.9 mm below the raw blank')
+  // The reach test admits the sample, so only the intersection check can stop
+  // the false credit.
+  assert.ok(bodyAngularReachDeg(ball, radius, previousTip, Math.max(rawAt(targetAngle), radius)) > 5,
+    'the footprint reach test admits the repro sample (so the reach test cannot be the guard)')
+  assert.equal(bodyInterval(ball, radius, previousTip, 5 * Math.PI / 180, 1.99), null,
+    'the Ø4 ball at tip 9 misses the ray 1.99 mm along and 5 degrees off its axis')
+  assert.throws(
+    () => assertStageDescent(entry, 'footprint', moves, 'around', 0, ball, radius, stepdown, alongOf, 1),
+    /does not descend from the raw blank at along/,
+    'the 1.9 mm first cut is rejected instead of being credited to a pass that misses the ray',
+  )
 }
 
 /**
@@ -3260,8 +3487,13 @@ function descentCoversRay(
     return d > 180 ? 360 - d : d
   })()
   const cellDx = cell.along < 0.5 ? 0.5 - cell.along : cell.along > 1.5 ? cell.along - 1.5 : 0
-  const extendedBound = Math.max(oldBound,
-    cell.material - alongRayContact(true, radius, lowerTip, cellDelta, cellDx))
+  // The lower layer does reach this ray through the ball's shank, so the contact
+  // exists; `null` here would mean the formula and the reach test disagree.
+  const cellContact = alongRayContact(true, radius, lowerTip, cellDelta, cellDx)
+  assert.ok(cellContact !== null, 'the lower layer intersects the recorded worst cell')
+  const extendedBound = cellContact === null
+    ? oldBound
+    : Math.max(oldBound, cell.material - cellContact)
   assert.ok(extendedBound >= moveSurfaceWorst - 1e-12,
     `the standing-material bound ${extendedBound.toFixed(4)} covers the measured ${moveSurfaceWorst.toFixed(4)}`)
   console.log(`  slice-Q repro: ${reproBite.toFixed(4)} mm at the 24.25 deg ray; previous-layer bound `
@@ -3553,6 +3785,12 @@ interface LinkProofContext {
  * angle from the start to the end of the change, and the region is sampled along
  * the slope rather than at one angle.
  */
+/** Whether two commanded A values are the same physical rotation. */
+function sameRotaryAngleDegrees(a: number, b: number): boolean {
+  const delta = Math.abs(((a - b) % 360 + 360) % 360)
+  return delta <= 1e-9 || delta >= 360 - 1e-9
+}
+
 function proveAtLayerLink(
   context: LinkProofContext,
   move: ToolpathMove,
@@ -3577,8 +3815,10 @@ function proveAtLayerLink(
   if (toAngle !== fromAngle) {
     counts.acrossAngle++
     acrossAngleByCase.set(entry.label, (acrossAngleByCase.get(entry.label) ?? 0) + 1)
-  } else if (stock.shape === 'square'
-    && (Math.abs(fromAngle) <= 1e-9 || Math.abs(fromAngle - 360) <= 1e-9)) {
+  } else if (stock.shape === 'square' && sameRotaryAngleDegrees(fromAngle, 0)) {
+    // The coverage counter asks for a **whole-ring** link at physical A0/A360.
+    // Commanded A accumulates a turn per ring (#1103), so by the time a whole
+    // ring links it may be at A2880: normalise before deciding (fix 1).
     wholeRingSquareByCase.set(entry.label, (wholeRingSquareByCase.get(entry.label) ?? 0) + 1)
   }
 
@@ -3923,9 +4163,71 @@ let worstPlungeLabel = ''
 // An in-air link is a rapid and is checked for body clearance below; a link
 // that stays a cut (the A-changing travel rule) must remove nothing.
 let roughLinkChecks = 0
+/**
+ * Rough around cut moves that are part of a **continuous helix** (#1103 ca-j).
+ *
+ * A square blank's whole-ring band is a helix now, so the emitted program holds
+ * moves that travel along the bar *and* turn A -- the shape the #1093/#1117
+ * at-layer link rules were written for. A helix is not a link: it is the layer's
+ * own cut, and its depth is owned by `assertStageDescent` above (which replays
+ * every emitted pose against the raw blank and the material the earlier layers
+ * left, corner shell and all). The link proof's one-stepdown bound is the wrong
+ * measure here: a square blank's intact corner shell stands more than a stepdown
+ * above the corner rays, exactly the reason the interior number is a diagnostic
+ * on a square blank, and a helix's cutter flank removes it just as a ring cut
+ * does. Counting them keeps the classification visible.
+ */
+let helixMoveChecks = 0
+/** Square blank and round bar share of those moves. */
+let helixSquareChecks = 0
 let roundAroundCases = 0
 /** Non-revolved models replayed (#1093 review). */
 let featureCases = 0
+
+/**
+ * The moves of one around stage that belong to a continuous helix (#1103 ca-j).
+ *
+ * Two shapes reach the analysis. The generator merges collinear moves, so a
+ * helix over a surface of revolution arrives as one (or a few) commanded moves
+ * whose A span is a whole number of turns -- 720 degrees on the failing fixture,
+ * which no at-layer link can be. A helix the surface does not make collinear
+ * stays a run of short (along, A) segments at one axial advance per degree,
+ * which the run test below recognises and a pair of ring links never is.
+ */
+function helixMovesOf(
+  moves: readonly ToolpathMove[],
+  alongOf: (point: ToolpathMove['from']) => number,
+): Set<ToolpathMove> {
+  const set = new Set<ToolpathMove>()
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = alongOf(move.to) - alongOf(move.from)
+    const turn = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) set.add(move)
+  }
+  let run: ToolpathMove[] = []
+  let pitch = 0
+  const flush = (): void => {
+    if (run.length >= 6) for (const move of run) set.add(move)
+    run = []
+  }
+  for (const move of moves) {
+    const along = move.kind === 'cut' ? alongOf(move.to) - alongOf(move.from) : 0
+    const turn = move.kind === 'cut' ? (move.to.a ?? 0) - (move.from.a ?? 0) : 0
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) > 1e-9) {
+      const next = along / turn
+      if (run.length === 0
+        || Math.abs(next - pitch) <= 1e-6 * Math.max(Math.abs(next), Math.abs(pitch))) {
+        run.push(move)
+        pitch = next
+        continue
+      }
+    }
+    flush()
+  }
+  flush()
+  return set
+}
 
 for (const { entry, program } of CASES) {
   currentCaseLabel = entry.label
@@ -4068,11 +4370,15 @@ for (const { entry, program } of CASES) {
     // distance is the nearest band's.
     const outside = (along: number, angle: number): number => {
       let distance = Number.POSITIVE_INFINITY
+      // #1103 slice ca-c: an around pass carries A past one turn (it never
+      // reverses), and the region is a property of the bar's surface, so the
+      // distance is measured on A modulo one turn.
+      const physical = ((angle % 360) + 360) % 360
       for (const rect of regionList(entry.region!)) {
         const alongOut = Math.max(0, rect.alongFrom - along, along - rect.alongTo)
         let angleOut = Number.POSITIVE_INFINITY
         for (let turn = -1; turn <= 1; turn++) {
-          const shifted = angle + turn * 360
+          const shifted = physical + turn * 360
           angleOut = Math.min(angleOut, Math.max(0,
             angleOf(rect.acrossFrom) - shifted, shifted - angleOf(rect.acrossTo)))
         }
@@ -4117,7 +4423,10 @@ for (const { entry, program } of CASES) {
         if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) continue
         if (alongOf(move.from) !== alongOf(move.to)) continue
         const mid = { along: alongOf(move.from), angle: (move.from.a + move.to.a) / 2 }
-        if (mask.containsPoint(at(mid.along, mid.angle))) continue
+        // The mask repeats one circumference each way, so a commanded A past one
+        // turn is tested on its physical angle (#1103 slice ca-c).
+        const physicalMid = ((mid.angle % 360) + 360) % 360
+        if (mask.containsPoint(at(mid.along, physicalMid))) continue
         // The A midpoint of a merged cut that wraps A0/A360 is not its physical
         // midpoint; only a gap turn crosses the region this way, and one that
         // does must already be in air.
@@ -4213,12 +4522,17 @@ for (const { entry, program } of CASES) {
   }
 
   let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
+  /** #1103 ca-j: the finish stage's helix moves, for the finished-surface bound below. */
+  let finishHelixMoves = 0
   for (const stage of stages) {
     const bound = roughBound
     // A finish-only program cuts to full depth in one pass, so the along-stage
     // radial bite does not apply to it; it is covered by the advisory instead.
     // (Turning engagement and plunges are rough-only assertions regardless.)
     const unlicensedFinish = stage.finish && entry.programKind === 'finish'
+    const helixMoves = stage.direction === 'around'
+      ? helixMovesOf(stage.moves, alongOf)
+      : new Set<ToolpathMove>()
     for (const move of stage.moves) {
       const hasAngle = move.from.a !== undefined || move.to.a !== undefined
       const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
@@ -4282,9 +4596,16 @@ for (const { entry, program } of CASES) {
         // along-mode pass is a constant-angle cut by construction.
         // #1117 rl-e: a rough link may also change A -- the partial-ring case, one
         // straight slope in (along, A). The finish's links stay at one angle.
+        const helixMove = helixMoves.has(move)
+        if (helixMove) {
+          helixMoveChecks++
+          if (entry.stock.shape === 'square') helixSquareChecks++
+          if (stage.finish) finishHelixMoves++
+        }
         const linkMove = stage.direction === 'around'
           && alongOf(move.from) !== alongOf(move.to)
           && (fromAngle === toAngle || !stage.finish)
+          && !helixMove
         if (linkMove) {
           if (stage.finish) {
             finishLinkChecks++
@@ -4338,8 +4659,17 @@ for (const { entry, program } of CASES) {
             // A sharp non-revolved corner makes the cumulative removed material
             // an upper bound with no stepdown meaning (the same reason the along
             // stage's interior number is not a bound); the link and rapid checks
-            // carry the non-revolved cases.
-            if (!entry.mesh) checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+            // carry the non-revolved cases. A **square blank** has that corner
+            // even when its model is revolved: the body sweeps under the intact
+            // corner shell for several angles of one move, and the sum of those
+            // cavities is not a radial depth. So the number is a diagnostic there
+            // too, and the assertion is kept for the round bars it was written
+            // for (#1103 ca-d fix 1: the corrected multi-turn reference reports
+            // the true cumulative value, which the one-stepdown bound never
+            // described).
+            if (!entry.mesh && stock.shape === 'round') {
+              checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+            }
           }
         } else {
           // #1045 slice O/P: an along pass is a **flank** cut, not a radial
@@ -4391,8 +4721,13 @@ for (const { entry, program } of CASES) {
             ? alongLo - moveSurfaceCell.along
             : moveSurfaceCell.along > alongHi ? moveSurfaceCell.along - alongHi : 0
           const reachedBound = alongRadialBiteBound(ball, cutterRadius, stepdown, tip)
-          const standingBound = moveSurfaceCell.material
-            - alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          // A body that misses the cell's ray left nothing there, so it cannot
+          // widen the allowance: the standing term is unavailable, not a whole
+          // tip of removal (#1103 ca-d correction 2, review P2).
+          const cellContact = alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          const standingBound = cellContact === null
+            ? Number.NEGATIVE_INFINITY
+            : moveSurfaceCell.material - cellContact
           // #1045 slice S: the standing-material term is only sound where the
           // stage's own emitted samples inside this cutter's footprint really
           // descended from the raw blank one stepdown at a time. A finish has
@@ -4472,7 +4807,23 @@ for (const { entry, program } of CASES) {
                 worst[key].excess = excess
                 worst[key].label = keyLabel
               }
-              if (!entry.mesh) {
+              // Within one cutter radius of a band face the outermost pass is
+              // pulled in, so the cutter's **side** cuts the retained collar:
+              // its radial bite there is not a layer stepdown, exactly as the
+              // blank-touch turn rule already carves out (`proveRoughTurn`).
+              const faceDistance = Math.min(
+                Math.abs(worstCell.along - entry.alongStart),
+                Math.abs(worstCell.along - entry.alongEnd),
+              )
+              const collar = faceDistance <= cutterRadius + budget.alongBin
+              // #1103 ca-j: a **helix** move is not a turning cut in this sense.
+              // Its A turn comes with the along advance, so the cumulative
+              // interior number spans several turns of the band and collects
+              // cavities under the intact corner shell that the ring path's
+              // one-turn check never sees (the same reason the interior number is
+              // a diagnostic on a square blank). What bounds how deep a helix may
+              // cut is `assertStageDescent`, which replays every emitted pose.
+              if (!entry.mesh && !collar && !helixMove) {
                 checkEngagement(engagement, bound,
                   `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
                   + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
@@ -4506,7 +4857,11 @@ for (const { entry, program } of CASES) {
                 worstPlunge = engagement
                 worstPlungeLabel = keyLabel
               }
-              if (!entry.mesh) {
+              const plungeFace = Math.min(
+                Math.abs(worstCell.along - entry.alongStart),
+                Math.abs(worstCell.along - entry.alongEnd),
+              )
+              if (!entry.mesh && plungeFace > cutterRadius + budget.alongBin) {
                 checkEngagement(engagement, bound,
                   `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
                   + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
@@ -4681,8 +5036,24 @@ for (const { entry, program } of CASES) {
   // property checked here is that the finish is not below the model and not
   // further above it than that lift plus its own scallop.
   const conservativeLift = entry.requestedCellSize
+  // #1103 ca-j: a square blank's finish band can be a **helix** now. A helix's
+  // between-sample error is the module's own tolerance (`helixTolerance`, whose
+  // floor is `AROUND_ANGLE_TOLERANCE_MM` = 0.005 mm) and it is measured along
+  // the **diagonal** (along, A) chord, so it adds to the cell lift and the ring
+  // scallops this allowance already names instead of being one of them. The ring
+  // path's angular sag is the `0.005` above; this is the diagonal one.
+  const helixTolerance = finishHelixMoves > 0 ? 0.005 : 0
+  // A square blank's blank support is not the cell's own ray: the corner stands
+  // above it, and the reference's cell carries that support. The ring path
+  // happened to sample the corner at the same angular phase as the reference's
+  // bins; a helix's (along, A) phase is its own, so the support it meets at a
+  // cell can be one reference bin away -- the same term the corner already
+  // contributes once. It is an angular-phase allowance, not slack in the cut.
+  const helixCornerSupport = finishHelixMoves > 0 && entry.stock.shape === 'square'
+    ? corner * referenceAngleRad
+    : 0
   const surfaceTolerance = conservativeLift + alongScallop + angularScallop + 0.005
-    + corner * referenceAngleRad + 1e-6
+    + helixTolerance + helixCornerSupport + corner * referenceAngleRad + 1e-6
   const skip = 2 * budget.alongBin + cutterRadius
   // A stubbed end keeps one cutter radius of the band uncut on purpose: the
   // cutter-centre span is pulled inside the stub face so the cutter's side
@@ -4862,6 +5233,10 @@ assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (
 // A run that stops emitting a qualifying link on one of them -- because the
 // generator fell back to raised links, or because a case was dropped -- fails
 // here instead of passing with a hole where that dimension's proof should be.
+assert.ok(helixMoveChecks > 0,
+  `a square blank's helix moves are classified as the layer's cut, not as links (${helixMoveChecks})`)
+assert.ok(helixSquareChecks > 0,
+  `the square blank's whole-ring bands reach the helix path (${helixSquareChecks})`)
 assert.ok(atLayerLinkCounts.total > 0,
   `the at-layer rough links are proved against the reference (${atLayerLinkCounts.total})`)
 

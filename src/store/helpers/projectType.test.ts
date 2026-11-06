@@ -283,13 +283,18 @@ function postOperations(
  * layers now alternate the direction of their angle sequence instead of adding
  * a full turn per layer. The same cuts and depths are made, in a different
  * order and direction, so A stays within [0, 360].
+ *
+ * #1103 slice ca-h recaptured the Around row alone: every rotary program now
+ * ends facing 0 up, so its posted text gains the forward end turn, the
+ * machine-coordinate retract and the instruction. The generated moves are
+ * unchanged, and the non-rotary rows are untouched.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: 'b2c32e5725b5322e',
+  around: '675032fe662a0a03',
   aroundMoves: '57c161faf512400a',
 } as const
 

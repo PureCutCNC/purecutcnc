@@ -235,6 +235,7 @@ export const dialogsEn = {
   'dialogs.export.previewNoOperations': 'No preview: no operation is ticked for export.',
   'dialogs.export.previewMachineMissing': "No preview: this project's selected machine is not in the project. Choose it again in project settings.",
   'dialogs.export.movesLines': '{moves} moves, {lines} lines total',
+  'dialogs.export.rotaryZeroNotice': 'Start with A zeroed at 0 up. The program ends at 0 up and pauses between rotary operations for you to zero A.',
   'dialogs.export.error.generationFailed': 'Generation failed for "{operation}": {detail}',
   'dialogs.export.error.generationInterrupted': 'Generation for "{operation}" was cancelled or superseded. Change the selection or an option, then export again.',
   'dialogs.export.error.missingTool': 'Operation "{operation}" has no tool assigned.',
@@ -430,6 +431,8 @@ export const dialogsEn = {
   'dialogs.machineEditor.rotaryXMotor': 'The X motor',
   'dialogs.machineEditor.rotaryWord': 'Program word: {word}',
   'dialogs.machineEditor.rotaryReverse': 'Reverse direction',
+  'dialogs.machineEditor.rotaryZeroA': 'Zero A line (optional)',
+  'dialogs.machineEditor.rotaryZeroAHint': 'Runs before every rotary operation; leave empty to pause and zero A by hand.',
 
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': 'line {line}',
@@ -445,6 +448,7 @@ export const dialogsEn = {
   'dialogs.machineDiagnostics.ruleName.units': 'units template',
   'dialogs.machineDiagnostics.ruleName.inverse-time-on': 'inverse-time on template',
   'dialogs.machineDiagnostics.ruleName.inverse-time-off': 'inverse-time off template',
+  'dialogs.machineDiagnostics.ruleName.zero-a': 'Zero A line',
   'dialogs.machineDiagnostics.ruleName.torch': 'plasma torch template',
   'dialogs.machineDiagnostics.ruleName.material': 'material and torch-height template',
   'dialogs.machineDiagnostics.ruleName.material-feed': 'material feed template',

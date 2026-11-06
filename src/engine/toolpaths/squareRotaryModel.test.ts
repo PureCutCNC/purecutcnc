@@ -931,7 +931,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       { ...base, stockToLeave: 0, passDirection: direction }, {})
     const withLeave = generateRotaryRough('leave', mesh, stock, BALL,
       { ...base, stockToLeave: leave, passDirection: direction }, {})
-    assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
+    const roughHash = createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16)
+    assert.equal(roughHash,
       // #1098: square along rough layers alternate direction. #1117 rl-b
       // re-recorded the around row: its corner arcs now link at the layer as
       // cutting feeds instead of rising over them, so only the around
@@ -942,7 +943,16 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // #1117 (square links) re-recorded it again: the whole rings below the
       // blank's inscribed radius now link at the layer too (10 raised links
       // became at-layer cuts; nothing else moved).
-      direction === 'along' ? 'fac8eaac0fb0b159' : '87d8b1bd453b40f4',
+      // #1103 slice ca-d fix 1 re-recorded the around row: the forward seam
+      // walk samples the rows the commanded sweep crosses and the wide cleared
+      // model gaps are proven by the at-layer row proof, so the around links are
+      // the ones the fix keeps down. The along row did not move.
+      // #1103 slice ca-j re-recorded the around row once more: this square
+      // blank's layers below the flat face are one continuous helix per band now
+      // (`rotarySquareHelix.test.ts`), so the around program's rings and its
+      // at-layer links between them are replaced by the helix. The finish rows
+      // below moved in ca-j's correction round 1, when the finish was admitted.
+      direction === 'along' ? 'fac8eaac0fb0b159' : '4a38235b13638c6f',
       `rough ${direction}: zero stock to leave is byte-identical`)
     const spanStart = base.alongStart + BALL.radius
     const first = outermost(withLeave, spanStart)
@@ -981,14 +991,24 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     } as const
     const finish = generateRotaryFinish('finish', mesh, stock, BALL, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, BALL, { ...params, stockToLeave: 0 }, {})
+    // #1103 slice ca-c re-recorded the around row on purpose: a square blank's
+    // rings are now forward-only (A grows one turn per ring and is never
+    // rewound), so both of its programs moved. The along rows are the base
+    // commit's bytes exactly.
+    // #1103 slice ca-j re-recorded the around rows again: the finish's whole-ring
+    // band is one continuous helix now (rough and finish alike, review P1), so
+    // its ring program is replaced by the helix. The along rows are still the
+    // base commit's bytes.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'b7fea12dcc3c98c5' : 'ee7c8534a72873d6',
+      direction === 'along' ? 'b7fea12dcc3c98c5' : '1c7492c5cba1e187',
       `finish ${direction}: zero stock to leave is byte-identical`)
     // Recaptured for #1095: square around is unchanged (its stub never entered
     // the sampling mesh); square along carries the un-thickened wall now, so
     // its old value (which lifted the outermost pass to ~4.42) moved.
+    // Recaptured for #1103 slice ca-c: the square around finish's rings are
+    // forward-only, so its positive-leave program moved with the zero-leave one.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'cda89c07cab2130f' : '46ba23d5a6192237',
+      direction === 'along' ? 'cda89c07cab2130f' : 'df7e7d6cd246a481',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + BALL.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

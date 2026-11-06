@@ -31,7 +31,7 @@ import { isBarStock, isSquareStock } from '../../types/barStock'
 import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import type { OperationTarget } from '../../types/project'
 import { resolveEmittedArc } from './arcFitting'
-import type { ArcMoveDescriptor } from './arcFitting'
+import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
 import {
   createArcEmitOptions,
   createEmittedValueFormatter,
@@ -53,6 +53,7 @@ import {
 import type { FeedDirective, OperationSequence } from './motionPipeline'
 import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { emitOpenSbpProgram } from './opensbpEmitter'
+import { templateLineCode } from './templateRules'
 
 // What the emitter has written so far. Which tool is held and whether the
 // spindle and coolant are on are not tracked here: that is the program's
@@ -213,6 +214,36 @@ function templateCanMoveZ(line: string, commentPrefix: string): boolean {
 }
 
 /**
+ * The stop written between two rotary operations when the machine's pause
+ * template carries no mandatory stop (#1152 correction round 1, finding 2;
+ * round 2, finding 1). Without it the operator is told to zero A with nothing
+ * stopping the machine to do it. `M0` is the stop every G-code dialect that
+ * can carry a rotary axis understands; the emitter's rotary word is refused for
+ * ShopBot part files, so its own stop never has to be invented here.
+ */
+const MANUAL_PAUSE_COMMAND = 'M0'
+
+/**
+ * True when a rendered machine template carries a stop the controller **must**
+ * halt on: `M0` (`M00` is the same word). Nothing else counts (#1152
+ * correction round 2, finding 1). `M1`/`M01` is an optional stop — with the
+ * optional-stop switch off the program runs straight through it — and `M5` only
+ * stops the spindle. `M2`/`M30` end the program rather than pause it, so they
+ * cannot hand the operator the bar and then resume. Comments are stripped
+ * first, so prose never counts as a command.
+ */
+function templateHasMandatoryStop(content: string, outputDialect: string | undefined): boolean {
+  for (const line of content.split(/\r?\n/)) {
+    // The dialect's comment forms, not the definition's own prefix: LinuxCNC
+    // declares `(` yet still reads `; M0` as a comment (#1103).
+    for (const match of templateLineCode(line, outputDialect).matchAll(/\bM\s*(\d+(?:\.\d+)?)/gi)) {
+      if (Number(match[1]) === 0) return true
+    }
+  }
+  return false
+}
+
+/**
  * Export a program for the machine definition's output dialect.
  *
  * This is the only place a dialect is chosen. Each dialect owns its line
@@ -293,6 +324,39 @@ const MODAL_DISTANCE_COMMAND = 'G90'
 const MODAL_FEED_COMMAND = 'G94'
 const MODAL_PLANE_COMMAND = 'G17'
 
+/** One whole turn of the rotary, in degrees (#1103 slice ca-h). */
+const ROTARY_TURN = 360
+/**
+ * How close an angle must be to a whole turn to count as one. A generated
+ * pose lands on a multiple of 360 exactly, so the slack only absorbs the
+ * repeated additions; it is far below the emitted precision.
+ */
+const WHOLE_TURN_EPSILON = 1e-6
+
+/**
+ * The next whole turn at or ahead of `angle` — `360 * ceil(angle / 360)`,
+ * with a slack so an angle that is a whole turn within float noise is left
+ * alone instead of being given another full turn.
+ */
+function nextWholeTurn(angle: number): number {
+  return ROTARY_TURN * Math.ceil((angle - WHOLE_TURN_EPSILON) / ROTARY_TURN)
+}
+
+/**
+ * The last angle an operation's planned steps command, in the program's own
+ * direction, or null when it commands none. Read from the plan rather than the
+ * toolpath so the number is exactly what the emitter wrote; a fitted arc is
+ * never a turning move (rule 2), so only linear steps carry one.
+ */
+function lastPlannedAngle(steps: readonly FittedMoveDescriptor[]): number | null {
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const step = steps[index]
+    const angle = step.kind === 'arc' ? step.endPoint.a : step.point.a
+    if (angle !== undefined) return angle
+  }
+  return null
+}
+
 function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const { project, operations, definition, options } = input
   const lines: string[] = []
@@ -369,6 +433,19 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    *  retracts are in machine coordinates (#1054 slices 2 and 2b). An Around
    *  program works above the whole bar and needs no such frame. */
   const barSetupProgram = setupPlan.manualIndexAngle !== null
+  // #1103 slice ca-h, part 3: the machine's own "Zero A" line, when it has one.
+  // A filled line automates the operator's zeroing, so the emitter opens every
+  // rotary operation with it and never pauses between rotary operations; an
+  // empty one is what makes the pause necessary. The line is validated as a
+  // template (`rotary.zeroA` in `templateRules.ts`) to set A zero and move no
+  // axis, so it is written as-is and the emitter keeps no Z bookkeeping for it.
+  const zeroALines = definition.rotary === undefined
+    ? []
+    : (definition.rotary.zeroA ?? '').split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0)
+  /** True for every operation whose own toolpath commands A. */
+  const commandsAngle = operations.map(({ toolpath }) => toolpath.moves.some(
+    (move) => move.from.a !== undefined || move.to.a !== undefined,
+  ))
   const projectBarTravelZ = isBarStock(project.stock)
     ? rotaryTravelZ(project.stock, project.meta.units)
     : null
@@ -667,7 +744,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * operation must write its own position rather than inherit a 0/0 the
    * emitter would have invented.
    */
-  const emitManualIndexTurn = (angleDeg: 0 | 180) => {
+  const emitManualIndexTurn = (angleDeg: 0 | 180, afterClearance?: () => void) => {
     if (!isBarStock(project.stock) || state.rotaryWord === null) return
     leaveInverseTime()
     if (!emitMachineCoordinateRetract()) {
@@ -675,6 +752,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       return
     }
     state.motionCommand = null
+    // The machine's Zero A line, when it has one, runs after this clearance
+    // retract and before the turn (#1103 slice ca-h): it sets the A offset at
+    // whatever orientation the bar was left in, which is exactly what the
+    // turn below must be measured from.
+    afterClearance?.()
     // State the angle even when it equals the last one written: the restart
     // block that follows a tool change may already have stated the operation's
     // start angle, and the turn must still be a turn the controller is told
@@ -685,6 +767,39 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     })
     state.currentPosition = null
     emittedPosition = null
+  }
+
+  /**
+   * The controller's A now reads 0 at the bar's current orientation: either the
+   * machine's own Zero A line ran, or the operator was told to zero A and
+   * paused. Either way the emitter must stop believing the number it wrote
+   * before that (#1152 correction round 1, finding 1): after `M0` the tracking
+   * still said A360, so a following operation's own A360 positioning word
+   * disappeared and its first cut was commanded from a controller the operator
+   * had reset to 0. Nothing about X/Y/Z changes: the zeroing forms move no
+   * axis, so the work position and the proven Z are untouched.
+   */
+  const markRotaryZeroed = () => {
+    state.rotaryAngle = 0
+    if (state.currentPosition !== null) {
+      state.currentPosition = { ...state.currentPosition, a: 0 }
+    }
+  }
+
+  /**
+   * Write the machine's own "Zero A" line (#1103 slice ca-h, part 3).
+   *
+   * The line sets the controller's A offset at the current orientation, so the
+   * bar reads 0 wherever it is; the emitter therefore restarts A's tracking
+   * from 0, not from the last number it wrote. It is written with `emitLine`,
+   * not `emitTemplateLine`: it is the one place engine text may name the
+   * rotary, and the template-word guard that refuses a machine template driving
+   * the rotary must not read it as one.
+   */
+  const emitZeroALine = (lines: readonly string[]) => {
+    if (state.rotaryWord === null) return
+    for (const line of lines) emitLine(line)
+    markRotaryZeroed()
   }
 
   /**
@@ -956,12 +1071,17 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
    * own opening turn follows immediately and is itself the machine-coordinate
    * retract plus a stated angle (#1054), so a second retract would be noise.
    * The caller places the start after that turn instead (finding 5).
+   *
+   * `afterClearance` runs once the retract has proved the height and before
+   * the operation's first angle word — the machine's Zero A line (#1103 slice
+   * ca-h), which must execute above the work and before any turn.
    */
   const restartAfterToolChange = (
     start: ToolpathPoint | null,
     safeZ: number,
     startPlane: number | null,
     retractFirst: boolean,
+    afterClearance?: () => void,
   ): void => {
     emitLine(`${MODAL_DISTANCE_COMMAND} ${MODAL_FEED_COMMAND} ${MODAL_PLANE_COMMAND}`)
     state.inverseTime = false
@@ -990,6 +1110,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     } else {
       emitMotionLine(definition.motion.rapidCommand, { z: safeZ })
     }
+    afterClearance?.()
     placeAtStart(start, startPlane, barSetupProgram)
   }
 
@@ -1237,6 +1358,23 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           ? null
           : restartStart!.z
 
+    // #1103 slice ca-h, part 3: a filled Zero A line opens a rotary operation
+    // after its clearance retract and before its first turn. Two paths can
+    // prove that clearance — the post-tool-change restart and the manual-index
+    // turn — and the hook below runs inside whichever one this operation uses.
+    // An operation with neither (no tool change is emitted) gets its own
+    // machine-coordinate retract before the moves instead.
+    const rotaryOpensHere = zeroALines.length > 0 && state.rotaryWord !== null
+      && (commandsAngle[opIndex] || pendingManualIndexAngle !== null)
+    const zeroAOpening = rotaryOpensHere ? () => emitZeroALine(zeroALines) : undefined
+    const zeroAAtOperationStart = zeroAOpening !== undefined && pendingManualIndexAngle === null
+      && commandsAngle[opIndex]
+      ? zeroAOpening
+      : undefined
+    const zeroAAtManualIndex = zeroAOpening !== undefined && pendingManualIndexAngle !== null
+      ? zeroAOpening
+      : undefined
+
     // Tool change
     if (step.changeTool) {
       // Inverse-time mode is left before the program pauses (rule 4): a tool
@@ -1272,6 +1410,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         operationSafeZ,
         restartStartPlane,
         pendingManualIndexAngle === null,
+        zeroAAtOperationStart,
       )
     }
 
@@ -1286,10 +1425,24 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     // (Codex review of slice F, finding 5). The tool-change restart above
     // deliberately wrote only its modal baseline.
     if (pendingManualIndexAngle !== null) {
-      emitManualIndexTurn(pendingManualIndexAngle)
+      emitManualIndexTurn(pendingManualIndexAngle, zeroAAtManualIndex)
       pendingManualIndexAngle = null
       if (restartStart !== null) {
         placeAtStart(restartStart, restartStartPlane, false)
+      }
+    }
+
+    // #1103 slice ca-h, part 3: no tool change was emitted and no manual-index
+    // turn follows, so prove the clearance here before the machine's Zero A
+    // line. G53 is the only height that is independent of the work offsets a
+    // previous operation may have changed; without it the line (and the turn
+    // that follows it) would run at a height nobody proved, which is exactly
+    // what a filled Zero A line must not do.
+    if (rotaryOpensHere && !step.changeTool && zeroAAtManualIndex === undefined) {
+      if (emitMachineCoordinateRetract()) {
+        emitZeroALine(zeroALines)
+      } else {
+        refuseTurnClearance()
       }
     }
 
@@ -1476,6 +1629,73 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
 
+    // #1103 slice ca-h, part 2: an operation that commands A ends facing 0 up.
+    // After its own final retract a machine-coordinate retract proves the
+    // clearance (#1054), then a forward-only turn goes to the next whole turn —
+    // never a rewind, never a modulo-360 wrap. A whole turn is the same
+    // physical orientation as A0, so zeroing A (the operator's, or the next
+    // operation's Zero A line) restores this operation's own frame and the bar
+    // is left in a known orientation when the operator runs the operations
+    // separately. A manual-index Top/Bottom program commands its A once, at
+    // the program's opening turn, so its turn is written after its last
+    // operation only; turning after each one would cut a later operation on
+    // the wrong face.
+    const manualIndexEndAngle = opIndex === operations.length - 1 && setupPlan.manualIndexAngle !== null
+      ? setupPlan.manualIndexAngle * rotaryDirection(definition)
+      : null
+    const lastAngle = plan !== null && commandsAngle[opIndex]
+      ? lastPlannedAngle(plan.steps)
+      : manualIndexEndAngle
+    if (lastAngle !== null && state.rotaryWord !== null) {
+      const endTurn = nextWholeTurn(lastAngle)
+      if (endTurn > lastAngle + WHOLE_TURN_EPSILON) {
+        if (emitMachineCoordinateRetract()) {
+          state.motionCommand = null
+          // State the angle even if it happens to equal the last one written:
+          // the turn must be a turn the controller is told about.
+          state.rotaryAngle = null
+          emitMotionLine(definition.motion.rapidCommand, { a: endTurn })
+          // G53 left X/Y (and the work frame) unknown; the A-only rapid must
+          // not invent a position for them.
+          state.currentPosition = null
+          emittedPosition = null
+        } else {
+          refuseTurnClearance()
+        }
+      }
+      // "0 up" is said with a comma rather than the handoff's parentheses: a
+      // parenthesised comment dialect (generic, grblHAL, LinuxCNC, Mach3,
+      // UCCNC) cannot carry a nested pair — the inner `)` would end the
+      // comment and post the rest as code — and `safeCommentText` strips them
+      // anyway, which reads as "A is at 720 0 up . Zero A…".
+      comment(`A is at ${formatGCodeNumber(endTurn, definition, outputUnits)}, 0 up. Zero A before the next operation.`)
+      // Part 3: with no machine Zero A line the operator has to zero A between
+      // rotary operations by hand, so the program pauses there. A program whose
+      // last rotary operation ends here has nothing to zero for, so it does not
+      // pause.
+      if (zeroALines.length === 0 && commandsAngle.slice(opIndex + 1).some(Boolean)) {
+        comment('Zero A at 0 up, then resume.')
+        // The instruction is worthless without a stop the machine must obey
+        // (#1152 correction round 1, finding 2; round 2, finding 1). A machine
+        // may carry no pause template at all, one that is only a comment, or
+        // one whose command does not stop the program — `M1` waits for an
+        // optional-stop switch that may be off, `M5` only stops the spindle.
+        // Only a template carrying `M0` is used as written; everything else is
+        // replaced by `M0`, the mandatory stop every G-code dialect with a
+        // rotary axis understands. (A ShopBot cannot carry a rotary axis —
+        // validation refuses the block — so its part-file stop is out of this
+        // path.)
+        const pause = substituteTemplates(definition.toolChange.pauseCommand, operationContext)
+        emitTemplateLine(
+          templateHasMandatoryStop(pause, definition.outputDialect) ? pause : MANUAL_PAUSE_COMMAND,
+        )
+        // The operator has just made the bar's current orientation A0, so the
+        // controller's A restarts at 0. Keeping the pre-pause number hid the
+        // next operation's own positioning word (finding 1).
+        markRotaryZeroed()
+      }
+    }
+
     // Spindle off after the last move when the program ends here, or a tool
     // change that is actually going to be written comes next. The spindle stop
     // is not a turning move, so inverse-time mode is left *before* it (rule 4):
@@ -1502,9 +1722,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   // The program never ends in inverse-time mode (rule 4).
   leaveInverseTime()
 
-  // The bar stays where the last operation left it (#1091): there is no
-  // closing unwind. The program's final motion is the last operation's own
-  // retract, exactly as it is for a non-rotary program.
+  // The bar does not stay where the last operation left it (#1091's no closing
+  // *unwind* is kept): since #1103 slice ca-h every operation that commands A
+  // already ended with a forward turn to the next whole turn — 0 up — so the
+  // program ends on that turn rather than on the operation's own retract. It is
+  // a forward turn, not a rewind, which is what #1091 forbade.
 
   // 5. Footer
   definition.program.footer.forEach(line => {

@@ -2293,8 +2293,11 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // earlier layer actually left (the lowest pass over the ring positions)
     // rather than an upper bound on it, so this fixture's layers past the first
     // keep their links at the layer too. The along program did not move.
+    // Recaptured for #1103 slice ca-d: the around rough's full rings are an
+    // edge-clamped helix per layer and its partial rings turn A forward with
+    // safe gaps. The along program still does not move.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '3066ffca34b19d29' : '19428cbf978287a4',
+      direction === 'along' ? '3066ffca34b19d29' : '9ab4b867712f5393',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)
@@ -2335,14 +2338,18 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '8b430361116b9874' : '837073be35027cc7',
+      direction === 'along' ? '8b430361116b9874' : 'd4b344f455927b67',
       `finish ${direction}: zero stock to leave is the expected program`)
     // Recaptured for #1095: the positive-leave fingerprints now carry the
     // un-thickened walls (the old values lifted the outermost pass to ~4.42).
     // Recaptured for #1095 slice D: the around pass's outermost position no
     // longer reads the tangent wall cell, so its ring drops by the cell's lift.
+    // Recaptured for #1103 slice ca-c: the around finish's uninterrupted round
+    // band is one continuous helix (A one-way, never wrapped), so both its
+    // zero-leave and positive-leave fingerprints moved; the along program is
+    // the base commit's bytes exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '45837f8a39449e24' : '7d45b3fdda607198',
+      direction === 'along' ? '45837f8a39449e24' : 'ade919db141c68f2',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + ball.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

@@ -127,6 +127,7 @@ export const MACHINE_TEMPLATE_RULE_CODES = [
   'units',
   'inverse-time-on',
   'inverse-time-off',
+  'zero-a',
   'torch',
   'material',
   'material-feed',
@@ -174,6 +175,13 @@ export type TemplateRule =
   | { kind: 'units' }
   | { kind: 'inverse-time-on' }
   | { kind: 'inverse-time-off' }
+  /**
+   * The optional "Zero A" line (issue #1103 slice ca-h). Unlike `inert`, it
+   * must *do* something: set the A coordinate to zero without moving any axis.
+   * An empty field is not configured and is accepted; a filled one is exactly
+   * one of the zeroing forms below.
+   */
+  | { kind: 'zero-a' }
   | { kind: 'torch' }
   | { kind: 'material' }
   | { kind: 'material-feed' }
@@ -284,6 +292,18 @@ export interface TemplateRuleDefinition {
   } | null
   rotary?: {
     inverseTimeFeed: { on: string, off: string } | null
+    /** The optional "Zero A" line (#1103 slice ca-h); empty when unset. */
+    zeroA?: string
+    /** How the bar is driven, so the zero line names the axis it turns. */
+    drive?: 'own' | 'borrowed'
+    /** The project axis the bar lies along, for a borrowed motor's letter. */
+    about?: 'x' | 'y'
+  }
+  /** Read only to find a borrowed motor's rotary letter (the other axis). */
+  coordinateSystem?: {
+    xAxis: string
+    yAxis: string
+    zAxis: string
   }
   plasma?: {
     torchOnCommand: string
@@ -714,6 +734,7 @@ export const MACHINE_STRING_FIELDS: readonly MachineStringFieldSpec[] = [
   { path: ['rotary', 'drive'], class: { kind: 'enum' } },
   { path: ['rotary', 'inverseTimeFeed', 'on'], class: template({ kind: 'inverse-time-on' }) },
   { path: ['rotary', 'inverseTimeFeed', 'off'], class: template({ kind: 'inverse-time-off' }) },
+  { path: ['rotary', 'zeroA'], class: template({ kind: 'zero-a' }) },
 
   { path: ['coordinateSystem', 'xAxis'], class: { kind: 'enum' } },
   { path: ['coordinateSystem', 'yAxis'], class: { kind: 'enum' } },
@@ -791,6 +812,17 @@ function lineCode(line: string, syntax: CommentSyntax): string {
     if (at >= 0) code = code.slice(0, at)
   }
   return code
+}
+
+/**
+ * A rendered template line with every comment form of the definition's output
+ * dialect removed — `( … )` and `;` for G-code, `'` for a ShopBot part file —
+ * regardless of the definition's own `commentPrefix`. Callers that ask whether
+ * a line carries a command (the mandatory pause between rotary operations)
+ * must not count a word the controller will read as a comment (#1103).
+ */
+export function templateLineCode(line: string, outputDialect: string | undefined): string {
+  return lineCode(line, COMMENT_SYNTAX[commentDialectOf(outputDialect)])
 }
 
 /**
@@ -1033,6 +1065,91 @@ function checkMaterialFeedLine(line: string, syntax: CommentSyntax): LineRefusal
 }
 
 /**
+ * The zero-A forms (#1103 slice ca-h): the machine's own way of saying "this
+ * is A zero" without moving anything. `G10 L20 P<n> A0` sets the work offset
+ * for one axis so the current position reads zero (grbl, grblHAL, LinuxCNC);
+ * `G92 A0` does the same through the G92 offset. Both name that axis alone, so
+ * no other axis's coordinate changes. The axis is A on a machine's own rotary
+ * axis; a borrowed motor uses its own letter, checked against the definition
+ * in `machineTemplateDiagnostics` below.
+ *
+ * `G10 L2` is deliberately absent: it *defines* the offset rather than zeroing
+ * at the current position, and `G92.1` resets the G92 offsets instead of
+ * setting one. Anything with another axis, another command, or a non-zero A is
+ * refused by the pattern.
+ */
+const ZERO_A_LINE = /^(?:G10\s*L20\s*P\d+\s*[AXY][-+]?0(?:\.0*)?|G92\s*[AXY][-+]?0(?:\.0*)?)$/i
+
+/**
+ * The axis word a machine's rotary uses: `A` on its own fourth axis, or the
+ * borrowed motor's axis letter (the other horizontal project axis). Null when
+ * the definition does not say — a hand-built structural fragment — so the
+ * definition-level cross-check is skipped rather than guessed.
+ */
+function machineRotaryLetter(definition: TemplateRuleDefinition): string | null {
+  const rotary = definition.rotary
+  if (rotary === undefined) return null
+  if (rotary.drive !== 'borrowed') return 'A'
+  const borrowed = rotary.about === 'x'
+    ? definition.coordinateSystem?.yAxis
+    : definition.coordinateSystem?.xAxis
+  return borrowed === undefined ? null : borrowed.replace(/^[-+]/, '').toUpperCase()
+}
+
+/**
+ * The work-offset number `G10 L20 P<n>` writes for the system the program
+ * actually runs in, or null when the machine's selection does not say.
+ *
+ * `G10 L20 P<n>` edits offset `n` (G54 = P1 … G59 = P6); it does **not** follow
+ * whichever system is selected. A line that names P1 on a machine that selects
+ * G55 therefore zeroes G54 and leaves the active system alone — the bar keeps
+ * its old A, while the pauses the filled line was supposed to replace are
+ * suppressed for nothing (#1152 correction round 1, finding 3).
+ *
+ * An empty selection is **unknown**, not G54: the program may start in whatever
+ * system the controller was left in, so a `P1` line could zero G54 while G55
+ * stays active (#1152 correction round 2, finding 2). Likewise a selection that
+ * names no G5x word, or several, leaves the answer unknown. Only `P0` (the
+ * active system) or `G92` is trustworthy then.
+ */
+function activeWorkOffsetIndex(selectCommand: string | null, syntax: CommentSyntax): number | null {
+  // Every comment form of the dialect is removed first: `; G54` selects
+  // nothing, so it must not prove the active system (#1103).
+  const code = (selectCommand ?? '')
+    .split(/\r?\n/)
+    .map((line) => lineCode(line, syntax))
+    .join(' ')
+    .trim()
+  if (code.length === 0) return null
+  const indexes = new Set<number>()
+  for (const match of code.matchAll(/\bG(5[4-9])(?![\d.])/gi)) {
+    indexes.add(Number(match[1]) - 53)
+  }
+  return indexes.size === 1 ? [...indexes][0] : null
+}
+
+/** The `G54…G59` word for a work-offset number (1 = G54). */
+function workOffsetName(index: number): string {
+  return `G${53 + index}`
+}
+
+/**
+ * A "Zero A" line: empty when the machine does not automate zeroing, otherwise
+ * exactly one of the forms that set one axis's coordinate to zero and move
+ * nothing (which axis is checked against the machine's own rotary word below).
+ * The comment forms of the dialect are removed first, so `G10 L20 P1 A0
+ * (zero the rotary)` is accepted and a comment-only line is refused — a filled
+ * field that only comments would silently turn the field's guarantee (and the
+ * pause that replaces it) off.
+ */
+function checkZeroALine(line: string, syntax: CommentSyntax): LineRefusal | null {
+  if (line.trim().length === 0) return null
+  const code = lineCode(line, syntax).trim()
+  if (code.length === 0) return { word: line.trim(), kind: 'word' }
+  return ZERO_A_LINE.test(code) ? null : { word: code, kind: 'word' }
+}
+
+/**
  * The first word on one line that breaks `rule`, or null when the line is
  * acceptable. `anything` and `tool-change` still check placeholders (operator
  * text may not be written as code anywhere, and a placeholder may not spell a
@@ -1053,6 +1170,7 @@ function checkTemplateLine(
   // mode change makes the field wrong as a whole.
   if (rule.kind === 'command') return checkCommandText(line, rule)
   if (rule.kind === 'material-feed') return checkMaterialFeedLine(line, syntax)
+  if (rule.kind === 'zero-a') return checkZeroALine(line, syntax)
   const expanded = expandPlaceholders(line, unitsCommand, wcsCommand)
   const scan = scanTemplateLine(expanded, syntax, {
     assignment: rule.kind === 'header',
@@ -1190,6 +1308,12 @@ function describeRule(rule: TemplateRule): { code: MachineTemplateRuleCode, labe
       return { code: 'inverse-time-on', label: 'inverse-time on template', hint: 'the inverse-time on template may contain only G93' }
     case 'inverse-time-off':
       return { code: 'inverse-time-off', label: 'inverse-time off template', hint: 'the inverse-time off template may contain only G94' }
+    case 'zero-a':
+      return {
+        code: 'zero-a',
+        label: 'Zero A line',
+        hint: 'the Zero A line must set the rotary axis\'s coordinate to zero and move no axis: G10 L20 P<n> A0 (or the borrowed motor\'s letter) or G92 A0, optionally followed by a comment',
+      }
     case 'torch':
       return {
         code: 'torch',
@@ -1528,6 +1652,61 @@ export function machineTemplateDiagnostics(
         word: refusal.word,
         ruleCode: rule.code,
         message: refusalMessage(field.path, field.rule, refusal, field.lineOffset + index + 1),
+      })
+    })
+  }
+
+  // The Zero A line is also judged against *this* machine (#1103 slice ca-h):
+  // the rules above accept the forms that zero one axis without moving, and
+  // this says which axis that must be. On an own-drive machine it is A; on a
+  // borrowed motor it is the borrowed letter, and zeroing anything else would
+  // silently shift a real axis's work coordinate. A `G10 L20 P<n>` line is
+  // judged against the active coordinate system too (#1152 correction round 1,
+  // finding 3): P names the offset it writes, and on a machine that selects
+  // G55 a P1 line zeroes G54 instead.
+  const zeroA = definition.rotary?.zeroA
+  const expectedLetter = machineRotaryLetter(definition)
+  if (zeroA !== undefined && zeroA.trim().length > 0 && expectedLetter !== null) {
+    const activeOffset = activeWorkOffsetIndex(definition.workCoordinates.selectCommand, syntax)
+    zeroA.split(/\r?\n/).forEach((rawLine, index) => {
+      const code = lineCode(rawLine, syntax).trim()
+      const match = /^(?:G10\s*L20\s*P(\d+)|G92)\s*([AXY])/i.exec(code)
+      if (match === null) return
+      const letter = match[2].toUpperCase()
+      if (letter !== expectedLetter) {
+        diagnostics.push({
+          path: ['rotary', 'zeroA'],
+          field: 'rotary.zeroA',
+          line: index + 1,
+          text: rawLine,
+          word: letter,
+          ruleCode: 'zero-a',
+          message: `rotary.zeroA: line ${index + 1}: this machine's rotary axis is ${expectedLetter}, `
+            + `so the Zero A line must set ${expectedLetter} to zero, not ${letter}.`,
+        })
+        return
+      }
+      // `G92` and `P0` write the active system whatever it is; a positive `P`
+      // writes exactly one offset, which must be the one this program selects.
+      if (match[1] === undefined) return
+      const written = Number(match[1])
+      if (written === 0) return
+      if (activeOffset !== null && written === activeOffset) return
+      diagnostics.push({
+        path: ['rotary', 'zeroA'],
+        field: 'rotary.zeroA',
+        line: index + 1,
+        text: rawLine,
+        word: `P${written}`,
+        ruleCode: 'zero-a',
+        message: activeOffset === null
+          ? `rotary.zeroA: line ${index + 1}: the Zero A line's G10 L20 P${written} changes the ${workOffsetName(written)} `
+            + `work offset, but workCoordinates.selectCommand does not say which system the program runs in. `
+            + `Use P0 (the active system) or G92 ${expectedLetter}0, or name the system in the selection.`
+          : `rotary.zeroA: line ${index + 1}: the Zero A line's G10 L20 P${written} changes the ${workOffsetName(written)} `
+            + `work offset, but this machine selects ${workOffsetName(activeOffset)} `
+            + `(P${activeOffset}), so the active system would keep its old ${expectedLetter}. `
+            + `Use P${activeOffset}, P0 (the active system) or G92 ${expectedLetter}0.`,
       })
     })
   }

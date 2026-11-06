@@ -237,6 +237,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.previewNoOperations': '没有预览：没有勾选要导出的加工操作。',
   'dialogs.export.previewMachineMissing': '没有预览：此项目所选的机床不在项目中。请在项目设置中重新选择。',
   'dialogs.export.movesLines': '{moves} 次移动，共 {lines} 行',
+  'dialogs.export.rotaryZeroNotice': '开始时请将 A 在 0 朝上位置归零。程序结束时停在 0 朝上，并在旋转工序之间暂停，供你将 A 归零。',
   'dialogs.export.error.generationFailed': '“{operation}”的生成失败：{detail}',
   'dialogs.export.error.generationInterrupted': '“{operation}”的生成已取消或被取代。请更改选择或某个选项，然后重新导出。',
   'dialogs.export.error.missingTool': '加工操作“{operation}”未指定刀具。',
@@ -432,6 +433,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.rotaryXMotor': 'X 电机',
   'dialogs.machineEditor.rotaryWord': '程序字：{word}',
   'dialogs.machineEditor.rotaryReverse': '反转方向',
+  'dialogs.machineEditor.rotaryZeroA': 'A 轴归零行（可选）',
+  'dialogs.machineEditor.rotaryZeroAHint': '在每个旋转工序前执行；留空则暂停并手动将 A 归零。',
 
   // ── Machine template diagnostics (#1119) ──
   'dialogs.machineDiagnostics.line': '第 {line} 行',
@@ -447,6 +450,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineDiagnostics.ruleName.units': '单位模板',
   'dialogs.machineDiagnostics.ruleName.inverse-time-on': '反向时间启用模板',
   'dialogs.machineDiagnostics.ruleName.inverse-time-off': '反向时间停用模板',
+  'dialogs.machineDiagnostics.ruleName.zero-a': 'A 轴归零语句',
   'dialogs.machineDiagnostics.ruleName.torch': '等离子割炬模板',
   'dialogs.machineDiagnostics.ruleName.material': '材料与割炬高度模板',
   'dialogs.machineDiagnostics.ruleName.material-feed': '材料进给模板',

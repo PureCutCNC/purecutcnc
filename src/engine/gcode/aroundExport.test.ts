@@ -386,24 +386,40 @@ function highestFedZ(path: ToolpathResult, originZ: number): number {
 /**
  * The angles actually written, derived from the wrapped toolpaths: the rotary
  * word is modal, so it is written once per change — including each operation's
- * opening rapid at its own start angle. The program ends on the last move's
- * angle (#1091), so no extra write is added. A re-derivation of the modal rule,
- * used only to check the written count against the moves.
+ * opening rapid at its own start angle, and the forward turn to the next whole
+ * turn that closes an operation which commands A (#1103 slice ca-h). A
+ * re-derivation of the modal rule, used only to check the written count
+ * against the moves.
  */
 function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition): number[] {
   const direction = rotaryDirection(definition)
   const written: number[] = []
   let last: number | undefined
-  const consider = (angle: number | undefined) => {
-    if (angle === undefined) return
-    const value = angle * direction
+  const consider = (value: number) => {
     if (value !== last) {
       written.push(value)
       last = value
     }
   }
-  for (const entry of fixture.operations) {
-    for (const move of fixture.wrapped.get(entry.id)!.moves) consider(move.to.a)
+  const commandsAngle = fixture.operations.map((entry) => fixture.wrapped.get(entry.id)!.moves.some(
+    (move) => move.from.a !== undefined || move.to.a !== undefined,
+  ))
+  const pauses = (definition.rotary?.zeroA ?? '').trim().length === 0
+  for (const [index, entry] of fixture.operations.entries()) {
+    const moves = fixture.wrapped.get(entry.id)!.moves
+    for (const move of moves) {
+      if (move.to.a !== undefined) consider(move.to.a * direction)
+    }
+    // #1103 slice ca-h: the operation ends facing 0 up, on the next whole turn
+    // at or ahead of the last angle it commanded.
+    if (commandsAngle[index] && last !== undefined) {
+      consider(360 * Math.ceil((last - 1e-6) / 360))
+      // And the pause before a later turning operation has the operator zero A
+      // there, so the controller reads 0 for that operation's angles (#1152
+      // correction round 1, finding 1). A zero at its start is therefore not
+      // written again.
+      if (pauses && commandsAngle.slice(index + 1).some(Boolean)) last = 0
+    }
   }
   return written
 }
@@ -763,18 +779,32 @@ console.log('Testing the program keeps its last angle...')
     !blocks.some((block) => /^G0\s+A-?0(\.0+)?$/.test(block)),
     `no closing unwind rapid is written:\n${blocks.join('\n')}`,
   )
-  // The last angle written is the last move's angle, not 0.
+  // The operation ends facing 0 up (#1103 slice ca-h): the last angle word is
+  // the next whole turn at or ahead of the last move, reached by a forward
+  // turn, never a rewind.
   const lastAngle = wrapped.moves[wrapped.moves.length - 1].to.a!
   assert.notEqual(lastAngle % 360, 0, 'fixture: the last move does not sit on the zero line')
-  assert.equal(written[written.length - 1], Number(lastAngle.toFixed(3)), 'the program ends on its last angle')
-  // The final motion is the operation's own retract, and it carries no A word:
-  // the bar stays where the toolpath left it.
-  const last = blocks[blocks.length - 1]
-  assert.match(last, /^G0\s+Z/, `the final motion is the operation's retract, got ${last}`)
-  assert.doesNotMatch(last, /A/, 'the retract does not turn the bar')
+  const endTurn = 360 * Math.ceil((lastAngle - 1e-6) / 360)
+  assert.ok(endTurn > lastAngle, 'the end turn goes ahead of the last angle, never back')
+  assert.equal(endTurn % 360, 0, 'and lands on a whole turn — 0 up')
+  assert.equal(written[written.length - 1], Number(endTurn.toFixed(3)), 'the program ends on the next whole turn')
+  // The end turn is a rapid at a machine-coordinate clearance height, not a
+  // cut and not a work-height move.
+  const turnAt = blocks.findIndex((block) => /\bA/.test(block) && Number(/(?:^|\s)A(-?[0-9.]+)/.exec(block)?.[1]) === Number(endTurn.toFixed(3)))
+  assert.ok(turnAt > 0, `the end turn is a motion block:\n${blocks.join('\n')}`)
+  assert.match(blocks[turnAt], /^G0\s+A/, `the end turn is a bare rapid of the rotary word: ${blocks[turnAt]}`)
+  assert.match(
+    result.gcode,
+    new RegExp(`G53 G0 Z[^\\n]*\\n[^\\n]*G0 A${Number(endTurn.toFixed(3))}`),
+    'a machine-coordinate retract precedes the end turn',
+  )
+  assert.ok(
+    result.gcode.includes(`A is at ${endTurn.toFixed(3)}, 0 up. Zero A before the next operation.`),
+    'and the operator is told where A is and to zero it',
+  )
 
   // A cut that ends where it began — the bar returns to angle 0 — writes no
-  // unwind, because there is none for any program. The end sits on the zero
+  // end turn, because it is already on a whole turn. The end sits on the zero
   // line (issue #1026), which is the bar's centreline, not the sheet's edge.
   const backLine = straight({ x: 60, y: 30 + MM_CIRCUMFERENCE }, { x: 100, y: 50 })
   const back = buildFixture(MM_BAR, 'mm', [
@@ -842,14 +872,33 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     OWN_X.program.commentSuffix,
     { word: rotaryWord(OWN_X)!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
-  // The program ends at a non-zero angle and carries no closing unwind after
-  // #1091, so every block is a work-coordinate motion the parser can place.
-  assert.equal(parsed.status, 'verified', `the program parses cleanly: ${parsed.warnings.join('; ')}`)
-  assert.deepEqual(parsed.warnings, [], 'no block is reported as unplaceable')
-  assert.ok(parsed.moves.length > 0, 'and has motion')
+  // Since #1103 slice ca-h every operation that commands A closes with a
+  // machine-coordinate retract and a forward turn to the next whole turn. The
+  // parser cannot place machine-coordinate motion in the work frame, so it
+  // reports exactly those blocks — two per operation (the retract, then the
+  // A-only rapid that follows it) — and nothing else.
+  assert.equal(parsed.status, 'unsupported', 'the end turns are reported, not silently mis-placed')
+  assert.ok(parsed.moves.length > 0, 'and the program still traces')
+  for (const warning of parsed.warnings) {
+    assert.match(warning, /G53 machine-coordinate move|move after a G53 block does not state Z/,
+      `only the end-turn blocks are unplaceable: ${warning}`)
+  }
+  const turningOperations = MM.operations.filter((entry) => MM.wrapped.get(entry.id)!.moves.some(
+    (move) => move.from.a !== undefined || move.to.a !== undefined,
+  ))
+  assert.equal(parsed.warnings.length, 2 * turningOperations.length,
+    'two answers per rotary operation: the retract and the turn after it')
 
   // The whole program, unwrapped with `unwrapPoint`, lies on the flat
-  // toolpaths the operations were generated from.
+  // toolpaths the operations were generated from. The end-turn angles are
+  // new motion of their own — a turn at clearance, not part of any toolpath —
+  // so they are excluded; everything the bar turns to while cutting is not.
+  const endTurnAngles = new Set<number>()
+  for (const entry of turningOperations) {
+    const moves = MM.wrapped.get(entry.id)!.moves
+    const last = moves[moves.length - 1].to.a!
+    endTurnAngles.add(360 * Math.ceil((last * rotaryDirection(OWN_X) - 1e-6) / 360))
+  }
   const flatSource = MM.operations.flatMap((entry) => unwrapToolpath(wrapped.get(entry.id)!, frame).moves)
   let checked = 0
   for (const move of parsed.moves) {
@@ -858,6 +907,7 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
       // — the pre-existing safe-Z split, whose XY is the machine's own zero
       // and not a toolpath point. Everything the bar turns to is checked.
       if (point.a === undefined) continue
+      if (endTurnAngles.has(point.a)) continue
       const projectPoint = machineToProjectPoint(point, project.origin, OWN_X)
       // The axis transform reads X/Y/Z; the angle is the bar's own and comes
       // through the parse unchanged.

@@ -113,6 +113,15 @@ export function createRotaryAngleKernel(setup: RotaryAngleSetupPayload): RotaryA
     along: setup.along,
     requestedCellSize: setup.requestedCellSize,
     conservativeCellBounds: setup.mode === 'around',
+    // A worker's rows are not cached: the map cache is a main-thread workspace
+    // optimisation (#1103 ca-e), and a worker's prep is rebuilt from a payload
+    // whose workspace is a copy the parent never sees. So the worker never reads
+    // or writes a cache -- and, when the parent asked for maps, it hands each map
+    // it builds back instead (#1103 slice ca-i): the pool caches it in the
+    // parent workspace, in job order, which is what makes the cache state after a
+    // batch the one a serial batch would have left.
+    angleMaps: 'off',
+    ...(setup.emitAngleMaps === true ? { emitAngleMaps: true } : {}),
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     workspace: {
       subset: new Uint32Array(2 * triangleCount),

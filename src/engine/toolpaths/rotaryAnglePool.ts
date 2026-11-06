@@ -53,7 +53,13 @@
 import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
 import { rotaryCandidateScratchBytes } from './rotaryRaster'
 import type { RotaryAngleJob, RotaryAngleSample, RotaryBatchFactory, RotarySamplingPrep } from './rotarySampling'
-import { serialRotaryBatches } from './rotarySampling'
+import {
+  cachedAngleKey,
+  hasRotaryAngleMap,
+  runRotaryAngleJob,
+  serialRotaryBatches,
+  storeRotaryAngleBatchMaps,
+} from './rotarySampling'
 import type {
   RotaryAngleSetupPayload,
   RotaryAngleWorkerReply,
@@ -122,6 +128,14 @@ export interface RotaryAnglePoolStats {
   readonly planRevisions: number
   /** Replies dropped for a stale epoch, a stale batch or a retired pool. */
   readonly rejectedReplies: number
+  /** Angle maps workers handed back (#1103 slice ca-i); 0 when none were asked for. */
+  readonly maps: number
+  /**
+   * Bytes those maps carried -- the operation's angle-map transfer volume
+   * (#1103 slice ca-i). Buffers are transferred rather than copied, so this is
+   * what moved, not what was duplicated.
+   */
+  readonly mapBytes: number
 }
 
 export interface RotaryAnglePool {
@@ -325,6 +339,35 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * Whether a reply's angle map may go into the parent cache (#1103 slice ca-i).
+ *
+ * Strict on purpose: the map is read by every later row at its angle, so a
+ * truncated array or a key that is not an integer would be a wrong tip row that
+ * no digest could explain. A worker that cannot send a well-formed map fails its
+ * batch instead of having the map silently ignored -- the rows would still be
+ * right, and the missing reuse would look like a performance bug.
+ */
+function isRotaryAngleMapEntry(entry: NonNullable<RotaryAngleSample['map']>): boolean {
+  const map: unknown = entry.map
+  if (!Number.isInteger(entry.key) || !Number.isFinite(entry.bytes) || entry.bytes < 0) return false
+  if (typeof map !== 'object' || map === null) return false
+  const fields = map as Record<string, unknown>
+  const data = fields.data
+  const width = fields.width
+  const height = fields.height
+  const cellSize = fields.cellSize
+  const coverage = fields.wallCoverage
+  const modelOnly = fields.modelOnly
+  return data instanceof Float32Array
+    && typeof width === 'number' && Number.isInteger(width) && width > 0
+    && typeof height === 'number' && Number.isInteger(height) && height > 0
+    && typeof cellSize === 'number' && Number.isFinite(cellSize) && cellSize > 0
+    && data.length === width * height
+    && (coverage === undefined || coverage instanceof Uint8Array)
+    && (modelOnly === undefined || modelOnly instanceof Float32Array)
+}
+
+/**
  * Startup and resource failures get the serial retry; computation errors do not.
  *
  * The pool's own setup failures are thrown with this prefix, and a worker's
@@ -390,6 +433,8 @@ export function createRotaryAnglePool(
   let awaitMs = 0
   let planRevisions = 0
   let rejectedReplies = 0
+  let maps = 0
+  let mapBytes = 0
   let disposed = false
   let installed = false
   let setupMode: RotaryAngleSetupPayload['mode'] = 'around'
@@ -412,6 +457,8 @@ export function createRotaryAnglePool(
     awaitMs: roundedMs(awaitMs),
     planRevisions,
     rejectedReplies,
+    maps,
+    mapBytes,
   })
 
   /** Stop using the pool; every later batch runs serially. */
@@ -534,6 +581,14 @@ export function createRotaryAnglePool(
             rejectBatch(new Error(`rotary angle pool: job ${jobIndex} returned no warning list`))
             return
           }
+          if (sample.map !== undefined && !isRotaryAngleMapEntry(sample.map)) {
+            rejectBatch(new Error(`rotary angle pool: job ${jobIndex} returned a malformed angle map`))
+            return
+          }
+          if (sample.map !== undefined) {
+            maps += 1
+            mapBytes += sample.map.bytes
+          }
           missing.delete(jobIndex)
           batch.collected.set(jobIndex, sample)
           batch.arrival.push(sample)
@@ -551,6 +606,12 @@ export function createRotaryAnglePool(
           }
           ordered.push(sample)
         }
+        // #1103 slice ca-i: every map the workers built goes into the parent
+        // workspace's cache, in **job order**. Completion order would make the
+        // cache's contents and its `full` latch depend on which worker finished
+        // first; job order replays exactly the sequence a serial batch inserts,
+        // so the cache state after the batch is the serial one.
+        storeRotaryAngleBatchMaps(prep, ordered)
         batch.settled = true
         active = null
         batch.resolve(ordered)
@@ -720,11 +781,55 @@ export function createRotaryAnglePool(
     if (jobs.length === 0) return []
     if (serialMode) return serial(jobs)
     try {
+      // The plan is built from **every** job, as the serial runner builds it:
+      // its reach is the widest strip any angle of the batch reads, and the rows
+      // this realm answers itself (#1103 slice ca-i) must be sampled against the
+      // same plan a serial batch would use.
       const planValue = prep.planFor(jobs.map((job) => job.angle))
+      // #1103 slice ca-i: a `read-write` row the parent already holds is not a
+      // worker's to sample -- a worker has no parent workspace, so it would
+      // rasterise a map this operation already has and the parent would count it
+      // as fresh work. Answer it here with the serial job instead: the row is the
+      // same, and `reused`/`rasterWork` are what the serial path reports for it.
+      //
+      // The same rule applies to a row whose physical angle an **earlier job of
+      // this batch** is about to build (#1103 ca-i review round 1). A360 and A0
+      // are one map, so serial samples A0 and answers A360 from the map it just
+      // cached; a partition that only reads the parent cache before dispatch sees
+      // an empty cache and sends both to workers, reporting two rasters and no
+      // reuse. Those repeats are *deferred* rather than served here: the map they
+      // read is only in the parent cache once the workers' replies have been
+      // inserted (in job order), so they run after the batch and report exactly
+      // the hit -- or the rebuild, when the cache refused the map -- that the
+      // serial path reports at the same position.
+      const local: RotaryAngleSample[] = []
+      const deferred: RotaryAngleJob[] = []
+      const remote: RotaryAngleJob[] = []
+      if (prep.angleMaps === 'read-write') {
+        const claimed = new Set<number>()
+        for (const job of jobs) {
+          const key = cachedAngleKey(job.angle)
+          if (hasRotaryAngleMap(prep.workspace, job.angle)) {
+            // Already cached before this batch; serial hits it at its own position.
+            local.push(runRotaryAngleJob(prep, planValue, job))
+            claimed.add(key)
+          } else if (claimed.has(key)) {
+            deferred.push(job)
+          } else {
+            claimed.add(key)
+            remote.push(job)
+          }
+        }
+      } else {
+        // `write` never reads, and `off` has no cache: every row is sampled, so a
+        // repeated physical angle rasterises twice exactly as it does serially.
+        for (const job of jobs) remote.push(job)
+      }
+      if (remote.length === 0) return local
       if (!installed) {
         const setup = buildRotaryAngleSetup(prep, planValue)
         const workerPlan = planRotaryAnglePool({
-          angleCount: jobs.length,
+          angleCount: remote.length,
           ...(source.availableParallelism !== undefined
             ? { availableParallelism: source.availableParallelism }
             : {}),
@@ -741,13 +846,32 @@ export function createRotaryAnglePool(
       } else if (planValue !== sentPlan) {
         await revisePlan(planValue)
       }
-      const workers = Math.min(ports.length, jobs.length)
+      const workers = Math.min(ports.length, remote.length)
       if (workers <= 0) {
         serialMode = true
         mode = 'serial'
         return serial(jobs)
       }
-      return await dispatch(jobs, workers)
+      const results = await dispatch(remote, workers)
+      // The batch's maps are in the parent cache now -- `dispatch` inserts the
+      // workers' replies in job order before it resolves. A deferred repeat of a
+      // physical angle can therefore run the serial job and see the same cache
+      // entry serial saw at its position: a hit (`reused`, `rasterWork: 0`) when
+      // the map was cached, a rebuild when the cache refused it. Either way the
+      // totals match serial.
+      for (const job of deferred) local.push(runRotaryAngleJob(prep, planValue, job))
+      if (local.length === 0) return results
+      // Put the two halves back in the batch's own job order.
+      const byIndex = new Map<number, RotaryAngleSample>()
+      for (const sample of local) byIndex.set(sample.index, sample)
+      for (const sample of results) byIndex.set(sample.index, sample)
+      const merged: RotaryAngleSample[] = []
+      for (const job of jobs) {
+        const sample = byIndex.get(job.index)
+        if (sample === undefined) throw new Error(`rotary angle pool: job ${job.index} has no result`)
+        merged.push(sample)
+      }
+      return merged
     } catch (error) {
       // A startup or resource failure discards the batch and reruns it serially.
       // A computation error is the user's problem, not a transport problem.

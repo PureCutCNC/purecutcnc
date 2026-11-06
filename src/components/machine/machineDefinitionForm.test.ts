@@ -360,6 +360,38 @@ for (const about of ['x', 'y'] as const) {
 }
 
 {
+  // #1103 slice ca-h: the Zero A line is a focused field (finding 5 of the
+  // review — it used to be preserved without a control, so configuration
+  // needed raw JSON). The form reads it, writes a typed line, and leaves a
+  // definition that never had one without the key.
+  const zeroA = 'G10 L20 P1 A0'
+  const def = makeTestDef({ rotary: makeRotary({ zeroA }) })
+  const form = toFormData(def)
+  assert(form.rotaryZeroA === zeroA, 'toFormData: the Zero A line is in the form')
+  form.rotaryAbout = 'y'
+  form.rotaryDrive = 'borrowed'
+  form.rotaryReversed = true
+  const merged = mergeFormData(def, form)
+  assert(merged.rotary?.zeroA === zeroA, 'mergeFormData: editing other rotary fields keeps the Zero A line')
+
+  // Typing a line into a machine that had none writes it, and the strict
+  // schema accepts the result (P1 matches the test machine's G54).
+  const fresh = makeTestDef({ rotary: makeRotary() })
+  const typed = { ...toFormData(fresh), rotaryZeroA: 'G92 A0' }
+  const withLine = mergeFormData(fresh, typed)
+  assert(withLine.rotary?.zeroA === 'G92 A0', 'mergeFormData: a typed Zero A line reaches the definition')
+  assert(validateDef(withLine).ok !== undefined, 'and the definition still validates')
+  // Clearing it drops the key instead of saving an empty default.
+  const cleared = mergeFormData(withLine, { ...toFormData(withLine), rotaryZeroA: '' })
+  assert(!('zeroA' in (cleared.rotary ?? {})), 'clearing the field removes the key')
+  assert(validateDef(cleared).ok !== undefined, 'and the cleared definition validates')
+  // An untouched machine that never had one gains nothing.
+  const untouched = mergeFormData(fresh, toFormData(fresh))
+  assert(!('zeroA' in (untouched.rotary ?? {})),
+    'an unset Zero A line stays absent, with no format change')
+}
+
+{
   // A plasma machine cannot carry the block, so converting drops it.
   const def = makeTestDef({ rotary: makeRotary() })
   const form = toFormData(def)

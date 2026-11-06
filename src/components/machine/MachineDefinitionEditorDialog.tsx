@@ -346,6 +346,19 @@ function renderVar(name: string, desc: string, context?: string) {
                       />
                       <span>{td('dialogs.machineEditor.rotaryReverse')}</span>
                     </label>
+                    <label className="machine-editor-field">
+                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryZeroA')}</span>
+                      <input
+                        className="machine-editor-input"
+                        type="text"
+                        data-testid="machine-rotary-zero-a"
+                        value={form.rotaryZeroA}
+                        placeholder="G10 L20 P1 A0"
+                        spellCheck={false}
+                        onChange={(event) => handleFormChange({ rotaryZeroA: event.target.value })}
+                      />
+                      <span className="machine-editor-note">{td('dialogs.machineEditor.rotaryZeroAHint')}</span>
+                    </label>
                   </>
                 )}
               </div>

@@ -74,6 +74,7 @@ import { formatGCodeNumber } from './utils'
 import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { stockSpacePoint } from '../rotaryFrame'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -303,30 +304,30 @@ for (const axis of ['x', 'y'] as const) {
  * changes; the same cuts and depths are made. Every finish entry is unchanged.
  */
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/own': 'moves=6f34d961c5e364b0|warnings=|gcode=b20fb2bb921db058|post=',
-  'x/mm/rotary_rough/borrowed': 'moves=6f34d961c5e364b0|warnings=|gcode=f6b98b6287bfddd4|post=',
-  'x/mm/rotary_rough/reversed': 'moves=6f34d961c5e364b0|warnings=|gcode=ff0a1c12f934208b|post=',
-  'x/mm/rotary_finish/own': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=5b71325054e64b0a|post=',
-  'x/mm/rotary_finish/borrowed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=768c6dd120d6af70|post=',
-  'x/mm/rotary_finish/reversed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=c955a06282724b6a|post=',
-  'x/inch/rotary_rough/own': 'moves=6438efa7ff0b1d9f|warnings=|gcode=79549aa60babf65f|post=',
-  'x/inch/rotary_rough/borrowed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=c46df84820ec0718|post=',
-  'x/inch/rotary_rough/reversed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=ca845c5021a3dbdd|post=',
-  'x/inch/rotary_finish/own': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=183ee50a9e9dd376|post=',
-  'x/inch/rotary_finish/borrowed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=b8a26899f1354d22|post=',
-  'x/inch/rotary_finish/reversed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=61d4273220b04b16|post=',
-  'y/mm/rotary_rough/own': 'moves=5b8b8666a0e57485|warnings=|gcode=73523919127bfc9f|post=',
-  'y/mm/rotary_rough/borrowed': 'moves=5b8b8666a0e57485|warnings=|gcode=35af04820418cfb8|post=',
-  'y/mm/rotary_rough/reversed': 'moves=5b8b8666a0e57485|warnings=|gcode=ce710c5685964b43|post=',
-  'y/mm/rotary_finish/own': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=28bb9691a7397980|post=',
-  'y/mm/rotary_finish/borrowed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=68f985caa670e59e|post=',
-  'y/mm/rotary_finish/reversed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=4a2da2c245d0c570|post=',
-  'y/inch/rotary_rough/own': 'moves=16d32190474a3663|warnings=|gcode=a468ea433c8cd637|post=',
-  'y/inch/rotary_rough/borrowed': 'moves=16d32190474a3663|warnings=|gcode=e207b9b495054233|post=',
-  'y/inch/rotary_rough/reversed': 'moves=16d32190474a3663|warnings=|gcode=99b8d9102bb1c856|post=',
-  'y/inch/rotary_finish/own': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=ff1bc457fa41eb12|post=',
-  'y/inch/rotary_finish/borrowed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=112f6f1f742994ac|post=',
-  'y/inch/rotary_finish/reversed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=50a229c813a26759|post=',
+  'x/mm/rotary_rough/own': 'moves=6f34d961c5e364b0|warnings=|gcode=9dbe488c0d8d7983|post=',
+  'x/mm/rotary_rough/borrowed': 'moves=6f34d961c5e364b0|warnings=|gcode=e4a604a088d61a8f|post=',
+  'x/mm/rotary_rough/reversed': 'moves=6f34d961c5e364b0|warnings=|gcode=72d5bd5e7cf74af3|post=',
+  'x/mm/rotary_finish/own': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=f343e12508cf3787|post=',
+  'x/mm/rotary_finish/borrowed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=4b535d82a3960ef0|post=',
+  'x/mm/rotary_finish/reversed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=1fb756e79740de5c|post=',
+  'x/inch/rotary_rough/own': 'moves=6438efa7ff0b1d9f|warnings=|gcode=c05f7d252ffc41c8|post=',
+  'x/inch/rotary_rough/borrowed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=4f856fde23aa3bc7|post=',
+  'x/inch/rotary_rough/reversed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=963c53ea14e0ebde|post=',
+  'x/inch/rotary_finish/own': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=3a739ef963e152f8|post=',
+  'x/inch/rotary_finish/borrowed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=c2ea6999ee4286fc|post=',
+  'x/inch/rotary_finish/reversed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=dfa9d2953b871943|post=',
+  'y/mm/rotary_rough/own': 'moves=5b8b8666a0e57485|warnings=|gcode=456bca52ef5c1825|post=',
+  'y/mm/rotary_rough/borrowed': 'moves=5b8b8666a0e57485|warnings=|gcode=533fbf94d527be3d|post=',
+  'y/mm/rotary_rough/reversed': 'moves=5b8b8666a0e57485|warnings=|gcode=e7217db7f2ece31e|post=',
+  'y/mm/rotary_finish/own': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=d681f9a433950572|post=',
+  'y/mm/rotary_finish/borrowed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=0c8cf63d776fe130|post=',
+  'y/mm/rotary_finish/reversed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=c2c944840de44e2b|post=',
+  'y/inch/rotary_rough/own': 'moves=16d32190474a3663|warnings=|gcode=f37cc393cb7247a6|post=',
+  'y/inch/rotary_rough/borrowed': 'moves=16d32190474a3663|warnings=|gcode=9c245c8727e78d19|post=',
+  'y/inch/rotary_rough/reversed': 'moves=16d32190474a3663|warnings=|gcode=95a273c2ec48d24a|post=',
+  'y/inch/rotary_finish/own': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=d0c1b28f172e42f0|post=',
+  'y/inch/rotary_finish/borrowed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=6f17ba11579e89ff|post=',
+  'y/inch/rotary_finish/reversed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=186e615c66ad1a28|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_ROUND === '1') {
@@ -397,22 +398,22 @@ for (const axis of ['x', 'y'] as const) {
  * along-layer alternation as the round matrix. Every finish entry is unchanged.
  */
 const SQUARE_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/flat_endmill': 'moves=25f63a19f743dca2|warnings=|gcode=da282887c62c969f|post=',
-  'x/mm/rotary_rough/ball_endmill': 'moves=74d86fbc88d69d8b|warnings=|gcode=a291945934380b04|post=',
-  'x/mm/rotary_finish/flat_endmill': 'moves=76b5619be346db35|warnings=rotaryFinishWithoutRough|gcode=5cab59aa787a150b|post=',
-  'x/mm/rotary_finish/ball_endmill': 'moves=91e82b497c5e49e9|warnings=rotaryFinishWithoutRough|gcode=1c0fafcfe760c8fb|post=',
-  'x/inch/rotary_rough/flat_endmill': 'moves=cbe3a882dca1df66|warnings=|gcode=f745807d2d526aa0|post=',
-  'x/inch/rotary_rough/ball_endmill': 'moves=0f785113544404c9|warnings=|gcode=992d6c32d4c26e7a|post=',
-  'x/inch/rotary_finish/flat_endmill': 'moves=744293ceeb1c6651|warnings=rotaryFinishWithoutRough|gcode=64223fd0f349046c|post=',
-  'x/inch/rotary_finish/ball_endmill': 'moves=9459d0d08d24b863|warnings=rotaryFinishWithoutRough|gcode=fa5e326f24d8d220|post=',
-  'y/mm/rotary_rough/flat_endmill': 'moves=a37c385a0e7f71cc|warnings=|gcode=b4bf59d8b153e376|post=',
-  'y/mm/rotary_rough/ball_endmill': 'moves=53450f017cf47548|warnings=|gcode=bedd52dff848ff65|post=',
-  'y/mm/rotary_finish/flat_endmill': 'moves=33358f8ea7e988ef|warnings=rotaryFinishWithoutRough|gcode=3c1f0d16d56c8be4|post=',
-  'y/mm/rotary_finish/ball_endmill': 'moves=884abac6dce74e4a|warnings=rotaryFinishWithoutRough|gcode=bcbd90c0f2262673|post=',
-  'y/inch/rotary_rough/flat_endmill': 'moves=72b995af769136bd|warnings=|gcode=34c362767401b7f6|post=',
-  'y/inch/rotary_rough/ball_endmill': 'moves=bb665a80787fee69|warnings=|gcode=9262195b1334bd02|post=',
-  'y/inch/rotary_finish/flat_endmill': 'moves=4c0d75554bb80afe|warnings=rotaryFinishWithoutRough|gcode=06477434ba04a292|post=',
-  'y/inch/rotary_finish/ball_endmill': 'moves=6da72cdfb688a239|warnings=rotaryFinishWithoutRough|gcode=798784816be2be32|post=',
+  'x/mm/rotary_rough/flat_endmill': 'moves=25f63a19f743dca2|warnings=|gcode=1119d548e2545ec2|post=',
+  'x/mm/rotary_rough/ball_endmill': 'moves=74d86fbc88d69d8b|warnings=|gcode=3e84433a168900da|post=',
+  'x/mm/rotary_finish/flat_endmill': 'moves=76b5619be346db35|warnings=rotaryFinishWithoutRough|gcode=2cfa151a820fbd1a|post=',
+  'x/mm/rotary_finish/ball_endmill': 'moves=91e82b497c5e49e9|warnings=rotaryFinishWithoutRough|gcode=4d7c8e9f4908feb0|post=',
+  'x/inch/rotary_rough/flat_endmill': 'moves=cbe3a882dca1df66|warnings=|gcode=2badcfaadb95a411|post=',
+  'x/inch/rotary_rough/ball_endmill': 'moves=0f785113544404c9|warnings=|gcode=8266583d251f5763|post=',
+  'x/inch/rotary_finish/flat_endmill': 'moves=744293ceeb1c6651|warnings=rotaryFinishWithoutRough|gcode=cc6257fb65153b60|post=',
+  'x/inch/rotary_finish/ball_endmill': 'moves=9459d0d08d24b863|warnings=rotaryFinishWithoutRough|gcode=491d7da2e7d92b59|post=',
+  'y/mm/rotary_rough/flat_endmill': 'moves=a37c385a0e7f71cc|warnings=|gcode=48af6c96658b6e66|post=',
+  'y/mm/rotary_rough/ball_endmill': 'moves=53450f017cf47548|warnings=|gcode=702619c5b0e05acf|post=',
+  'y/mm/rotary_finish/flat_endmill': 'moves=33358f8ea7e988ef|warnings=rotaryFinishWithoutRough|gcode=d01560ba902a5572|post=',
+  'y/mm/rotary_finish/ball_endmill': 'moves=884abac6dce74e4a|warnings=rotaryFinishWithoutRough|gcode=55e5060b32d639a5|post=',
+  'y/inch/rotary_rough/flat_endmill': 'moves=72b995af769136bd|warnings=|gcode=f57ce41a333c7ee4|post=',
+  'y/inch/rotary_rough/ball_endmill': 'moves=bb665a80787fee69|warnings=|gcode=307eb301f1b69b74|post=',
+  'y/inch/rotary_finish/flat_endmill': 'moves=4c0d75554bb80afe|warnings=rotaryFinishWithoutRough|gcode=f372756196175666|post=',
+  'y/inch/rotary_finish/ball_endmill': 'moves=6da72cdfb688a239|warnings=rotaryFinishWithoutRough|gcode=11766c7311fbf1ae|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_SQUARE === '1') {
@@ -470,17 +471,30 @@ for (const cell of MATRIX_CELLS) {
   assert.equal(lastMove.from.y, lastMove.to.y, `${label}: the retract does not travel along the bar`)
   assert.ok(lastMove.to.z > lastMove.from.z, `${label}: the last move is a retract, not a cut`)
   assert.ok(lastMove.to.a !== undefined, `${label}: the retract keeps the last angle`)
+  const machineLast = lastMove.to.a! * rotaryDirection(definition)
+  const endTurn = 360 * Math.ceil((machineLast - 1e-6) / 360)
   const lastWritten = [...result.gcode.matchAll(new RegExp(`(?:^|[\\s])${word!}(-?[0-9]+(?:\\.[0-9]+)?)`, 'gm'))]
     .map((match) => Number(match[1]))
   assert.equal(
     lastWritten[lastWritten.length - 1],
-    Number(formatGCodeNumber(lastMove.to.a! * rotaryDirection(definition), definition, cell.units)),
-    `${label}: the last angle written is the last toolpath angle, with no closing unwind`,
+    Number(formatGCodeNumber(endTurn, definition, cell.units)),
+    `${label}: the program ends at 0 up, on the next whole turn after the last toolpath angle`,
   )
-  const axisLines = motionLines(result.gcode).filter((line) => /[XYZ]/.test(line))
-  const finalMotion = axisLines[axisLines.length - 1]
-  assert.match(finalMotion, /^(?:G0\s+)?Z/, `${label}: the final motion is the Z retract, got ${finalMotion}`)
-  assert.doesNotMatch(finalMotion, new RegExp(`${word}`), `${label}: the retract carries no angle word`)
+  assert.ok(endTurn >= machineLast, `${label}: the end turn never goes back (${machineLast} -> ${endTurn})`)
+  const blocks = motionLines(result.gcode).filter((line) => /^G[0-9]/.test(line))
+  if (endTurn === machineLast) {
+    // Already 0 up: no turn is written, so the last motion is the operation's
+    // own Z retract and nothing follows it but the instruction.
+    assert.match(blocks[blocks.length - 1], /^(?:G0\s+)?Z/,
+      `${label}: no turn is written when the last angle is already a whole turn`)
+  } else {
+    assert.match(blocks[blocks.length - 1], new RegExp(`^G0\\s+${word}`),
+      `${label}: the final motion is the forward end turn, got ${blocks[blocks.length - 1]}`)
+    assert.match(blocks[blocks.length - 2], /^G53\b/,
+      `${label}: and it is preceded by the machine-coordinate retract: ${blocks.slice(-4).join(' | ')}`)
+  }
+  assert.ok(result.gcode.includes(`A is at ${formatGCodeNumber(endTurn, definition, cell.units)}, 0 up`),
+    `${label}: the operator is told where A is`)
 
   // The same input posts byte-identical text twice: the output is a function of
   // the project, not of any hidden state.
@@ -1437,6 +1451,143 @@ console.log('Testing the posted inverse-time feed against a seeded physical refe
   // The direction factor is the machine's, not the geometry's.
   assert.equal(direction, 1, 'fixture: an own-axis machine turns in the positive direction')
   console.log(`   ${checked} seeded pure-turn feeds match the true-pivot analytic word`)
+}
+
+// ── 6. the forward-only square path posts as straight moves (#1103 ca-e) ──
+//
+// Square around work cannot helix: its corner arcs and partial rings turn
+// forward only, with safe gaps, and A grows across the whole operation rather
+// than being rewound to the next ring's angle. The generated programs are
+// posted through the real emitter and checked for the four things that make
+// that motion safe to run:
+//
+//   - no turning cut reverses A anywhere in the path, and A never decreases;
+//   - every turning block is a straight G1 (arc fitting is on: a square arc
+//     cannot be become a G2/G3, and a G2/G3 would unwind the stock);
+//   - every block in inverse-time mode carries a positive F, and that F is
+//     `feed / length` for an independent integration of the tip path in the
+//     stock's own frame (sampled across the path, every block positive);
+//   - the program ends on the last pose angle, with no closing unwind.
+{
+  const bruteForceStockPathLength = (from: ToolpathPoint, to: ToolpathPoint, stock: SquareStock, chords = 4000): number => {
+    const lerp = (t: number): ToolpathPoint => ({
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+      z: from.z + (to.z - from.z) * t,
+      a: (from.a ?? 0) + ((to.a ?? 0) - (from.a ?? 0)) * t,
+    })
+    let previous = stockSpacePoint(lerp(0), stock)
+    let length = 0
+    for (let index = 1; index <= chords; index++) {
+      const point = stockSpacePoint(lerp(index / chords), stock)
+      length += Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z)
+      previous = point
+    }
+    return length
+  }
+  const aWord = (line: string): number | undefined => {
+    const match = /A(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+    return match ? Number(match[1]) : undefined
+  }
+  const fWord = (line: string): number | undefined => {
+    const match = /F(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+    return match ? Number(match[1]) : undefined
+  }
+
+  console.log('Testing the forward-only square around path posts as straight G1 moves...')
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const fixtureCell = fixture({ axis: 'x', units: 'mm', kind })
+    const { project, operation, stock } = fixtureCell
+    operation.rotaryPassDirection = 'around'
+    const envelope = computeOperationToolpath(project, operation)
+    assert.ok(envelope, `${kind}/around: the dispatch answers`)
+    if (!envelope) throw new Error('unreachable')
+    const label = `${kind}/around`
+    const moves = envelope.result.moves
+    assert.deepEqual(
+      envelope.result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'),
+      [],
+      `${label}: admitted, not a refusal`,
+    )
+    const feed = operation.feed
+    const turning = moves.filter((move) => move.kind !== 'rapid'
+      && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a)
+    assert.ok(turning.length > 0, `${label}: the path turns A`)
+
+    // Forward only, and never rewound: no sign change, no decrease between
+    // consecutive poses, and the last pose is the largest angle.
+    let lastSign = 0
+    for (const move of turning) {
+      const sign = Math.sign((move.to.a ?? 0) - (move.from.a ?? 0))
+      assert.ok(sign >= 0, `${label}: a turning cut never runs backwards (A${move.from.a} -> A${move.to.a})`)
+      if (lastSign !== 0) assert.equal(sign, lastSign, `${label}: every turning cut advances A`)
+      lastSign = sign
+    }
+    let previous = -Infinity
+    for (const move of moves) {
+      const angle = move.from.a ?? 0
+      assert.ok(angle >= previous - 1e-9, `${label}: commanded A never decreases (${angle} after ${previous})`)
+      previous = angle
+    }
+    const last = moves[moves.length - 1]
+    assert.ok((last.to.a ?? 0) > 360, `${label}: the program accumulates past one revolution (${last.to.a} deg)`)
+
+    const definition = machine('own', 'x')
+    const posted = post(project, definition, operation, envelope.result)
+    assert.deepEqual(posted.warnings, [], `${label}: the program posts with no refusal`)
+    assert.doesNotMatch(posted.gcode, /G[23]\b/, `${label}: no turning move is fitted into a G2/G3`)
+
+    // Every inverse-time block carries a positive F, and it is the feed over an
+    // independent integration of the stock-frame tip path.
+    let inverse = false
+    const blocks: string[] = []
+    for (const line of motionLines(posted.gcode)) {
+      if (line === 'G93') { inverse = true; continue }
+      if (line === 'G94') { inverse = false; continue }
+      if (inverse && /F-?[0-9]/.test(line)) blocks.push(line)
+    }
+    assert.equal(blocks.length, turning.length, `${label}: one inverse-time block per turning move`)
+    let checked = 0
+    let worst = 0
+    for (let index = 0; index < blocks.length; index++) {
+      const line = blocks[index]
+      const word = fWord(line)
+      assert.ok(word !== undefined && word > 0, `${label} block ${index}: F is present and positive (${line})`)
+      assert.match(line, /G1 |^[XYZ]/, `${label} block ${index}: is a straight motion block (${line})`)
+      const wordA = aWord(line)
+      assert.ok(wordA !== undefined
+        && Math.abs(wordA - Number(formatGCodeNumber(turning[index].to.a!, definition, 'mm'))) < 1e-9,
+        `${label} block ${index}: writes the move's own growing angle`)
+      // Sampling every 13th block keeps the integration cheap; the remaining
+      // assertions still cover every block.
+      if (index % 13 !== 0) continue
+      // A near-zero path is floored at the export geometry tolerance, exactly
+      // as `inverseTimeFeedValue` floors it; every other block is the true
+      // feed / length.
+      const length = Math.max(
+        bruteForceStockPathLength(turning[index].from, turning[index].to, stock),
+        exportGeometryTolerance('mm'),
+      )
+      const expected = feed / length
+      worst = Math.max(worst, Math.abs(word! - expected))
+      assert.ok(Math.abs(word! - expected) <= 0.0011,
+        `${label} block ${index}: F${word} is feed / the integrated path length (${expected.toFixed(3)})`)
+      checked += 1
+    }
+
+    // No closing unwind, and #1103 ca-h's forward end turn: the last angle
+    // written is the next whole turn at or ahead of the last pose's.
+    const written = motionLines(posted.gcode)
+      .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+    const endTurn = 360 * Math.ceil((last.to.a! - 1e-6) / 360)
+    assert.equal(written[written.length - 1], Number(formatGCodeNumber(endTurn, definition, 'mm')),
+      `${label}: the program ends at 0 up, on the next whole turn`)
+    assert.ok(endTurn >= last.to.a!, `${label}: and that angle is ahead of the last pose's, not a rewind`)
+    assert.ok(written[written.length - 1] > 360, `${label}: and that angle is the accumulated one`)
+    console.log(`   ${label}: ${moves.length} moves, ${turning.length} turning cuts, `
+      + `A ${moves[0].from.a?.toFixed(0)} -> ${written[written.length - 1].toFixed(0)}, `
+      + `${checked} sampled feeds match the integrated length (worst ${worst.toExponential(1)})`)
+  }
 }
 
 console.log('engine/gcode/squareRotaryOutput.test.ts: all assertions passed')
