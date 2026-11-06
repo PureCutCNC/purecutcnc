@@ -1564,14 +1564,17 @@ function templateMovesAxis(definition: MachineDefinition, letter: 'X' | 'Y'): bo
  *
  * The arc test is a probe over the same fitting the planner runs, taken **before**
  * the emitted-arc validation can fall a run back to linear moves: a run that
- * only *might* be an arc withholds the rule. It cannot in fact find one: the
- * machine-plane fitter reads X and Y, the cross axis is one of those two, and
- * condition 3 requires it to format as zero on every point, so every candidate
- * run is collinear. The clause therefore overlaps the format half of condition 3
- * completely and is a guard against a future change to the fitting plane, never
- * a decision that changes a program today. It is kept deliberately: if an arc
- * ever could be planned, `emitArcLine` writes both X and Y whatever the axis
- * does, and the program could not be word-free.
+ * only *might* be an arc withholds the rule. It is a deciding half of condition
+ * 3, not a restatement of the format half. The fitter's collinearity tolerance
+ * (`exportGeometryTolerance`, 0.01 mm) is an order of magnitude coarser than the
+ * machine's format grid (0.001 mm on the default mm machine), so a circle whose
+ * radius is below one format unit still fits as arcs while every planned cross
+ * coordinate formats as the machine's zero: radius 0.0004 mm yields four fitted
+ * arcs and not one non-zero cross word. The format half fails to withhold that
+ * program; the arc clause does. It must, because `emitArcLine` writes both X and
+ * Y whatever the axis does, so an arc program could never be word-free — and
+ * removing the clause would emit Y words on a program the rule would otherwise
+ * claim.
  */
 export function crossAxisHeldByTouchOff(input: CrossAxisHoldInput): 'x' | 'y' | null {
   const { project, definition, operations, manualIndexAngle } = input

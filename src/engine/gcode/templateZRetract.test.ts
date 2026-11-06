@@ -382,9 +382,18 @@ console.log('Testing a feed-first operation after a tool change descends to its 
 console.log('Testing a rotary machine states the angle in the restart block...')
 
 {
+  // This machine's own tool change moves the cross axis (`G53 G0 Y-10`), so a
+  // #1156 program on it cannot hold that axis by touch-off: condition 4 fails
+  // and the restart block states the cross word, exactly as it always has.
+  // Without that command the fixture would be a held program and the expected
+  // Y below would have to change; that is a #1156 golden, not this suite's to
+  // move (acceptance item 6 names the goldens that may lose a Y word, and this
+  // file is not one of them).
+  const base = structuredClone(bundled('grbl'))
   const rotaryMachine: MachineDefinition = validateMachineDefinition({
-    ...structuredClone(bundled('grbl')),
+    ...base,
     rotary: { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    toolChange: { ...base.toolChange, commands: ['G53 G0 Y-10', ...base.toolChange.commands] },
   })
   const project = newProject('Rotary restart', 'mm')
   project.stock = roundStock(20, 100, 'x')
@@ -403,13 +412,8 @@ console.log('Testing a rotary machine states the angle in the restart block...')
   assert.equal(blocks[0]?.motion, 'G0', 'the restart retract is a rapid')
   closeTo(blocks[0]?.z, 10, 'the retract is above the bar')
   closeTo(blocks[1]?.a, 45, 'the restart states the operation start angle')
-  closeTo(blocks[1]?.x, 0, 'and its along coordinate')
-  // #1156: this program holds its cross axis by touch-off, so the restart block
-  // states no cross word — the bar's centreline is where the operator zeroed it.
-  // Acceptance item 6 does not name this file: its expected Y is the one golden
-  // change outside that allowance, called out as a stop-and-report rather than
-  // edited silently.
-  assert.equal(blocks[1]?.y, undefined, 'and no cross word at all')
+  closeTo(blocks[1]?.x, 0, 'and its plane')
+  closeTo(blocks[1]?.y, 0, 'and its plane')
 }
 
 // ── 7. Tool changes off: no block ───────────────────────────

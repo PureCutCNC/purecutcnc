@@ -39,7 +39,7 @@ import assert from 'node:assert/strict'
 import golden from './crossAxisHeldPrograms.golden.json'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import type { ParsedGcodeMove } from './gcodeMotionParser'
-import { crossAxisHeldByTouchOff } from './motionPipeline'
+import { createEmittedValueFormatter, crossAxisHeldByTouchOff } from './motionPipeline'
 import { fitArcsInMachineMoves } from './arcFitting'
 import { projectToMachinePoint } from './utils'
 import { setupFrameForOperation } from '../setupOrientation'
@@ -372,9 +372,9 @@ console.log('Testing a sub-format cross move: only its word is removed...')
   assert.ok(kept.length >= 3, 'and the held program keeps every one of those X words')
 }
 
-// ── An arc and a held cross axis cannot coexist ──────────────
+// ── The arc clause is a deciding half of condition 3 ────────
 
-console.log('Testing that a fitted arc always moves the cross coordinate...')
+console.log('Testing that a fitted arc withholds the rule even when every cross word is zero...')
 {
   /** How many emitted arc descriptors the planner's own fitting produces for a
    *  program, using the rule's probe inputs. */
@@ -394,9 +394,28 @@ console.log('Testing that a fitted arc always moves the cross coordinate...')
     return arcs
   }
 
+  /** The machine-frame cross coordinate of every planned point, formatted with
+   *  the machine's own grid — condition 3's format half, read directly. */
+  const machineCrossValues = (program: CrossAxisProgram): number[] => {
+    const format = createEmittedValueFormatter(program.definition, program.project.meta.units)
+    const letter = crossAxisLetter(program) === 'X' ? 'x' : 'y'
+    const values: number[] = []
+    for (const { operation, toolpath } of program.operations) {
+      const setup = setupFrameForOperation(program.project, operation)
+      for (const move of toolpath.moves) {
+        for (const point of [move.from, move.to]) {
+          const machine = projectToMachinePoint(
+            point, program.project.origin, program.definition, setup,
+          )
+          values.push(format(machine[letter]))
+        }
+      }
+    }
+    return values
+  }
+
   // Every program the rule holds has one constant machine coordinate in the XY
-  // plane the fitter reads, so no run in it is an arc. Condition 3's arc probe
-  // therefore never decides these programs.
+  // plane the fitter reads, so no run in it is an arc.
   for (const program of PROGRAMS.filter((entry) => entry.holdsCrossAxis)) {
     assert.equal(
       machineArcs(program),
@@ -405,12 +424,8 @@ console.log('Testing that a fitted arc always moves the cross coordinate...')
     )
   }
 
-  // A program that *does* fit arcs moves its cross coordinate (by up to the
-  // radius), so the format half of condition 3 already withholds the rule.
-  // Both halves of the condition reject exactly the same programs: removing the
-  // arc exclusion cannot make any test fail, because no program it could decide
-  // can reach it. Acceptance item 4's arc control cannot be built against this
-  // fitter — reported as a stop-and-report in the #1156 correction round.
+  // A real 5 mm circle moves the cross coordinate off the centreline by the
+  // radius, so condition 3's *format* half already withholds the rule.
   const arc = crossAxisArcProgram()
   assert.ok(machineArcs(arc) > 0, 'the arc-shaped program really is fitted as arcs')
   assert.equal(
@@ -422,6 +437,32 @@ console.log('Testing that a fitted arc always moves the cross coordinate...')
     }),
     null,
     'and it cannot hold the cross axis: its cross coordinate moves off the centreline',
+  )
+
+  // The same circle at radius 0.0004 mm — a quarter of the 0.001 mm grid the
+  // default mm machine writes. The fitter's collinearity tolerance is 0.01 mm,
+  // far coarser than the grid, so the crop is still fitted as four arcs while
+  // every vertex formats as 0.000: the format half holds, and only the arc
+  // clause withholds the rule. This is acceptance item 4's arc control; delete
+  // the arc exclusion and the decision below flips to 'y'.
+  const subFormatArc = crossAxisArcProgram(0.0004)
+  assert.ok(machineArcs(subFormatArc) > 0, 'a sub-format circle is still fitted as arcs')
+  const formatted = machineCrossValues(subFormatArc)
+  assert.ok(formatted.length > 0, 'the sub-format program plans points')
+  assert.deepEqual(
+    [...new Set(formatted)],
+    [0],
+    'every formatted cross coordinate is the machine zero, so condition 3\'s format half holds',
+  )
+  assert.equal(
+    crossAxisHeldByTouchOff({
+      project: subFormatArc.project,
+      definition: subFormatArc.definition,
+      operations: subFormatArc.operations,
+      manualIndexAngle: null,
+    }),
+    null,
+    'a fitted arc withholds the rule on its own: an arc block writes both X and Y',
   )
 }
 

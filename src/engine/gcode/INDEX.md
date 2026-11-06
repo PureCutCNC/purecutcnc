@@ -436,9 +436,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   word. A multi-line tool-change entry and a compact/leading-zero home
   (`G90G28`, `G028`, `G90G30`) each withhold the rule; a sub-format cross move
   keeps its block, and the X repetition on it, in a differential control whose
-  origin is shifted off the centreline; and a real machine-plane arc program
-  proves the arc clause can never be the deciding test, because the fitter
-  reads X and Y and a held cross axis is constant on one of them),
+  origin is shifted off the centreline; and a 5 mm machine-plane arc program
+  shows the format half withholding the rule while a sub-format one (radius
+  0.0004 mm, every cross word `0.000`) still fits four arcs, so the arc clause
+  alone withholds it — delete the clause and that control flips to holding),
   `opensbpEmitter.test.ts` (SBP and the dialect switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
   `trochoidalArcExport.test.ts`, `rotaryDefinition.test.ts` (the optional
@@ -556,11 +557,13 @@ exactly what they were before the rule:
    machine-frame cross coordinate that formats as the machine's own zero, and
    the export arc-fitting probe finds no run. An arc block writes both X and Y
    whatever the axis does (`emitArcLine`), and a point off the centreline is
-   real cross travel the program must state. The two halves overlap completely:
-   the fitter reads machine X and Y, the cross axis is one of them, and
-   formatting it as zero on every point makes every candidate run collinear, so
-   the arc clause can never be the deciding test. It is kept as a guard for a
-   future fitting plane.
+   real cross travel the program must state. The two halves are independent: a
+   real 5 mm circle moves the cross coordinate, so the format half decides it,
+   but the fitter's 0.01 mm collinearity tolerance is coarser than the 0.001 mm
+   format grid, so a circle of radius 0.0004 mm still fits as four arcs while
+   every vertex formats as `0.000` — there the arc clause alone withholds the
+   rule. Removing it would emit Y words on a program the rule would otherwise
+   claim.
 4. No template the program writes names the cross letter as an axis word, and
    none homes the machine with `G28`/`G30`. The scan covers the program header,
    the operation header, the tool change and its pause, the footer and the

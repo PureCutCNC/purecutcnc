@@ -328,22 +328,29 @@ export function crossAxisJitterProgram(originShift = 0): CrossAxisProgram {
 
 /**
  * A program whose cut path is a real circle in the machine XY plane on the same
- * own-A bar. The arc fitter joins it, and every point's machine cross
- * coordinate is up to the radius away from the centreline — so the program
- * cannot hold the cross axis. It exists to show that condition 3's two halves
- * overlap completely: the fitter can only produce an arc when the cross
- * coordinate moves, and the rule can only hold when it does not. The arc
- * exclusion can therefore never be the deciding test (#1156 correction round,
- * finding 3).
+ * own-A bar. Two radii, because condition 3 has two halves and each one decides
+ * a program (#1156 correction round 2, finding 1):
+ *
+ * - The default 5 mm circle moves the machine cross coordinate by up to 5 mm on
+ *   every vertex, so the *format* half withholds the rule before the arc clause
+ *   needs considering.
+ * - `radiusMm = 0.0004` is a circle smaller than one millimetre format unit: the
+ *   fitter's collinearity tolerance (`exportGeometryTolerance`, 0.01 mm) still
+ *   sees it, so four arcs are fitted, while every vertex formats as `0.000` on
+ *   the mm grid. The format half then holds and only the arc clause can withhold
+ *   the rule — the control acceptance item 4 asks for.
+ *
+ * An emitted arc block writes both X and Y whatever the axis does
+ * (`emitArcLine`), so a program with one can never be word-free even when every
+ * planned cross coordinate formats as zero.
  */
-export function crossAxisArcProgram(): CrossAxisProgram {
+export function crossAxisArcProgram(radiusMm = 5): CrossAxisProgram {
   const project = smokeProject()
   const operation = project.operations[0]
-  const radius = 5
   const count = 16
   const at = (index: number): ToolpathPoint => {
     const angle = (index / count) * Math.PI * 2
-    return { x: 20 + radius * Math.cos(angle), y: 10 + radius * Math.sin(angle), z: 14, a: 0 }
+    return { x: 20 + radiusMm * Math.cos(angle), y: 10 + radiusMm * Math.sin(angle), z: 14, a: 0 }
   }
   const moves: ToolpathMove[] = [
     // Establish the angle above the bar; the circle then cuts at it.
@@ -355,7 +362,7 @@ export function crossAxisArcProgram(): CrossAxisProgram {
     })),
   ]
   return {
-    name: 'control-machine-plane-arc',
+    name: radiusMm === 5 ? 'control-machine-plane-arc' : 'control-subformat-machine-plane-arc',
     project,
     definition: ownAMachine('x'),
     operations: [entry(project, operation, {
