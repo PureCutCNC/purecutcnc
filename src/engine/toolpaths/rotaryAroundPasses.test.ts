@@ -1172,6 +1172,15 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
     'no raised link joins the forward-only rings after the helix')
   const links = result.moves.filter(isAlongLink)
   const afterShoulder = links.filter((move) => alongOf(move.from) >= shoulder - 1e-6)
+  // #1155 rn-e: the band's far end (16) is the model's own end, so the centre
+  // now reaches it instead of stopping one cutter radius inside it, and the
+  // along grid gains the ring at 16. The rings past the shoulder are therefore
+  // 8, 10, 12, 14 and 16 -- four boundaries, each of which must link.
+  const ringAlong = [...new Set(result.moves
+    .filter((move) => move.kind !== 'rapid' && angleOf(move.from) !== angleOf(move.to)
+      && alongOf(move.from) === alongOf(move.to))
+    .map((move) => Math.round(alongOf(move.from) * 1e6) / 1e6))].sort((a, b) => a - b)
+  const boundaries = ringAlong.filter((along) => along >= shoulder - 1e-6).length - 1
   // The count is the number of ring-to-ring boundaries that still exist, not a
   // constant: #1103 slice ca-g splits layer 1's band -- which used to be all
   // rings because one shoulder segment could not be verified -- into a helix
@@ -1179,8 +1188,10 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   // that used to be a ring link is now a helix boundary (measured on this
   // fixture: nine rapids and 478 moves before, four rapids and 385 after, with
   // no raised link either way).
-  assert.ok(afterShoulder.length >= 5,
-    `every ring after the helix links to its neighbour (${afterShoulder.length} links)`)
+  assert.equal(afterShoulder.length, boundaries,
+    `every ring after the helix links to its neighbour (${afterShoulder.length} links, ${boundaries} boundaries)`)
+  assert.ok(boundaries >= 4,
+    `the fixture still has the rings this check is about (${boundaries} boundaries past the shoulder)`)
   // The ring after a helix is entered by a **link**, not a retract: every move
   // between the helix piece's end boundary ring and the next ring's first cut is
   // a feed that holds that ring's exact A, so the tool never rises. That is
@@ -2084,6 +2095,13 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
 //     pull-in now starts and ends the grid one cutter radius inside each
 //     stubbed face, in both modes. The assertion is the cutter body itself: no
 //     cutting centre may sit closer to a stubbed face than its own radius.
+//
+//     #1155 rn-e: a retained stub only stands at a band end that is **inside**
+//     the model -- the approved rule lets the plain bar beyond the model's own
+//     end be cut. The fixture's model therefore runs 16..44 with the band still
+//     18..42, which is what an end support or a keep-out produces: the band's
+//     ends are held inside the model, the radius-5 model at 16..18 and 42..44
+//     sits under the radius-20 stubs, and the band's own geometry is unchanged.
 // ---------------------------------------------------------------------------
 
 console.log('Testing the retained round ends on around and along passes...')
@@ -2091,7 +2109,7 @@ console.log('Testing the retained round ends on around and along passes...')
   const stock = roundStock(40, 60, 'x', { x: 0, y: 0 })
   const pivot = barPivotZ(stock)
   const tool: NormalizedTool = { ...BALL, id: 'flat-6', name: '6 mm flat end mill', type: 'flat_endmill', radius: 3, diameter: 6 }
-  const model = revolved(stock, [{ along: 18, radius: 5 }, { along: 42, radius: 5 }], 64)
+  const model = revolved(stock, [{ along: 16, radius: 5 }, { along: 44, radius: 5 }], 64)
   const params = {
     stepover: 2.7, sampleSpacing: 0.75, stockToLeave: 0, alongStart: 18, alongEnd: 42,
     safeRadius: 30, requestedCellSize: 1,

@@ -911,63 +911,38 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 {
-  // Review fix 2: `rotaryAlongRange` limits the tool *centre* to the model's
-  // along extent, so at the model's end the cutter's side reaches a tool radius
-  // past it into the bar that is meant to stay and hold the part. An off-axis
-  // prism (across 8..12, up 8..12) spanning along 10..30 in a 60 mm bar, zero
-  // supports and a 2 mm flat end mill: the rough used to plunge to the
-  // centreline at along 10 and take the bar at 9.5. The generator now samples
-  // the retained bar -- two coaxial cylinders at the bar's radius, one from each
-  // bar end to the cut range -- alongside the model, so the tool-shape sampling
-  // lifts the tip at the model's ends by itself.
+  // #1155 rn-e replaced review fix 2's rule. That rule kept the bar beyond the
+  // cut range as stock the cutter's side must never enter, so the centre stopped
+  // one radius inside the model's end and every pass left a one-radius ridge
+  // there. Frank's decision of 2026-11-06 is the opposite: the plain bar beyond
+  // a model's end is material the operation **may cut into**, so a rough or a
+  // finish runs the tool to the edge of its target's surface. An off-axis prism
+  // (across 8..12, up 8..12) spanning along 10..30 in a 60 mm bar, zero supports,
+  // a 2 mm flat and a 2 mm ball: the band now reaches along 10 and 30 exactly,
+  // for both generators. What still stops the tool -- an end support, a
+  // chuck/tailstock keep-out and a neighbour model -- is pinned by
+  // `rotaryTargetEnds.test.ts`, which sweeps the cutter body against the
+  // analytic ends; the square blank's retained corners keep their own guards
+  // (`squareRotaryStub.test.ts`).
   const modelMin = 10
   const modelMax = 30
-  // Facet sagitta (minRenderHeight, 0.01 mm) and one 0.05 mm height-map cell
-  // are the slack a sampled bar surface can sit below the true one.
-  const EPSILON = 0.05
+  /** One sample spacing of slack: the last sample is the band's end by construction. */
+  const BAND_SLACK = 2
   for (const axis of ['x', 'y'] as const) {
     const stock = finishStock(axis)
-    const radius = stock.thickness / 2
     const mesh = prism(stock, [[8, 8], [12, 8], [12, 12], [8, 12]], [modelMin, modelMax])
     const alongOf = (p: { x: number; y: number }): number => axis === 'x' ? p.x : p.y
-    /**
-     * The radial depth of the deepest cutter point lying outside the model's
-     * along extent, or Infinity when the cutter stays inside it. The retained
-     * region is that bar; a cutter point there below the bar's surface is a
-     * gouge. `tip` is the tool tip on the centreline: a flat end mill is the
-     * disc of radius r at the tip height, a ball the sphere of radius r whose
-     * lowest point is the tip.
-     */
-    const retainedDepth = (tip: ToolpathPoint, tool: NormalizedTool): number => {
-      const r = tool.radius
-      const along = alongOf(tip)
-      const lowCrosses = along - r < modelMin
-      const highCrosses = along + r > modelMax
-      if (!lowCrosses && !highCrosses) return Infinity
-      if (tool.type === 'flat_endmill') {
-        const depth = Math.abs(tip.z - radius)
-        return depth < radius ? depth : Infinity
-      }
-      const halfWidth = Math.sqrt(r * r - Math.min(Math.abs(modelMin - along), r) ** 2)
-      const highHalfWidth = Math.sqrt(r * r - Math.min(Math.abs(along - modelMax), r) ** 2)
-      const depth = Math.abs(tip.z + r - radius)
-      let worst = Infinity
-      if (lowCrosses) worst = Math.min(worst, Math.max(0, depth - halfWidth))
-      if (highCrosses) worst = Math.min(worst, Math.max(0, depth - highHalfWidth))
-      return Math.min(worst, radius)
-    }
     for (const tool of [FLAT_2, FINISH_PASS_MM]) {
       for (const generate of [generateRotaryFinish, generateRotaryRough]) {
-        const result = generate('op-retained', mesh, stock, tool, { ...FINISH_BASE, stepover: 20, stepdown: 4 }, {})
+        const result = generate('op-band-ends', mesh, stock, tool, { ...FINISH_BASE, stepover: 20, stepdown: 4 }, {})
         assert.ok(result.moves.length > 0, `${axis} ${tool.type} ${generate.name} cuts the off-axis prism`)
-        for (const move of result.moves) {
-          if (move.kind === 'rapid') continue
-          for (const point of [move.from, move.to]) {
-            const depth = retainedDepth(point, tool)
-            assert.ok(depth >= radius - EPSILON,
-              `${axis} ${tool.type} ${generate.name} ${move.kind} at along ${alongOf(point).toFixed(3)} stays out of the retained bar (${depth.toFixed(4)} >= ${(radius - EPSILON).toFixed(4)})`)
-          }
-        }
+        const cut = result.moves.filter((move) => move.kind !== 'rapid')
+        const first = Math.min(...cut.map((move) => Math.min(alongOf(move.from), alongOf(move.to))))
+        const last = Math.max(...cut.map((move) => Math.max(alongOf(move.from), alongOf(move.to))))
+        assert.ok(first <= modelMin + BAND_SLACK,
+          `${axis} ${tool.type} ${generate.name} reaches the model's start (${first.toFixed(3)} <= ${modelMin})`)
+        assert.ok(last >= modelMax - BAND_SLACK,
+          `${axis} ${tool.type} ${generate.name} reaches the model's end (${last.toFixed(3)} >= ${modelMax})`)
       }
     }
   }
@@ -1618,9 +1593,17 @@ for (const axis of ['x', 'y'] as const) {
   // centre sampling missed; a smooth plane moves nothing. The
   // sampled tips move at those edges, which changes how many merges a run keeps:
   // 2093 -> 2101 moves.
-  assert.equal(result.moves.length, 2101, 'rough fixture keeps its move count')
+  //
+  // Re-captured for #1155 slice rn-e: the fixture's upper band end (X = 60.48)
+  // is the **model's own** end, which is no longer a retained wall. The band now
+  // runs to it instead of one radius inside it, so the span's last along
+  // position moves from 57.48 to 60.48 and the point list follows the samples it
+  // now cuts: 2101 -> 2102 moves. The finish below cuts 0..150, both of which
+  // meet the bar's own ends and so had no stub and no pull to begin with: its
+  // count and hash are unchanged.
+  assert.equal(result.moves.length, 2102, 'rough fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'ea745df1c29324b6d1d3bd65e0745d522339e3ccdfec9344e2d13c419d4bee4f', 'rough fixture keeps its exact points')
+    '3c719cac25906d15672433533a0fdd6c07a6635c18783ec799b5455ef5bc08e6', 'rough fixture keeps its exact points')
   assert.deepEqual(result.warnings, [], 'rough fixture keeps its warnings')
   {
     // Slice H: the retract and the traverse between runs now hop over the bar
@@ -1979,13 +1962,20 @@ function cutterOffsets(tool: NormalizedTool): ReadonlyArray<readonly [number, nu
               worstModel = depth
               worstModelWhere = `${where} a=${(a0 + (a1 - a0) * f).toFixed(2)} local(${l.toFixed(3)}, ${la.toFixed(3)}, ${lu.toFixed(3)}) cutter +(${offset[0].toFixed(3)}, ${offset[1].toFixed(3)}, ${offset[2].toFixed(3)})`
             }
-            // The retained bar is the full-radius bar outside the cut range:
-            // entering it costs the least of the distance past its end face and
-            // the depth below its curved surface.
+            // The retained bar is the full-radius bar outside the cut range.
+            // #1155 rn-e: at an end the **model itself** ends at, the plain bar
+            // beyond it is material the operation may cut into (Frank's
+            // 2026-11-06 decision), so the body may reach one tool radius past
+            // that end and the measure starts there. An end a support bounds
+            // keeps the old face, because the tool must never enter the support.
             const radial = Math.hypot(la, lu)
+            const freeStart = Math.abs(range.start - modelMin) < 1e-9
+            const freeEnd = Math.abs(range.end - modelMax) < 1e-9
+            const retainedStart = freeStart ? range.start - tool.radius : range.start
+            const retainedEnd = freeEnd ? range.end + tool.radius : range.end
             const retained = radial >= R ? 0
-              : l < range.start ? Math.max(0, Math.min(range.start - l, l, R - radial))
-                : l > range.end ? Math.max(0, Math.min(l - range.end, length - l, R - radial))
+              : l < retainedStart ? Math.max(0, Math.min(retainedStart - l, l, R - radial))
+                : l > retainedEnd ? Math.max(0, Math.min(l - retainedEnd, length - l, R - radial))
                   : 0
             if (retained > worstRetained) {
               worstRetained = retained
@@ -2246,13 +2236,20 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
 // ends are retained (the band is 3..9 inside a 12 mm bar), and the height-map
 // cell is requested at 0.01 mm, so the pass's own discretisation is a fraction
 // of the old lift.
+//
+// #1155 rn-e: the lathe runs 2..10 with the band still 3..9. A retained wall
+// only stands at a band end that is **inside** the model -- the approved rule
+// lets the plain bar beyond the model's own end be cut, so a model ending at 3
+// would leave no wall to test this leave against. The extra 2..3 and 9..10 of
+// radius-4 model sit under the radius-6 stubs, so the band's own geometry is
+// the one this block was written for.
 {
   const stock = roundStock(12, 12, 'x')
   const pivot = stock.thickness / 2
   const modelRadius = 4
   const leave = 0.05
   const ball: NormalizedTool = { ...BALL, diameter: 4, radius: 2 }
-  const mesh = lathe(stock, () => modelRadius, 3, 9, 1, 192)
+  const mesh = lathe(stock, () => modelRadius, 2, 10, 1, 192)
   const base = {
     stepover: 1, sampleSpacing: 1, alongStart: 3, alongEnd: 9,
     safeRadius: 9, requestedCellSize: 0.01, stepdown: 0.5,
@@ -2474,13 +2471,18 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
 // follow the model. This fixture is the shape the tight #1095 wall fixture
 // cannot be: the wall is three cutter radii above the model, so a lifted ring
 // and a model-following ring cannot be confused.
+//
+// #1155 rn-e: the lathe now runs 9..31 with the band still 10..30, because a
+// retained wall only stands at a band end that is **inside** the model. The
+// band's ends would otherwise be the model's own ends, where the approved rule
+// lets the tool cut the plain bar and the stub is gone by design.
 {
   const stock = roundStock(8, 40, 'x')
   const pivot = stock.thickness / 2
   const wallTop = stock.thickness / 2
   const modelRadius = 1
   const ball: NormalizedTool = { ...BALL, diameter: 3, radius: 1.5 }
-  const mesh = lathe(stock, () => modelRadius, 10, 30, 1, 192)
+  const mesh = lathe(stock, () => modelRadius, 9, 31, 1, 192)
   const cell = 0.5
   const result = generateRotaryFinish('wall-tangent', mesh, stock, ball, {
     stepover: 2, sampleSpacing: 0.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,

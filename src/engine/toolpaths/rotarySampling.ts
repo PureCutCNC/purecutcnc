@@ -909,6 +909,20 @@ export interface RotarySamplingSetup {
   readonly requestedCellSize: number
   /** See `RotarySampleOptions.conservativeCellBounds`. */
   readonly conservativeCellBounds?: boolean
+  /**
+   * Read each along position as the **exact** maximum of the turned surface over
+   * the cutter's lateral footprint (#1155 rn-d correction 3). A conservative
+   * cell map is an *upper* bound only with a margin, and a wall-foot ring must
+   * reach a smooth target's surface to within the surface tolerance while still
+   * clearing a crease in it: no single margin does both (0.00915 in high on a
+   * smooth target, 0.0078 in into a polygon target's corner).
+   *
+   * The exact read is the maximum over `tool.radius` of the projected surface,
+   * so a prep that sets it must sample the wall-foot rings alone (one or two
+   * along positions). Its rows never come from the angle-map cache: the read
+   * needs the triangle candidates the raster pass gathered.
+   */
+  readonly exactTipRows?: boolean
   /** See `RotarySampleOptions.wallTriangleStart`. */
   readonly wallTriangleStart?: number
   /** See `RotarySampleOptions.gridExtra`. */
@@ -947,6 +961,8 @@ export interface RotarySamplingPrep {
   readonly along: readonly number[]
   readonly requestedCellSize: number
   readonly conservativeCellBounds: boolean
+  /** See `RotarySamplingSetup.exactTipRows` (#1155 rn-d correction 3). */
+  readonly exactTipRows?: boolean
   readonly wallTriangleStart?: number
   readonly gridExtra?: RotaryModelMesh
   /** See `RotarySamplingSetup.angleMaps` (#1103 ca-e). */
@@ -1008,6 +1024,7 @@ export function createRotarySamplingPrep(
     along: setup.along,
     requestedCellSize: setup.requestedCellSize,
     conservativeCellBounds,
+    ...(setup.exactTipRows === true ? { exactTipRows: true } : {}),
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     ...(setup.gridExtra !== undefined ? { gridExtra: setup.gridExtra } : {}),
     angleMaps: setup.angleMaps ?? 'off',
@@ -1243,9 +1260,14 @@ export function runRotaryAngleJob(
   // keeps every existing caller's rows exactly as they were.
   const cache = prep.angleMaps === 'off' ? undefined : angleMapCache(prep.workspace)
   const cacheKey = cachedAngleKey(angle)
-  const cached = prep.angleMaps === 'read-write' ? cache?.maps.get(cacheKey) : undefined
+  // #1155 rn-d correction 3: an exact-tip prep reads the candidate triangles the
+  // raster pass gathered, so it never answers a row from the cache.
+  const cached = prep.angleMaps === 'read-write' && prep.exactTipRows !== true
+    ? cache?.maps.get(cacheKey)
+    : undefined
   const reused = cached !== undefined
   let rasterWork = 0
+  let candidates = 0
   let heightMap = cached
   let emittedMap: RotaryAngleMapEntry | undefined
   if (heightMap === undefined) {
@@ -1290,6 +1312,7 @@ export function runRotaryAngleJob(
     // The subset is this row's raster work: every candidate is projected and
     // tested whether or not it lands in the window (#1103 ca-e correction 2).
     rasterWork = count
+    candidates = count
     const buildOptions = {
       window,
       triangles: subset.subarray(0, count),
@@ -1321,18 +1344,192 @@ export function runRotaryAngleJob(
   // reported, not applied, and assembly adds it to every finite sample of the
   // angle it belongs to.
   const cellSize = heightMap.cellSize
-  const lift = conservativeCellBounds ? Math.min(heightMap.cellRise ?? 0, cellSize) : 0
+  const lift = conservativeCellBounds && prep.exactTipRows !== true
+    ? Math.min(heightMap.cellRise ?? 0, cellSize)
+    : 0
   const row = new Float32Array(along.length)
+  if (prep.exactTipRows === true) {
+    // #1155 rn-d correction 3: the ring's tip is a geometric quantity -- the
+    // maximum of the turned surface over the disc the cutter's body covers --
+    // and the conservative map's margins are only an approximation of it. Read
+    // it exactly, from the same candidate triangles the raster pass gathered.
+    exactFootprintTips(row, prep, plan, subset, candidates, cos, sin)
+    return {
+      index: job.index, row, lift, warnings: angleWarnings, reused, rasterWork,
+      ...(emittedMap !== undefined ? { map: emittedMap } : {}),
+    }
+  }
   for (let i = 0; i < along.length; i++) {
     const x = stock.axis === 'x' ? along[i] : centre
     const y = stock.axis === 'x' ? centre : along[i]
-    const z = safeToolTipZAt(x, y, heightMap, tool,
-      conservativeCellBounds ? cellSize * Math.SQRT1_2 : 0)
+    // #1155 rn-c: the conservative read reaches a **full** cell past the sample,
+    // not half a diagonal. A map records each cell's surface at the cell's
+    // centre, so material that ends inside the next cell -- a neighbour's end
+    // face, a Hex corner -- is recorded only when that cell's centre is inside
+    // it. A face just below a cell centre therefore leaves the cell at the lower
+    // surface, and the last centre that does hold the material can be a whole
+    // cell from the face. The half-diagonal pad stopped short of that by up to
+    // `cell / 2 - cell * (√2 - 1)`, and the cutter body entered a neighbour's
+    // end face by that much (0.073 mm measured on Frank's bolt, whose Turn
+    // starts 0.05 in inside the Hex, so the face sits in a cell the sampler
+    // reads as the Turn).
+    const z = safeToolTipZAt(x, y, heightMap, tool, conservativeCellBounds ? cellSize : 0)
     row[i] = z === Number.NEGATIVE_INFINITY ? NaN : z - pivot
   }
   return {
     index: job.index, row, lift, warnings: angleWarnings, reused, rasterWork,
     ...(emittedMap !== undefined ? { map: emittedMap } : {}),
+  }
+}
+
+/**
+ * The **exact** maximum of the turned surface over one cutter footprint (#1155
+ * rn-d correction 3).
+ *
+ * The conservative cell read (`safeToolTipZAt` plus the cell pad and the angle's
+ * lift) is an upper bound of this maximum, and a loose one. A wall-foot ring
+ * needs the maximum itself: it must reach a smooth target's surface within the
+ * surface tolerance (where the margin cut 0.00915 in high) and it must not cut
+ * into a crease in the target (where taking the margin back off cut 0.0078 in
+ * into a polygon's corner). No single margin is both, so the ring reads the
+ * geometry:
+ *
+ * - The footprint is the disc `|(along, across) - (ring, centre)| <= radius`,
+ *   exactly the cutter body's lateral cross-section in the turned frame --
+ *   `across` is the tangential coordinate, so a surface point inside the disc is
+ *   a point the flat's body covers.
+ * - The turned height `up` is an **affine** function of `(along, across)` over
+ *   each projected triangle (the turn is a rotation of the cross-section), so
+ *   the maximum over triangle ∩ disc is at a vertex of that region or, when the
+ *   region's boundary runs along the circle, at the disc's own highest point of
+ *   that triangle's plane. Both are computed here; nothing is sampled.
+ *
+ * The candidate triangles are the raster pass's own subset, a superset of the
+ * triangles covering the window band (`radius + one cell` wide) this disc sits
+ * inside. A projection that collapses to a line is skipped, exactly as
+ * `buildHeightMap` skips it; a position with no triangle over its disc stays
+ * `NaN`, the "no model under the tool" rule every other row follows.
+ *
+ * A **ball** endmill's tip is this maximum less `r - sqrt(r^2 - d^2)` at the
+ * point it is read from, which is never more than the maximum itself, so the
+ * same read is used for both tool types: it is exact for a flat and conservative
+ * for a ball, whose wall-foot ring keeps its own fillet either way.
+ */
+function exactFootprintTips(
+  row: Float32Array,
+  prep: RotarySamplingPrep,
+  plan: RotaryStripPlan,
+  subset: Uint32Array,
+  count: number,
+  cos: number,
+  sin: number,
+): void {
+  const { mesh, stock, tool, along, pivot } = prep
+  const positions = mesh.positions
+  const index = mesh.index
+  const across = plan.across
+  const up = plan.up
+  const radius = tool.radius
+  const radiusSq = radius * radius
+  const alongAxis = stock.axis === 'x' ? 0 : 1
+  // The projected triangle in one ring's local `(along, across)` frame.
+  const vx = [0, 0, 0]
+  const vy = [0, 0, 0]
+  const vz = [0, 0, 0]
+  for (let i = 0; i < along.length; i++) {
+    const origin = along[i]
+    const project = (v: number, j: number): void => {
+      const p = v * 3
+      vx[j] = positions[p + alongAxis] - origin
+      vy[j] = across[v] * cos - up[v] * sin
+      vz[j] = pivot + across[v] * sin + up[v] * cos
+    }
+    // Barycentric sign test against the projected triangle, in the disc's local
+    // frame. Defined once per ring (it reads the triangle scratch above), not per
+    // candidate.
+    const contains = (px: number, py: number): boolean => {
+      const c0 = (vx[1] - px) * (vy[2] - py) - (vx[2] - px) * (vy[1] - py)
+      const c1 = (vx[2] - px) * (vy[0] - py) - (vx[0] - px) * (vy[2] - py)
+      const c2 = (vx[0] - px) * (vy[1] - py) - (vx[1] - px) * (vy[0] - py)
+      return (c0 >= -1e-12 && c1 >= -1e-12 && c2 >= -1e-12)
+        || (c0 <= 1e-12 && c1 <= 1e-12 && c2 <= 1e-12)
+    }
+    let best = Number.NEGATIVE_INFINITY
+    for (let s = 0; s < count; s++) {
+      const offset = subset[s]
+      project(index[offset], 0)
+      project(index[offset + 1], 1)
+      project(index[offset + 2], 2)
+      // A triangle whose projected bounds miss the disc cannot contribute.
+      const minX = Math.min(vx[0], vx[1], vx[2])
+      if (minX > radius) continue
+      const maxX = Math.max(vx[0], vx[1], vx[2])
+      if (maxX < -radius) continue
+      const minY = Math.min(vy[0], vy[1], vy[2])
+      if (minY > radius) continue
+      const maxY = Math.max(vy[0], vy[1], vy[2])
+      if (maxY < -radius) continue
+      const e1x = vx[1] - vx[0]
+      const e1y = vy[1] - vy[0]
+      const e2x = vx[2] - vx[0]
+      const e2y = vy[2] - vy[0]
+      const denom = e1x * e2y - e1y * e2x
+      // The height map reads no surface from a projection that collapses to a
+      // line either (`buildHeightMap`'s determinant test).
+      if (Math.abs(denom) < 1e-15) continue
+      const rise1 = vz[1] - vz[0]
+      const rise2 = vz[2] - vz[0]
+      const gx = (rise1 * e2y - rise2 * e1y) / denom
+      const gy = (rise2 * e1x - rise1 * e2x) / denom
+      // (a) Its own vertices, where the height is read off the mesh.
+      for (let j = 0; j < 3; j++) {
+        if (vx[j] * vx[j] + vy[j] * vy[j] <= radiusSq + 1e-12 && vz[j] > best) best = vz[j]
+      }
+      // (b) Where each edge crosses the footprint's boundary: an affine height
+      // over the clipped edge is highest at one of its ends.
+      for (let j = 0; j < 3; j++) {
+        const k = j === 2 ? 0 : j + 1
+        const dx = vx[k] - vx[j]
+        const dy = vy[k] - vy[j]
+        const a = dx * dx + dy * dy
+        if (!(a > 0)) continue
+        const b = 2 * (vx[j] * dx + vy[j] * dy)
+        const c = vx[j] * vx[j] + vy[j] * vy[j] - radiusSq
+        let discriminant = b * b - 4 * a * c
+        if (discriminant < 0) {
+          if (discriminant < -1e-18) continue
+          discriminant = 0
+        }
+        const root = Math.sqrt(discriminant)
+        for (const crossing of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
+          if (!(crossing >= 0) || crossing > 1) continue
+          const value = vz[j] + (vz[k] - vz[j]) * crossing
+          if (value > best) best = value
+        }
+      }
+      // (c) The footprint's centre, which is in the region whenever the triangle
+      // covers it. A triangle far larger than the disc (a long facet strip) has
+      // every vertex and edge outside it, so this is its only interior point --
+      // and for a plane whose gradient is zero it is the only candidate carrying
+      // the plane's height at all.
+      if (contains(0, 0)) {
+        const value = vz[0] + gx * (0 - vx[0]) + gy * (0 - vy[0])
+        if (value > best) best = value
+      }
+      // (d) The disc's own highest point of this triangle's plane, when it lies
+      // inside the triangle. A plane over a disc peaks on the rim along its
+      // gradient, which is an arc's interior rather than a vertex.
+      const gradient = Math.hypot(gx, gy)
+      if (gradient > 1e-12) {
+        const px = (radius * gx) / gradient
+        const py = (radius * gy) / gradient
+        if (contains(px, py)) {
+          const value = vz[0] + gx * (px - vx[0]) + gy * (py - vy[0])
+          if (value > best) best = value
+        }
+      }
+    }
+    row[i] = best === Number.NEGATIVE_INFINITY ? NaN : best - pivot
   }
 }
 
