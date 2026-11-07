@@ -15,27 +15,23 @@
  */
 
 /**
- * The Polygon (Hex) model has its own icon (issue #1112 rt3-d item 32).
+ * The rotary group's own icons (issue #1165, after #1112 rt3-d item 32).
  *
- * It used to borrow `ngon` — the regular-polygon *outline* shape — so a hex bar
- * cut on the lathe read as a flat hexagon drawn on a face. The new source is
- * the Turn icon's convention (item 15) applied to a hex bar: the dash-dot
- * centreline, a regular hexagonal section with its flat edges visible, and the
- * solid running along the axis. Both surfaces it hangs on — the drawer and the
- * tablet rail — read this one command table.
+ * Polygon (Hex) is drawn as the bar seen end-on: a dashed circle for the round
+ * stock and a regular, flat-up hexagon inside it for the flats, with a dot on
+ * the axis. Thread and Flutes no longer borrow the surface-finish and end-mill
+ * icons; each has its own side view of the bar.
  *
  * Mutations checked one at a time against these assertions:
  * - putting `icon: 'ngon'` back in `RotarySolidActions.tsx` → the command
- *   assertions fail, and so does the "no command borrows the outline" one;
- * - deleting `stroke-dasharray` from `hex.svg` (dropping the centreline) → the
- *   artwork assertions fail;
- * - dropping the bar subpath so only the hexagon is left → the "runs along the
- *   axis / is not the outline shape" assertions fail, which is the item's own
- *   rule;
- * - making the section a non-regular hexagon (an arbitrary six-gon, e.g. by
- *   moving one vertex) → the equal-side and apothem-ratio assertions fail;
- * - removing `hex.svg` without re-running the sprite build → the sprite
- *   assertion fails, the one an edit-and-forget would hit.
+ *   assertions fail;
+ * - deleting the dashed circle (dropping the stock) → the stock assertions fail;
+ * - moving one hexagon vertex → the equal-side and apothem-ratio assertions fail;
+ * - growing the hexagon onto the circle → the "inside the stock" assertion fails;
+ * - putting `icon: 'surface'` or `icon: 'tool-endmill'` back in
+ *   `RotaryPatternActions.tsx` → the Thread/Flutes command assertions fail;
+ * - removing a source SVG without re-running the sprite build → the sprite
+ *   assertions fail.
  *
  * Run with: NODE_OPTIONS=--no-experimental-global-navigator npx tsx src/components/layout/toolbar/hexIcon.test.ts
  */
@@ -46,128 +42,81 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
-const hexSource = readFileSync(new URL('../../../assets/icons/hex.svg', import.meta.url), 'utf8')
-const ngonSource = readFileSync(new URL('../../../assets/icons/ngon.svg', import.meta.url), 'utf8')
-const turnSource = readFileSync(new URL('../../../assets/icons/turn.svg', import.meta.url), 'utf8')
-const roundRectSource = readFileSync(new URL('../../../assets/icons/roundrect.svg', import.meta.url), 'utf8')
-const chamferRectSource = readFileSync(new URL('../../../assets/icons/chamferrect.svg', import.meta.url), 'utf8')
+const icon = (name: string): string =>
+  readFileSync(new URL(`../../../assets/icons/${name}.svg`, import.meta.url), 'utf8')
+const hexSource = icon('hex')
+const ngonSource = icon('ngon')
 const sprite = readFileSync(new URL('../../../../public/icons.svg', import.meta.url), 'utf8')
-const actions = readFileSync(new URL('./RotarySolidActions.tsx', import.meta.url), 'utf8')
+const solidActions = readFileSync(new URL('./RotarySolidActions.tsx', import.meta.url), 'utf8')
+const patternActions = readFileSync(new URL('./RotaryPatternActions.tsx', import.meta.url), 'utf8')
 
-// ── Artwork ─────────────────────────────────────────────────────────
+// ── Hex artwork ─────────────────────────────────────────────────────
 
 assert(/viewBox="0 0 24 24"/.test(hexSource), 'the icon uses the 24×24 grid every other icon uses')
 assert(/stroke-width="1\.5"/.test(hexSource), 'the source keeps the 1.5 baseline stroke')
-assert(
-  /stroke-dasharray="[\d.\s]+"/.test(hexSource),
-  'the centreline is drawn with an element-level dash-dot pattern, like the Turn icon (the consumer sets only stroke)',
-)
 
-const hexPaths = [...hexSource.matchAll(/<path[^>]*\sd="([^"]+)"/g)].map((match) => match[1])
-assert(hexPaths.length === 2, `the icon is the centreline plus one artwork path, got ${hexPaths.length}`)
-const centreline = hexPaths.find((d) => / 12 H 22\.5$/.test(d))
-assert(centreline !== undefined, 'one path is the horizontal centreline at y = 12')
-const artwork = hexPaths.find((d) => d !== centreline)!
-assert(!centreline.includes('Z'), 'the centreline is not part of an outline')
+const stock = /<circle[^>]*cx="([\d.]+)"[^>]*cy="([\d.]+)"[^>]*r="([\d.]+)"[^>]*stroke-dasharray="[\d.\s]+"/.exec(hexSource)
+assert(stock, 'the round stock is a dashed circle')
+const [cx, cy, r] = [Number(stock[1]), Number(stock[2]), Number(stock[3])]
+assert(cx === 12 && cy === 12, 'the stock is centred on the grid')
 
-/** A path split into its subpaths: `{ points, closed }` per M..Z run. */
-function subpaths(d: string): Array<{ points: Array<[number, number]>; closed: boolean }> {
-  const runs = d.match(/M[^M]*/g) ?? []
-  return runs.map((run) => ({
-    points: [...run.matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]
-      .map((match): [number, number] => [Number(match[1]), Number(match[2])]),
-    closed: /Z/i.test(run),
-  }))
-}
-
-const parts = subpaths(artwork)
-assert(parts.length === 2, `the artwork is the section plus the bar running along the axis, got ${parts.length} subpaths`)
-const section = parts.find((part) => part.closed)!
-const bar = parts.find((part) => !part.closed)!
-assert(section.points.length === 6, `the section is a hexagon, got ${section.points.length} vertices`)
+const paths = [...hexSource.matchAll(/<path[^>]*\sd="([^"]+)"/g)].map((match) => match[1])
+const section = paths.find((d) => /Z\s*$/.test(d))
+assert(section, 'one path is the closed hexagonal section')
+const points = [...section.matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]
+  .map((match): [number, number] => [Number(match[1]), Number(match[2])])
+assert(points.length === 6, `the section is a hexagon, got ${points.length} vertices`)
 
 const distance = (a: [number, number], b: [number, number]): number => Math.hypot(a[0] - b[0], a[1] - b[1])
-const sides = section.points.map((point, index) => (
-  distance(point, section.points[(index + 1) % section.points.length])
-))
-const shortest = Math.min(...sides)
-const longest = Math.max(...sides)
+const sides = points.map((point, index) => distance(point, points[(index + 1) % points.length]))
 assert(
-  longest - shortest < 0.02,
+  Math.max(...sides) - Math.min(...sides) < 0.02,
   `the section is a regular hexagon: equal sides, got ${sides.map((side) => side.toFixed(3)).join(' / ')}`,
 )
-
-// Flat up: the widest reach is across corners (horizontal), the narrowest across
-// flats (vertical) — a hexagon standing on a flat, not on a point.
-const xs = section.points.map((point) => point[0])
-const ys = section.points.map((point) => point[1])
+const xs = points.map((point) => point[0])
+const ys = points.map((point) => point[1])
 const circumradius = (Math.max(...xs) - Math.min(...xs)) / 2
 const apothem = (Math.max(...ys) - Math.min(...ys)) / 2
 assert(
   Math.abs(apothem / circumradius - Math.sqrt(3) / 2) < 0.005,
   `the hexagon is flat up: apothem/circumradius is √3/2, got ${(apothem / circumradius).toFixed(4)}`,
 )
-// Mirrored about the centreline at y = 12, like the Turn icon's profile.
 assert(
-  Math.abs((12 - Math.min(...ys)) - (Math.max(...ys) - 12)) < 1e-9,
-  `the section is mirrored above and below the centreline (top ${Math.min(...ys)}, bottom ${Math.max(...ys)})`,
+  Math.abs((Math.max(...xs) + Math.min(...xs)) / 2 - cx) < 1e-9 && Math.abs((Math.max(...ys) + Math.min(...ys)) / 2 - cy) < 1e-9,
+  'the hexagon is centred on the bar axis',
 )
 assert(
-  Math.min(...ys) < 12 && Math.max(...ys) > 12,
-  'the section sits astride the centreline, so it reads as a solid around the axis',
+  points.every((point) => distance(point, [cx, cy]) < r - 1),
+  'the flats sit inside the stock with a visible gap, so the corners do not merge with the dashes',
 )
+assert(paths.some((d) => /^M 12 12 H 12\.\d+$/.test(d)), 'a dot marks the bar axis')
 
-// The bar runs from the section's flat edges out along the axis: "flat edges
-// visible". Its two long edges are at the flats' own levels, not at the corners.
-const barFaces = [...new Set(bar.points.map((point) => point[1]))].sort((a, b) => a - b)
-assert(
-  barFaces.length === 2
-    && Math.abs(barFaces[0] - Math.min(...ys)) < 1e-9
-    && Math.abs(barFaces[1] - Math.max(...ys)) < 1e-9,
-  `the bar's long edges are the hexagon's flats (bar ${barFaces.join('/')}, flats ${Math.min(...ys)}/${Math.max(...ys)})`,
-)
-assert(
-  Math.max(...bar.points.map((point) => point[0])) > 20,
-  'the bar runs most of the grid width, so it reads as stock rather than a plate',
-)
+// ── Distinct from the outline icon it used to borrow (item 32) ─────
 
-// ── Distinct from the icons it used to share or sit beside (item 32) ─
-//
-// The dash-dot centreline is deliberately the Turn icon's own (item 15): one
-// convention for "stock on the axis". Everything else has to be this icon's.
-
-const artPaths = (source: string): string[] =>
-  [...source.matchAll(/<path[^>]*\sd="([^"]+)"/g)]
-    .map((match) => match[1])
-    .filter((d) => d !== centreline)
-
+const artwork = (source: string): string[] => [...source.matchAll(/<path[^>]*\sd="([^"]+)"/g)].map((match) => match[1])
 assert(
-  turnSource.includes(centreline),
-  'the centreline is the Turn icon-wide convention, not a second dash pattern',
+  artwork(ngonSource).every((d) => !hexSource.includes(d)),
+  'no part of the regular-polygon outline is reused: the Hex model reads as its own shape',
 )
-for (const [name, source] of [
-  ['regular-polygon outline', ngonSource],
-  ['Turn', turnSource],
-  ['rounded rectangle', roundRectSource],
-  ['chamfered rectangle', chamferRectSource],
-] as const) {
-  assert(!source.includes(artwork), `the ${name} icon does not carry this artwork`)
-  const otherPaths = artPaths(source)
-  assert(otherPaths.length > 0, `the ${name} icon has artwork to compare against`)
-  assert(
-    otherPaths.every((d) => !artwork.includes(d)),
-    `no part of the ${name} icon is reused: the Hex model reads as its own shape`,
-  )
+assert(!/<circle/.test(ngonSource), 'the outline icon has no stock circle — the cue that sets the Hex model apart')
+
+// ── Thread and Flutes ───────────────────────────────────────────────
+
+for (const name of ['thread', 'flutes']) {
+  const source = icon(name)
+  assert(/viewBox="0 0 24 24"/.test(source), `${name}: uses the 24×24 grid`)
+  assert(artwork(source).length >= 2, `${name}: draws the bar and its cuts`)
 }
-assert(
-  artPaths(ngonSource).every((d) => subpaths(d).length === 1),
-  'the outline icon is a single hexagon — the shape this icon must not be',
-)
+assert(/icon: 'thread'/.test(patternActions), 'the Thread command uses its own icon')
+assert(/icon: 'flutes'/.test(patternActions), 'the Flutes command uses its own icon')
+assert(!/icon: '(surface|tool-endmill)'/.test(patternActions), 'Thread and Flutes no longer borrow the surface or end-mill icon')
 
 // ── Sprite and command wiring ───────────────────────────────────────
 
-assert(/<symbol id="hex"/.test(sprite), 'the generated sprite carries the icon (run `npm run sync-icons` after editing the source)')
-assert(/icon: 'hex'/.test(actions), 'the Polygon (Hex) command uses the Hex icon')
-assert(!/icon: 'ngon'/.test(actions), 'no rotary command borrows the regular-polygon outline icon any more')
+for (const name of ['hex', 'thread', 'flutes']) {
+  assert(new RegExp(`<symbol id="${name}"`).test(sprite), `the generated sprite carries ${name} (run \`npm run sync-icons\` after editing the source)`)
+}
+assert(/icon: 'hex'/.test(solidActions), 'the Polygon (Hex) command uses the Hex icon')
+assert(!/icon: 'ngon'/.test(solidActions), 'no rotary command borrows the regular-polygon outline icon any more')
 
 console.log('hexIcon.test.ts passed')

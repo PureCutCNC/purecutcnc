@@ -47,11 +47,20 @@ export const OPERATION_PARAM_REF_KINDS = [
   'stockRadial',
   'stockAxial',
   'passes',
+  'rotaryChuckSupport',
+  'rotaryTailSupport',
   'adaptiveSpacing',
   'adaptiveRefinement',
   'maxRings',
   'drillType',
   'countersinkDiameter',
+  'plasmaSide',
+  'plasmaReverse',
+  'plasmaLeadIn',
+  'plasmaLeadInLength',
+  'plasmaLeadOut',
+  'plasmaLeadOutLength',
+  'plasmaStart',
 ] as const
 
 export type OperationParamRefKind = typeof OPERATION_PARAM_REF_KINDS[number]
@@ -86,11 +95,20 @@ const OP_PARAM_REF_KEY: Record<OperationParamRefKind, keyof typeof camEn> = {
   stockRadial: 'cam.paramRef.stockRadial',
   stockAxial: 'cam.paramRef.stockAxial',
   passes: 'cam.paramRef.passes',
+  rotaryChuckSupport: 'cam.paramRef.rotaryChuckSupport',
+  rotaryTailSupport: 'cam.paramRef.rotaryTailSupport',
   adaptiveSpacing: 'cam.paramRef.adaptiveSpacing',
   adaptiveRefinement: 'cam.paramRef.adaptiveRefinement',
   maxRings: 'cam.paramRef.maxRings',
   drillType: 'cam.paramRef.drillType',
   countersinkDiameter: 'cam.paramRef.countersinkDiameter',
+  plasmaSide: 'cam.paramRef.plasmaSide',
+  plasmaReverse: 'cam.paramRef.plasmaReverse',
+  plasmaLeadIn: 'cam.paramRef.plasmaLeadIn',
+  plasmaLeadInLength: 'cam.paramRef.plasmaLeadInLength',
+  plasmaLeadOut: 'cam.paramRef.plasmaLeadOut',
+  plasmaLeadOutLength: 'cam.paramRef.plasmaLeadOutLength',
+  plasmaStart: 'cam.paramRef.plasmaStart',
 }
 
 export function operationParamRefLabel(kind: OperationParamRefKind): string {

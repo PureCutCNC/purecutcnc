@@ -19,6 +19,7 @@ import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import type { Operation, Project } from '../../types/project'
 import { plasmaLeadLength } from '../../engine/toolpaths/plasma'
 import { camT } from './camI18n'
+import { OperationParameterReference } from './OperationParameterReference'
 import { Select } from '../Select'
 import { plasmaStartContours } from '../canvas/plasmaStartPoint'
 
@@ -42,16 +43,22 @@ export function PlasmaOperationFields({ operation, project, onChange }: {
     <p className="cam-field-note">{camT('cam.plasma.help')}</p>
     <label className="properties-field"><span>{camT('cam.plasma.side')}</span><Select value={operation.plasmaSide ?? 'auto'} options={[
       { value: 'auto', label: camT('cam.plasma.auto') }, { value: 'outside', label: camT('cam.plasma.outside') }, { value: 'inside', label: camT('cam.plasma.inside') },
-    ]} onChange={(value) => onChange({ plasmaSide: value })} /></label>
-    <label className="properties-check"><input type="checkbox" checked={operation.plasmaReverseDirection ?? false} onChange={(event) => onChange({ plasmaReverseDirection: event.target.checked })} /><span>{camT('cam.plasma.reverse')}</span></label>
-    <label className="properties-field"><span>{camT('cam.plasma.leadIn')}</span><Select value={operation.plasmaLeadIn ?? 'arc'} options={options} onChange={(value) => onChange({ plasmaLeadIn: value })} /></label>
-    <label className="properties-field"><span>{camT('cam.plasma.leadInLength')} ({project.meta.units})</span>{number(operation.plasmaLeadInLength, (value) => onChange({ plasmaLeadInLength: value }), plasmaLeadLength(project, operation))}</label>
-    <label className="properties-field"><span>{camT('cam.plasma.leadOut')}</span><Select value={operation.plasmaLeadOut ?? 'line'} options={options} onChange={(value) => onChange({ plasmaLeadOut: value })} /></label>
-    <label className="properties-field"><span>{camT('cam.plasma.leadOutLength')} ({project.meta.units})</span>{number(operation.plasmaLeadOutLength, (value) => onChange({ plasmaLeadOutLength: value }))}</label>
+    ]} onChange={(value) => onChange({ plasmaSide: value })} /><OperationParameterReference kind="plasmaSide" variant={operation.plasmaSide ?? 'auto'} /></label>
+    {/* The picture sits beside the label, not in it, so the checkbox keeps
+        its own name rather than gaining the picture's (#1165). */}
+    <div className="properties-check">
+      <label className="properties-check"><input type="checkbox" checked={operation.plasmaReverseDirection ?? false} onChange={(event) => onChange({ plasmaReverseDirection: event.target.checked })} /><span>{camT('cam.plasma.reverse')}</span></label>
+      <OperationParameterReference kind="plasmaReverse" variant={operation.plasmaReverseDirection ? 'on' : 'off'} />
+    </div>
+    <label className="properties-field"><span>{camT('cam.plasma.leadIn')}</span><Select value={operation.plasmaLeadIn ?? 'arc'} options={options} onChange={(value) => onChange({ plasmaLeadIn: value })} /><OperationParameterReference kind="plasmaLeadIn" variant={operation.plasmaLeadIn ?? 'arc'} /></label>
+    <label className="properties-field"><span>{camT('cam.plasma.leadInLength')} ({project.meta.units})</span>{number(operation.plasmaLeadInLength, (value) => onChange({ plasmaLeadInLength: value }), plasmaLeadLength(project, operation))}<OperationParameterReference kind="plasmaLeadInLength" /></label>
+    <label className="properties-field"><span>{camT('cam.plasma.leadOut')}</span><Select value={operation.plasmaLeadOut ?? 'line'} options={options} onChange={(value) => onChange({ plasmaLeadOut: value })} /><OperationParameterReference kind="plasmaLeadOut" variant={operation.plasmaLeadOut ?? 'line'} /></label>
+    <label className="properties-field"><span>{camT('cam.plasma.leadOutLength')} ({project.meta.units})</span>{number(operation.plasmaLeadOutLength, (value) => onChange({ plasmaLeadOutLength: value }))}<OperationParameterReference kind="plasmaLeadOutLength" /></label>
     <div className="properties-field"><span>{camT('cam.plasma.start')}</span>
       <button type="button" style={{ minHeight: 44 }} aria-pressed={picking} onClick={() => picking
         ? usePlasmaStartPointPick.getState().cancel()
         : usePlasmaStartPointPick.getState().begin(operation.id, useProjectStore.getState().projectKey)}>{camT(picking ? 'cam.plasma.cancelPick' : 'cam.plasma.pickStart')}</button>
+      <OperationParameterReference kind="plasmaStart" />
     </div>
     {plasmaStartContours(project, operation).filter((target) => operation.plasmaStartPoints?.[target.id]).map((target) => (
       <div key={target.id} role="group" aria-label={target.name} className="properties-field">
