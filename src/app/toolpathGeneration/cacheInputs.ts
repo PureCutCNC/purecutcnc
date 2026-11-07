@@ -57,6 +57,7 @@ import {
   type AroundMaterialBand,
 } from '../../engine/aroundFrame'
 import { projectsEqual } from '../../store/helpers/normalize'
+import { operationTurnSurfaceRadius } from '../../store/helpers/turnedSheet'
 
 /**
  * Everything a generated result depends on, captured from the snapshot it was
@@ -364,6 +365,15 @@ export function cacheInputsValid(
     operation.kind === 'follow_line'
     && !sameAroundMaterials(inputs.aroundMaterials, aroundMaterialInputs(project, operation))
   ) {
+    return false
+  }
+
+  // Around work on a Turn is planned at the Turn's radius across the bar
+  // (#1131). The Turn is a model whose side-view silhouette need not overlap
+  // the work's world-XY footprint (the sheet's across coordinate is not the
+  // Turn's), so the diff below can miss a Turn whose diameter or span moved.
+  // The radius the generator would plan at is compared directly.
+  if (operationTurnSurfaceRadius(inputs.project, inputs.operation) !== operationTurnSurfaceRadius(project, operation)) {
     return false
   }
 

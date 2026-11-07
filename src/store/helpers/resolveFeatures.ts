@@ -258,11 +258,23 @@ export function resolveProfile(
   definition: FeatureDefinition,
   transform: Matrix2D,
 ): SketchProfile {
+  return transformProfileByMatrix(definition.profile, transform)
+}
+
+/**
+ * {@link resolveProfile} for a bare profile: the matrix applied with arcs and
+ * circles kept native under a similarity and turned into Béziers otherwise.
+ * Canned outlines use it under a non-similar placement (#1131 review: the
+ * across-the-bar scale on a Turn would otherwise bend a slot's arcs).
+ */
+export function transformProfileByMatrix(
+  profile: SketchProfile,
+  transform: Matrix2D,
+): SketchProfile {
   const preserveCircle = isCirclePreservingTransform(transform)
   const mirror = isMirrorTransform(transform)
   const transformPoint = (p: Point) => applyMatrixToPoint(transform, p)
 
-  const { profile } = definition
   const nextSegments: Segment[] = []
   let current = profile.start
 

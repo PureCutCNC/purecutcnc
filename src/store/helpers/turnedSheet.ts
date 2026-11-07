@@ -319,6 +319,11 @@ export function operationTurnSurfaceRadius(
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) return null
   if (!isBarStock(project.stock)) return null
+  // Cheap first: only Around work is ever planned on a Turn, so anything else
+  // answers before the Turns are read.
+  if (!target.featureIds.every((id) => project.features.some((feature) => feature.id === id && feature.authoringFace === 'around'))) {
+    return null
+  }
   const index = buildSurfaceIndex(project)
   if (!index) return null
   let radius: number | null = null

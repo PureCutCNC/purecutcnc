@@ -53,6 +53,7 @@ import { operationCutsInProject } from '../store/helpers/projectType'
 import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../store/helpers/rotarySurface'
 import {
   aroundSurfaceStarts,
+  operationTurnSurfaceRadius,
   squareSheetFeatureBlock,
   squareSheetHasRoundSection,
 } from '../store/helpers/turnedSheet'
@@ -65,6 +66,13 @@ import type { ToolpathResult } from './toolpaths/types'
 import { featureReachableFromFace, setupGenerationBlock, targetAllowedInSetup } from './setupTargets'
 import { buildBarModelSolid, getManifoldModule, squareSheetModelFilter } from './csg'
 import { modelFeatures } from '../store/helpers/featureRoles'
+import { resolveCannedShapeShapes } from '../cannedShapes'
+import { SLOT_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
+import { rotarySolidCannedData } from '../store/helpers/rotarySolids'
+import { aroundFrame, acrossScaledAroundProject } from './aroundFrame'
+import { captureCacheInputs, cacheInputsValid } from '../app/toolpathGeneration/cacheInputs'
+import type { SketchProfile } from '../types/project'
 import { BUNDLED_DEFINITIONS } from './gcode/definitions'
 import { runPostProcessor } from './gcode/postprocessor'
 import { validateMachineDefinition } from './gcode/types'
@@ -669,6 +677,92 @@ for (const shape of ['round', 'square'] as const) {
   const referenceProject: Project = { ...project, features: project.features.filter((feature) => feature.authoringFace === 'around') }
   assert.deepEqual(computeOperationToolpath(project, plainOp)!.result.moves,
     computeOperationToolpath(referenceProject, plainOp)!.result.moves, 'a pocket off the Turn is planned as before')
+}
+
+{
+  // A canned slot keeps its round ends under the across-the-bar scale: each
+  // cap becomes half of an ellipse, as long along the bar as before (#1131
+  // review — a scaled arc kept as a circle shrank the slot's ends along too).
+  const sample = (profile: SketchProfile): Array<{ x: number; y: number }> => {
+    const points: Array<{ x: number; y: number }> = [profile.start]
+    let from = profile.start
+    for (const segment of profile.segments) {
+      for (let step = 1; step <= 16; step += 1) {
+        const t = step / 16
+        if (segment.type === 'bezier') {
+          const u = 1 - t
+          points.push({
+            x: u * u * u * from.x + 3 * u * u * t * segment.control1.x + 3 * u * t * t * segment.control2.x + t * t * t * segment.to.x,
+            y: u * u * u * from.y + 3 * u * u * t * segment.control1.y + 3 * u * t * t * segment.control2.y + t * t * t * segment.to.y,
+          })
+        } else if (segment.type === 'arc' || segment.type === 'circle') {
+          const radius = Math.hypot(from.x - segment.center.x, from.y - segment.center.y)
+          const start = Math.atan2(from.y - segment.center.y, from.x - segment.center.x)
+          const end = segment.type === 'circle' ? start + (segment.clockwise ? -2 : 2) * Math.PI
+            : Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
+          let sweep = end - start
+          if (segment.type === 'arc' && segment.clockwise && sweep > 0) sweep -= 2 * Math.PI
+          if (segment.type === 'arc' && !segment.clockwise && sweep < 0) sweep += 2 * Math.PI
+          points.push({ x: segment.center.x + radius * Math.cos(start + sweep * t), y: segment.center.y + radius * Math.sin(start + sweep * t) })
+        } else {
+          points.push({ x: from.x + (segment.to.x - from.x) * t, y: from.y + (segment.to.y - from.y) * t })
+        }
+      }
+      from = segment.to
+    }
+    return points
+  }
+  const slotLength = 6
+  const slotWidth = 2
+  const placed = { a: 1, b: 0, c: 0, d: 1, e: 17, f: ZERO }
+  const frame = aroundFrame(squareStock(SIDE, LENGTH, 'x'))
+  const scaled = acrossScaledAroundProject({
+    features: [{ id: 'slot', authoringFace: 'around', transform: placed }],
+  } as unknown as Project, frame, RATIO).features[0]!.transform
+  const shapes = resolveCannedShapeShapes({
+    canned: { kind: SLOT_CANNED_KIND, params: { length: slotLength, width: slotWidth } },
+    transform: scaled,
+    operation: 'subtract',
+  } as Parameters<typeof resolveCannedShapeShapes>[0])
+  assert(shapes.length > 0, 'the slot resolves')
+  const points = shapes.flatMap((shape) => sample(shape.profile))
+  const alongReach = Math.max(...points.map((point) => point.x)) - 17
+  const acrossReach = Math.max(...points.map((point) => point.y)) - ZERO
+  assert(Math.abs(alongReach - (slotLength / 2 + slotWidth / 2)) < 1e-3, `the scaled slot is as long as before (${alongReach.toFixed(4)})`)
+  assert(Math.abs(acrossReach - RATIO * slotWidth / 2) < 1e-3, `and its width is scaled across (${acrossReach.toFixed(4)})`)
+}
+
+{
+  // A cached path planned at one Turn's radius is stale once that Turn's
+  // diameter changes, although nothing overlapping the pocket's footprint did.
+  // The pocket sits a third of a turn round the bar, across the sheet from the
+  // Turn's side-view silhouette, so their world-XY footprints do not meet.
+  const farSide: SketchFeature = {
+    ...sheetFeature('cached', 12, 23, TURN_Z, TURN_Z - 0.5),
+    sketch: { profile: rectProfile(12, ZERO + 14, 11, 2), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  }
+  const { project, turnId } = turnedBar('round', [farSide])
+  const cachedOp = pocketOn(project, 'cached', FLAT.id)
+  const inputs = captureCacheInputs(project, cachedOp)
+  assert.equal(cacheInputsValid(inputs, cachedOp, project), true, 'the cache holds for the same project')
+  const frame = rotarySolidFrame(project)
+  assert(frame, 'the bar has a rotary frame')
+  const smaller = rotarySolidCannedData(frame, { kind: 'turn', ...TURN, diameter: TURN.diameter - 2 }, 'mm')
+  assert(smaller, 'the smaller Turn builds')
+  store().updateFeature(turnId, { canned: smaller })
+  assert.equal(cacheInputsValid(inputs, cachedOp, store().project), false, 'a Turn diameter change invalidates the cached pocket')
+  // Moving the Turn changes no mesh and nothing in the pocket's footprint, but
+  // the pocket is no longer wholly on it, so it is planned on the reference
+  // sheet again: the cache must see that.
+  const moved: Project = {
+    ...project,
+    features: project.features.map((feature) => feature.id !== turnId ? feature : {
+      ...feature,
+      transform: { ...feature.transform, e: feature.transform.e + 8 },
+    }),
+  }
+  assert.equal(operationTurnSurfaceRadius(moved, cachedOp), null, 'the moved Turn no longer carries the whole pocket')
+  assert.equal(cacheInputsValid(inputs, cachedOp, moved), false, 'moving the Turn invalidates the cached pocket')
 }
 
 console.log('squareTurnedSheet: all assertions passed.')
