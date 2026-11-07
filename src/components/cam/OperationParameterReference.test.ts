@@ -86,7 +86,7 @@ function testEveryKindRendersSvg(): void {
 // the value-aware switch produces geometry).
 function testVariantKindsRenderEveryOption(): void {
   const cases: Array<[OperationParamRefKind, readonly string[]]> = [
-    ['pattern', ['offset', 'parallel', 'waterline', 'seeded_offset']],
+    ['pattern', ['offset', 'parallel', 'waterline', 'seeded_offset', 'constant_scallop', 'trochoidal']],
     ['cutDirection', ['conventional', 'climb']],
     ['edgeStrategy', ['contour', 'trochoidal']],
     ['machiningOrder', ['level_first', 'feature_first']],
@@ -113,6 +113,17 @@ function testVariantKindsRenderEveryOption(): void {
       )
     }
   }
+}
+
+// #1169: trochoidal used to fall through to the Offset picture.
+function testTrochoidalPatternHasOwnPicture(): void {
+  assert(
+    renderKind('pattern', 'trochoidal') !== renderKind('pattern', 'offset'),
+    'the trochoidal pattern must not borrow the offset picture',
+  )
+  const slots = renderKind('engagementMode', 'slots_only')
+  const engagement = renderKind('engagementMode', 'engagement')
+  assert(slots !== engagement, 'the two engagement modes draw different pictures')
 }
 
 // #1165: each plasma option draws a different picture, and Reverse flips the
@@ -216,6 +227,7 @@ testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
 testCutDirectionArrowOrientation()
 testPlasmaVariantsDiffer()
+testTrochoidalPatternHasOwnPicture()
 testRotaryPicturesDiffer()
 
 console.log('OperationParameterReference tests passed')

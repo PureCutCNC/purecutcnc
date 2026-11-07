@@ -286,8 +286,8 @@ function CreationActions({
       */}
       <div className="toolbar-target-toggle" role="group" aria-label="Creation target">
         {renderCreationTargetButton('feature', 'plus', t(CREATION_TARGET_LABEL_KEYS.feature))}
-        {renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))}
-        {renderCreationTargetButton('region', 'pocket', t(CREATION_TARGET_LABEL_KEYS.region))}
+        {renderCreationTargetButton('line', 'line-target', t(CREATION_TARGET_LABEL_KEYS.line))}
+        {renderCreationTargetButton('region', 'region', t(CREATION_TARGET_LABEL_KEYS.region))}
         {renderCreationTargetButton('construction', 'construction', t(CREATION_TARGET_LABEL_KEYS.construction))}
       </div>
       <div
