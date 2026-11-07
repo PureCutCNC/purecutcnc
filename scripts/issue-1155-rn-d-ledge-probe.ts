@@ -48,7 +48,7 @@ import { planRotarySolid } from '../src/store/helpers/rotarySolids'
 import type { SelectionState } from '../src/store/types'
 import { minRenderHeight } from '../src/engine/csg'
 import {
-  blankProfile, cutterPosesByAngle, leftoverLevel, sweepProfile, wallFootLeftover, wallFootWindow,
+  blankProfile, cutterPosesByAngle, sweepProfile, wallFootLeftover, wallFootWindow,
 } from '../src/test/rotaryWallFootSweep'
 import type { WallFootProfile } from '../src/test/rotaryWallFootSweep'
 
@@ -67,7 +67,6 @@ const HEX_END = HEX_START + HEX_LENGTH
 const TURN_START = 1.2
 const TURN_LENGTH = 2.55
 const TURN_DIAMETER = 1
-const TURN_END = TURN_START + TURN_LENGTH
 const FLAT_TOOL_ID = 'flat-025'
 const BALL_TOOL_ID = 'ball-025'
 
@@ -157,6 +156,8 @@ function movesSummary(moves: readonly ToolpathMove[]): { total: number; ring: nu
 interface LedgerReport {
   readonly ledge: number
   readonly edgeGap: number
+  readonly depth: number
+  readonly highest: number
   readonly worstAngle: number
   readonly angles: number
 }
@@ -178,25 +179,33 @@ function measure(
   const moves = generate(project, operation)
   const window = wallFootWindow(HEX_END, tool, 1)
   const angles = cutterPosesByAngle(moves, stock, tool)
+  // The specified level: the Turn's own surface plus the operation's leave. The
+  // first cut read the profile's own lowest value, which reported zero leftover
+  // even for an untouched blank (#1155 rn-d correction 2).
+  const level = TURN_DIAMETER / 2 + leave
   let ledge = Number.NEGATIVE_INFINITY
   let edgeGap = Number.NEGATIVE_INFINITY
+  let depth = Number.POSITIVE_INFINITY
+  let highest = Number.NEGATIVE_INFINITY
   let worstAngle = 0
   let profile: WallFootProfile | null = null
   for (const entry of angles) {
     const base = previous === null
       ? blankProfile(stock, window.from, window.to, tool, HEX_END + leave)
       : { along: previous.along, top: [...previous.top] }
-    const swept = sweepProfile(base, entry.poses, tool)
-    const leftover = wallFootLeftover(swept, HEX_END, 1, leftoverLevel(swept), leave, tolerance)
+    const swept = sweepProfile(base, entry.poses, tool, entry.angle)
+    const leftover = wallFootLeftover(swept, HEX_END, 1, level, leave, tolerance, 2 * tool.radius)
     if (leftover.ledge > ledge) {
       ledge = leftover.ledge
       worstAngle = entry.angle
     }
     if (leftover.edge - HEX_END > edgeGap) edgeGap = leftover.edge - HEX_END
+    if (leftover.depth < depth) depth = leftover.depth
+    if (leftover.highest > highest) highest = leftover.highest
     profile ??= swept
   }
   return {
-    report: { ledge, edgeGap, worstAngle, angles: angles.length },
+    report: { ledge, edgeGap, depth, highest, worstAngle, angles: angles.length },
     profile: profile ?? blankProfile(stock, window.from, window.to, tool),
   }
 }
@@ -219,6 +228,8 @@ function reportOperation(
   console.log(`  ledge max ${Number.isFinite(report.ledge) ? report.ledge.toFixed(5) : 'none'} in over `
     + `${report.angles} angles (worst A${report.worstAngle}°); edge past the face max `
     + `${report.edgeGap.toFixed(5)} in against the ${leave.toFixed(3)} leave`)
+  console.log(`  foot cut ${report.depth.toFixed(5)}..${report.highest.toFixed(5)} in from the axis `
+    + `against the target's ${(TURN_DIAMETER / 2 + leave).toFixed(5)} in surface plus leave`)
   return profile
 }
 

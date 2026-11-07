@@ -70,25 +70,34 @@
  * cutter's body is **tangent** to the face there, so that ring may read the
  * target's own surface (`wallFootPreps` samples it on the mesh without the
  * neighbour it is tangent to) and it clears everything above the target from
- * `face + leave` on. The ring is cut as its own ring, never as a helix boundary,
- * because the helix resamples each pose on the operation's mesh and a helix
- * starting at the tangent pose rides the wall for a turn. The sections below
- * measure that with `src/test/rotaryWallFootSweep.ts` -- one radial material
- * profile per degree of A, cut by the real cutter body at every emitted pose --
- * and report the leftover beside the face per angle:
+ * `face + leave` on, at the **target surface + leave** (`removeLift` -- the
+ * conservative cell pad is taken back off a ring that has nothing but the target
+ * under it). The ring is cut as its own ring, never as a helix boundary, because
+ * the helix resamples each pose on the operation's mesh and a helix starting at
+ * the tangent pose rides the wall for a turn. The sections below measure it with
+ * `src/test/rotaryWallFootSweep.ts` -- one radial material profile per degree of
+ * A, cut by the real cutter body intersected at the profile's own angle -- and
+ * read the leftover beside the face per angle against that specified level.
+ * Measured on the first rn-d cut (`3cdf1f78`), whose ring kept the pad, and on
+ * this correction:
  *
- * | op | before | after |
- * | --- | --- | --- |
- * | flat finish, leave 0 | 0.08594 in | 0.00000 in |
- * | flat rough, leave 0.02 | 0.00977 in | 0.00000 in |
- * | flat rough, leave 0 | 0.03027 in | 0.00000 in |
- * | ball finish on the rough's material | 0.20066 in | 0.11570 in |
+ * | op | foot cut before (in) | foot cut after (in) | ledge before | ledge after |
+ * | --- | --- | --- | --- | --- |
+ * | flat finish, leave 0 | 0.50915..0.51001 | 0.49959..0.50000 | 0.25000 | 0.00000 |
+ * | flat rough, leave 0.02 | 0.52945..0.52998 | 0.51959..0.52000 | 0.25000 | 0.00000 |
+ * | flat rough, leave 0 | 0.50945..0.50998 | 0.49959..0.50000 | 0.25000 | 0.00000 |
+ * | ball finish on the rough's material | 0.50916..0.77983 | 0.49959..0.77983 | 0.25000 | 0.11570 |
  *
- * The ball's figure is its own fillet at the foot -- a ball's section cannot
- * reach below `tip + r - sqrt(r² - d²)`, so it leaves a band at a wall that no
- * placement removes (0.115 in for this 1/4 in ball) -- which is why the ball is
- * held to `<= its own radius` and to the ring's position, while the flat cutters
- * are held to the surface tolerance.
+ * The before figures are the review's: the foot ring was read through the
+ * conservative cell pad, so it cut 0.00915..0.01001 in above the target and
+ * nothing in the foot zone reached the specified level (a 0.25 in zone, the
+ * whole of it, which is the "nothing is cleared" reading that the first cut's
+ * `leftoverLevel` hid by comparing the profile with itself). The ball's after
+ * figure is its own fillet at the foot -- a ball's section cannot reach below
+ * `tip + r - sqrt(r² - d²)`, so it leaves a band at a wall that no placement
+ * removes (0.115 in for this 1/4 in ball) -- which is why the ball is held to
+ * `<= its own radius` and to the ring's position, while the flat cutters are
+ * held to the surface tolerance.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourPartialOverlap.test.ts
  */
@@ -111,7 +120,7 @@ import { createRotarySamplingPrep, runRotaryAngleJob } from './rotarySampling'
 import type { NormalizedTool, ToolpathMove } from './types'
 import { deepestCutterGouge } from '../../test/rotaryCutterGouge'
 import {
-  blankProfile, cutterPosesByAngle, leftoverLevel, sweepProfile, wallFootLeftover, wallFootWindow,
+  blankProfile, cutterPosesByAngle, sweepProfile, wallFootLeftover, wallFootWindow,
 } from '../../test/rotaryWallFootSweep'
 import type { WallFootProfile } from '../../test/rotaryWallFootSweep'
 
@@ -627,6 +636,8 @@ function ringTurns(moves: readonly ToolpathMove[]): Map<number, number> {
 interface WallFootSweepResult {
   readonly ledge: number
   readonly edgeOffset: number
+  readonly depth: number
+  readonly highest: number
   readonly worstAngle: number
   readonly angles: number
   readonly profile: WallFootProfile
@@ -639,6 +650,11 @@ interface WallFootSweepResult {
  * is measured on what its rough left rather than on a blank no real job starts
  * from. `direction` is the side the operation cuts on: `+1` past the face (the
  * Turn's band starting beside the Hex's far face) or `-1` before it (the mirror).
+ * `level` is the surface the operation must reach there -- the **specified**
+ * target surface plus its stock to leave, passed in by the caller. It is never
+ * read off the swept profile: doing that compared the material with itself and
+ * reported zero ledge for an untouched blank and for a ring that cut 0.00915 in
+ * high (#1155 rn-d correction 2).
  */
 function sweepWallFoot(
   project: Project,
@@ -646,6 +662,7 @@ function sweepWallFoot(
   face: number,
   direction: 1 | -1,
   previous: WallFootProfile | null,
+  level: number,
 ): WallFootSweepResult {
   const stock = project.stock as BarStock
   const tool = toolOf(project, operation)
@@ -657,29 +674,45 @@ function sweepWallFoot(
   const angles = cutterPosesByAngle(moves, stock, tool)
   let ledge = Number.NEGATIVE_INFINITY
   let edgeOffset = 0
+  let depth = Number.POSITIVE_INFINITY
+  let highest = Number.NEGATIVE_INFINITY
   let worstAngle = 0
   let profile: WallFootProfile | null = null
   for (const entry of angles) {
     const base = previous === null
       ? blankProfile(stock, window.from, window.to, tool, boundary)
       : { along: previous.along, top: [...previous.top] }
-    const swept = sweepProfile(base, entry.poses, tool)
-    const leftover = wallFootLeftover(swept, face, direction, leftoverLevel(swept), leave, tolerance)
+    const swept = sweepProfile(base, entry.poses, tool, entry.angle)
+    const leftover = wallFootLeftover(swept, face, direction, level, leave, tolerance, 2 * tool.radius)
     if (leftover.ledge > ledge) {
       ledge = leftover.ledge
       worstAngle = entry.angle
     }
     const offset = Math.abs(leftover.edge - boundary)
     if (offset > edgeOffset) edgeOffset = offset
+    if (leftover.depth < depth) depth = leftover.depth
+    if (leftover.highest > highest) highest = leftover.highest
     profile ??= swept
   }
   return {
     ledge,
     edgeOffset,
+    depth,
+    highest,
     worstAngle,
     angles: angles.length,
     profile: profile ?? blankProfile(stock, window.from, window.to, tool, boundary),
   }
+}
+
+/**
+ * The sweep's own along resolution (#1155 rn-d): `blankProfile` builds one grid
+ * point every 128th of a cutter radius, so a boundary that is not a grid point
+ * (`previous` profiles carry their own anchor) and the first tangent cut can each
+ * read one step late. The leftover checks allow that step and nothing more.
+ */
+function sweepStep(project: Project, operation: Operation): number {
+  return Math.max(toolOf(project, operation).radius / 128, 1e-5)
 }
 
 /** The cutter-centre position the wall's foot is cut from: `face + leave + radius`. */
@@ -719,16 +752,34 @@ for (const item of [
     atFoot >= 360 - 1e-6,
     `${item.label}: a full ring at the wall's foot ${foot.toFixed(4)} in (found ${atFoot.toFixed(3)}° of turn)`,
   )
-  const report = sweepWallFoot(project, operation, HEX_END, 1, null)
+  // The depth acceptance, against the **specified** surface: target radius plus
+  // the operation's own leave. `highest` is what still stands in the foot zone
+  // (nothing, after the fix), `depth` is what the ring actually reached there (the
+  // surface, after the fix). Reading either against the profile's own lowest
+  // value instead would accept a ring that cut 0.00915 in high on Frank's file.
+  const level = TURN_RADIUS + item.leave
+  const report = sweepWallFoot(project, operation, HEX_END, 1, null, level)
+  const step = sweepStep(project, operation)
   assert.ok(
-    report.edgeOffset <= 0.001,
-    `${item.label}: the leftover beside the Hex ends ${report.edgeOffset.toFixed(5)} in off the `
-      + `${item.leave} leave's boundary at A${report.worstAngle}°`,
+    report.depth <= level + tolerance,
+    `${item.label}: the wall's foot is cut down to ${report.depth.toFixed(5)} in from the axis, above the `
+      + `${level.toFixed(5)} in target surface plus the ${item.leave} leave at A${report.worstAngle}°`,
   )
   assert.ok(
-    report.ledge <= tolerance,
-    `${item.label}: ${report.ledge.toFixed(5)} in of material left past the leave at A${report.worstAngle}° `
+    report.highest <= level + tolerance,
+    `${item.label}: ${(report.highest - level).toFixed(5)} in of material still stands above the `
+      + `${level.toFixed(5)} in target surface plus the ${item.leave} leave at A${report.worstAngle}° `
       + `(tolerance ${tolerance.toFixed(6)} in) -- the ledge #1155 rn-d removes`,
+  )
+  assert.ok(
+    report.edgeOffset <= tolerance + step,
+    `${item.label}: the leftover beside the Hex ends ${report.edgeOffset.toFixed(5)} in off the `
+      + `${item.leave} leave's boundary at A${report.worstAngle}° (one sweep step is ${step.toFixed(6)} in)`,
+  )
+  assert.ok(
+    report.ledge <= tolerance + step,
+    `${item.label}: ${report.ledge.toFixed(5)} in of material left past the leave at A${report.worstAngle}° `
+      + `(tolerance ${tolerance.toFixed(6)} in plus the sweep's ${step.toFixed(6)} in step)`,
   )
 }
 
@@ -737,10 +788,12 @@ for (const item of [
  *
  * A ball's section cannot reach below `tip + r - sqrt(r² - d²)`, so at a wall's
  * foot it always leaves a fillet of its own; what the fix owes the ball is that
- * the leftover is **that fillet** and not a placement error. The figure fell with
- * the fix (0.20066 in to 0.11570 in, the fillet's own 0.115 in) and is now inside
- * one cutter radius, where a foot left one helix turn late would put it a
- * stepover wider than the fillet the ball's own shape leaves.
+ * the leftover is **that fillet** and not a placement error. The measured 0.11570
+ * in is the fillet's own 0.115 in and inside one cutter radius, where a foot left
+ * one helix turn late would put it a stepover wider than the ball's own shape
+ * leaves. Its depth is held to the target surface like the flat cutters': the
+ * first rn-d cut read the ring at 0.50915..0.77983 in, the correction at
+ * 0.49959..0.77983 in.
  */
 {
   const { project, turnId } = boltFixture()
@@ -763,28 +816,47 @@ for (const item of [
     atFoot >= 360 - 1e-6,
     `the ball finish cuts a full ring at the wall's foot ${foot.toFixed(4)} in (found ${atFoot.toFixed(3)}° of turn)`,
   )
-  const roughProfile = sweepWallFoot(project, rough, HEX_END, 1, null)
-  const roughLedge = roughProfile.ledge
+  const roughLevel = TURN_RADIUS + 0.02
+  const roughProfile = sweepWallFoot(project, rough, HEX_END, 1, null, roughLevel)
   assert.ok(
-    roughLedge <= tolerance,
-    `the ball case's rough leaves ${roughLedge.toFixed(5)} in of ledge past the leave (tolerance `
-      + `${tolerance.toFixed(6)} in), so the ball's figure is its own fillet`,
+    roughProfile.highest <= roughLevel + tolerance,
+    `the ball case's rough leaves ${(roughProfile.highest - roughLevel).toFixed(5)} in above its own `
+      + `${roughLevel.toFixed(5)} in surface plus leave (tolerance ${tolerance.toFixed(6)} in), so the ball's `
+      + `figure is its own fillet`,
   )
-  const report = sweepWallFoot(project, finish, HEX_END, 1, roughProfile.profile)
+  const step = sweepStep(project, finish)
+  const report = sweepWallFoot(project, finish, HEX_END, 1, roughProfile.profile, TURN_RADIUS)
+  // The ball's fillet is its own shape: its section cannot reach below the tip
+  // radius anywhere but on the ring's own axis, so the leftover spans one cutter
+  // radius. It must be that fillet and no placement error on top of it.
   assert.ok(
-    report.ledge <= tool.radius + tolerance,
+    report.depth <= TURN_RADIUS + tolerance,
+    `the ball finish reaches only ${report.depth.toFixed(5)} in from the axis at the foot, above the `
+      + `${TURN_RADIUS.toFixed(3)} in target surface`,
+  )
+  assert.ok(
+    report.ledge <= tool.radius + tolerance + step,
     `the ball finish leaves ${report.ledge.toFixed(5)} in past the leave at A${report.worstAngle}°, wider than `
-      + `its own fillet (one cutter radius, ${tool.radius} in)`,
+      + `its own fillet (one cutter radius, ${tool.radius} in, plus the sweep's ${step.toFixed(6)} in step)`,
   )
   // And it still comes to the face: the ring at the foot is a real cut at the
-  // target's surface, not a lift onto the Hex.
+  // target's surface, not a lift onto the Hex. This is the depth acceptance the
+  // first cut bypassed: the ring read 0.50915..0.51001 in, not 0.5.
   const atFootMoves = generate(project, finish).filter((move) => Math.abs(move.from.x - foot) < 1e-6)
   assert.ok(atFootMoves.length > 0, 'the ball finish emits cut moves at the wall foot')
   const lowest = Math.min(...atFootMoves.map((move) => move.from.z - barPivotZ(stock)))
   assert.ok(
-    lowest <= TURN_RADIUS + 0.02,
-    `the ball ring at the foot cuts to ${lowest.toFixed(4)} in from the axis, at the Turn's `
-      + `${TURN_RADIUS.toFixed(3)} in surface rather than on the Hex`,
+    lowest <= TURN_RADIUS + tolerance,
+    `the ball ring at the foot cuts to ${lowest.toFixed(5)} in from the axis, above the Turn's `
+      + `${TURN_RADIUS.toFixed(3)} in surface (tolerance ${tolerance.toFixed(6)} in) -- the lift the `
+      + `first cut put on it read 0.50915..0.51001 in`,
+  )
+  // The other side of the same check: the sampler's own one-cent grid can read a
+  // ball tip a few ten-thousandths low, but not a whole cell.
+  assert.ok(
+    lowest >= TURN_RADIUS - 0.001,
+    `the ball ring at the foot cuts to ${lowest.toFixed(5)} in from the axis, more than the sampler's `
+      + `grid below the Turn's ${TURN_RADIUS.toFixed(3)} in surface`,
   )
 }
 
@@ -815,14 +887,28 @@ for (const item of [
     `the mirror ${item.kind}: a full ring at the far wall's foot ${foot.toFixed(4)} in `
       + `(found ${atFoot.toFixed(3)}° of turn)`,
   )
-  const report = sweepWallFoot(project, operation, HEX_START, -1, null)
+  const level = TURN_RADIUS + item.leave
+  const step = sweepStep(project, operation)
+  const report = sweepWallFoot(project, operation, HEX_START, -1, null, level)
   assert.ok(
-    report.ledge <= tolerance,
-    `the mirror ${item.kind}: ${report.ledge.toFixed(5)} in of material left past the leave on the band's `
-      + `far side at A${report.worstAngle}° (tolerance ${tolerance.toFixed(6)} in)`,
+    report.depth <= level + tolerance,
+    `the mirror ${item.kind}: the far foot is cut down to ${report.depth.toFixed(5)} in from the axis, `
+      + `above the ${level.toFixed(5)} in target surface plus leave`,
   )
   assert.ok(
-    report.edgeOffset <= 0.001,
+    report.highest <= level + tolerance,
+    `the mirror ${item.kind}: ${(report.highest - level).toFixed(5)} in of material still stands above the `
+      + `${level.toFixed(5)} in target surface plus leave at A${report.worstAngle}° `
+      + `(tolerance ${tolerance.toFixed(6)} in)`,
+  )
+  assert.ok(
+    report.ledge <= tolerance + step,
+    `the mirror ${item.kind}: ${report.ledge.toFixed(5)} in of material left past the leave on the band's `
+      + `far side at A${report.worstAngle}° (tolerance ${tolerance.toFixed(6)} in plus the sweep's `
+      + `${step.toFixed(6)} in step)`,
+  )
+  assert.ok(
+    report.edgeOffset <= tolerance + step,
     `the mirror ${item.kind}: the leftover ends ${report.edgeOffset.toFixed(5)} in off the `
       + `${item.leave} leave's boundary`,
   )
@@ -864,6 +950,220 @@ for (const item of [
     Math.abs(along - wallFoot(HEX_END, 0, 1, tool)) < 1e-6)
   assert.ok(!wallFootRing, "no wall-foot ring is cut where the neighbour does not rise")
   void turnId
+}
+
+// ── a wall that rises only out of the flats (#1155 rn-d correction 1) ─────
+
+/** A wall that rises only out of the target's flats, and the controls around it. */
+interface FlatWallFixture {
+  readonly project: Project
+  readonly targetId: string
+  readonly neighbourId: string
+  /** The neighbour's outer radius. */
+  readonly neighbourRadius: number
+}
+
+/**
+ * A **polygon** target with a **cylinder** neighbour whose end face sits inside
+ * the target's band: the shape the first wall test missed (#1155 rn-d
+ * correction 1, review P1).
+ *
+ * The polygon is the handoff's Hex, apothem 0.75 and corners 0.866, run from
+ * 1.2 to 3.75. The neighbour is a cylinder of radius `radius` over 0.75..1.25,
+ * so its end face at 1.25 is inside the target's band and the tool reaches the
+ * target's own surface at 1.25 + 0.125 = 1.375. With `radius = 0.8` the
+ * neighbour stands 0.05 in above the target's **flats** and 0.066 in below its
+ * corners: the surface the tool follows steps up at every angle over a flat, but
+ * a comparison of the two meshes' largest radii sees only 0.8 < 0.866 and
+ * reports no wall at all.
+ */
+function flatWallFixture(radius: number): FlatWallFixture {
+  const base = boltProject(`rn-d flat wall ${radius}`)
+  const neighbour = planRotarySolid(base, EMPTY_SELECTION, {
+    kind: 'turn', start: HEX_START, length: HEX_LENGTH, diameter: 2 * radius,
+  })
+  if (!neighbour.ok) throw new Error(`the neighbour must plan: ${neighbour.reason}`)
+  const target = planRotarySolid(neighbour.project, EMPTY_SELECTION, {
+    kind: 'polygon', start: TURN_START, length: TURN_LENGTH, sides: 6,
+    acrossFlats: HEX_ACROSS_FLATS, rotationDeg: 0,
+  })
+  if (!target.ok) throw new Error(`the target must plan: ${target.reason}`)
+  return {
+    project: target.project,
+    targetId: target.created.featureId,
+    neighbourId: neighbour.created.featureId,
+    neighbourRadius: radius,
+  }
+}
+
+/**
+ * The target's nominal surface radius at one angle of the polygon: the apothem
+ * over the largest facet dot product, exactly as the solid's facet is cut.
+ */
+function polygonRayRadius(angleDeg: number): number {
+  const apothem = HEX_ACROSS_FLATS / 2
+  const angle = (angleDeg * Math.PI) / 180
+  let largest = Number.NEGATIVE_INFINITY
+  for (let k = 0; k < 6; k++) {
+    const normal = (k * Math.PI) / 3
+    largest = Math.max(largest, Math.sin(normal) * Math.sin(angle) + Math.cos(normal) * Math.cos(angle))
+  }
+  return apothem / largest
+}
+
+/**
+ * The fixture's own geometry: the neighbour is above the flats and below the
+ * corners, so the largest-radius comparison can only see the corners.
+ */
+{
+  const { project, neighbourId, targetId, neighbourRadius } = flatWallFixture(0.8)
+  const definitions = [neighbourId, targetId].map((id) => {
+    const feature = project.features.find((candidate) => candidate.id === id)
+    assert.ok(feature, `${id} is a feature`)
+    return project.featureDefinitions[feature.definitionId]
+  })
+  assert.equal(definitions[0].canned?.kind, 'turn')
+  assert.equal(definitions[1].canned?.kind, 'polygon')
+  const targetCorner = polygonRayRadius(30)
+  assert.ok(Math.abs(targetCorner - HEX_ACROSS_FLATS / Math.sqrt(3)) < 1e-9, `the corner radius is ${targetCorner}`)
+  assert.ok(neighbourRadius > HEX_ACROSS_FLATS / 2 + MIN_HEIGHT, 'the neighbour rises above the flats')
+  assert.ok(neighbourRadius < targetCorner - MIN_HEIGHT, 'the neighbour stays below the corners')
+}
+
+/**
+ * A full ring is cut at the wall's foot even though the neighbour only rises out
+ * of the flats (#1155 rn-d correction 1, review P1).
+ *
+ * The foot is `1.25 + 0.125 = 1.375`. The first cut compared the two meshes'
+ * largest radii -- the neighbour's 0.8 against the polygon's corner 0.866 -- and
+ * emitted no ring there; the ring is what puts the material at the flat angles on
+ * the target's own surface instead of on the stair-step the helix leaves.
+ */
+{
+  const { project, targetId } = flatWallFixture(0.8)
+  const operation = rotaryOperation(project, [targetId], 'rotary_finish', {
+    name: 'polygon finish against a rising cylinder', toolRef: FLAT_TOOL_ID, stepover: 0.32,
+    stepdown: 0.125, stockToLeaveRadial: 0,
+  })
+  const tool = toolOf(project, operation)
+  const stock = project.stock as BarStock
+  const tolerance = minRenderHeight(project.meta.units)
+  const foot = wallFoot(HEX_END, 0, 1, tool)
+  const moves = generate(project, operation)
+  const turns = ringTurns(moves)
+  const atFoot = turns.get(Math.round(foot * 1e6) / 1e6) ?? 0
+  assert.ok(
+    atFoot >= 360 - 1e-6,
+    `a full ring at the wall's foot ${foot.toFixed(4)} in where the neighbour rises only out of the flats `
+      + `(found ${atFoot.toFixed(3)}° of turn)`,
+  )
+  // And the ring follows the **target**, not the neighbour: its lowest radius is
+  // the polygon's apothem, not the cylinder's 0.8 in. A ring lifted onto the
+  // neighbour would read 0.8 in at every angle.
+  const pivot = barPivotZ(stock)
+  const radii = moves
+    .filter((move) => move.kind !== 'rapid' && Math.abs(move.from.x - foot) < 1e-6)
+    .map((move) => move.from.z - pivot)
+  assert.ok(radii.length > 0, 'the wall-foot ring emits motion')
+  const lowest = Math.min(...radii)
+  assert.ok(
+    lowest <= HEX_ACROSS_FLATS / 2 + tolerance,
+    `the wall-foot ring cuts no lower than ${lowest.toFixed(5)} in from the axis, above the polygon's `
+      + `${(HEX_ACROSS_FLATS / 2).toFixed(3)} in flat`,
+  )
+  assert.ok(
+    lowest >= HEX_ACROSS_FLATS / 2 - tolerance - 0.01,
+    `the wall-foot ring reaches ${lowest.toFixed(5)} in from the axis, below the polygon's `
+      + `${(HEX_ACROSS_FLATS / 2).toFixed(3)} in flat`,
+  )
+}
+
+/**
+ * The control: the same polygon target with a cylinder that stays **below** every
+ * angle of it (radius 0.7 against the 0.75 flat) adds no foot ring. The wall test
+ * must not fire merely because a neighbour is present.
+ */
+{
+  const { project, targetId } = flatWallFixture(0.7)
+  const operation = rotaryOperation(project, [targetId], 'rotary_finish', {
+    name: 'polygon finish against a lower cylinder', toolRef: FLAT_TOOL_ID, stepover: 0.32,
+    stepdown: 0.125, stockToLeaveRadial: 0,
+  })
+  const tool = toolOf(project, operation)
+  const foot = wallFoot(HEX_END, 0, 1, tool)
+  const turns = ringTurns(generate(project, operation))
+  assert.ok(
+    ![...turns.keys()].some((along) => Math.abs(along - foot) < 1e-6),
+    `no wall-foot ring at ${foot.toFixed(4)} in where the neighbour stays below the target's flats`,
+  )
+}
+
+/**
+ * The level is the **specified** target surface, not the profile's own lowest
+ * value (#1155 rn-d correction 2, review P1): an untouched blank must report the
+ * whole foot zone as leftover, where the first cut's `leftoverLevel` reported
+ * zero because the blank's lowest value was the blank itself.
+ */
+{
+  const { project } = boltFixture()
+  const record = project.tools.find((candidate) => candidate.id === FLAT_TOOL_ID)
+  assert.ok(record, 'the fixture has its 1/4" flat')
+  const stock = project.stock as BarStock
+  const tool = normalizeToolForProject(record, project)
+  const tolerance = minRenderHeight(project.meta.units)
+  const profile = blankProfile(stock, HEX_END - 4 * tool.radius, HEX_END + 6 * tool.radius, tool, HEX_END)
+  const untouched = wallFootLeftover(profile, HEX_END, 1, TURN_RADIUS, 0, tolerance, 2 * tool.radius)
+  assert.ok(
+    untouched.ledge >= 2 * tool.radius - 1e-9,
+    `an untouched blank reports ${untouched.ledge.toFixed(5)} in of ledge, not the whole ${(2 * tool.radius).toFixed(5)} in `
+      + 'foot zone: the level is the specified target, so nothing is vacuous',
+  )
+}
+
+// ── the sweep's cutter body (#1155 rn-d correction 3) ─────────────────────
+
+/**
+ * The sweep intersects the **actual** cutter body at the profile's angle, not its
+ * axial footprint at a zero angular offset (#1155 rn-d correction 3, review P2).
+ *
+ * The first cut threw the pose's own angle away and applied its whole axial
+ * footprint to every angle inside its subtended arc. This point stands 0.13547 in
+ * from a radius-0.125 cutter's axis -- outside the body -- and was credited as
+ * cut: the axial offset is 0.1 in, inside the 0.125 in footprint, and the pose's
+ * whole section was applied as if it were on the point's own radial line. With
+ * the angular offset kept, the body's surface at 7 degrees reaches only 0.6153 in
+ * from the bar's axis, below the 0.75 in material there.
+ */
+{
+  const { project } = boltFixture()
+  const record = project.tools.find((candidate) => candidate.id === FLAT_TOOL_ID)
+  assert.ok(record, 'the fixture has its 1/4" flat')
+  const tool = normalizeToolForProject(record, project)
+  const along = 0.1
+  const tip = 0.5
+  const angle = 7
+  const material = 0.75
+  const profile: WallFootProfile = { along: [0], top: [material] }
+  const distance = Math.hypot(along, material * Math.sin((angle * Math.PI) / 180))
+  assert.ok(
+    distance > tool.radius,
+    `the reproducer's point is ${distance.toFixed(5)} in from the cutter's axis, outside its `
+      + `${tool.radius} in radius`,
+  )
+  const off = sweepProfile(profile, [{ along, radius: tip, angle: 0 }], tool, angle)
+  assert.equal(
+    off.top[0], material,
+    `a pose 7 degrees off the material's line leaves the ${material} in top alone: the point is `
+      + `${distance.toFixed(5)} in from its axis, outside the ${tool.radius} in body`,
+  )
+  // The same pose on the point's own line does cut it, so the check is the angle
+  // and not the pose being ignored altogether.
+  const onLine = sweepProfile(profile, [{ along, radius: tip, angle }], tool, angle)
+  assert.ok(
+    onLine.top[0] <= tip + MIN_HEIGHT,
+    `the pose on the material's own line cuts the ${material} in top down to ${onLine.top[0].toFixed(5)} in, `
+      + `at the ${tip} in tip`,
+  )
 }
 
 console.log('rotary partial-overlap neighbour tests passed')

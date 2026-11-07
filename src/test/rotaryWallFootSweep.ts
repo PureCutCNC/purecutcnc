@@ -24,23 +24,30 @@
  * every turning cut comes from outside. A pose then removes a **section** of the
  * cutter body from that profile:
  *
- * - a flat endmill is a cylinder standing on its bottom disc, so over its
- *   footprint `[along - r, along + r]` it removes everything above the tip;
- * - a ball endmill is a sphere of radius `r` whose lowest point is the tip, so at
- *   along offset `d` it removes the radii `tip + r - sqrt(r² - d²)` up to
- *   `tip + r + sqrt(r² - d²)`. Material **above** that band is not cut by the
- *   body and stays (an unsupported overhang the simulation keeps as well), which
- *   is why a ball leaves its own fillet at a wall's foot, and why the ball's check
- *   runs on the material an earlier rough left, exactly as the real job does.
+ * - a flat endmill is a cylinder standing on its bottom disc, so at along offset
+ *   `d` from its centre and angular offset `delta` from its own angle it removes
+ *   down to `radius / cos(delta)` over the radii where
+ *   `d² + s² sin²(delta) <= radius²`;
+ * - a ball endmill is a sphere of radius `radius` whose lowest point is the tip,
+ *   so its centre stands at `tip + radius` from the bar's axis and it removes the
+ *   radial band `centre·cos(delta) ± sqrt(radius² - d² - centre² sin²(delta))`.
+ *   Material **above** that band is not cut by the body and stays (an unsupported
+ *   overhang the simulation keeps as well), which is why a ball leaves its own
+ *   fillet at a wall's foot, and why the ball's check runs on the material an
+ *   earlier rough left, exactly as the real job does.
  *
- * The measured figure is the leftover profile at the wall: the **edge**, the first
- * along position past the neighbour's face where no material above the level
- * stands, and the **ledge**, how far that edge sits past the leave boundary. It
- * is also the width of the material left standing between the two, because no
- * pose reached it. Before rn-d the finish's helix crossed the wall on a different
- * turn for every angle, so the edge wandered by up to one stepover and that
- * wander was the ledge; after it, a full ring at the wall's foot puts the edge on
- * the leave boundary at every angle.
+ * The angular offset matters (#1155 rn-d correction 1, review P2): the first cut
+ * discarded it and applied the pose's whole axial footprint to every angle inside
+ * its subtended arc, which credited a 1/4 in cutter (0.125 in radius) with cutting points up to
+ * 0.00958 in beyond its own surface. The body is intersected here -- in the plane
+ * of the angle line, with the pose's real angle -- so a pose only lowers material
+ * its surface actually reaches.
+ *
+ * The measured figures are read from the leftover profile against a **specified**
+ * level (`target surface + stock to leave`), never against the profile's own
+ * lowest value (#1155 rn-d correction 2, review P1): comparing a profile with
+ * itself reports zero leftover for an untouched blank and hid a foot ring that
+ * cut 0.00915 in high.
  *
  * Nothing here asserts and nothing here reads the sampler.
  */
@@ -57,10 +64,12 @@ export interface WallFootProfile {
   readonly top: number[]
 }
 
-/** One cutter-body pose: where its tip is and how far off the axis it stands. */
+/** One cutter-body pose: where its tip is, how far off the axis, and at what angle. */
 export interface CutterPose {
   readonly along: number
   readonly radius: number
+  /** The pose's own physical angle, degrees in `[0, 360)`. */
+  readonly angle: number
 }
 
 /** The distinct physical angles the sweep reports, in whole degrees. */
@@ -84,7 +93,8 @@ export interface AnglePoses {
  * subtends `asin(r / R)` of angle, and a ring emitted every 3.6 degrees would
  * otherwise leave most angles with no cut at all. The window is that subtended
  * angle (in degrees, plus half of the one-degree binning), so a pose's section is
- * applied to exactly the lines it can touch.
+ * applied to exactly the lines it can touch. The pose keeps its own angle, and
+ * `sweepProfile` uses the offset between the two.
  */
 export function cutterPosesByAngle(
   moves: readonly ToolpathMove[],
@@ -94,40 +104,50 @@ export function cutterPosesByAngle(
 ): AnglePoses[] {
   const pivot = barPivotZ(stock)
   const step = Math.max(tool.radius / 4, 1e-4)
-  const poses: Array<CutterPose & { readonly angle: number }> = []
+  const poses: CutterPose[] = []
+  // The motion is continuous in A: the machine interpolates between two emitted
+  // points, so the tool passes every angle between them at the same along and
+  // radius. Sampling only the emitted points left a foot-wide sliver at a ring's
+  // tangent rim uncut at some angles, and the leftover then read a few
+  // thousandths wide where the real sweep reaches the boundary. The pose step is
+  // therefore capped in angle as well as in tool-centre travel.
+  const angleStep = 0.5
   for (const move of moves) {
     if (move.kind === 'rapid') continue
     const alongFrom = stock.axis === 'x' ? move.from.x : move.from.y
     const alongTo = stock.axis === 'x' ? move.to.x : move.to.y
-    const angleFrom = ((move.from.a ?? 0) * Math.PI) / 180
-    const angleTo = ((move.to.a ?? 0) * Math.PI) / 180
+    const angleFrom = move.from.a ?? 0
+    const angleTo = move.to.a ?? 0
     const radiusFrom = move.from.z - pivot
     const radiusTo = move.to.z - pivot
-    const arc = Math.abs(angleTo - angleFrom) * Math.max(Math.abs(radiusFrom), Math.abs(radiusTo))
-    const steps = Math.max(1, Math.ceil(Math.hypot(alongTo - alongFrom, arc, radiusTo - radiusFrom) / step))
+    const arc = Math.abs(((angleTo - angleFrom) * Math.PI) / 180)
+      * Math.max(Math.abs(radiusFrom), Math.abs(radiusTo))
+    const travel = Math.ceil(Math.hypot(alongTo - alongFrom, arc, radiusTo - radiusFrom) / step)
+    const turned = Math.ceil(Math.abs(angleTo - angleFrom) / angleStep)
+    const steps = Math.max(1, travel, turned)
     for (let i = 0; i <= steps; i++) {
       const t = i / steps
-      const degrees = ((((angleFrom + (angleTo - angleFrom) * t) * 180) / Math.PI) % 360 + 360) % 360
       poses.push({
         along: alongFrom + (alongTo - alongFrom) * t,
         radius: radiusFrom + (radiusTo - radiusFrom) * t,
-        angle: degrees,
+        angle: (((angleFrom + (angleTo - angleFrom) * t) % 360) + 360) % 360,
       })
     }
   }
   const outer = Math.max(tool.radius, barMaxRadius(stock))
   const reach = windowDeg ?? (Math.asin(Math.min(1, tool.radius / outer)) * 180) / Math.PI + 0.5
-  const angles: AnglePoses[] = []
-  for (let angle = 0; angle < 360; angle++) {
-    const members: CutterPose[] = []
-    for (const pose of poses) {
+  const members: CutterPose[][] = Array.from({ length: 360 }, () => [])
+  const span = Math.ceil(reach)
+  for (const pose of poses) {
+    const centre = Math.round(pose.angle)
+    for (let offset = -span; offset <= span; offset++) {
+      const angle = (centre + offset + 360) % 360
       const delta = Math.abs(pose.angle - angle)
       if (Math.min(delta, 360 - delta) > reach) continue
-      members.push({ along: pose.along, radius: pose.radius })
+      members[angle].push(pose)
     }
-    angles.push({ angle, poses: members })
   }
-  return angles
+  return members.map((poses, angle) => ({ angle, poses }))
 }
 
 /**
@@ -158,16 +178,20 @@ export function blankProfile(
 }
 
 /**
- * The profile after one angle's poses cut it.
+ * The profile after one angle's poses cut it, with the cutter body intersected in
+ * the angle line's own plane.
  *
- * A flat endmill removes everything above its tip over its footprint; a ball
- * removes the band its section covers and leaves whatever stands above that band,
- * exactly as the swept body does.
+ * `angle` is the profile's physical angle in degrees; a pose soaks in with the
+ * offset `delta = angle - pose.angle`. A flat endmill lowers the column to
+ * `radius / cos(delta)` and only over the radii its surface reaches; a ball
+ * removes its radial band and leaves whatever stands above it. With `delta = 0`
+ * both reduce to the plain section the first cut used.
  */
 export function sweepProfile(
   profile: WallFootProfile,
   poses: readonly CutterPose[],
   tool: NormalizedTool,
+  angle: number,
 ): WallFootProfile {
   const top = [...profile.top]
   const ball = tool.type === 'ball_endmill'
@@ -175,6 +199,10 @@ export function sweepProfile(
   const count = profile.along.length
   const step = count > 1 ? profile.along[1] - profile.along[0] : 0
   for (const pose of poses) {
+    const delta = (((angle - pose.angle) * Math.PI) / 180)
+    const cos = Math.cos(delta)
+    if (!(cos > 0)) continue
+    const sin = Math.abs(Math.sin(delta))
     // The grid is uniform (`blankProfile` builds it that way), so a pose's
     // footprint is one index range rather than a scan of the whole window.
     const first = step > 0
@@ -183,20 +211,39 @@ export function sweepProfile(
     const last = step > 0
       ? Math.min(count - 1, Math.floor((pose.along + radius - profile.along[0]) / step))
       : count - 1
+    // A ball's cutting sphere stands one radius above its tip; a flat's body is
+    // the half-cylinder above the tip radius.
+    const centre = pose.radius + radius
     for (let j = first; j <= last; j++) {
       const offset = profile.along[j] - pose.along
       if (Math.abs(offset) > radius + 1e-12) continue
       const current = top[j]
       if (!(current > pose.radius)) continue
-      let lowest = pose.radius
-      let highest = Number.POSITIVE_INFINITY
       if (ball) {
-        const inside = radius * radius - offset * offset
+        const inside = radius * radius - offset * offset - (centre * sin) * (centre * sin)
         if (inside < 0) continue
         const spread = Math.sqrt(inside)
-        lowest = pose.radius + radius - spread
-        highest = pose.radius + radius + spread
+        const lowest = centre * cos - spread
+        const highest = centre * cos + spread
+        if (current > highest) continue
+        if (current > lowest) top[j] = lowest
+        continue
       }
+      // The flat's bottom face stands at the tip radius, so the body's surface at
+      // this angle covers radii from `radius / cos` up to `reach`; material above
+      // `reach` is over the cylinder and stays, material below the bottom face is
+      // behind the tool.
+      if (sin < 1e-12) {
+        top[j] = pose.radius
+        continue
+      }
+      const w = Math.sqrt(Math.max(0, radius * radius - offset * offset))
+      const lowest = pose.radius / cos
+      // The rim of the body is the tangent line through the tip: it runs along
+      // the tool's radial axis, so it reaches every radius above the bottom face
+      // and a pose covers its own axial end inclusively (the first cut's envelope
+      // reads the leave boundary exactly).
+      const highest = w <= 1e-12 ? Number.POSITIVE_INFINITY : w / sin
       if (current > highest) continue
       if (current > lowest) top[j] = lowest
     }
@@ -207,43 +254,33 @@ export function sweepProfile(
 /** Where the leftover material at a wall sits. */
 export interface WallFootLeftover {
   /**
-   * The first along position past the face where the material stands at or below
-   * the level: the leave's own boundary when the operation is right, further out
-   * when a ledge is left.
+   * The first along position past the leave boundary where the material stands at
+   * or below the specified level: the leave's own boundary when the operation is
+   * right, further out when a ledge is left, and the foot zone's end when nothing
+   * reaches the level at all.
    */
   readonly edge: number
   /** How far `edge` sits past the leave boundary, in the cut direction. */
   readonly ledge: number
-  /** The width of the next band of material above the level, after `edge`. */
-  readonly gapWidth: number
-  /** The highest top radius the profile still carries beside the face. */
+  /** The lowest material top the operation reached inside the foot zone. */
+  readonly depth: number
+  /** The highest material top still standing inside the foot zone. */
   readonly highest: number
 }
 
 /**
- * The material top an operation leaves **away** from the wall: the lowest radius
- * its profile still carries anywhere. That is its own cut surface -- plus the
- * sampler's conservative lift, #1045 slice F, which is why the theoretical
- * surface radius is the wrong level to compare against -- because a band the
- * operation failed to clear keeps material *above* it, never below. The blank the
- * operation never reaches stands at the bar's radius and cannot lower it, and the
- * neighbour's own step is above it for the same reason.
- */
-export function leftoverLevel(profile: WallFootProfile): number {
-  let level = Number.POSITIVE_INFINITY
-  for (const top of profile.top) if (top < level) level = top
-  return level
-}
-
-/**
- * The leftover at a wall, from a swept profile.
+ * The leftover at a wall, from a swept profile, against a **specified** level.
  *
  * `face` is the neighbour's end face, `direction` the side the operation cuts on
- * (`+1` past the face, `-1` before it), and `level` the material top the operation
- * leaves away from the wall ({@link leftoverLevel}); material above it is what this
- * operation failed to remove, while the band at the leave itself is entitled to
- * stand. `leave` is the radial stock the operation carries, so the leave boundary
- * is `face + direction * leave`.
+ * (`+1` past the face, `-1` before it), and `level` the surface the operation is
+ * required to reach there -- `target surface + stock to leave`, decided by the
+ * caller and never read off the profile. The first cut must reach it from the
+ * leave boundary on; material above `level + tolerance` between the boundary and
+ * the first clearing is the ledge, and its along width is what the acceptance
+ * bounds. `reach` is how far past the boundary the foot zone extends -- the span
+ * this operation's wall-foot ring can reach, `2 * tool radius` in every caller --
+ * so a band that never comes down to the level is reported as the whole zone
+ * rather than walked to the window's end.
  */
 export function wallFootLeftover(
   profile: WallFootProfile,
@@ -252,33 +289,43 @@ export function wallFootLeftover(
   level: number,
   leave: number,
   tolerance: number,
+  reach: number,
 ): WallFootLeftover {
   const clearLevel = level + tolerance
-  const step = profile.along.length > 1 ? profile.along[1] - profile.along[0] : 1
+  const boundary = face + direction * leave
+  const limit = boundary + direction * reach
   let index = 0
   let distance = Number.POSITIVE_INFINITY
   for (let i = 0; i < profile.along.length; i++) {
-    const candidate = Math.abs(profile.along[i] - face)
+    const candidate = Math.abs(profile.along[i] - boundary)
     if (candidate < distance) {
       distance = candidate
       index = i
     }
   }
-  const clamp = (value: number): number => Math.max(0, Math.min(profile.top.length - 1, value))
   const walk = direction > 0 ? 1 : -1
+  let edge = limit
+  let cleared = false
+  let depth = Number.POSITIVE_INFINITY
   let highest = Number.NEGATIVE_INFINITY
-  while (index >= 0 && index < profile.top.length && profile.top[index] > clearLevel) {
-    if (profile.top[index] > highest) highest = profile.top[index]
+  while (index >= 0 && index < profile.top.length) {
+    const along = profile.along[index]
+    if (direction > 0 ? along > limit + 1e-12 : along < limit - 1e-12) break
+    const top = profile.top[index]
+    if (top < depth) depth = top
+    if (top > highest) highest = top
+    if (!cleared && top <= clearLevel) {
+      edge = along
+      cleared = true
+    }
     index += walk
   }
-  const edge = profile.along[clamp(index)]
-  let gapWidth = 0
-  while (index >= 0 && index < profile.top.length && profile.top[index] <= clearLevel) {
-    index += walk
-    gapWidth += step
+  return {
+    edge,
+    ledge: direction > 0 ? edge - boundary : boundary - edge,
+    depth,
+    highest,
   }
-  const clearance = direction > 0 ? edge - (face + leave) : (face - leave) - edge
-  return { edge, ledge: clearance, gapWidth, highest }
 }
 
 /** The along window a wall check needs: a few tool radii each side of the face. */

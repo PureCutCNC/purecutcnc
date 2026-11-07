@@ -1732,43 +1732,173 @@ interface RotaryWallFoot {
 }
 
 /**
- * The largest radius from the bar's axis over the triangles of `mesh` that reach
- * into the along window `[from, to]`, or `-Infinity` when none does.
- *
- * A triangle counts when its own along span overlaps the window, so a coarse
- * mesh -- a canned cylinder whose only vertices are at its two ends -- still
- * reports the surface it carries across the window. Reading the vertices' radius
- * over a triangle that overlaps the window over-estimates it, which is the
- * direction that keeps the wall test conservative: an over-estimated target
- * surface hides a wall rather than inventing one.
+ * The angular resolution of the wall test (#1155 rn-d correction 1): one degree,
+ * the same resolution the leftover sweep reads the part at.
  */
-function meshTopBeside(mesh: RotaryModelMesh, stock: BarStock, from: number, to: number): number {
+const WALL_ANGLE_BINS = 360
+
+/**
+ * The largest radius of a straight section `(x, s)` over the part of it inside
+ * the along window `[from, to]` and on the positive-radius (material) side.
+ * `s` is affine in `x`, so the maximum is at a clamped endpoint.
+ */
+function sectionTopRadius(
+  x0: number, s0: number, x1: number, s1: number, from: number, to: number,
+): number {
+  if (x0 > x1) {
+    const x = x0
+    const s = s0
+    x0 = x1
+    s0 = s1
+    x1 = x
+    s1 = s
+  }
+  if (s0 < 0 && s1 < 0) return Number.NEGATIVE_INFINITY
+  let lo = x0
+  let hi = x1
+  if (s0 < 0 || s1 < 0) {
+    const zero = x0 + (x1 - x0) * (s0 / (s0 - s1))
+    if (s0 < 0) lo = Math.max(lo, zero)
+    else hi = Math.min(hi, zero)
+  }
+  const a = Math.max(lo, from)
+  const b = Math.min(hi, to)
+  if (b < a) return Number.NEGATIVE_INFINITY
+  if (x1 - x0 < 1e-12) return Math.max(s0, s1)
+  const at = (x: number): number => s0 + ((s1 - s0) * (x - x0)) / (x1 - x0)
+  return Math.max(at(a), at(b))
+}
+
+/**
+ * The surface radius of `mesh` beside an end face, per one-degree angle bin
+ * (#1155 rn-d): the largest radius the mesh carries at that angle over the along
+ * window `[from, to]`, or `-Infinity` where it has no surface.
+ *
+ * The triangle is intersected with the half-plane through the bar's axis at the
+ * bin's angle, so a facet's own radius is read rather than its corners': a
+ * polygon target shows its flats at their apothem and its corners at their own
+ * radius, and a neighbour rising out of the **flats** is visible even when the
+ * target's corners stand above it. Comparing the two meshes' largest radii over
+ * all angles (the first rn-d cut) could not see that, and missed a required
+ * wall-foot ring on every angle whose neighbour stood only above the flats:
+ * flats 0.75, corners 0.866, neighbour 0.8 read as "no step" although the
+ * neighbour is 0.05 in above the flats.
+ *
+ * A triangle whose cross-section spans more than half a turn is a cap (a disc
+ * through the axis) and reports its largest radius at every angle; a bar's
+ * surface triangles never span that far.
+ */
+function meshSurfaceTops(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  from: number,
+  to: number,
+): Float64Array {
+  const tops = new Float64Array(WALL_ANGLE_BINS)
+  tops.fill(Number.NEGATIVE_INFINITY)
   const positions = mesh.positions
   const index = mesh.index
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
   const xAxis = stock.axis === 'x'
   const triangles = Math.floor(index.length / 3)
-  let top = Number.NEGATIVE_INFINITY
+  const along = [0, 0, 0]
+  const across = [0, 0, 0]
+  const up = [0, 0, 0]
+  const angle = [0, 0, 0]
+  const radii = [0, 0, 0]
+  const pointX: number[] = []
+  const pointS: number[] = []
+  const sorted = [0, 0, 0]
+  const gaps = [0, 0, 0]
+  const distance = [0, 0, 0]
   for (let t = 0; t < triangles; t++) {
     let alongMin = Number.POSITIVE_INFINITY
     let alongMax = Number.NEGATIVE_INFINITY
-    let radius = Number.NEGATIVE_INFINITY
     for (let corner = 0; corner < 3; corner++) {
       const vertex = index[t * 3 + corner] * 3
       const px = positions[vertex]
       const py = positions[vertex + 1]
-      const along = xAxis ? px : py
-      const across = (xAxis ? py : px) - centre
-      const r = Math.hypot(across, positions[vertex + 2] - pivot)
-      if (along < alongMin) alongMin = along
-      if (along > alongMax) alongMax = along
-      if (r > radius) radius = r
+      along[corner] = xAxis ? px : py
+      across[corner] = (xAxis ? py : px) - centre
+      up[corner] = positions[vertex + 2] - pivot
+      radii[corner] = Math.hypot(across[corner], up[corner])
+      angle[corner] = (((Math.atan2(across[corner], up[corner]) * 180) / Math.PI) + 360) % 360
+      if (along[corner] < alongMin) alongMin = along[corner]
+      if (along[corner] > alongMax) alongMax = along[corner]
     }
+    // A triangle counts when its own along span overlaps the window, so a coarse
+    // mesh -- a canned cylinder whose only vertices are at its two ends -- still
+    // reports the surface it carries across the window.
     if (alongMax < from || alongMin > to) continue
-    if (radius > top) top = radius
+    // The arc the triangle's cross-section covers: everything but its largest
+    // angular gap.
+    sorted[0] = angle[0]
+    sorted[1] = angle[1]
+    sorted[2] = angle[2]
+    let swap = 0
+    if (sorted[0] > sorted[1]) { swap = sorted[0]; sorted[0] = sorted[1]; sorted[1] = swap }
+    if (sorted[1] > sorted[2]) { swap = sorted[1]; sorted[1] = sorted[2]; sorted[2] = swap }
+    if (sorted[0] > sorted[1]) { swap = sorted[0]; sorted[0] = sorted[1]; sorted[1] = swap }
+    gaps[0] = sorted[1] - sorted[0]
+    gaps[1] = sorted[2] - sorted[1]
+    gaps[2] = sorted[0] + 360 - sorted[2]
+    let widest = 0
+    for (let g = 1; g < 3; g++) if (gaps[g] > gaps[widest]) widest = g
+    const span = 360 - gaps[widest]
+    if (span > 180) {
+      // A cap through the axis: its own radius stands at every angle.
+      const radius = Math.max(radii[0], radii[1], radii[2])
+      for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) if (radius > tops[bin]) tops[bin] = radius
+      continue
+    }
+    const start = sorted[(widest + 1) % 3]
+    const first = Math.floor((start * WALL_ANGLE_BINS) / 360) - 1
+    const last = Math.ceil(((start + span) * WALL_ANGLE_BINS) / 360) + 1
+    for (let step = first; step <= last; step++) {
+      const bin = ((step % WALL_ANGLE_BINS) + WALL_ANGLE_BINS) % WALL_ANGLE_BINS
+      const alpha = (bin * 2 * Math.PI) / WALL_ANGLE_BINS
+      const sin = Math.sin(alpha)
+      const cos = Math.cos(alpha)
+      pointX.length = 0
+      pointS.length = 0
+      distance[0] = across[0] * cos - up[0] * sin
+      distance[1] = across[1] * cos - up[1] * sin
+      distance[2] = across[2] * cos - up[2] * sin
+      for (let edge = 0; edge < 3; edge++) {
+        const next = (edge + 1) % 3
+        if (Math.abs(distance[edge]) <= 1e-12) {
+          pointX.push(along[edge])
+          pointS.push(across[edge] * sin + up[edge] * cos)
+        }
+        const d0 = distance[edge]
+        const d1 = distance[next]
+        if ((d0 < 0 && d1 > 0) || (d0 > 0 && d1 < 0)) {
+          const u = d0 / (d0 - d1)
+          const x = along[edge] + (along[next] - along[edge]) * u
+          const a = across[edge] + (across[next] - across[edge]) * u
+          const b = up[edge] + (up[next] - up[edge]) * u
+          pointX.push(x)
+          pointS.push(a * sin + b * cos)
+        }
+      }
+      if (pointX.length === 0) continue
+      let top = Number.NEGATIVE_INFINITY
+      for (let i = 0; i < pointX.length; i++) {
+        for (let j = i + 1; j < pointX.length; j++) {
+          const candidate = sectionTopRadius(pointX[i], pointS[i], pointX[j], pointS[j], from, to)
+          if (candidate > top) top = candidate
+        }
+      }
+      // A single vertex on the plane is a zero-length section.
+      if (pointX.length === 1 && pointX[0] >= from && pointX[0] <= to
+        && pointS[0] >= 0 && pointS[0] > top) {
+        top = pointS[0]
+      }
+      if (top > tops[bin]) tops[bin] = top
+    }
   }
-  return top
+  return tops
 }
 
 /**
@@ -1780,10 +1910,14 @@ function meshTopBeside(mesh: RotaryModelMesh, stock: BarStock, from: number, to:
  * stands on has no foot to step out of -- and when the neighbour's own surface
  * beside that face stands more than the surface tolerance above the target's
  * surface on the band's side of it, which is what "the surface the tool follows
- * steps up" means. The position comes from the neighbour's **mesh**, never from
- * where the conservative height-map read happens to drop: the read reaches a
- * whole cell past its sample, so a position taken from it is pushed out by up to
- * a cell, and the wall's foot would miss by that much.
+ * steps up" means. Both surfaces are read **per angle** (`meshSurfaceTops`), so
+ * the step is the one the tool follows along the radial line it cuts: a polygon
+ * target's flats are compared with their own apothem, not with the corner that
+ * happens to stand above the neighbour, and a neighbour rising only out of the
+ * flats still gets its ring. The position comes from the neighbour's **mesh**,
+ * never from where the conservative height-map read happens to drop: the read
+ * reaches a whole cell past its sample, so a position taken from it is pushed
+ * out by up to a cell, and the wall's foot would miss by that much.
  *
  * Around mode only. The ring and helix placement this fixes is around mode's;
  * along mode's passes are at fixed angles and keep their output byte for byte.
@@ -1813,10 +1947,17 @@ function rotaryWallFeet(
       if (!(foot >= span.start - WALL_FOOT_EPSILON && foot <= span.end + WALL_FOOT_EPSILON)) continue
       const neighbourSide = direction > 0 ? [face - window, face] : [face, face + window]
       const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
-      const neighbourTop = meshTopBeside(neighbour, stock, neighbourSide[0], neighbourSide[1])
-      const targetTop = meshTopBeside(mesh, stock, bandSide[0], bandSide[1])
-      if (!Number.isFinite(neighbourTop) || !Number.isFinite(targetTop)) continue
-      if (!(neighbourTop > targetTop + tolerance)) continue
+      const neighbourTops = meshSurfaceTops(neighbour, stock, neighbourSide[0], neighbourSide[1])
+      const targetTops = meshSurfaceTops(mesh, stock, bandSide[0], bandSide[1])
+      let rises = false
+      for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) {
+        if (!Number.isFinite(neighbourTops[bin]) || !Number.isFinite(targetTops[bin])) continue
+        if (neighbourTops[bin] > targetTops[bin] + tolerance) {
+          rises = true
+          break
+        }
+      }
+      if (!rises) continue
       feet.push({ face, foot, direction })
     }
   }
@@ -1874,6 +2015,16 @@ interface RotaryWallFootRead {
   readonly prep: RotarySamplingPrep
   /** This ring's position within `prep.along`. */
   readonly position: number
+  /**
+   * Whether the conservative cell pad is taken back off this ring's read
+   * (#1155 rn-d correction 2). True when the ring's prep holds the target alone
+   * -- no neighbour and no retained stub within the cutter's reach -- because
+   * there is then nothing but the target's own surface to protect and the
+   * target's surface is the level the acceptance names. The pad otherwise lifts
+   * the ring up to a cell (measured 0.00915 in on Frank's file) above the
+   * surface it must cut.
+   */
+  readonly removeLift: boolean
 }
 
 /**
@@ -1904,9 +2055,20 @@ function wallFootPreps(
   // stock to leave as radius, and the leave is what keeps the body off the face.
   const reach = samplingTool.radius
   const extents = neighbours.map((neighbour) => alongExtremes(neighbour.positions, stock))
+  // The retained bar stubs are the target's own stock left at the operation's
+  // two ends; their faces are the only steps in the foot prep's mesh when no
+  // neighbour is reachable, so a ring within the cutter's reach of one keeps the
+  // conservative pad exactly as before.
+  const bounds = getStockBounds(stock)
+  const lowerEnd = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upperEnd = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const stubFaces: number[] = []
+  if (params.alongStart > lowerEnd + WALL_FOOT_EPSILON) stubFaces.push(params.alongStart)
+  if (upperEnd > params.alongEnd + WALL_FOOT_EPSILON) stubFaces.push(params.alongEnd)
   const groups = new Map<string, {
     readonly kept: RotaryModelMesh[]
     readonly members: Array<{ readonly index: number; readonly foot: RotaryWallFoot }>
+    bare: boolean
   }>()
   for (const member of footReads) {
     const kept: RotaryModelMesh[] = []
@@ -1921,7 +2083,10 @@ function wallFootPreps(
       }
     })
     const id = key.join(',')
-    const group = groups.get(id) ?? { kept, members: [] }
+    const group = groups.get(id) ?? { kept, members: [], bare: true }
+    if (kept.length > 0 || stubFaces.some((face) => Math.abs(face - member.foot.foot) <= reach + WALL_FOOT_EPSILON)) {
+      group.bare = false
+    }
     group.members.push(member)
     groups.set(id, group)
   }
@@ -1938,7 +2103,7 @@ function wallFootPreps(
         : {}),
     })
     group.members.forEach((member, position) => {
-      reads.push({ index: member.index, prep, position })
+      reads.push({ index: member.index, prep, position, removeLift: group.bare })
     })
   }
   return reads
@@ -2182,19 +2347,27 @@ function completeRotaryTargets(
   // the neighbour it is tangent to and the ring would leave the ledge it exists
   // to remove. Its own row is read here, on the mesh without the neighbour the
   // ring is tangent to (see `wallFootPreps`), through the same stock offset and
-  // clamp as every other sample.
+  // clamp as every other sample. When nothing but the target is left in that
+  // prep, the conservative cell pad is taken back off the read as well: there is
+  // nothing else to protect, and leaving the pad on put the ring 0.00915 in above
+  // the surface the acceptance names (Frank's file, correction 2).
   if (plan.wallFootReads.length > 0) {
-    const rowsByPrep = new Map<RotarySamplingPrep, readonly Float32Array[]>()
+    const rowsByPrep = new Map<RotarySamplingPrep, {
+      readonly rows: readonly Float32Array[]
+      readonly lifts: readonly number[]
+    }>()
     for (const read of plan.wallFootReads) {
-      let rows = rowsByPrep.get(read.prep)
-      if (rows === undefined) {
-        const sampled = sampleAnglesWithPrep(read.prep, angles, warnings)
-        if (!sampled.valid) continue
-        rows = sampled.tipRadius
-        rowsByPrep.set(read.prep, rows)
+      let sampled = rowsByPrep.get(read.prep)
+      if (sampled === undefined) {
+        const result = sampleAnglesWithPrep(read.prep, angles, warnings)
+        if (!result.valid) continue
+        sampled = { rows: result.tipRadius, lifts: result.lifts }
+        rowsByPrep.set(read.prep, sampled)
       }
+      const { rows, lifts } = sampled
       for (let k = 0; k < tips.length && k < rows.length; k++) {
-        const raw = rows[k][read.position]
+        const pad = read.removeLift ? (lifts[k] ?? 0) : 0
+        const raw = rows[k][read.position] - pad
         tips[k][read.index] = Number.isFinite(raw)
           ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius)
           : NaN

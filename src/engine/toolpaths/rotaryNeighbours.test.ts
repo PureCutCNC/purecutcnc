@@ -607,8 +607,12 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // face's wall foot (along 22, one cutter radius past it): that ring replaces
   // the helix boundary at the foot and adds one more turn of its own, because a
   // helix starting at the tangent pose reads the Hex and would ride the wall for
-  // a turn. The no-neighbour control below is unchanged.
-  assert.equal(withNeighbour.length, 6997, 'the overlapping neighbour moves the output: the measured bolt run')
+  // a turn. It is 6759 since the rn-d correction read that ring on the target's
+  // surface without the conservative cell pad (#1155 correction 2): the ring is
+  // 0.1457 mm lower here, which changes where the bands beside the foot are
+  // eligible for a helix -- the ring itself is still one full turn at the foot.
+  // The no-neighbour control below is unchanged.
+  assert.equal(withNeighbour.length, 6759, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.
