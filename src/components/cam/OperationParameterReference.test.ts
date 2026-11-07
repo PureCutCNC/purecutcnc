@@ -97,6 +97,11 @@ function testVariantKindsRenderEveryOption(): void {
     // the radial stock uses a rotary cross-section instead of the pocket wall.
     ['passes', ['along', 'around']],
     ['stockRadial', ['rotary', 'around']],
+    // #1165: the plasma selects and the reverse checkbox each switch the picture.
+    ['plasmaSide', ['auto', 'outside', 'inside']],
+    ['plasmaReverse', ['off', 'on']],
+    ['plasmaLeadIn', ['line', 'arc']],
+    ['plasmaLeadOut', ['line', 'arc']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {
@@ -108,6 +113,27 @@ function testVariantKindsRenderEveryOption(): void {
       )
     }
   }
+}
+
+// #1165: each plasma option draws a different picture, and Reverse flips the
+// travel from clockwise (standard consumables, outline viewed from above) to
+// counter-clockwise rather than redrawing the same arrows.
+function testPlasmaVariantsDiffer(): void {
+  const groups: Array<[OperationParamRefKind, readonly string[]]> = [
+    ['plasmaSide', ['auto', 'outside', 'inside']],
+    ['plasmaReverse', ['off', 'on']],
+    ['plasmaLeadIn', ['line', 'arc']],
+    ['plasmaLeadOut', ['line', 'arc']],
+  ]
+  for (const [kind, variants] of groups) {
+    const pictures = new Set(variants.map((variant) => renderKind(kind, variant)))
+    assert(pictures.size === variants.length, `kind ${kind} draws the same picture for two options`)
+  }
+  assert(renderKind('plasmaReverse', 'off').includes('data-arrow="cw"'), 'reverse off must run clockwise')
+  assert(renderKind('plasmaReverse', 'on').includes('data-arrow="ccw"'), 'reverse on must run counter-clockwise')
+  // A lead-in starts with a pierce in the scrap; a lead-out has none.
+  assert(renderKind('plasmaLeadIn', 'line').includes('<circle'), 'lead-in must show the pierce')
+  assert(!renderKind('plasmaLeadOut', 'line').includes('<circle'), 'lead-out must not show a pierce')
 }
 
 // The cut-direction arrow runs along the outside of the part's top edge. With a
@@ -189,6 +215,7 @@ testAllLabelsAreUnique()
 testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
 testCutDirectionArrowOrientation()
+testPlasmaVariantsDiffer()
 testRotaryPicturesDiffer()
 
 console.log('OperationParameterReference tests passed')

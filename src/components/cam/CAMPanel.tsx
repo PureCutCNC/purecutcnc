@@ -1879,6 +1879,7 @@ export function CAMPanel({
           <span>{camT('cam.rotary.chuckSupport')}</span>
           <DraftLengthInput value={operation.rotaryChuckSupport ?? 0} units={project.meta.units} min={0}
             onCommit={(value) => updateOperation(operation.id, { rotaryChuckSupport: value })} />
+          <OperationParameterReference kind="rotaryChuckSupport" />
         </label>
       ),
       rotaryTailSupport: () => (
@@ -1886,6 +1887,7 @@ export function CAMPanel({
           <span>{camT('cam.rotary.tailSupport')}</span>
           <DraftLengthInput value={operation.rotaryTailSupport ?? 0} units={project.meta.units} min={0}
             onCommit={(value) => updateOperation(operation.id, { rotaryTailSupport: value })} />
+          <OperationParameterReference kind="rotaryTailSupport" />
         </label>
       ),
       rotaryPassDirection: () => (

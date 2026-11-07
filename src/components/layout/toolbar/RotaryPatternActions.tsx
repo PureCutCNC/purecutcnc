@@ -48,8 +48,8 @@ interface RotaryCommand {
 }
 
 const ROTARY_COMMANDS: readonly RotaryCommand[] = [
-  { kind: 'thread', command: 'rotary-thread', icon: 'surface', labelKey: 'dialogs.rotary.thread.button' },
-  { kind: 'flutes', command: 'rotary-flutes', icon: 'tool-endmill', labelKey: 'dialogs.rotary.flutes.button' },
+  { kind: 'thread', command: 'rotary-thread', icon: 'thread', labelKey: 'dialogs.rotary.thread.button' },
+  { kind: 'flutes', command: 'rotary-flutes', icon: 'flutes', labelKey: 'dialogs.rotary.flutes.button' },
 ]
 
 interface RotaryPatternActionsProps {
