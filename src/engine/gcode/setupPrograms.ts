@@ -48,7 +48,7 @@ import type { MachiningSetup, Project, RegistrationReference, SetupFace } from '
 import { isBarStock } from '../../types/barStock'
 import { setupFace, setupForOperation } from '../setupOrientation'
 import { manualIndexingApplies } from '../../store/helpers/projectType'
-import { rotaryWord } from './types'
+import { pinRotaryAxis, rotaryWord } from './types'
 import type { MachineDefinition } from './types'
 
 /**
@@ -388,10 +388,12 @@ export function setupStatesManualIndexing(
 export function setupHeaderLines(
   project: Project,
   setup: MachiningSetup,
-  definition: MachineDefinition,
+  unpinnedDefinition: MachineDefinition,
   machineCoordinateRetract = true,
   heldCrossAxis: 'x' | 'y' | null = null,
 ): string[] {
+  // A borrowed motor's letter follows the bar (#1153).
+  const definition = pinRotaryAxis(unpinnedDefinition, project.stock)
   const number = formatProgramNumber(setupProgramNumber(project, setup.id))
   const around = isAroundSetup(setup)
   const lines = [

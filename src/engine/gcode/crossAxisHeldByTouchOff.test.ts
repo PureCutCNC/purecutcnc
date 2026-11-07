@@ -72,6 +72,7 @@ import { runPostProcessor } from './postprocessor'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove } from '../toolpaths/types'
+import { pinRotaryAxis } from './types'
 
 /** The rotary options every program here is parsed with: own-A grbl. */
 const ROTARY_PARSE = {
@@ -623,8 +624,8 @@ console.log('Testing that a fitted arc withholds the rule even when every cross 
       const setup = setupFrameForOperation(program.project, operation)
       const moves = toolpath.moves.map((move) => ({
         ...move,
-        from: projectToMachinePoint(move.from, program.project.origin, program.definition, setup),
-        to: projectToMachinePoint(move.to, program.project.origin, program.definition, setup),
+        from: projectToMachinePoint(move.from, program.project.origin, pinRotaryAxis(program.definition, null), setup),
+        to: projectToMachinePoint(move.to, program.project.origin, pinRotaryAxis(program.definition, null), setup),
       }))
       arcs += fitArcsInMachineMoves(moves, tolerance, 90)
         .filter((step) => step.kind === 'arc').length
@@ -643,7 +644,7 @@ console.log('Testing that a fitted arc withholds the rule even when every cross 
       for (const move of toolpath.moves) {
         for (const point of [move.from, move.to]) {
           const machine = projectToMachinePoint(
-            point, program.project.origin, program.definition, setup,
+            point, program.project.origin, pinRotaryAxis(program.definition, null), setup,
           )
           values.push(format(machine[letter]))
         }

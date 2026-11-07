@@ -35,7 +35,7 @@
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
-import { rotaryWord } from '../../engine/gcode/types'
+import { pinRotaryAxis, rotaryWord } from '../../engine/gcode/types'
 import { manualIndexingApplies } from '../../store/helpers/projectType'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { Project, SetupFace } from '../../types/project'
@@ -66,7 +66,7 @@ export function shouldShowRotaryZeroNotice(
   // a project with no setup plans none).
   const manualIndexTurns = manualIndexingApplies(project)
     && (project.setups?.length ?? 0) > 0
-    && rotaryWord(definition) !== null
+    && rotaryWord(pinRotaryAxis(definition, project.stock)) !== null
   return programs.some((program) => {
     if (manualIndexTurns && program.face !== 'around') return true
     return program.operations.some(({ toolpath }) => toolpath.moves.some(

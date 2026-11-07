@@ -38,6 +38,7 @@ import {
   parseExportedMotion,
 } from './motionDebug'
 import type { OperationMotionTrace } from './types'
+import { pinRotaryAxis } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -128,8 +129,8 @@ function testInverseTransform(): void {
   const probes = [pt(12, 18, 0), pt(10, 20, -3), pt(0, 0, 0), pt(-5, 7, 2)]
   for (const def of [grblDefinition(), mirroredDefinition()]) {
     for (const p of probes) {
-      const m = projectToMachinePoint(p, ORIGIN, def)
-      const back = machineToProjectPoint(m, ORIGIN, def)
+      const m = projectToMachinePoint(p, ORIGIN, pinRotaryAxis(def, null))
+      const back = machineToProjectPoint(m, ORIGIN, pinRotaryAxis(def, null))
       assert(approx(back.x, p.x) && approx(back.y, p.y) && approx(back.z, p.z),
         `round-trip ${JSON.stringify(p)} -> ${JSON.stringify(back)} (${def.coordinateSystem.xAxis}/${def.coordinateSystem.yAxis})`)
     }
@@ -146,11 +147,11 @@ function testRotaryAngleInverse(): void {
   for (const def of [reversedRotaryDefinition(), mirroredBorrowedRotaryDefinition()]) {
     // The sign the direction contributes is negative here, so a transform that
     // forgot to divide it out would come back with the opposite angle.
-    assert(rotaryDirection(def) === -1, 'the fixture makes the direction matter')
+    assert(rotaryDirection(pinRotaryAxis(def, null)) === -1, 'the fixture makes the direction matter')
     for (const p of probes) {
-      const m = projectToMachinePoint(p, ORIGIN, def)
-      assert(m.a === p.a! * rotaryDirection(def), 'the program angle is the project angle times the direction')
-      const back = machineToProjectPoint(m, ORIGIN, def)
+      const m = projectToMachinePoint(p, ORIGIN, pinRotaryAxis(def, null))
+      assert(m.a === p.a! * rotaryDirection(pinRotaryAxis(def, null)), 'the program angle is the project angle times the direction')
+      const back = machineToProjectPoint(m, ORIGIN, pinRotaryAxis(def, null))
       assert(approx(back.x, p.x) && approx(back.y, p.y) && approx(back.z, p.z),
         `rotary round-trip ${JSON.stringify(p)} -> ${JSON.stringify(back)}`)
       assert(back.a !== undefined && approx(back.a, p.a!),
@@ -159,7 +160,7 @@ function testRotaryAngleInverse(): void {
   }
 
   // A point with no angle gains no key on the way back, exactly as before.
-  const plain = machineToProjectPoint(pt(1, 2, 3), ORIGIN, reversedRotaryDefinition())
+  const plain = machineToProjectPoint(pt(1, 2, 3), ORIGIN, pinRotaryAxis(reversedRotaryDefinition(), null))
   assert(!('a' in plain), 'a point with no angle comes back with no a key')
 }
 
@@ -254,7 +255,7 @@ function testRotaryProgramReadback(): void {
       { kind: 'rapid', from: rpt(20, 10, 20, 90), to: rpt(20, 10, 30, 90) },
     ]
     const { gcode, trace } = exportRotary(definition, moves)
-    const parsed = parseExportedMotion(gcode, definition)
+    const parsed = parseExportedMotion(gcode, pinRotaryAxis(definition, null))
     // Since #1103 slice ca-h the operation closes with a machine-coordinate
     // retract and a forward turn to the next whole turn. Those two blocks are
     // machine-frame motion the parser cannot place in the work frame, so it
@@ -341,7 +342,7 @@ function testCompactMachineCoordinateReadback(): void {
     options: { emitToolChanges: false, emitCoolant: false },
   })
   assert(gcode.includes('G53G0'), `the exporter writes the compact machine-coordinate command:\n${gcode}`)
-  const parsed = parseExportedMotion(gcode, definition)
+  const parsed = parseExportedMotion(gcode, pinRotaryAxis(definition, null))
   assert(
     parsed.status === 'unsupported',
     `the compact machine retract is not verified, got ${parsed.status}: ${parsed.warnings.join('; ')}`,
@@ -379,7 +380,7 @@ function testBuildModelVerified(): void {
   const ppTrace = makePostprocessorTrace()
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   assert(model.metrics.rawMoveCount === 3, `rawMoveCount ${model.metrics.rawMoveCount}`)
   assert(model.metrics.optimizedMoveCount === 1, `optimizedMoveCount ${model.metrics.optimizedMoveCount}`)
@@ -423,7 +424,7 @@ function testBuildModelNoPositioningRapid(): void {
   }
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   assert(model.diagnostic.state === 'verified',
     `expected verified, got ${model.diagnostic.state}: ${JSON.stringify(model.diagnostic.warnings)}`)
@@ -460,7 +461,7 @@ function testInitialPlungeIsNotComparedAsPlanarCut(): void {
   }
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   assert(model.diagnostic.state === 'verified',
     `expected verified, got ${model.diagnostic.state}: ${JSON.stringify(model.diagnostic.warnings)}`)
@@ -475,7 +476,7 @@ function testExportedLayerInProjectCoords(): void {
   const ppTrace = makePostprocessorTrace()
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   const exportedCut = model.layers.exported.segments.find((s) => s.cutting && s.kind === 'linear')
   assert(exportedCut != null, 'exported layer has a cutting segment')
@@ -507,7 +508,7 @@ function testMirroredMachineFlipsExportedArc(): void {
   const parsed = parseGcodeMotion('G0 X1 Y0 Z-1\nG2 X0 Y-1 Z-1 I-1 J0 F100', 'ij', '(', ')')
   const build = (definition: MachineDefinition) => buildExportedMotionDebugModel({
     trace: makeTrace(), parsed, postprocessorTrace: makePostprocessorTrace(),
-    origin: ZERO_ORIGIN, definition, tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(definition, null), tolerance: 0.01,
   }).layers.exported.segments.find((s) => s.kind === 'arc')
 
   const identity = build(grblDefinition())
@@ -586,7 +587,7 @@ function testFittedArcOverCoarseChordsVerifies(): void {
   }
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   assert(model.diagnostic.state === 'verified',
     `expected verified, got ${model.diagnostic.state}: ${JSON.stringify(model.diagnostic.warnings)}`)
@@ -609,7 +610,7 @@ function modelForExportedGcode(gcode: string, pts: ToolpathPoint[], z: number) {
   }
   return buildExportedMotionDebugModel({
     trace, parsed: parseGcodeMotion(gcode, 'ij', '(', ')'), postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
 }
 
@@ -673,7 +674,7 @@ function testClosedContourArcsSpanOnlyTheirOwnRun(): void {
   }
   const model = buildExportedMotionDebugModel({
     trace, parsed, postprocessorTrace: ppTrace,
-    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+    origin: ZERO_ORIGIN, definition: pinRotaryAxis(grblDefinition(), null), tolerance: 0.01,
   })
   const deviations = model.diagnostic.warnings.filter((w) => w.kind === 'arcDeviation')
   assert(deviations.length === 0,

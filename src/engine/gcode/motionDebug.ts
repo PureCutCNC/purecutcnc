@@ -22,7 +22,7 @@
 
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
-import type { OperationMotionTrace, MachineDefinition } from './types'
+import type { OperationMotionTrace, PinnedMachineDefinition } from './types'
 import { resolveOutputDialect, rotaryWord } from './types'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import type { ParsedGcodeMove, ParsedGcodeMotion } from './gcodeMotionParser'
@@ -38,7 +38,7 @@ const Z_EPS = 1e-6
  * debug view calls this rather than a dialect's parser directly, so the text
  * it validates is always read in the language it was written in.
  */
-export function parseExportedMotion(program: string, definition: MachineDefinition): ParsedGcodeMotion {
+export function parseExportedMotion(program: string, definition: PinnedMachineDefinition): ParsedGcodeMotion {
   switch (resolveOutputDialect(definition)) {
     case 'opensbp':
       return parseSbpMotion(program)
@@ -174,7 +174,7 @@ function segmentFromMove(move: ToolpathMove): MotionDebugSegment {
 }
 
 /** Project-coord segment from a parsed G-code move (machine → project). */
-function segmentFromParsed(move: ParsedGcodeMove, origin: MachineOrigin, definition: MachineDefinition): MotionDebugSegment {
+function segmentFromParsed(move: ParsedGcodeMove, origin: MachineOrigin, definition: PinnedMachineDefinition): MotionDebugSegment {
   const fromProj = machineToProjectPoint(move.from, origin, definition)
   const toProj = machineToProjectPoint(move.to, origin, definition)
   const cutting = move.kind !== 'rapid'
@@ -600,7 +600,8 @@ export interface BuildExportedMotionDebugModelArgs {
   parsed: ParsedGcodeMotion
   postprocessorTrace: OperationMotionTrace
   origin: MachineOrigin
-  definition: MachineDefinition
+  /** Pinned against the project's stock (#1153): the angle letter depends on it. */
+  definition: PinnedMachineDefinition
   tolerance: number
 }
 

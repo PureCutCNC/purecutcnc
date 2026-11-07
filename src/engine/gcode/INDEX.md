@@ -379,6 +379,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   QtPlasmaC table, controller-owned piercing, whose torch path is written (#959);
   `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
   whose probe/pierce/dwell/cut sequence is written on the same pipeline.
+  `BUNDLED_ROTARY_DEFINITIONS` (#1153) derives six rotary machines from the
+  grbl/grblhal/mach3/uccnc/linuxcnc JSON — borrowed-motor GRBL, a Grbl fork with
+  its own A (`angleScalesWithUnits`), and own-A grblHAL/Mach3/UCCNC/LinuxCNC —
+  with no `about` (they follow the bar through `pinRotaryAxis`) and no Zero A.
+- `bundledRotaryMachines.test.ts` — the #1153 machines: each equals its base but
+  for name and rotary block, the bar-axis resolver and copies that pin it, the
+  millimetre rule (`rotaryEnforcesMm`, `postRotaryInchUnits`, the emitter
+  backstop through `emitProgramWithoutPlanning`), the editor flag and the notices.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
 - `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, the selectable material range (0 and 1000000+ block), one torch pair per contour, no Z or numeric F, the small hole folded to one closed G3 with both a straight and the default arc lead-in (and the fold kept off a radius-format machine, where a closed R arc is a controller error), skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
 - `plasmaGcodeOutput.test.ts` — the Grbl plasma torch path (#983): safe Z in the

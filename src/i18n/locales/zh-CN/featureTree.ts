@@ -211,6 +211,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.machine.duplicateHint': '复制后编辑',
   'featureTree.properties.machine.groupOther': '其他机床',
   'featureTree.properties.machine.mismatch': '这不是 {type} 机床。在选定合适的机床之前，导出已禁用。',
+  'featureTree.properties.machine.rotaryMmRequired': '{machine} 仅以毫米驱动旋转轴。请将项目单位改为 mm 以导出旋转工序。',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': '放置原点',

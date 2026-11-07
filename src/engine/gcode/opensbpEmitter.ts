@@ -60,6 +60,7 @@
  */
 
 import type { PostProcessorInput, PostProcessorResult, OperationMotionTrace } from './types'
+import { pinRotaryAxis } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
@@ -107,7 +108,10 @@ function commentLines(text: string): string[] {
 }
 
 export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResult {
-  const { project, operations, definition, options } = input
+  const { project, operations, options } = input
+  // An opensbp definition carries no rotary block, so this pin never changes
+  // it; it only gives the coordinate mapping the type it requires (#1153).
+  const definition = pinRotaryAxis(input.definition, project.stock)
   const outputUnits = project.meta.units
   const lines: string[] = []
   const warnings: ToolpathWarning[] = []

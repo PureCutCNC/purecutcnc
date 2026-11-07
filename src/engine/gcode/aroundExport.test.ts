@@ -58,6 +58,7 @@ import { machineToProjectPoint } from './utils'
 import { exportGeometryTolerance } from '../../utils/units'
 import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
+import { pinRotaryAxis } from './types'
 
 function bundled(id: string): MachineDefinition {
   const found = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
@@ -392,7 +393,7 @@ function highestFedZ(path: ToolpathResult, originZ: number): number {
  * against the moves.
  */
 function expectedAngleWrites(fixture: Fixture, definition: MachineDefinition): number[] {
-  const direction = rotaryDirection(definition)
+  const direction = rotaryDirection(pinRotaryAxis(definition, null))
   const written: number[] = []
   let last: number | undefined
   const consider = (value: number) => {
@@ -483,15 +484,23 @@ console.log('Testing the Around header and one program per Around setup...')
 
   // The same header, with the bar along Y, and one more line when the machine
   // borrows a motor instead of having its own axis.
+  // A borrowed motor turns in millimetres only (#1153), so the inch program is
+  // refused; the header it would carry is read from the same header lines.
   const inch = exportFixture(INCH, BORROWED_X, false)
-  const inchLines = inch.gcode.split('\n')
-  const inchAt = inchLines.findIndex((line) => line.includes('SETUP 01'))
-  assert.deepEqual(inchLines.slice(inchAt, inchAt + 4), [
-    '; SETUP 01: Around - AROUND THE BAR, BAR ALONG Y',
-    '; ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
-    '; TOUCH OFF: X1 Y5 IN FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
-    "; THE X MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND",
-  ], `the Y-bar borrowed-motor header, exactly:\n${inchLines.slice(inchAt, inchAt + 5).join('\n')}`)
+  assert.equal(
+    inch.warnings.filter((warning) => warning.code === 'postRotaryInchUnits').length,
+    INCH.operations.length,
+    'every turning operation of an inch program on a borrowed motor is refused for units (#1153)',
+  )
+  assert.ok(!/\bG93\b/.test(inch.gcode), 'and nothing turns the bar')
+  const inchAround = INCH.project.setups.find((setup) => setup.kind === 'around')
+  assert.ok(inchAround, 'the inch fixture has an Around setup')
+  assert.deepEqual(setupHeaderLines(INCH.project, inchAround, BORROWED_X).slice(0, 4), [
+    'SETUP 01: Around - AROUND THE BAR, BAR ALONG Y',
+    'ROTARY ZERO: TURN THE BAR SO THE START LINE IS UP, THEN ZERO THE ROTARY',
+    'TOUCH OFF: X1 Y5 IN FROM THE FRONT-LEFT CORNER OF THE BAR SEEN FROM ABOVE, Z0 ON TOP OF THE BAR',
+    "THE X MOTOR DRIVES THE ROTARY: SET THE TOOL OVER THE BAR'S CENTRELINE BY HAND",
+  ], 'the Y-bar borrowed-motor header, exactly')
 
   // An own-axis Y machine writes no borrowed-motor line.
   const ownInch = exportFixture(INCH, OWN_Y, false)
@@ -591,7 +600,7 @@ console.log('Testing every real operation exports with no rotary refusal...')
   for (const [name, definition] of [['own X', OWN_X], ['borrowed Y', BORROWED_Y]] as const) {
     const result = exportFixture(MM, definition)
     const lines = result.gcode.split('\n')
-    const word = rotaryWord(definition)!
+    const word = rotaryWord(pinRotaryAxis(definition, null))!
     for (const entry of MM.operations) {
       const start = lines.findIndex((line) => line.includes(entry.name))
       assert.ok(start > 0, `${name}: ${entry.name} has a header`)
@@ -658,7 +667,7 @@ console.log('Testing the centreline and the borrowed motor...')
 
   // Borrowed motor: the borrowed letter carries the angle and nothing else.
   const borrowed = exportFixture(MM, BORROWED_Y)
-  assert.equal(rotaryWord(BORROWED_Y), 'Y', 'the borrowed motor is project Y')
+  assert.equal(rotaryWord(pinRotaryAxis(BORROWED_Y, null)), 'Y', 'the borrowed motor is project Y')
   const borrowedLines = motionBlocks(borrowed.gcode).filter((line) => /\bY-?[0-9]/.test(line))
   const written = expectedAngleWrites(MM, BORROWED_Y)
   assert.deepEqual(angleWords(borrowed.gcode, 'Y'), written.map((value) => Number(value.toFixed(3))),
@@ -686,11 +695,11 @@ console.log('Testing the centreline and the borrowed motor...')
   // motor carries the angle under its own letter.
   const ownY = exportFixture(INCH, OWN_Y, false)
   assert.deepEqual(axisWords(ownY.gcode, 'X'), [], 'a Y bar holds its across coordinate too')
-  const borrowedX = exportFixture(INCH, BORROWED_X, false)
-  assert.equal(rotaryWord(BORROWED_X), 'X', 'the borrowed motor is project X')
-  assert.deepEqual(angleWords(borrowedX.gcode, 'X').map((value) => Number(value.toFixed(4))),
-    expectedAngleWrites(INCH, BORROWED_X).map((value) => Number(value.toFixed(4))),
-    'the borrowed X carries the angle once per change')
+  // The borrowed X letter is the angle; an inch program on it is refused
+  // (#1153), and the mm Y-bar angle words are covered by the conformance
+  // corpus's `-bar-y` borrowed cases.
+  assert.equal(rotaryWord(pinRotaryAxis(BORROWED_X, null)), 'X', 'the borrowed motor is project X')
+  assert.deepEqual(angleWords(exportFixture(INCH, BORROWED_X, false).gcode, 'X'), [], 'an inch borrowed-X program turns nothing (#1153)')
 }
 
 // ── 4. inverse time (rule 6 / #393 rule 4) ────────────────────
@@ -872,7 +881,7 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     OWN_X.motion.arcFormat,
     OWN_X.program.commentPrefix,
     OWN_X.program.commentSuffix,
-    { word: rotaryWord(OWN_X)!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
+    { word: rotaryWord(pinRotaryAxis(OWN_X, null))!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
   // Since #1103 slice ca-h every operation that commands A closes with a
   // machine-coordinate retract and a forward turn to the next whole turn. The
@@ -899,7 +908,7 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
   for (const entry of turningOperations) {
     const moves = MM.wrapped.get(entry.id)!.moves
     const last = moves[moves.length - 1].to.a!
-    endTurnAngles.add(360 * Math.ceil((last * rotaryDirection(OWN_X) - 1e-6) / 360))
+    endTurnAngles.add(360 * Math.ceil((last * rotaryDirection(pinRotaryAxis(OWN_X, null)) - 1e-6) / 360))
   }
   const flatSource = MM.operations.flatMap((entry) => unwrapToolpath(wrapped.get(entry.id)!, frame).moves)
   let checked = 0
@@ -910,7 +919,7 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
       // and not a toolpath point. Everything the bar turns to is checked.
       if (point.a === undefined) continue
       if (endTurnAngles.has(point.a)) continue
-      const projectPoint = machineToProjectPoint(point, project.origin, OWN_X)
+      const projectPoint = machineToProjectPoint(point, project.origin, pinRotaryAxis(OWN_X, null))
       // The axis transform reads X/Y/Z; the angle is the bar's own and comes
       // through the parse unchanged.
       const flatPoint = unwrapPoint({ ...projectPoint, a: point.a }, frame)

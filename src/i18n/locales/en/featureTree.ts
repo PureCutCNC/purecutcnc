@@ -210,6 +210,7 @@ export const featureTreeEn = {
   'featureTree.properties.machine.duplicateHint': 'duplicate to edit',
   'featureTree.properties.machine.groupOther': 'Other machines',
   'featureTree.properties.machine.mismatch': 'This is not a {type} machine. Export is disabled until you pick one.',
+  'featureTree.properties.machine.rotaryMmRequired': '{machine} turns the rotary in millimetres only. Change the project units to mm to export rotary operations.',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': 'Place origin',

@@ -2341,8 +2341,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  row-gap: 4px;
+  flex-wrap: nowrap;
   width: 100%;
   padding: 10px 14px;
   border: none;
@@ -2370,10 +2369,55 @@
 }
 
 .machine-manager-item-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The row's status badges and kind/rotary icons (#1153), kept on the name's line. */
+.machine-manager-item-marks {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.machine-manager-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--surface-hover);
+  color: var(--text-dim);
+}
+
+.machine-manager-mark--rotary {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* What the row icons mean, pinned under the list as it scrolls. */
+.machine-manager-legend {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev-1);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.machine-manager-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* Right: detail + actions */

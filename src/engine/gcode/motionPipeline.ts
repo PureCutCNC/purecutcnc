@@ -52,8 +52,8 @@ import { rotaryTravelZ } from '../toolpaths/squareRotaryStock'
 import { convertLength, exportGeometryTolerance, MM_PER_INCH, type Units } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
-import type { MachineDefinition, OperationMotionTrace, PlasmaTouchOff, PostProcessorInput } from './types'
-import { rotaryBorrowedAxis, rotaryDirection, rotaryWord } from './types'
+import type { MachineDefinition, OperationMotionTrace, PinnedMachineDefinition, PlasmaTouchOff, PostProcessorInput } from './types'
+import { pinRotaryAxis, rotaryBorrowedAxis, rotaryDirection, rotaryEnforcesMm, rotaryWord } from './types'
 import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFace, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock, squareRotaryWorkAdmitted } from '../setupTargets'
@@ -448,7 +448,7 @@ export function plasmaSafeZ(steps: readonly FittedMoveDescriptor[]): number | nu
  */
 export function plasmaSheetZ(project: Project, definition: MachineDefinition, operation: Operation): number {
   const setup = setupFrameForOperation(project, operation)
-  return projectToMachinePoint({ x: 0, y: 0, z: project.stock.thickness }, project.origin, definition, setup).z
+  return projectToMachinePoint({ x: 0, y: 0, z: project.stock.thickness }, project.origin, pinRotaryAxis(definition, project.stock), setup).z
 }
 
 /**
@@ -597,6 +597,8 @@ export function planProgramSetup(
   heldCrossAxisFor?: (manualIndexAngle: 0 | 180 | null) => 'x' | 'y' | null,
 ): ProgramSetupPlan {
   const { project, operations } = input
+  // The bar axis is resolved once, against this program's stock (#1153).
+  const definition = pinRotaryAxis(input.definition, project.stock)
   const warnings: ToolpathWarning[] = []
 
   // An operation its setup may not cut was generated with no motion. A file
@@ -652,8 +654,8 @@ export function planProgramSetup(
   // refused with the code the planner already uses for a mismatched rotary
   // operation, never silently reduced to the comment-only header (#1054 fix 1,
   // finding 4).
-  const turns = setupStatesManualIndexing(project, setup) && rotaryWord(input.definition) !== null
-  const rotary = input.definition.rotary
+  const turns = setupStatesManualIndexing(project, setup) && rotaryWord(definition) !== null
+  const rotary = definition.rotary
   const bar = project.stock
   let turnAxisMismatch = false
   if (turns && rotary != null && isBarStock(bar) && rotary.about !== bar.axis) {
@@ -667,12 +669,15 @@ export function planProgramSetup(
       },
     })
   }
+  // An inch manual-index turn on a controller that reads the angle as a length
+  // (#1153) is refused by the emitter's backstop, which sees the turn this
+  // angle makes; no second check is kept here.
   const angle = turns && !turnAxisMismatch ? manualIndexAngle(setup) : null
   return {
     headerComments: setupHeaderLines(
       project,
       setup,
-      input.definition,
+      definition,
       machineCoordinateRetract,
       heldCrossAxisFor?.(angle) ?? null,
     ),
@@ -1210,7 +1215,7 @@ function borrowedAxisTravelWarning(operationName: string, axis: 'x' | 'y'): Tool
  * the angle cuts the part wrong.
  */
 function inspectRotaryOperation(args: {
-  definition: MachineDefinition
+  definition: PinnedMachineDefinition
   project: Project
   operation: Operation
   toolpath: ToolpathResult
@@ -1400,9 +1405,16 @@ function inspectRotaryOperation(args: {
 export function planRotaryRefusals(
   input: Pick<PostProcessorInput, 'project' | 'definition' | 'operations'>,
 ): { operations: PostProcessorInput['operations']; warnings: ToolpathWarning[] } {
-  const { project, definition, operations } = input
+  const { project, operations } = input
+  // The bar axis is resolved once, against this program's stock (#1153).
+  const definition = pinRotaryAxis(input.definition, project.stock)
   const warnings: ToolpathWarning[] = []
   const kept: PostProcessorInput['operations'] = []
+  // A controller that reads the angle as a length turns the bar 25.4 times too
+  // far in an inch program (#1153), so on such a machine an operation that
+  // turns is refused. The emitter refuses a turning inch program whole as the
+  // backstop (`postprocessor.ts`).
+  const inchTurnsRefused = rotaryInchRefused(definition, project)
   // Rule 2 and rule 3a both span the program: the angle the controller is at
   // and the borrowed coordinate carry from one operation to the next.
   let trackedAngle: number | null = null
@@ -1433,11 +1445,40 @@ export function planRotaryRefusals(
       warnings.push(verdict.refused)
       continue
     }
+    // Asked after the rules above, so an operation this machine cannot run at
+    // all keeps the reason that names why (an axis mismatch, say).
+    if (inchTurnsRefused && toolpathTurns(entry.toolpath)) {
+      warnings.push(rotaryInchWarning(entry.operation.name, definition))
+      continue
+    }
     trackedAngle = verdict.trackedAngle
     borrowedCoordinate = verdict.borrowedCoordinate
     kept.push(entry)
   }
   return { operations: kept, warnings }
+}
+
+/** True when any move of the toolpath carries an angle. */
+function toolpathTurns(toolpath: Pick<ToolpathResult, 'moves'>): boolean {
+  return toolpath.moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)
+}
+
+/**
+ * True when this program may write no rotary word (#1153): the project is in
+ * inch and the machine's controller converts the angle like a length. Every
+ * inch refusal — an operation, a manual-index turn, the emitter's backstop —
+ * reads this one predicate.
+ */
+export function rotaryInchRefused(
+  definition: Pick<MachineDefinition, 'rotary'>,
+  project: Pick<Project, 'meta'>,
+): boolean {
+  return project.meta.units === 'inch' && rotaryEnforcesMm(definition)
+}
+
+/** The warning an inch turn on a millimetre-only machine is refused with. */
+export function rotaryInchWarning(operation: string, definition: Pick<MachineDefinition, 'name'>): ToolpathWarning {
+  return { code: 'postRotaryInchUnits', params: { operation, machine: definition.name } }
 }
 
 // ── The cross axis (#1156) ────────────────────────────────────
@@ -1595,7 +1636,8 @@ function templateMovesAxis(definition: MachineDefinition, letter: 'X' | 'Y'): bo
  * claim.
  */
 export function crossAxisHeldByTouchOff(input: CrossAxisHoldInput): 'x' | 'y' | null {
-  const { project, definition, operations, manualIndexAngle } = input
+  const { project, operations, manualIndexAngle } = input
+  const definition = pinRotaryAxis(input.definition, project.stock)
 
   // 1. A borrowed motor's letter is the angle, not a cross coordinate.
   if (definition.rotary === undefined || definition.rotary.drive !== 'own') return null
@@ -1674,10 +1716,11 @@ export function planDrillCycles(
   cycles: readonly DrillCycle[],
   operation: Operation,
 ): MachineDrillCycle[] {
+  const pinned = pinRotaryAxis(definition, project.stock)
   // Undefined for a Top operation, which then takes the unturned path.
   const setup = setupFrameForOperation(project, operation)
   const toMachine = (cycle: DrillCycle, z: number): ToolpathPoint =>
-    projectToMachinePoint({ x: cycle.x, y: cycle.y, z }, project.origin, definition, setup)
+    projectToMachinePoint({ x: cycle.x, y: cycle.y, z }, project.origin, pinned, setup)
   return cycles.map((cycle) => {
     const at = toMachine(cycle, 0)
     return {
@@ -1721,9 +1764,10 @@ export interface PlanOperationMotionArgs {
  */
 export function planOperationMotion(args: PlanOperationMotionArgs): OperationMotionPlan {
   const {
-    project, definition, operation, toolpath, arcEmitOptions,
+    project, operation, toolpath, arcEmitOptions,
     startPosition, captureTrace,
   } = args
+  const definition = pinRotaryAxis(args.definition, project.stock)
   const warnings: ToolpathWarning[] = []
 
   const arcEnabled = operation.arcFittingEnabled ?? true
@@ -1845,12 +1889,13 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
  */
 export function plannedStepStart(
   project: Project,
-  definition: MachineDefinition,
+  unpinnedDefinition: MachineDefinition,
   operation: Operation,
   toolpath: Pick<ToolpathResult, 'moves'>,
   steps: readonly FittedMoveDescriptor[],
   index: number,
 ): ToolpathPoint {
+  const definition = pinRotaryAxis(unpinnedDefinition, project.stock)
   const step = steps[index]
   if (step.kind === 'arc') return step.startPoint
   if (index > 0) {

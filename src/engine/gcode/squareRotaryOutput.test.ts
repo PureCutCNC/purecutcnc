@@ -71,10 +71,11 @@ import { BUNDLED_DEFINITIONS } from './definitions'
 import { inverseTimeFeedValue, rotaryCentreline } from './motionPipeline'
 import { runPostProcessor } from './postprocessor'
 import { formatGCodeNumber } from './utils'
-import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
+import { rotaryDirection, rotaryWord, validateMachineDefinition, rotaryEnforcesMm } from './types'
 import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
 import { convertLength, convertToolUnits, exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { stockSpacePoint } from '../rotaryFrame'
+import { pinRotaryAxis } from './types'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -453,11 +454,16 @@ for (const cell of MATRIX_CELLS) {
     }
   }
   const result = post(project, definition, operation, envelope.result)
+  // A borrowed motor turns in millimetres only (#1153): its inch cells are refused.
+  if (cell.units === 'inch' && rotaryEnforcesMm(definition)) {
+    assert.ok(result.warnings.some((warning) => warning.code === 'postRotaryInchUnits'), `${label}: refused for inch units (#1153)`)
+    continue
+  }
   assert.deepEqual(result.warnings, [], `${label}: the program posts with no refusal`)
   assert.ok(result.gcode.length > 0, `${label}: program text is written`)
   // A turning feed is posted in inverse time, and the machine's own rotary
   // word carries the angle.
-  const word = rotaryWord(definition)
+  const word = rotaryWord(pinRotaryAxis(definition, null))
   assert.ok(word, `${label}: the machine has a rotary word`)
   assert.match(result.gcode, /G93/, `${label}: inverse-time mode is entered for a turning feed`)
   assert.ok(postsAngle(result.gcode, word!), `${label}: the angle reaches the program as ${word}`)
@@ -471,7 +477,7 @@ for (const cell of MATRIX_CELLS) {
   assert.equal(lastMove.from.y, lastMove.to.y, `${label}: the retract does not travel along the bar`)
   assert.ok(lastMove.to.z > lastMove.from.z, `${label}: the last move is a retract, not a cut`)
   assert.ok(lastMove.to.a !== undefined, `${label}: the retract keeps the last angle`)
-  const machineLast = lastMove.to.a! * rotaryDirection(definition)
+  const machineLast = lastMove.to.a! * rotaryDirection(pinRotaryAxis(definition, null))
   const endTurn = 360 * Math.ceil((machineLast - 1e-6) / 360)
   const lastWritten = [...result.gcode.matchAll(new RegExp(`(?:^|[\\s])${word!}(-?[0-9]+(?:\\.[0-9]+)?)`, 'gm'))]
     .map((match) => Number(match[1]))
@@ -528,6 +534,9 @@ for (const cell of MATRIX_CELLS) {
   const key = `${cell.axis}/${cell.units}/${cell.kind}/${cell.machine}`
   const expected = ROUND_BASELINE[key]
   assert.ok(expected, `fixture: a captured round baseline for ${key}`)
+  // An inch cell on a borrowed motor is refused since #1153 (section 1 asserts
+  // the refusal); its baseline records the program that is no longer written.
+  if (cell.units === 'inch' && rotaryEnforcesMm(machine(cell.machine, cell.axis))) continue
   assert.equal(fingerprint(project, machine(cell.machine, cell.axis), operation), expected, `${key}: the round bar is unchanged`)
 }
 
@@ -1422,7 +1431,7 @@ console.log('Testing the posted inverse-time feed against a seeded physical refe
   assert.equal(centre.point.z, barPivotZ(stock), 'the centreline is the true pivot')
   assert.equal(centre.point.y, barCentre(stock), 'and the true across centreline')
   const definition = machine('own', 'x')
-  const direction = rotaryDirection(definition)
+  const direction = rotaryDirection(pinRotaryAxis(definition, null))
   const feed = 600
   const tolerance = exportGeometryTolerance('mm')
   const pivot = barPivotZ(stock)

@@ -33,6 +33,9 @@ import {
   openMachineManager as openManager,
   seedMachineProject,
 } from './machineLibrary.helpers'
+import { getProject, seedProject, selectMachine } from './helpers'
+import { seedGcodeExportProject } from './gcodeExport.helpers'
+import { roundStock, type Project } from '../src/types/project'
 
 const CUSTOM_MACHINES_KEY = 'purecutcnc.machines.customMachines'
 
@@ -306,12 +309,12 @@ for (const tablet of [false, true]) {
     test('QtPlasmaC kind and commands survive focused edits, JSON edits, selection and restart', async ({ app, ui }) => {
       await seedMachineProject(app.page)
       await openManager(app.page, ui)
-      await expect(ui.machineManager.item(app.page, 'GRBL 1.1')).toContainText('Router')
+      // The kind is an icon with its own name since #1153.
+      await expect(ui.machineManager.item(app.page, 'GRBL 1.1').getByRole('img', { name: 'Router' })).toBeVisible()
       const bundled = ui.machineManager.item(app.page, 'QtPlasmaC (experimental)')
-      await expect(bundled).toContainText('Plasma')
-      const kindBadge = bundled.locator('.machine-manager-badge--kind')
-      await expect(kindBadge).toHaveText('Plasma')
-      expect(await kindBadge.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+      const kindMark = bundled.getByRole('img', { name: 'Plasma' })
+      await expect(kindMark).toBeVisible()
+      expect(await kindMark.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
       await bundled.click()
       await ui.machineManager.dialog(app.page).screenshot({ path: test.info().outputPath('plasma-library.png') })
       await ui.machineManager.duplicateButton(app.page).click()
@@ -561,4 +564,145 @@ test('the rotary axis group writes, persists and clears a rotary block (#393)', 
   await expect(ui.machineEditor.rotaryAxis(app.page)).toHaveCount(0)
   await expect(ui.machineEditor.rotaryDrive(app.page)).toHaveCount(0)
   await ui.machineEditor.cancelButton(app.page).click()
+})
+
+// ── Bundled rotary machines (#1153) ───────────────────────────────────────
+//
+// The rotary machines follow the project's bar, and on the borrowed GRBL motor
+// and the Grbl fork a rotary project must be in millimetres. The engine side is
+// unit-tested (`bundledRotaryMachines.test.ts`); this proves what the user sees:
+// the notice under the machine picker, the export dialog's notes, and the
+// editor's one checkbox.
+
+const BORROWED_ROTARY = 'GRBL 1.1 + rotary (borrowed motor)'
+const GRBLHAL_ROTARY = 'grblHAL + rotary A'
+
+/**
+ * Seed a project for the rotary notices: the export fixture on a round bar (or
+ * left on its block for a milling project). The units are set without
+ * converting the geometry: only the notices are under test.
+ */
+async function seedRotaryProject(page: Page, options: { units: 'mm' | 'inch'; axis: 'x' | 'y'; type?: 'rotary' | 'milling' }): Promise<void> {
+  const { units, axis, type = 'rotary' } = options
+  await seedGcodeExportProject(page)
+  const project = await getProject(page) as unknown as Project
+  project.meta.units = units
+  project.meta.projectType = type
+  // The operations stay on their own Top setup: a rotary bar project may cut a
+  // face too, and the notices read only the project type, units and machine.
+  if (type === 'rotary') project.stock = roundStock(20, 100, axis)
+  await seedProject(page, JSON.stringify(project))
+}
+
+async function openExportDialog(page: Page, ui: typeof import('./selectors')): Promise<void> {
+  await ui.operations.headerExportButton(page).click()
+  await expect(ui.exportDialog.root(page)).toBeVisible()
+}
+
+test.describe('bundled rotary machines (#1153)', () => {
+  for (const axis of ['x', 'y'] as const) {
+    test(`an inch rotary project on the borrowed motor, bar along ${axis.toUpperCase()}, is told to use mm`, async ({ app, ui }) => {
+      await seedRotaryProject(app.page, { units: 'inch', axis })
+      await selectMachine(app.page, ui, BORROWED_ROTARY)
+      const notice = app.page.getByTestId('machine-rotary-mm-required')
+      await expect(notice).toBeVisible()
+      await expect(notice).toContainText('millimetres only')
+
+      await openExportDialog(app.page, ui)
+      await expect(app.page.getByTestId('export-rotary-mm-notice')).toContainText('Change the project units to mm')
+      const motor = axis === 'x' ? 'Y' : 'X'
+      await expect(app.page.getByTestId('export-rotary-axis-note'))
+        .toHaveText(`The rotary follows the stock: it turns about ${axis.toUpperCase()} and is driven by the ${motor} motor.`)
+    })
+  }
+
+  test('no mm notice for a mm project, an inch-capable machine, or a project that is not rotary', async ({ app, ui }) => {
+    const notice = app.page.getByTestId('machine-rotary-mm-required')
+
+    await seedRotaryProject(app.page, { units: 'mm', axis: 'x' })
+    await selectMachine(app.page, ui, BORROWED_ROTARY)
+    await expect(ui.properties.machineStatus(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+
+    await seedRotaryProject(app.page, { units: 'inch', axis: 'y' })
+    await selectMachine(app.page, ui, GRBLHAL_ROTARY)
+    await expect(ui.properties.machineStatus(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+    await openExportDialog(app.page, ui)
+    await expect(app.page.getByTestId('export-rotary-mm-notice')).toHaveCount(0)
+    await expect(app.page.getByTestId('export-rotary-axis-note'))
+      .toHaveText('The A orientation follows the stock: the rotary turns about Y, the bar\'s axis.')
+    await ui.exportDialog.root(app.page).getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(ui.exportDialog.root(app.page)).toHaveCount(0)
+
+    await seedRotaryProject(app.page, { units: 'inch', axis: 'x', type: 'milling' })
+    await selectMachine(app.page, ui, BORROWED_ROTARY)
+    await expect(ui.properties.machineStatus(app.page)).toBeVisible()
+    await expect(notice).toHaveCount(0)
+  })
+
+  for (const layout of [
+    { name: 'desktop', viewport: { width: 1280, height: 800 }, hasTouch: false },
+    { name: 'narrow desktop', viewport: { width: 1024, height: 768 }, hasTouch: false },
+    { name: 'landscape tablet', viewport: { width: 1180, height: 820 }, hasTouch: true },
+  ]) {
+    test.describe(`machine list on ${layout.name}`, () => {
+      test.use({ viewport: layout.viewport, hasTouch: layout.hasTouch })
+
+      test('rows keep the name on one line with kind and rotary icons, and a legend', async ({ app, ui }) => {
+        await seedMachineProject(app.page)
+        await openManager(app.page, ui)
+        const rotary = ui.machineManager.item(app.page, BORROWED_ROTARY)
+        await expect(rotary.getByRole('img', { name: 'Router' })).toBeVisible()
+        await expect(rotary.getByRole('img', { name: 'Rotary' })).toBeVisible()
+        await expect(ui.machineManager.item(app.page, 'GRBL 1.1').getByRole('img', { name: 'Rotary' })).toHaveCount(0)
+        // No built-in/custom pill on a row: the group headings say it.
+        await expect(ui.machineManager.dialog(app.page).locator('.machine-manager-item .machine-manager-badge--builtin')).toHaveCount(0)
+        // Every row is one line: the name and its icons share the row's height.
+        for (const name of [BORROWED_ROTARY, 'GRBL 4-axis fork + rotary A', 'GRBL 1.1', 'QtPlasmaC (experimental)']) {
+          const row = ui.machineManager.item(app.page, name)
+          const nameBox = await row.locator('.machine-manager-item-name').boundingBox()
+          const marksBox = await row.locator('.machine-manager-item-marks').boundingBox()
+          expect(nameBox && marksBox, `${name}: name and icons are laid out`).toBeTruthy()
+          if (!nameBox || !marksBox) continue
+          expect(Math.abs((nameBox.y + nameBox.height / 2) - (marksBox.y + marksBox.height / 2)), `${name}: the icons sit on the name's line`).toBeLessThan(4)
+          await expect(row.locator('.machine-manager-item-name')).toHaveAttribute('title', name)
+        }
+        const legend = app.page.getByTestId('machine-manager-legend')
+        await expect(legend).toContainText('Router')
+        await expect(legend).toContainText('Plasma')
+        await expect(legend).toContainText('Rotary')
+        await ui.machineManager.item(app.page, 'GRBL 4-axis fork + rotary A').scrollIntoViewIfNeeded()
+        await ui.machineManager.dialog(app.page).screenshot({ path: test.info().outputPath(`machine-list-${layout.viewport.width}.png`) })
+      })
+    })
+  }
+
+  test('the editor offers the inch-scaling checkbox on an own axis only', async ({ app, ui }) => {
+    await seedMachineProject(app.page)
+    await openManager(app.page, ui)
+
+    await ui.machineManager.item(app.page, GRBLHAL_ROTARY).click()
+    await expect(ui.machineManager.rotarySummary(app.page)).toContainText('Follows the bar')
+    await ui.machineManager.duplicateButton(app.page).click()
+    const editor = ui.machineEditor.dialog(app.page)
+    await expect(editor).toBeVisible()
+    // A copy names its axis, so the editor shows X or Y, never "no rotary".
+    await expect(ui.machineEditor.rotaryAxis(app.page)).not.toHaveValue('none')
+    const scales = editor.getByTestId('machine-rotary-angle-scales')
+    await expect(scales).not.toBeChecked()
+    await scales.check()
+    await ui.machineEditor.saveButton(app.page).click()
+    await expect(editor).toHaveCount(0)
+    const stored = JSON.parse(await readStorage(app.page, CUSTOM_MACHINES_KEY) ?? '{}') as { machines?: Array<{ name: string; rotary?: { about?: string; angleScalesWithUnits?: boolean } }> }
+    const copy = stored.machines?.find((machine) => machine.name.startsWith(GRBLHAL_ROTARY))
+    expect(copy?.rotary?.angleScalesWithUnits).toBe(true)
+    expect(copy?.rotary?.about).toMatch(/^[xy]$/)
+
+    await ui.machineManager.item(app.page, BORROWED_ROTARY).click()
+    await ui.machineManager.duplicateButton(app.page).click()
+    await expect(editor).toBeVisible()
+    await expect(editor.getByTestId('machine-rotary-angle-scales')).toHaveCount(0)
+    await expect(editor.getByTestId('machine-rotary-mm-only')).toContainText('mm only')
+  })
 })

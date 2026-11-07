@@ -71,6 +71,7 @@ import type { MessageKey } from '../../i18n/locales/en'
 import { activeFace, faceAngles, linkedCopiesOffFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
 import { FaceZRange } from './FaceZRange'
+import { rotaryProjectNeedsMm } from '../export/rotaryUnitsNotice'
 
 /**
  * Memoised because `App` subscribes to the whole store without a selector and
@@ -447,6 +448,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               {selectedMachine.builtin ? (
                 <span className="properties-machine-hint">{t('featureTree.properties.machine.duplicateHint')}</span>
               ) : null}
+            </div>
+          ) : null}
+          {selectedMachine && rotaryProjectNeedsMm(project, selectedMachine) ? (
+            <div className="properties-field-message cam-field-message" role="note" data-testid="machine-rotary-mm-required">
+              {t('featureTree.properties.machine.rotaryMmRequired', { machine: selectedMachine.name })}
             </div>
           ) : null}
           {machineMismatch ? (

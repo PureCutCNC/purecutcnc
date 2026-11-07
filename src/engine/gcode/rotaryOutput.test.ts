@@ -52,6 +52,7 @@ import { stockSpacePoint } from '../rotaryFrame'
 import { generateRotaryFinish, generateRotaryRough } from '../toolpaths/rotaryModel'
 import type { RotaryModelMesh } from '../toolpaths/rotaryModel'
 import { formatGCodeNumber } from './utils'
+import { pinRotaryAxis } from './types'
 
 // ── fixtures ──────────────────────────────────────────────────
 
@@ -265,7 +266,9 @@ function bruteForceStockPathLength(
     { kind: 'plunge', from: at(10, 10, 30), to: at(10, 10, 20) },
     { kind: 'cut', from: at(10, 10, 20), to: at(30, 10, 20) },
   ]
-  for (const raw of BUNDLED_DEFINITIONS) {
+  // The machines that ship without a rotary block; the bundled rotary machines
+  // (#1153) carry their own and are covered in `bundledRotaryMachines.test.ts`.
+  for (const raw of BUNDLED_DEFINITIONS.filter((candidate) => candidate.rotary === undefined)) {
     const definition = validateMachineDefinition(raw)
     const project = projectWith(definition.machineKind === 'plasma' ? block() : bar())
     const op = operation('Plain')
@@ -1225,7 +1228,7 @@ const NINETY = Math.PI / 2
       centre: rotaryCentreline(bar()),
       tolerance: exportGeometryTolerance('mm'),
       operationName: op.name,
-      direction: rotaryDirection(definition),
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
       effectiveFeed: () => 600,
     }),
     /Mispaired/,
@@ -1249,7 +1252,7 @@ const NINETY = Math.PI / 2
       centre: rotaryCentreline(bar()),
       tolerance: exportGeometryTolerance('mm'),
       operationName: 'Mispaired',
-      direction: rotaryDirection(definition),
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
       effectiveFeed: () => 600,
     }),
     /Mispaired/,

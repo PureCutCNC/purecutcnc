@@ -44,6 +44,8 @@ export interface MachineFormData {
   rotaryReversed: boolean
   /** The optional Zero A program line; empty when the machine has none. */
   rotaryZeroA: string
+  /** The controller converts A like a length under G20 (#1153); own axis only. */
+  rotaryAngleScalesWithUnits: boolean
   name: string
   fileExtension: string
   mmCommand: string
@@ -113,6 +115,7 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     rotaryDrive: def.rotary?.drive ?? 'own',
     rotaryReversed: def.rotary?.reversed ?? false,
     rotaryZeroA: def.rotary?.zeroA ?? '',
+    rotaryAngleScalesWithUnits: def.rotary?.angleScalesWithUnits === true,
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -158,6 +161,11 @@ export function mergeFormData(
         ...(form.rotaryZeroA.trim().length > 0
           ? { zeroA: form.rotaryZeroA }
           : def.rotary?.zeroA === '' ? { zeroA: '' } : {}),
+        // Written only when ticked, and only for an own axis: a borrowed motor
+        // is always millimetre-only, so the flag would say nothing (#1153).
+        ...(form.rotaryAngleScalesWithUnits && form.rotaryDrive === 'own'
+          ? { angleScalesWithUnits: true }
+          : {}),
       }
     : null
   return {

@@ -164,6 +164,7 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.machine.duplicateHint': 'dupliquer pour modifier',
   'featureTree.properties.machine.groupOther': 'Autres machines',
   'featureTree.properties.machine.mismatch': 'Ce n’est pas une machine pour {type}. L’export est désactivé jusqu’à ce que vous en choisissiez une.',
+  'featureTree.properties.machine.rotaryMmRequired': "{machine} pilote l'axe rotatif uniquement en millimètres. Passez les unités du projet en mm pour exporter les opérations rotatives.",
   'featureTree.properties.origin.placeOrigin': 'Placer l’origine',
   'featureTree.properties.origin.presets': 'Préréglages',
   'featureTree.properties.origin.topLeft': 'En haut à gauche',

@@ -1090,6 +1090,8 @@ function machineRotaryLetter(definition: TemplateRuleDefinition): string | null 
   const rotary = definition.rotary
   if (rotary === undefined) return null
   if (rotary.drive !== 'borrowed') return 'A'
+  // Not fixed while the machine follows the bar (#1153); refused above.
+  if (rotary.about === undefined) return null
   const borrowed = rotary.about === 'x'
     ? definition.coordinateSystem?.yAxis
     : definition.coordinateSystem?.xAxis
@@ -1665,6 +1667,22 @@ export function machineTemplateDiagnostics(
   // finding 3): P names the offset it writes, and on a machine that selects
   // G55 a P1 line zeroes G54 instead.
   const zeroA = definition.rotary?.zeroA
+  // A borrowed motor that follows the bar (#1153) writes its angle as X or Y
+  // depending on the project, so no single Zero A line can be right for it.
+  // Only a copy, which always names its axis, may carry one.
+  if (zeroA !== undefined && zeroA.trim().length > 0
+    && definition.rotary?.drive === 'borrowed' && definition.rotary.about === undefined) {
+    diagnostics.push({
+      path: ['rotary', 'zeroA'],
+      field: 'rotary.zeroA',
+      line: 1,
+      text: zeroA.split(/\r?\n/)[0] ?? '',
+      word: '',
+      ruleCode: 'zero-a',
+      message: 'rotary.zeroA: this machine borrows a motor and follows the bar, so its rotary letter is not fixed; '
+        + 'set the bar axis before adding a Zero A line.',
+    })
+  }
   const expectedLetter = machineRotaryLetter(definition)
   if (zeroA !== undefined && zeroA.trim().length > 0 && expectedLetter !== null) {
     const activeOffset = activeWorkOffsetIndex(definition.workCoordinates.selectCommand, syntax)

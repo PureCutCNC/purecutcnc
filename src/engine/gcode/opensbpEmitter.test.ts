@@ -37,6 +37,7 @@ import { compareMotionTraces, parseExportedMotion } from './motionDebug'
 import { parseSbpMotion } from './sbpMotionParser'
 import { resolveOutputDialect, validateMachineDefinition } from './types'
 import type { MachineDefinition, PostProcessorOptions, PostProcessorResult } from './types'
+import { pinRotaryAxis } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -1014,7 +1015,7 @@ function testRoundTrip(): void {
     }
 
     // And the debug view's own comparison agrees, through its dialect dispatch.
-    const viaDispatch = parseExportedMotion(result.gcode, shopbot())
+    const viaDispatch = parseExportedMotion(result.gcode, pinRotaryAxis(shopbot(), null))
     assert(viaDispatch.moves.length === parsed.moves.length, `${units}: the debug view parses SBP for an SBP definition`)
     const diagnostic = compareMotionTraces(viaDispatch, trace, 4 * tolerance)
     assert(diagnostic.state === 'verified', `${units}: debug comparison: ${JSON.stringify(diagnostic.warnings)}`)

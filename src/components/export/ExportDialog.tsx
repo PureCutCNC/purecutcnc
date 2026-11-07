@@ -37,6 +37,7 @@ import {
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { exportDialectLabels } from './exportDialectLabels'
 import { shouldShowRotaryZeroNotice } from './rotaryZeroNotice'
+import { rotaryFollowsStockNote, rotaryProjectNeedsMm } from './rotaryUnitsNotice'
 import { setupFace } from '../../engine/setupOrientation'
 import { Icon } from '../Icon'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
@@ -151,6 +152,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     () => shouldShowRotaryZeroNotice(programs, activeDefinition, project),
     [programs, activeDefinition, project],
   )
+  // #1153: a rotary project in inch on a machine that turns the rotary in
+  // millimetres only, and the axis a bundled rotary machine follows.
+  const rotaryMmNotice = rotaryProjectNeedsMm(project, activeDefinition)
+  const rotaryAxisNote = rotaryFollowsStockNote(project, activeDefinition)
   // Files already written from the programs on screen. A browser may refuse a
   // second save dialog from one click, so an export can take more than one
   // press; this keeps a later press from writing a file twice.
@@ -495,6 +500,25 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                     </button>
                   ))}
                 </div>
+              </div>
+            ) : null}
+            {rotaryMmNotice && activeDefinition ? (
+              <div
+                className="export-setup-note"
+                role="alert"
+                data-testid="export-rotary-mm-notice"
+              >
+                {td('dialogs.export.rotaryMmNotice', { machine: activeDefinition.name })}
+              </div>
+            ) : null}
+            {rotaryAxisNote ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-rotary-axis-note"
+              >
+                {rotaryAxisNote.kind === 'own'
+                  ? td('dialogs.export.rotaryFollowsStockOwn', { axis: rotaryAxisNote.axis })
+                  : td('dialogs.export.rotaryFollowsStockBorrowed', { axis: rotaryAxisNote.axis, motor: rotaryAxisNote.motor })}
               </div>
             ) : null}
             {rotaryZeroNotice ? (

@@ -46,6 +46,7 @@ import {
 } from '../../types/project'
 import { getOperationAddHint } from '../cam/operationValidity'
 import { importModelFile, type ImportModelFileParams } from './importModelFile'
+import { pinRotaryAxis } from '../../engine/gcode/types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -404,8 +405,8 @@ await test("the file's front face stays toward the operator (#824)", async () =>
   const machine = getBundledMachine('grbl')
   assert(machine, 'the bundled grbl machine exists')
   const origin: MachineOrigin = { name: 'O', x: stock.minX, y: stock.maxY, z: 0, visible: true }
-  const frontY = projectToMachinePoint({ x: 0, y: front.maxY, z: 0 }, origin, machine).y
-  const backY = projectToMachinePoint({ x: 0, y: back.maxY, z: 0 }, origin, machine).y
+  const frontY = projectToMachinePoint({ x: 0, y: front.maxY, z: 0 }, origin, pinRotaryAxis(machine, null)).y
+  const backY = projectToMachinePoint({ x: 0, y: back.maxY, z: 0 }, origin, pinRotaryAxis(machine, null)).y
   assert(frontY === 0, `the file's front face sits at machine Y 0: ${frontY}`)
   assert(backY === 10, `the file's back face sits 10 mm from the operator: ${backY}`)
 })

@@ -38,6 +38,7 @@ import { generatePlasmaProfileToolpath, plasmaLeadLength } from './plasma'
 import { distanceToContour, pathClearOfContour, pathOnScrap, pointDistance } from './plasmaGeometry'
 import type { ToolpathResult } from './types'
 import { operationFieldsForGroup, OPERATION_FIELD_GROUPS } from '../../components/cam/operationFields'
+import { pinRotaryAxis } from '../gcode/types'
 
 function square(x: number, y: number, w: number, h = w): SketchProfile {
   return { start: { x, y }, segments: [
@@ -67,8 +68,8 @@ function physicalArea(result: ToolpathResult, project = p, operation = op(projec
   // Pin physical direction through the real export conversion, including origin
   // and setup, rather than duplicating its Y convention in this test.
   return result.moves.filter((m) => m.kind === 'cut').reduce((sum, m) => {
-    const from = projectToMachinePoint(m.from, project.origin, machine, frame)
-    const to = projectToMachinePoint(m.to, project.origin, machine, frame)
+    const from = projectToMachinePoint(m.from, project.origin, pinRotaryAxis(machine, null), frame)
+    const to = projectToMachinePoint(m.to, project.origin, pinRotaryAxis(machine, null), frame)
     return sum + from.x * to.y - to.x * from.y
   }, 0) / 2
 }

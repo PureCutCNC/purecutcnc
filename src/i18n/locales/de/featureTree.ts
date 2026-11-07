@@ -205,6 +205,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.machine.duplicateHint': 'zum Bearbeiten duplizieren',
   'featureTree.properties.machine.groupOther': 'Andere Maschinen',
   'featureTree.properties.machine.mismatch': 'Dies ist keine Maschine für {type}. Der Export ist deaktiviert, bis Sie eine passende wählen.',
+  'featureTree.properties.machine.rotaryMmRequired': '{machine} dreht die Rundachse nur in Millimetern. Stelle die Projekteinheiten auf mm um, um Rundachsen-Operationen zu exportieren.',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': 'Nullpunkt setzen',

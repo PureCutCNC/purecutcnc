@@ -28,7 +28,8 @@
  */
 
 import { BUNDLED_DEFINITIONS } from '../engine/gcode/definitions'
-import { MachineDefinitionStructureSchema, readMachineDefinitionStructure, type MachineDefinition } from '../engine/gcode/types'
+import { MachineDefinitionStructureSchema, pinRotaryAxis, readMachineDefinitionStructure, type MachineDefinition } from '../engine/gcode/types'
+import type { Stock } from '../types/project'
 import type { MachineLoadDiagnostic } from './diagnostics'
 
 export const MACHINE_NAME_MAX_LENGTH = 60
@@ -68,7 +69,7 @@ export type MachineValidationResult =
  * `validateMachineDefinition` remains the schema for definitions the
  * application writes itself (the editor's save form still checks it first).
  */
-export function validateCustomMachine(input: unknown): MachineValidationResult {
+export function validateCustomMachine(input: unknown, stock: Stock | null = null): MachineValidationResult {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { error: 'Machine definition must be a JSON object.' }
   }
@@ -93,7 +94,11 @@ export function validateCustomMachine(input: unknown): MachineValidationResult {
   if (name.length > MACHINE_NAME_MAX_LENGTH) {
     return { error: `Machine name is longer than ${MACHINE_NAME_MAX_LENGTH} characters.` }
   }
-  return { ok: { ...definition, id, name, builtin: false } }
+  // A custom machine always names its bar axis (#1153): only a bundled machine
+  // follows the stock. A copy is pinned against the open project's stock when
+  // the caller has one, and reads as X otherwise; the editor's X/Y choice and
+  // the axis-mismatch refusal then work exactly as for a hand-made machine.
+  return { ok: pinRotaryAxis({ ...definition, id, name, builtin: false }, stock) as MachineDefinition }
 }
 
 /**
@@ -181,10 +186,12 @@ export function duplicateMachineName(sourceName: string, existingNames: readonly
 export function duplicateMachineAsCustom(
   source: MachineDefinition,
   existing: readonly MachineDefinition[],
+  /** The open project's stock: a machine that follows the bar copies its axis (#1153). */
+  stock: Stock | null = null,
 ): MachineDefinition {
   const name = duplicateMachineName(source.name, existing.map((definition) => definition.name))
   const id = allocateMachineId(name, new Set(existing.map((definition) => definition.id)))
-  return readMachineDefinitionStructure({ ...structuredClone(source), id, name, builtin: false })
+  return readMachineDefinitionStructure(pinRotaryAxis({ ...structuredClone(source), id, name, builtin: false }, stock))
 }
 
 /**
@@ -252,6 +259,8 @@ export function machineSnapshotStatus(
 export function parseMachineImport(
   json: string,
   existing: readonly MachineDefinition[],
+  /** The open project's stock, for a file exported from a bundled rotary machine (#1153). */
+  stock: Stock | null = null,
 ): MachineValidationResult {
   let parsed: unknown
   try {
@@ -271,7 +280,7 @@ export function parseMachineImport(
   const id = rawId !== '' && !isBundledMachineId(rawId)
     ? rawId
     : allocateMachineId(rawName || rawId, new Set(existing.map((entry) => entry.id)))
-  const validated = validateCustomMachine({ ...record, id })
+  const validated = validateCustomMachine({ ...record, id }, stock)
   if (validated.error !== undefined) return validated
   return { ok: withCollisionSafeId(validated.ok, existing) }
 }
