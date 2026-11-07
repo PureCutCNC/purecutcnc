@@ -67,6 +67,10 @@ import { featureReachableFromFace, setupGenerationBlock, targetAllowedInSetup } 
 import { buildBarModelSolid, getManifoldModule, squareSheetModelFilter } from './csg'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { resolveCannedShapeShapes } from '../cannedShapes'
+import { createTextFeatureAt } from '../store/helpers/naming'
+import { resolveTextFeatureShapes } from '../text'
+import { profileToPolygon } from './profilePolyline'
+import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { SLOT_CANNED_KIND } from '../cannedShapes/generators/kinds'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { rotarySolidCannedData } from '../store/helpers/rotarySolids'
@@ -824,6 +828,69 @@ for (const shape of ['round', 'square'] as const) {
   }
   const drilled = computeOperationToolpath(project, drill)!.result
   assert(drilled.moves.length > 0, `the hole on the Turn is drilled: ${JSON.stringify(drilled.warnings)}`)
+}
+
+{
+  // Frank's case: a V-carved "T" on a Turn. On the Turn the glyph is the sheet
+  // glyph squeezed across the bar by RATIO; a medial carve of it must reach its
+  // crossbar corners at the surface, as the flat carve does, and its cone must
+  // never reach past the glyph's outline there — the overcut that rounded the
+  // stroke ends when the carve was planned on the reference sheet.
+  const halfAngle = Math.PI / 6
+  for (const shape of ['round', 'square'] as const) {
+    const base = barProject(shape)
+    const made = createTextFeatureAt(base, { text: 'T', style: 'outline', fontId: 'helvetiker_bold', size: 6, operation: 'subtract', layout: null }, { x: 13, y: ZERO - 3 })
+    assert(made, `${shape}: the T builds`)
+    const glyph = { ...made, id: 'glyph', authoringFace: 'around' as const, operation: 'subtract' as const, z_top: TURN_Z, z_bottom: TURN_Z - 3 }
+    const { project } = turnedBar(shape, [glyph])
+    const resolved = resolveFeatureInstance(project, 'glyph')
+    assert(resolved, `${shape}: the T resolves`)
+    // The glyph's outline on the Turn, in physical (along, across) units.
+    const outline = resolveTextFeatureShapes(resolved)
+      .map((piece) => profileToPolygon(piece.profile).map(([x, y]) => [x, (y - ZERO) * RATIO] as const))
+    const bounds = outline.flat()
+    const minAlong = Math.min(...bounds.map(([x]) => x))
+    const maxAlong = Math.max(...bounds.map(([x]) => x))
+    const distanceToOutline = (x: number, y: number): number => {
+      let best = Number.POSITIVE_INFINITY
+      for (const ring of outline) {
+        for (let index = 0; index < ring.length; index += 1) {
+          const [ax, ay] = ring[index]!
+          const [bx, by] = ring[(index + 1) % ring.length]!
+          const dx = bx - ax
+          const dy = by - ay
+          const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)))
+          best = Math.min(best, Math.hypot(x - (ax + dx * t), y - (ay + dy * t)))
+        }
+      }
+      return best
+    }
+    const carve: Operation = {
+      ...defaultOperationForTarget(project, 'v_carve_medial', 'rough', { source: 'features', featureIds: ['glyph'] }, 0),
+      id: 'carve-t', setupId: 'around', toolRef: VBIT.id, maxCarveDepth: 3,
+    }
+    const result = computeOperationToolpath(project, carve)!.result
+    const cuts = result.moves.filter((move) => move.kind !== 'rapid')
+    assert(cuts.length > 0, `${shape}: the T carves: ${JSON.stringify(result.warnings)}`)
+    // The cone stays inside the glyph on the Turn.
+    let worst = 0
+    for (const point of cuts.flatMap((move) => [move.from, move.to])) {
+      if (point.z >= TURN_Z - 1e-6) continue
+      const halfWidth = (TURN_Z - point.z) * Math.tan(halfAngle)
+      worst = Math.max(worst, halfWidth - distanceToOutline(point.x, acrossOnTurn(point)))
+    }
+    assert(worst < 0.03, `${shape}: the T's carve never reaches past its outline on the Turn (worst overcut ${worst.toFixed(3)})`)
+    // The crossbar's corners — the outline points at the glyph's along
+    // extremes, the ends of the crossbar — are reached at the surface.
+    const surface = cuts.flatMap((move) => [move.from, move.to]).filter((point) => point.z >= TURN_Z - 1e-3)
+      .map((point) => [point.x, acrossOnTurn(point)] as const)
+    const corners = bounds.filter(([x]) => Math.abs(x - minAlong) < 1e-6 || Math.abs(x - maxAlong) < 1e-6)
+    assert(corners.length >= 2, `${shape}: the T has crossbar corners (${corners.length})`)
+    for (const [x, y] of corners) {
+      const nearest = Math.min(...surface.map(([sx, sy]) => Math.hypot(sx - x, sy - y)))
+      assert(nearest < 0.05, `${shape}: the carve reaches the crossbar corner (${x.toFixed(2)}, ${y.toFixed(2)}) at the surface (nearest ${nearest.toFixed(3)})`)
+    }
+  }
 }
 
 console.log('squareTurnedSheet: all assertions passed.')
