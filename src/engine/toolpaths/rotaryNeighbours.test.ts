@@ -393,8 +393,14 @@ check('the neighbours are sampled before the retained stubs, not as wall triangl
   assert.ok(targetMesh, 'the target surface resolves')
   const neighbourMesh = resolveRotaryNeighbourMesh(project, [hex])
   assert.ok(neighbourMesh, 'the neighbour mesh resolves')
+  // #1155 rn-e: a retained stub only exists at a band end that is **inside**
+  // the model. The Turn's own ends are model ends now, where the approved rule
+  // lets the plain bar be cut and no stub stands; this check is about the
+  // composition order, so it asks for a band an eighth of an inch inside the
+  // Turn at each end (what an end support or a keep-out produces).
   const composed = rotarySampledMesh(targetMesh.mesh, [neighbourMesh], stock, project.meta.units, {
-    alongStart: TURN_START, alongEnd: TURN_START + TURN_LENGTH, passDirection: 'around', stockToLeave: 0,
+    alongStart: TURN_START + 0.125, alongEnd: TURN_START + TURN_LENGTH - 0.125,
+    passDirection: 'around', stockToLeave: 0,
   })
   const targetTriangles = targetMesh.mesh.index.length / 3
   const neighbourTriangles = neighbourMesh.index.length / 3
@@ -612,7 +618,13 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // 0.1457 mm lower here, which changes where the bands beside the foot are
   // eligible for a helix -- the ring itself is still one full turn at the foot.
   // The no-neighbour control below is unchanged.
-  assert.equal(withNeighbour.length, 6759, 'the overlapping neighbour moves the output: the measured bolt run')
+  //
+  // 6759 -> 7127 for #1155 rn-e: the Turn's band now runs to its own ends. The
+  // Hex still bounds its start (a neighbour's wall, so the one-radius pull and
+  // the wall-foot ring stay), but the far end at 3.75 is the model's own end:
+  // the retained stub there is gone and the band runs 0.125 in further, which
+  // adds the end rings and re-eligibility the helix bands needed over them.
+  assert.equal(withNeighbour.length, 7127, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

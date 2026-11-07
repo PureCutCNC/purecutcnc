@@ -3971,10 +3971,19 @@ function proveAtLayerLink(
   }
 
   // The retained ends: this link's own body footprint, outside the cut band.
+  //
+  // #1155 rn-e: on a **round** bar the plain bar beyond the model's own end is
+  // material the operation may cut into, so a cell within one cutter radius of
+  // the band's end is not "retained" any more -- the body legitimately reaches
+  // it. Every cell further out still must not move. A square blank keeps the
+  // whole band's edge: its retained corners hold the part.
+  const roundOverrun = entry.stock.shape === 'round'
+  const retainedLow = roundOverrun ? entry.alongStart - cutterRadius : entry.alongStart
+  const retainedHigh = roundOverrun ? entry.alongEnd + cutterRadius : entry.alongEnd
   for (let i = first; i <= last; i++) {
     const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
     if (cellAlong < context.alongLimits.min || cellAlong > context.alongLimits.max) continue
-    if (cellAlong >= entry.alongStart - 1e-9 && cellAlong <= entry.alongEnd + 1e-9) continue
+    if (cellAlong >= retainedLow - 1e-9 && cellAlong <= retainedHigh + 1e-9) continue
     for (let k = 0; k < reference.angleBins; k++) {
       const index = i * reference.angleBins + k
       const blank = blankRadius(stock, (k + 0.5) * reference.angleDeg)
@@ -4736,7 +4745,23 @@ for (const { entry, program } of CASES) {
           // material the operation never cleared and excuse any bite (a
           // 1 000 mm stepdown passed all eight along-finish cases, including
           // 9.3975 mm).
-          const standingAllowed = stage.descent !== null && descentCoversRay(
+          // #1155 rn-e: at a **region** boundary the band's edge is not the
+          // previous layer's edge. The two stages' grids are built from
+          // different sample spacings and the mask is evaluated per sample, so
+          // one stage's clipped run can start a grid step before the other's,
+          // and its body then reaches a cell the other stage never cut at all --
+          // the material there is still the blank. The previous-layer bound does
+          // not describe that cell (there was no previous layer there), so the
+          // standing-material bound is the only sound one, and it is exact:
+          // what stands above this body's own contact, never below it. Widening
+          // the band (#1155 rn-e) moved that phase, which is how this surfaced.
+          // The cell's own depth is still proved by `assertStageDescent`, which
+          // replays every pose against the exact solids.
+          const untouchedBlank = moveSurfaceCell.material >= blankRadius(stock, moveSurfaceCell.angle) - budget.alongBin
+          // An untouched cell needs no descent proof: there is nothing the
+          // previous layer could have descended, and the bound is the exact
+          // geometry of what stands above this body's contact.
+          const standingAllowed = untouchedBlank || (stage.descent !== null && descentCoversRay(
             stage.descent,
             moveSurfaceCell.along,
             moveSurfaceCell.angle,
@@ -4744,7 +4769,7 @@ for (const { entry, program } of CASES) {
             cutterRadius,
             tip,
             moveSurfaceCell.material,
-          )
+          ))
           // #1050: a clipped no-centre triangle can raise a cell by up to one
           // requested cell, and a rough stops one layer above that raised
           // height, so a finish after a rough may remove that much extra stock
@@ -4770,7 +4795,9 @@ for (const { entry, program } of CASES) {
               + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
               + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
               + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
-              + `(${standingAllowed ? 'covered by the emitted descent' : 'not applied: no verified descent inside the footprint'})`)
+              + `(${standingAllowed
+                ? untouchedBlank ? 'the cell is untouched stock the rough never reached' : 'covered by the emitted descent'
+                : 'not applied: no verified descent inside the footprint'})`)
             alongBiteChecks++
             if (stage.finish) finishAlongBiteChecks++
           }
@@ -4876,10 +4903,14 @@ for (const { entry, program } of CASES) {
   }
 
   // (2) The retained ends keep the blank. Cells outside the band are material
-  // the cutter's body must never reach.
+  // the cutter's body must never reach -- except, on a round bar, the one cutter
+  // radius past each of the model's own ends that #1155 rn-e's rule opens (the
+  // approved "may cut into it"; a square blank keeps its retained corners).
+  const retainedLow = stock.shape === 'round' ? entry.alongStart - cutterRadius : entry.alongStart
+  const retainedHigh = stock.shape === 'round' ? entry.alongEnd + cutterRadius : entry.alongEnd
   for (let i = 0; i < reference.alongBins; i++) {
     const along = reference.alongStart + (i + 0.5) * reference.alongBin
-    if (along >= entry.alongStart - 1e-9 && along <= entry.alongEnd + 1e-9) continue
+    if (along >= retainedLow - 1e-9 && along <= retainedHigh + 1e-9) continue
     if (along < alongLimits.min || along > alongLimits.max) continue
     for (let k = 0; k < reference.angleBins; k++) {
       const angle = (k + 0.5) * reference.angleDeg

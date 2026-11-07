@@ -1195,6 +1195,13 @@ function retainedRoundStub(
  * `stepdown` out of -- the overcut the export guard found. The along pass keeps
  * the stub in its mesh byte for byte.
  *
+ * `stubStart`/`stubEnd` are false at an end the target itself ends at (#1155
+ * rn-e), and then that retained cylinder is simply not added: the plain bar
+ * beyond the model is material the operation may cut into, and a wall standing
+ * there is what left the one-tool-radius ridge at each of the target's ends.
+ * A square blank never passes false (`rotarySampledMesh`), because its retained
+ * corners are what holds the part rather than a turnable surface.
+ *
  * `wallInset` erodes both stubs by that distance (#1095). `rotaryTargets`
  * passes the stock to leave here for a rough and a finish alike, because the
  * sampler is about to enlarge its tool by the same amount:
@@ -1210,9 +1217,11 @@ function withRetainedBar(
   alongEnd: number,
   includeSquareStubs = true,
   wallInset = 0,
+  stubStart = true,
+  stubEnd = true,
 ): RotaryModelMesh {
   if (isSquareStock(stock) && !includeSquareStubs) return mesh
-  const stubs = retainedBarStubs(stock, units, alongStart, alongEnd, wallInset)
+  const stubs = retainedBarStubs(stock, units, alongStart, alongEnd, wallInset, stubStart, stubEnd)
   if (stubs.length === 0) return mesh
   const positions = new Float32Array(mesh.positions.length + stubs.reduce((total, stub) => total + stub.positions.length, 0))
   positions.set(mesh.positions)
@@ -1241,6 +1250,12 @@ function withRetainedBar(
  * erosion (#1095). `withRetainedBar` concatenates these with the model; the
  * un-eroded set is also what the height-map grid is widened back to, so the
  * erosion cannot move the grid origin.
+ *
+ * `stubStart`/`stubEnd` are false at a band end the **target itself** ends at
+ * (#1155 rn-e): the plain bar beyond the model is material the approved rule
+ * lets the operation cut into, so the retained wall must not stand there. A
+ * square blank keeps both (`false` is never passed for one): its retained
+ * corners are what holds the part, not a turnable surface.
  */
 function retainedBarStubs(
   stock: BarStock,
@@ -1248,13 +1263,15 @@ function retainedBarStubs(
   alongStart: number,
   alongEnd: number,
   wallInset = 0,
+  stubStart = true,
+  stubEnd = true,
 ): RotaryModelMesh[] {
   const bounds = getStockBounds(stock)
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
   const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
   return [
-    retainedBarStub(stock, units, lower, alongStart, wallInset),
-    retainedBarStub(stock, units, alongEnd, upper, wallInset),
+    stubStart ? retainedBarStub(stock, units, lower, alongStart, wallInset) : null,
+    stubEnd ? retainedBarStub(stock, units, alongEnd, upper, wallInset) : null,
   ].filter((stub): stub is RotaryModelMesh => stub !== null)
 }
 
@@ -1273,6 +1290,144 @@ function concatRotaryMeshes(meshes: readonly RotaryModelMesh[]): RotaryModelMesh
     vertexOffset += mesh.positions.length / 3
   }
   return { positions, index }
+}
+
+/** Two along positions closer than this are the same coordinate (#1155 rn-e). */
+const BAND_END_EPSILON = 1e-9
+
+/**
+ * Which ends of a cut band are the **target's own** ends (#1155 rn-e).
+ *
+ * The approved rule (Frank, 2026-11-06) is that the plain bar beyond a model's
+ * end is material the operation **may cut into**: a rough or a finish runs the
+ * cutter to the edge of its target's surface, a ball's or flat's centre may go
+ * up to the model's end, and only another model, an end support, a chuck or
+ * tailstock keep-out or the bar's outside may stop it.
+ *
+ * The range itself (`rotaryAlongRange`) clamps to the model's extent before any
+ * support or keep-out can widen it, so a range end that equals the model's own
+ * end is exactly the case where no support or keep-out binds there. Anything
+ * shorter -- an end support or a keep-out inside the model -- stays a bound and
+ * keeps every rule it had. `alongExtremes` reads the target mesh the range was
+ * derived from, so the two agree by construction.
+ */
+function targetBandOverrun(
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  params: Pick<RotaryFinishParams, 'alongStart' | 'alongEnd'>,
+): { start: boolean; end: boolean } {
+  const along = alongExtremes(mesh.positions, stock)
+  if (!Number.isFinite(along.min) || !Number.isFinite(along.max)) {
+    return { start: false, end: false }
+  }
+  // **Equality**, not "inside": `rotaryAlongRange` clamps a saved operation's
+  // range to the model's extent, so an end the model owns sits exactly on it.
+  // A direct generator call may hand over a range wider than the model (the
+  // sampling suites do), and that band must stay the band it was.
+  const at = (band: number, model: number): boolean => Math.abs(band - model) <= BAND_END_EPSILON * Math.max(1, Math.abs(model))
+  return {
+    start: at(params.alongStart, along.min),
+    end: at(params.alongEnd, along.max),
+  }
+}
+
+/**
+ * True when a neighbour's surface stands more than the surface tolerance above
+ * the target's over the along window on one side of `face` (#1155 rn-e).
+ *
+ * This is `rotaryWallFeet`'s own step test, lifted out so a band end can ask it
+ * about the target's end: `direction +1` is a neighbour whose material lies at
+ * `along <= face` (a wall the band meets from its +x side), `-1` the mirror.
+ * Both surfaces are read per angle, so a polygon target's flats are compared
+ * with their own apothem.
+ */
+function neighbourRisesAcross(
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  mesh: RotaryModelMesh,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  face: number,
+  direction: 1 | -1,
+): boolean {
+  if (neighbours === undefined || neighbours.length === 0) return false
+  const tolerance = minRenderHeight(tool.units)
+  const window = tool.radius + Math.max(0, params.stockToLeave)
+  const neighbourSide = direction > 0 ? [face - window, face] : [face, face + window]
+  const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
+  const targetTops = meshSurfaceTops(mesh, stock, bandSide[0], bandSide[1])
+  for (const neighbour of neighbours) {
+    const neighbourTops = meshSurfaceTops(neighbour, stock, neighbourSide[0], neighbourSide[1])
+    for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) {
+      if (!Number.isFinite(neighbourTops[bin]) || !Number.isFinite(targetTops[bin])) continue
+      if (neighbourTops[bin] > targetTops[bin] + tolerance) return true
+    }
+  }
+  return false
+}
+
+/**
+ * How one operation's cut band is bounded at each end (#1155 rn-e).
+ *
+ * `stub` is the retained-bar wall that keeps the plain bar beyond the band
+ * uncut; `pull` is the one-radius pull of the cutter centre inside a stubbed
+ * end (`rotaryCutterSpan`).
+ *
+ * - An end a **support or keep-out** bounds keeps both, exactly as before, so
+ *   every project whose band already ends against a support is byte-identical.
+ * - An end the **target itself** ends at loses the stub: the retained bar beyond
+ *   the model no longer blocks the tool. Its centre may also reach the end
+ *   (`pull` false) **unless a neighbour's wall stands there** -- another model
+ *   still stops the tool, exactly as #1155 rn-a..rn-d require, and the wall-foot
+ *   ring `rotaryWallFeet` puts at that wall's foot is where the tool first
+ *   follows the target's own surface.
+ * - A **square blank** keeps both ends as they were (#1045 slice G / #1016): its
+ *   retained corners are the part's support, and the corner material gate and
+ *   the stub floors are untouched by the round bar's rule.
+ */
+interface RotaryBandEnds {
+  readonly stubStart: boolean
+  readonly stubEnd: boolean
+  readonly pullStart: boolean
+  readonly pullEnd: boolean
+}
+
+const KEEP_BAND_ENDS: RotaryBandEnds = {
+  stubStart: true, stubEnd: true, pullStart: true, pullEnd: true,
+}
+
+/**
+ * The band ends for one operation (#1155 rn-e): `targetBandOverrun` decides
+ * which ends the target itself owns, and only a **round** bar gives up the stub
+ * and the centre pull there.
+ */
+function rotaryBandEnds(
+  mesh: RotaryModelMesh,
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): RotaryBandEnds {
+  if (isSquareStock(stock)) return KEEP_BAND_ENDS
+  const overrun = targetBandOverrun(mesh, stock, params)
+  if (!overrun.start && !overrun.end) return KEEP_BAND_ENDS
+  const along = alongExtremes(mesh.positions, stock)
+  // #1155 rn-e: another model still stops the tool at the target's end. Its
+  // material is what the body must not enter, so the one-radius pull stays and
+  // the stub goes: with the neighbour in the sampled mesh the wall's foot is
+  // read from the neighbour itself, and a retained cylinder of the bar's own
+  // radius on top of it only adds a height-map cell of over-lift (#1155 rn-e's
+  // second case).
+  const wallStart = overrun.start
+    && neighbourRisesAcross(neighbours, mesh, stock, tool, params, along.min, 1)
+  const wallEnd = overrun.end
+    && neighbourRisesAcross(neighbours, mesh, stock, tool, params, along.max, -1)
+  return {
+    stubStart: !overrun.start,
+    stubEnd: !overrun.end,
+    pullStart: !(overrun.start && !wallStart),
+    pullEnd: !(overrun.end && !wallEnd),
+  }
 }
 
 /**
@@ -1320,11 +1475,21 @@ function concatRotaryMeshes(meshes: readonly RotaryModelMesh[]): RotaryModelMesh
  *
  * `null` when the two pulls cross: the caller refuses with the existing
  * `rotaryNoRoom`, exactly as for an already-empty range.
+ *
+ * #1155 rn-e: `ends` says which ends still need the pull. An end the **target**
+ * itself ends at, with no neighbour's wall standing there, is pulled **not at
+ * all**: the approved rule (2026-11-06) is that the plain bar beyond a model's
+ * end is material the operation may cut into, so the centre reaches the model's
+ * end and a ball's or flat's body reaches the edge. The retained stub goes with
+ * it (`rotarySampledMesh`), because a wall standing at the end is exactly what
+ * leaves the ridge this slice removes. A support, a keep-out or a neighbour's
+ * wall keeps the old pull byte for byte.
  */
 function rotaryCutterSpan(
   stock: BarStock,
   tool: NormalizedTool,
   params: RotaryFinishParams,
+  ends: RotaryBandEnds = KEEP_BAND_ENDS,
 ): { start: number; end: number } | null {
   const bounds = getStockBounds(stock)
   const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
@@ -1341,7 +1506,7 @@ function rotaryCutterSpan(
     return view.getFloat64(0)
   }
   let start = params.alongStart
-  if (radius > 0 && params.alongStart > lower) {
+  if (radius > 0 && params.alongStart > lower && ends.pullStart) {
     // The exact sum can round below the radius, and the along grid's last
     // sample (`start + (end - start) * i / intervals` in `rotaryAlongPositions`)
     // can round a few ulps past the span end, so a one-ulp pull is not enough
@@ -1353,7 +1518,7 @@ function rotaryCutterSpan(
     for (let i = 0; i < 8 && start - params.alongStart < radius; i++) start = ulpStep(start, 1)
   }
   let end = params.alongEnd
-  if (radius > 0 && upper > params.alongEnd) {
+  if (radius > 0 && upper > params.alongEnd && ends.pullEnd) {
     const margin = Math.max(Math.abs(params.alongEnd), radius) * 1e-12
     end = params.alongEnd - radius - margin
     for (let i = 0; i < 8 && params.alongEnd - end < radius; i++) end = ulpStep(end, -1)
@@ -1621,6 +1786,15 @@ interface RotaryTargetPlan {
    * neighbour rises out of the band, so an ordinary operation reads nothing.
    */
   readonly wallFootReads: readonly RotaryWallFootRead[]
+  /**
+   * #1155 rn-e: the ends the target itself ends at, where the retained wall is
+   * gone from the sampled mesh. A sample there can read "no model under the
+   * tool" for the sliver the cutter's footprint puts past the model's end, so
+   * that end's `NaN` run takes the target's surface at the end instead of
+   * becoming "no contour" (the finish) or "cut to the layer" (the rough).
+   */
+  readonly overrunStart: boolean
+  readonly overrunEnd: boolean
 }
 
 /**
@@ -1662,6 +1836,15 @@ export function rotarySampledMesh(
   // Neighbours still go in on a square blank in around mode: they are material,
   // not retained stock (#1155).
   const includeSquareStubs = !(isSquareStock(stock) && params.passDirection === 'around')
+  // #1155 rn-e: no retained wall stands at an end the target itself ends at, so
+  // the body may cut the plain bar beyond it. `mesh` is the **target** here (the
+  // neighbours are concatenated above), so the test reads exactly the extent the
+  // cut range was clamped to. A **square** blank keeps every stub it had: its
+  // retained corners are the part's support, and the corner material gate and
+  // the exact stub floors are untouched by the round bar's rule.
+  const overrun = isSquareStock(stock)
+    ? { start: false, end: false }
+    : targetBandOverrun(mesh, stock, params)
   return withRetainedBar(
     sampledMesh,
     stock,
@@ -1670,6 +1853,8 @@ export function rotarySampledMesh(
     params.alongEnd,
     includeSquareStubs,
     params.stockToLeave,
+    !overrun.start,
+    !overrun.end,
   )
 }
 
@@ -2129,7 +2314,14 @@ function prepareRotaryTargets(
   // `alongEnd` stay the *band*, and so the stub faces the sampler, the F6 floor
   // and the step predicate read. A span that collapses has no room for the
   // cutter at all and refuses like an empty range.
-  const span = rotaryCutterSpan(stock, tool, params)
+  //
+  // #1155 rn-e: the pull is skipped at an end the target itself ends at, so the
+  // centre reaches the model's end and the cutter reaches the edge there. A
+  // neighbour's wall, a support and a keep-out still bound it (`rotaryBandEnds`
+  // decides which is which); only the plain bar beyond the model stops bounding
+  // it, which is the rule Frank approved on 2026-11-06.
+  const ends = rotaryBandEnds(mesh, params.neighbours, stock, tool, params)
+  const span = rotaryCutterSpan(stock, tool, params, ends)
   if (!span) {
     return { refusal: 'rotaryNoRoom' }
   }
@@ -2214,10 +2406,19 @@ function prepareRotaryTargets(
   // stub only changes the cells its own footprint can read, instead of shifting
   // the origin under the whole bar. A zero inset adds nothing, so the old
   // single-mesh path stays byte for byte.
-  const unErodedStubs = wallInset !== 0 && includeSquareStubs
+  //
+  // #1155 rn-e: an end that lost its retained stub keeps the same treatment, for
+  // the same reason. Only the stub's *wall* is gone from the sampled mesh (so the
+  // cutter may cut the plain bar beyond the model's end); the grid envelope is
+  // still widened to it, so every cell more than a footprint away from the end
+  // keeps the height it had and the fix stays local to the band's ends instead of
+  // moving the whole height map. A zero inset with both stubs (the ordinary
+  // operation) adds nothing, so that path stays byte for byte.
+  const gridStubs = includeSquareStubs
+    && (wallInset !== 0 || !ends.stubStart || !ends.stubEnd)
     ? retainedBarStubs(stock, tool.units, params.alongStart, params.alongEnd)
     : []
-  const gridExtra = unErodedStubs.length > 0 ? concatRotaryMeshes(unErodedStubs) : undefined
+  const gridExtra = gridStubs.length > 0 ? concatRotaryMeshes(gridStubs) : undefined
   // #1155 rn-d: a neighbour's wall inside the band gets a ring at its foot. The
   // positions come from the neighbours' meshes and are merged into the along
   // grid, so the ring exists at every angle; the foot's own tip is read on the
@@ -2275,6 +2476,8 @@ function prepareRotaryTargets(
       angles, along, stockToLeave, maxRadius,
       samplingMesh, samplingTool, workspace, prep,
       wallFootReads,
+      overrunStart: !ends.stubStart,
+      overrunEnd: !ends.stubEnd,
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
     },
   }
@@ -2324,6 +2527,28 @@ function completeRotaryTargets(
   // on a round bar the cap is the surface it always was.
   const tips = tipRows.map((row) => Array.from(row, (raw) =>
     Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN))
+  // #1155 rn-e: at an end the target itself ends at, the footprint puts a sliver
+  // of the cutter past the model's end where no sampled mesh stands at all (the
+  // retained wall that used to be there is gone, which is the point), so the
+  // edge sample can read "no model under the tool". Beyond the end the height
+  // the tool may go down to is the target's surface **at** its end -- the
+  // drop-cutter on the target and its neighbours -- so the edge's `NaN` run
+  // takes the first finite sample inside it. Leaving the `NaN` would make the
+  // finish drop the whole end ring (a ridge again) and the rough cut the layer
+  // radius there, i.e. the retained bar beyond the end down to the last layer.
+  const fillOverrunNaNs = (fromStart: boolean): void => {
+    for (const row of tips) {
+      const limit = row.length
+      if (limit === 0) continue
+      let edge = 0
+      while (edge < limit && Number.isNaN(row[fromStart ? edge : limit - 1 - edge])) edge++
+      if (edge === 0 || edge === limit) continue
+      const inside = row[fromStart ? edge : limit - 1 - edge]
+      for (let i = 0; i < edge; i++) row[fromStart ? i : limit - 1 - i] = inside
+    }
+  }
+  if (plan.overrunStart) fillOverrunNaNs(true)
+  if (plan.overrunEnd) fillOverrunNaNs(false)
   // #1155 rn-d: a wall-foot ring follows the **target's** surface. The ring sits
   // exactly one leave plus one cutter radius off the neighbour's face, so its
   // body is tangent to that face and never inside it -- but the conservative

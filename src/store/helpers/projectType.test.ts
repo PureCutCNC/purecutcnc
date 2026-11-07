@@ -288,14 +288,20 @@ function postOperations(
  * ends facing 0 up, so its posted text gains the forward end turn, the
  * machine-coordinate retract and the instruction. The generated moves are
  * unchanged, and the non-rotary rows are untouched.
+ *
+ * #1155 rn-e recaptured the `around` pair: the fixture's prism runs 3..27 with
+ * the cut range on exactly those ends, so #1155 rn-e's approved rule lets the
+ * cutter centre reach them and the plain bar beyond them be cut. Its moves and
+ * the posted text that follows them both change; the non-rotary rows are
+ * untouched.
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '675032fe662a0a03',
-  aroundMoves: '57c161faf512400a',
+  around: '084df8c4a7f3363f',
+  aroundMoves: 'b3ec813a07891957',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

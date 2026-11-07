@@ -304,30 +304,30 @@ for (const axis of ['x', 'y'] as const) {
  * changes; the same cuts and depths are made. Every finish entry is unchanged.
  */
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/own': 'moves=6f34d961c5e364b0|warnings=|gcode=9dbe488c0d8d7983|post=',
-  'x/mm/rotary_rough/borrowed': 'moves=6f34d961c5e364b0|warnings=|gcode=e4a604a088d61a8f|post=',
-  'x/mm/rotary_rough/reversed': 'moves=6f34d961c5e364b0|warnings=|gcode=72d5bd5e7cf74af3|post=',
-  'x/mm/rotary_finish/own': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=f343e12508cf3787|post=',
-  'x/mm/rotary_finish/borrowed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=4b535d82a3960ef0|post=',
-  'x/mm/rotary_finish/reversed': 'moves=c8db8c9ec52bb897|warnings=rotaryFinishWithoutRough|gcode=1fb756e79740de5c|post=',
-  'x/inch/rotary_rough/own': 'moves=6438efa7ff0b1d9f|warnings=|gcode=c05f7d252ffc41c8|post=',
-  'x/inch/rotary_rough/borrowed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=4f856fde23aa3bc7|post=',
-  'x/inch/rotary_rough/reversed': 'moves=6438efa7ff0b1d9f|warnings=|gcode=963c53ea14e0ebde|post=',
-  'x/inch/rotary_finish/own': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=3a739ef963e152f8|post=',
-  'x/inch/rotary_finish/borrowed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=c2ea6999ee4286fc|post=',
-  'x/inch/rotary_finish/reversed': 'moves=eb73cc7eedddf910|warnings=rotaryFinishWithoutRough|gcode=dfa9d2953b871943|post=',
-  'y/mm/rotary_rough/own': 'moves=5b8b8666a0e57485|warnings=|gcode=456bca52ef5c1825|post=',
-  'y/mm/rotary_rough/borrowed': 'moves=5b8b8666a0e57485|warnings=|gcode=533fbf94d527be3d|post=',
-  'y/mm/rotary_rough/reversed': 'moves=5b8b8666a0e57485|warnings=|gcode=e7217db7f2ece31e|post=',
-  'y/mm/rotary_finish/own': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=d681f9a433950572|post=',
-  'y/mm/rotary_finish/borrowed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=0c8cf63d776fe130|post=',
-  'y/mm/rotary_finish/reversed': 'moves=2148c63ced005328|warnings=rotaryFinishWithoutRough|gcode=c2c944840de44e2b|post=',
-  'y/inch/rotary_rough/own': 'moves=16d32190474a3663|warnings=|gcode=f37cc393cb7247a6|post=',
-  'y/inch/rotary_rough/borrowed': 'moves=16d32190474a3663|warnings=|gcode=9c245c8727e78d19|post=',
-  'y/inch/rotary_rough/reversed': 'moves=16d32190474a3663|warnings=|gcode=95a273c2ec48d24a|post=',
-  'y/inch/rotary_finish/own': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=d0c1b28f172e42f0|post=',
-  'y/inch/rotary_finish/borrowed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=6f17ba11579e89ff|post=',
-  'y/inch/rotary_finish/reversed': 'moves=0dff884df13dfeda|warnings=rotaryFinishWithoutRough|gcode=186e615c66ad1a28|post=',
+  'x/mm/rotary_rough/own': 'moves=4d644141b3624327|warnings=|gcode=98ffb1a97d092b10|post=',
+  'x/mm/rotary_rough/borrowed': 'moves=4d644141b3624327|warnings=|gcode=4c41044f4e4e800b|post=',
+  'x/mm/rotary_rough/reversed': 'moves=4d644141b3624327|warnings=|gcode=c5f2416e249e7e7e|post=',
+  'x/mm/rotary_finish/own': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=2c452707fdada776|post=',
+  'x/mm/rotary_finish/borrowed': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=72750912f701e915|post=',
+  'x/mm/rotary_finish/reversed': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=ac9193e47acd18e6|post=',
+  'x/inch/rotary_rough/own': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=a81e69a8dc8aca5a|post=',
+  'x/inch/rotary_rough/borrowed': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=8721fe4aa5300906|post=',
+  'x/inch/rotary_rough/reversed': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=c9f7e6eff1e9ab1f|post=',
+  'x/inch/rotary_finish/own': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=e85a9dbb688eeca3|post=',
+  'x/inch/rotary_finish/borrowed': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=c1abde3f55ae0db5|post=',
+  'x/inch/rotary_finish/reversed': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=733fa0ea977f18bf|post=',
+  'y/mm/rotary_rough/own': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=f21a1f89c9fa2d8e|post=',
+  'y/mm/rotary_rough/borrowed': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=529d17cbca4264e6|post=',
+  'y/mm/rotary_rough/reversed': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=b2b68e6c9bc24a30|post=',
+  'y/mm/rotary_finish/own': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=0006eaa77e5866b3|post=',
+  'y/mm/rotary_finish/borrowed': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=331fbb888d91e775|post=',
+  'y/mm/rotary_finish/reversed': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=ad9c0138ccefed8b|post=',
+  'y/inch/rotary_rough/own': 'moves=5cd4f55a2bb69f40|warnings=|gcode=8278f549750ffb5b|post=',
+  'y/inch/rotary_rough/borrowed': 'moves=5cd4f55a2bb69f40|warnings=|gcode=c64e52d650826c0b|post=',
+  'y/inch/rotary_rough/reversed': 'moves=5cd4f55a2bb69f40|warnings=|gcode=e2cf8d625541181e|post=',
+  'y/inch/rotary_finish/own': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=468cb78e34b9bfa9|post=',
+  'y/inch/rotary_finish/borrowed': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=5c212e392a7240b1|post=',
+  'y/inch/rotary_finish/reversed': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=9d849480daa3e7cd|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_ROUND === '1') {
@@ -506,6 +506,12 @@ for (const cell of MATRIX_CELLS) {
 }
 
 // ── 2. the round bar is byte-identical to the base commit ─────
+//
+// #1155 rn-e re-recorded every row below: each fixture's model ends where its
+// cut band ends, so the approved rule lets the cutter centre reach both of the
+// model's own ends and the plain bar beyond them be cut. The square rows are
+// untouched -- a square blank keeps its retained corners and both stubs -- which
+// is what this control is for.
 
 /**
  * The equipment the baselines were captured with: the 3 inch preset, which was

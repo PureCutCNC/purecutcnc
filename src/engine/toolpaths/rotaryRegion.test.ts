@@ -543,9 +543,12 @@ const ROUND_FINISH_PARAMS = {
   assert.deepEqual(clipped.warnings, [], 'the region finish has no warning')
   const rings = ringCount(clipped)
   // The ring grid is one along position every stepover over the cutter-centre
-  // span (the band pulled one cutter radius inside each retained end).
-  const spanStart = ROUND_FINISH_PARAMS.alongStart + ROUND_FINISH_TOOL.radius
-  const spanEnd = ROUND_FINISH_PARAMS.alongEnd - ROUND_FINISH_TOOL.radius
+  // span. The fixture's model runs 3..27, exactly the band, so both of its ends
+  // are the **model's** own ends: #1155 rn-e lets the centre reach them and the
+  // plain bar beyond them be cut, so there is no retained stub and no one-radius
+  // pull on either side.
+  const spanStart = ROUND_FINISH_PARAMS.alongStart
+  const spanEnd = ROUND_FINISH_PARAMS.alongEnd
   const expectedRings = Math.ceil((spanEnd - spanStart) / ROUND_FINISH_PARAMS.stepover) + 1
   assert.equal(rings, expectedRings, 'the region still emits one ring per along position')
   assert.ok(rings > 1, 'the fixture has several rings')
@@ -1031,8 +1034,15 @@ const ROUND_FINISH_PARAMS = {
 // map cell (a neighbour's end face, the prism's own raised edges here). All four
 // along rows are byte-identical, as they must be: an along operation only reads
 // that way when it has a neighbour, and these fixtures have none.
+// #1155 rn-e re-recorded the four **round** rows: this fixture's prism runs
+// 3..27 and its band ends exactly on the model's ends, so both ends are the
+// model's own. The approved rule lets the cutter centre reach them (no
+// one-radius pull) and the plain bar beyond them be cut (no retained stub), so
+// every round program's grid and its end rings move. The four square rows are
+// byte-identical: a square blank keeps its retained corners and both stubs, so
+// the corner gate and the stub floors are untouched.
 const NO_REGION_HASHES: Record<string, string> = {
-  'round/rotary_rough/along': 'moves=57c161faf512400a warnings= gcode=1d01980a26a07b1c',
+  'round/rotary_rough/along': 'moves=b3ec813a07891957 warnings= gcode=61992f25bf719b9b',
   // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
   // earlier layer actually left (the lowest pass over the ring positions)
   // instead of an upper bound on it, so this fixture's asymmetric prism keeps
@@ -1044,13 +1054,13 @@ const NO_REGION_HASHES: Record<string, string> = {
   // split-ring eligibility rule refusing it outright, so #1117's same-A links
   // between the rings a helix leaves behind stay down. The links' heights and
   // material bounds are unchanged.
-  'round/rotary_rough/around': 'moves=fb16ee7f118a3e15 warnings= gcode=59ca3b4b2b5824e7',
-  'round/rotary_finish/along': 'moves=78362aad6fa56583 warnings=rotaryFinishWithoutRough gcode=bf4172fbd3f8e467',
+  'round/rotary_rough/around': 'moves=55de189fa03daa9a warnings= gcode=7ef25b73223eae93',
+  'round/rotary_finish/along': 'moves=b1b5c85c4e482903 warnings=rotaryFinishWithoutRough gcode=3efbbcdcf39ad8e9',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
-  'round/rotary_finish/around': 'moves=7de649839a767504 warnings=rotaryFinishWithoutRough gcode=cb5e7aabb4a982e7',
+  'round/rotary_finish/around': 'moves=1085d4ff6b1a9879 warnings=rotaryFinishWithoutRough gcode=d28edbb97670d730',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=c8e19d47e3a0b8c1',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer

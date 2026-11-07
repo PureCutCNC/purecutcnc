@@ -1037,11 +1037,17 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
   ].join('|')
 }
 
+// #1155 rn-e re-recorded all four round rows. Every one of them has a band end
+// on the **model's** own end (`chuck-*` starts at the chuck's keep-out and ends
+// at the model; `model-*` ends at the model at both ends), and the approved rule
+// now lets the cutter centre reach those ends and the plain bar beyond them be
+// cut. The square rows below are untouched: a square blank keeps its retained
+// corners and both stubs.
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/flat_endmill/finish/chuck-model': '80eb025693200404|rotaryFinishWithoutRough',
-  'x/mm/ball_endmill/rough/model-model': '3f4cd140ae9761e1|',
-  'y/mm/flat_endmill/finish/chuck-model': 'e213122eafd21e26|rotaryFinishWithoutRough',
-  'y/inch/ball_endmill/rough/model-model': '73b8d4775f59cdb1|',
+  'x/mm/flat_endmill/finish/chuck-model': '68cc1cb6444d1476|rotaryFinishWithoutRough',
+  'x/mm/ball_endmill/rough/model-model': '8901aab7a017c955|',
+  'y/mm/flat_endmill/finish/chuck-model': '951d957b7f2e2e71|rotaryFinishWithoutRough',
+  'y/inch/ball_endmill/rough/model-model': '5439c4574d8a3560|',
 }
 
 console.log('Testing the round fixtures are byte-identical to the base commit...')

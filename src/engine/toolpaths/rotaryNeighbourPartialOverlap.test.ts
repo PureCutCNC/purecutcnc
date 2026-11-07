@@ -943,11 +943,13 @@ for (const item of [
   const tool = toolOf(project, operation)
   const moves = generate(project, operation)
   assert.ok(moves.length > 0, 'the Hex finish emits motion')
-  // The cutter span of the Hex's band, exactly as `rotaryCutterSpan` pulls it in,
-  // and the uniform grid `aroundGrid` builds over it: the operation's own
-  // `ceil(span / stepover)` intervals, both endpoints included.
-  const start = HEX_START + tool.radius
-  const end = HEX_END - tool.radius
+  // The cutter span of the Hex's band and the uniform grid `aroundGrid` builds
+  // over it: the operation's own `ceil(span / stepover)` intervals, both
+  // endpoints included. #1155 rn-e: the band's ends are the Hex's own ends (the
+  // Turn stands below it, so no neighbour's wall bounds either side), so there
+  // is no one-radius pull and the grid runs 0.75..1.25.
+  const start = HEX_START
+  const end = HEX_END
   const stepover = operation.stepover * tool.diameter
   const intervals = Math.ceil((end - start) / stepover)
   const onGrid = (along: number): boolean => {
