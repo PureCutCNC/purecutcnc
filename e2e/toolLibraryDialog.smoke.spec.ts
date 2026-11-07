@@ -597,6 +597,11 @@ test('milling creation with only plasma tools and no library remains unassigned 
   const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
   await ui.contextMenu.item(menu, 'Create operation').hover()
   await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
+  // The click returns before the store holds the new operation (#1166).
+  await expect.poll(
+    async () => ((await getProject(app.page)).operations as unknown[]).length,
+    { message: 'the outside route should be created' },
+  ).toBe(1)
   const current = await getProject(app.page)
   expect((current.operations as Array<Record<string, unknown>>)[0].toolRef).toBeNull()
 })
