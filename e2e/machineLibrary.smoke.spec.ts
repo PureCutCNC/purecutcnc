@@ -33,7 +33,7 @@ import {
   openMachineManager as openManager,
   seedMachineProject,
 } from './machineLibrary.helpers'
-import { getProject, seedProject, selectMachine } from './helpers'
+import { getProject, seedProject, selectMachine, reloadWhenIdle } from './helpers'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { roundStock, type Project } from '../src/types/project'
 
@@ -90,7 +90,7 @@ test('custom machines live in My Machines and survive project changes and restar
   await ui.machineManager.doneButton(app.page).click()
 
   // And across an application restart.
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await openManager(app.page, ui)
   await expect(ui.machineManager.item(app.page, 'GRBL 1.1 (copy)')).toBeVisible()
@@ -290,7 +290,7 @@ for (const layout of [
     test('a machine library that cannot be read is shown with its reason', async ({ app, ui }) => {
       await seedMachineProject(app.page)
       await app.page.evaluate((key) => window.localStorage.setItem(key, '{ not json'), CUSTOM_MACHINES_KEY)
-      await app.page.reload()
+      await reloadWhenIdle(app.page)
       await app.page.waitForSelector('canvas', { timeout: 15000 })
 
       await openManager(app.page, ui)
@@ -361,7 +361,7 @@ for (const tablet of [false, true]) {
       expect(embedded.plasma).toEqual({ torchOnCommand: 'M3 $0 S1', torchOffCommand: 'M5 $-1', materialSelectCommand: 'M190 P{materialNumber} (selected)', materialWaitCommand: 'M66 P3 L3 Q2', materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)', pierceMode: 'controller' })
       expect(embedded.coordinateSystem).toEqual({ xAxis: '-X', yAxis: 'Y', zAxis: 'Z' })
       await ui.machineManager.doneButton(app.page).click()
-      await app.page.reload()
+      await reloadWhenIdle(app.page)
       await app.page.waitForSelector('canvas', { timeout: 15000 })
       await openManager(app.page, ui)
       await ui.machineManager.item(app.page, 'My Plasma Table').click()

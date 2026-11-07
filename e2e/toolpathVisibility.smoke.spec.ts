@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from './fixtures'
-import { allowSoftwareToolpathWebgl } from './helpers'
+import { allowSoftwareToolpathWebgl, reloadWhenIdle } from './helpers'
 import {
   chooseRenderer, closeRendererMenu, installSlowCanvasClock, openRendererMenu, panForGpuSuggestion, rendererButton,
   rendererFallbackNotice, rendererGear, rendererMenu, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON,
@@ -86,7 +86,7 @@ test.describe('shipped renderer default', () => {
     await chooseRenderer(page, 'Canvas')
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
     await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('canvas')
-    await page.reload()
+    await reloadWhenIdle(page)
     await seedToolpathVisProject(page)
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
     await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
@@ -131,7 +131,7 @@ for (const action of ['enable', 'dismiss'] as const) {
       await expect(legendToggle).toBeFocused()
       expect(await snapshot()).toEqual(before)
       await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.gpuSuggestionHandled'))).toBe('true')
-      await page.reload()
+      await reloadWhenIdle(page)
       await seedToolpathVisProject(page)
       await installSlowCanvasClock(page)
       await panForGpuSuggestion(page)
@@ -449,7 +449,7 @@ test('renderer preference persists without changing project, history or booklet 
   expect(await snapshot()).toEqual(before)
   await page.evaluate(() => (window as unknown as { restoreBookletGpu: () => void }).restoreBookletGpu())
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
-  await page.reload()
+  await reloadWhenIdle(page)
   await seedToolpathVisProject(page)
   await openRendererMenu(page)
   await expect(rendererButton(page, 'GPU')).toHaveAttribute('aria-pressed', 'true')
@@ -663,7 +663,7 @@ test('production renderer suggestion works through normal project Open and persi
     .getByRole('button', { name: 'Enable GPU', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   if (production) await expect(page.locator('canvas.sketch-toolpath-gpu')).not.toHaveAttribute('data-poc-stats')
-  await page.reload()
+  await reloadWhenIdle(page)
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
   expect(errors).toEqual([])

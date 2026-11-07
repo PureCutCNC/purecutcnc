@@ -67,6 +67,16 @@ export async function getProject(page: Page): Promise<Record<string, unknown>> {
 }
 
 /**
+ * Reload once the page's downloads have finished. A reload in the middle of
+ * the 3D engine's wasm download aborts it, and the old page logs that as a
+ * console error, which fails the test (#1171).
+ */
+export async function reloadWhenIdle(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle')
+  await page.reload()
+}
+
+/**
  * Select a bundled machine the way a user does: Project → Machine in the
  * project properties. Mirrors the local helper in plasmaMode.smoke.spec.ts so
  * every machine-dependent spec selects through one path (#960).

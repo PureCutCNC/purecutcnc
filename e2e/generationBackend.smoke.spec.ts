@@ -32,7 +32,7 @@
 import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
-import { seedProject, allowSoftwareToolpathWebgl } from './helpers'
+import { seedProject, allowSoftwareToolpathWebgl, reloadWhenIdle } from './helpers'
 import { exportDialog, exportPreview, generation } from './selectors'
 
 const EXECUTOR_STORAGE_KEY = 'purecut.generation.executor'
@@ -45,7 +45,7 @@ const EXECUTOR_STORAGE_KEY = 'purecut.generation.executor'
  */
 async function useStoredBackend(page: Parameters<typeof generation.backendTrigger>[0], kind: 'worker' | 'inline'): Promise<void> {
   await page.evaluate(([key, value]) => localStorage.setItem(key, value), [EXECUTOR_STORAGE_KEY, kind])
-  await page.reload()
+  await reloadWhenIdle(page)
   await page.waitForFunction(() => '__pcTest' in window)
 }
 
@@ -149,7 +149,7 @@ test.describe('Generation execution backend smoke', () => {
       expect(workerUrls.some((url) => /toolpath\.worker/.test(url))).toBe(false)
 
       // A reload must not rewrite the stored value.
-      await page.reload()
+      await reloadWhenIdle(page)
       expect(await page.evaluate((key) => localStorage.getItem(key), EXECUTOR_STORAGE_KEY)).toBe('inline')
     })
 
@@ -189,7 +189,7 @@ test.describe('Generation execution backend smoke', () => {
       }
       Object.defineProperty(window, 'Worker', { configurable: true, value: GuardedWorker })
     })
-    await page.reload()
+    await reloadWhenIdle(page)
 
     await seedGcodeExportProject(page)
     // The fallback runs the same job inline, so the work still completes.

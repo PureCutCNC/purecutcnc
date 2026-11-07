@@ -24,7 +24,7 @@
 
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { getProject } from './helpers'
+import { getProject, reloadWhenIdle } from './helpers'
 
 function withoutModified(snapshot: Record<string, unknown>): Record<string, unknown> {
   const meta = snapshot.meta as Record<string, unknown>
@@ -81,7 +81,7 @@ test('duplicates English, translates a key, applies, activates, and persists', a
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
   // Persists across reload.
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('lang', 'de')
   await expect(app.page.getByRole('button', { name: 'Projekt speichern' })).toBeVisible()
