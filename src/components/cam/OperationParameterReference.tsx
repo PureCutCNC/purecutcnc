@@ -303,14 +303,15 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
-      // slots_only (default): the reduction glyph sits over the full-width
-      // slot, where the cutter engages the whole channel at once.
+      // slots_only (default): the cutter runs between both slot walls, so
+      // its whole leading half is buried; the same short feed arrow as above.
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M6 8v18h20V8z" />
-          <circle className="gear-reference__outline" cx="16" cy="17" r="9" />
-          <path className="gear-reference__accent-fill" d="M16 3.4l-2.2 3h4.4z" />
-          <path className="gear-reference__accent-fill" d="M16 6.8l-2.2 3h4.4z" />
+          <path className="gear-reference__outline" d="M6 8h27M6 26h27" />
+          <circle className="gear-reference__outline" cx="24" cy="17" r="9" />
+          <path className="gear-reference__accent" d="M24 8a9 9 0 0 1 0 18" />
+          <path className="gear-reference__accent" d="M35 17h9" />
+          <path className="gear-reference__accent-fill" d="M46 17l-4-2.4v4.8z" />
         </OpParamRefFrame>
       )
     }
@@ -406,6 +407,19 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'trochoidal') {
+        // Small overlapping orbits walking along a channel, instead of rings
+        // that follow the pocket wall.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 5h46v24H6z" />
+            <path className="gear-reference__guide" d="M11 11.5h36M11 22.5h36" />
+            {[17, 23, 29, 35, 41].map((cx) => (
+              <circle key={cx} className="gear-reference__accent" cx={cx} cy="17" r="4.5" />
+            ))}
+          </OpParamRefFrame>
+        )
+      }
       // offset (default)
       return (
         <OpParamRefFrame label={label}>
@@ -448,6 +462,8 @@ export function OperationParameterReference({
           <path className="gear-reference__guide" d="M6 17h46" />
           <path className="gear-reference__accent" d="M13 27l17-21M22 27l17-21M31 27l17-21" />
           <path className="gear-reference__accent-fill" d="M46 8l-1.6-2.6 3.1-.5z" />
+          {/* The angle, measured from the X axis. */}
+          <path className="gear-reference__accent" d="M38.1 17A8 8 0 0 0 35.1 10.8" />
         </OpParamRefFrame>
       )
 
@@ -502,21 +518,20 @@ export function OperationParameterReference({
       )
     }
 
+    // A pocket in section; the finish pass runs just inside the face it cleans.
     case 'finishWalls':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__guide" d="M6 6h46v22H6z" />
-          <path className="gear-reference__guide" d="M9 17h40" />
-          <path className="gear-reference__accent" d="M6 6v22M52 6v22" />
+          <path className="gear-reference__outline" d="M6 7h10v20h26V7h10" />
+          <path className="gear-reference__accent" d="M19 8.5v16M39 8.5v16" />
         </OpParamRefFrame>
       )
 
     case 'finishFloor':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__guide" d="M6 6h46v22H6z" />
-          <path className="gear-reference__guide" d="M6 9v16M52 9v16" />
-          <path className="gear-reference__accent" d="M8 28h44" />
+          <path className="gear-reference__outline" d="M6 7h10v20h26V7h10" />
+          <path className="gear-reference__accent" d="M19 24h20" />
         </OpParamRefFrame>
       )
 

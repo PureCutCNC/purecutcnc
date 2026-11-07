@@ -96,7 +96,7 @@ assert(
 // ── Creation toolbars: Line and Construction targets ─────────────
 
 assert(
-  creationActions.includes("renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))"),
+  creationActions.includes("renderCreationTargetButton('line', 'line-target', t(CREATION_TARGET_LABEL_KEYS.line))"),
   'CreationActions must render the line creation target',
 )
 
