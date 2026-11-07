@@ -49,6 +49,15 @@
  * itself reports zero leftover for an untouched blank and hid a foot ring that
  * cut 0.00915 in high.
  *
+ * #1155 rn-e adds the **own-end** measure on the same sweep: `sweepByAngle`
+ * pairs each whole degree's poses with the material they cut (an earlier
+ * operation's profile where one runs first), `resample` moves a profile onto
+ * another operation's grid, and `endRidge` reads the extra material a target's
+ * own end -- or a wall face -- stands above the operation's **own interior**,
+ * so a stepover scallop or the conservative sampler's lift is not mistaken for a
+ * ridge. The committed check and `scripts/issue-1155-rn-e-ends-probe.ts` both
+ * use these, so the probe and the test cannot drift apart.
+ *
  * Nothing here asserts and nothing here reads the sampler.
  */
 
@@ -225,25 +234,39 @@ export function sweepProfile(
   const radius = tool.radius
   const count = profile.along.length
   const step = count > 1 ? profile.along[1] - profile.along[0] : 0
+  // The pose's axial footprint, widened by a **relative** epsilon (#1155 rn-e
+  // correction 1). A pose's along position is interpolated from the emitted
+  // move, so a ring the generator commands at 1.375 in arrives as
+  // 1.3750000000012; the profile's own grid point at exactly 1.25 is then
+  // `1.25e-12` *outside* the nominal rim, and the first grid point past the face
+  // read as uncut, reporting a whole-blank column as leftover at the face
+  // (the review's "highest leftover 0.50000 in at A0°"). A nanometre-scale
+  // epsilon is below any machine tolerance and keeps the guard honest for the
+  // poses that really are off the footprint.
+  const scale = count > 0 ? Math.max(1, Math.abs(profile.along[0]), Math.abs(profile.along[count - 1])) : 1
+  const rimEpsilon = Math.max(1e-9, scale * 1e-12)
   for (const pose of poses) {
     const delta = (((angle - pose.angle) * Math.PI) / 180)
     const cos = Math.cos(delta)
     if (!(cos > 0)) continue
     const sin = Math.abs(Math.sin(delta))
+    const rim = radius + rimEpsilon
     // The grid is uniform (`blankProfile` builds it that way), so a pose's
-    // footprint is one index range rather than a scan of the whole window.
+    // footprint is one index range rather than a scan of the whole window. One
+    // index either side is included so the guard below -- not the rounded index
+    // arithmetic -- decides a point sitting exactly on the rim.
     const first = step > 0
-      ? Math.max(0, Math.ceil((pose.along - radius - profile.along[0]) / step))
+      ? Math.max(0, Math.ceil((pose.along - rim - profile.along[0]) / step) - 1)
       : 0
     const last = step > 0
-      ? Math.min(count - 1, Math.floor((pose.along + radius - profile.along[0]) / step))
+      ? Math.min(count - 1, Math.floor((pose.along + rim - profile.along[0]) / step) + 1)
       : count - 1
     // A ball's cutting sphere stands one radius above its tip; a flat's body is
     // the half-cylinder above the tip radius.
     const centre = pose.radius + radius
     for (let j = first; j <= last; j++) {
       const offset = profile.along[j] - pose.along
-      if (Math.abs(offset) > radius + 1e-12) continue
+      if (Math.abs(offset) > rim) continue
       const current = top[j]
       if (!(current > pose.radius)) continue
       if (ball) {
@@ -368,4 +391,114 @@ export function wallFootWindow(face: number, tool: NormalizedTool, direction: 1 
   return direction > 0
     ? { from: face - 4 * tool.radius, to: face + span }
     : { from: face - span, to: face + 4 * tool.radius }
+}
+
+/**
+ * One angle's material after a whole operation's poses cut it (#1155 rn-e).
+ *
+ * The ridge a target's own end leaves is measured on the material the operation
+ * **actually runs on** -- the ball rough on the untouched bar, a ball finish on
+ * the material the rough left, a flat finish on the bar -- so this pairs the
+ * per-angle poses with the profile they cut.
+ */
+export interface SweptAngle {
+  readonly angle: number
+  readonly profile: WallFootProfile
+}
+
+/**
+ * Every whole degree's material profile after `moves` cut `blank` (#1155 rn-e).
+ * `blank` is the untouched stock, or the profile an earlier operation left.
+ */
+export function sweepByAngle(
+  moves: readonly ToolpathMove[],
+  stock: BarStock,
+  tool: NormalizedTool,
+  window: { from: number; to: number },
+  anchor: number,
+  blank?: (angle: number) => WallFootProfile | null,
+): SweptAngle[] {
+  return cutterPosesByAngle(moves, stock, tool).map((entry) => {
+    const base = blank?.(entry.angle)
+      ?? blankProfile(stock, window.from, window.to, tool, anchor)
+    return { angle: entry.angle, profile: sweepProfile(base, entry.poses, tool, entry.angle) }
+  })
+}
+
+/**
+ * The **ridge** a target's own end still carries: the material standing there
+ * that the operation's own passes leave nowhere else.
+ *
+ * An absolute height bound would measure the operation's stepover scallop, not
+ * the defect: a 1/4 in ball advancing 0.16 in leaves a 0.03 in cusp everywhere,
+ * by design, and a conservative sampler lifts every sample by up to one cell.
+ * The ridge is the *extra* material beside the end face, so each angle's
+ * reference is the highest material its own interior reaches
+ * (`interior.from..to` from the end), and the measured height is how far the
+ * end band stands above that. Taking the interior's **highest** point -- its
+ * cusp crest, and a polygon target's corner -- makes the check blind to the
+ * scallop and corner phase and still catches the defect by the whole step from
+ * the crest to the untouched blank (0.226 in on this fixture, over the 0.111 in
+ * band the handoff calls "about one tool radius wide"). `width` is the along
+ * extent of the extra material.
+ */
+export function endRidge(
+  swept: readonly SweptAngle[],
+  end: number,
+  direction: 1 | -1,
+  band: number,
+  interior: { from: number; to: number },
+  tolerance: number,
+): { width: number; height: number; angle: number } {
+  let width = 0
+  let height = 0
+  let angle = 0
+  for (const entry of swept) {
+    const { along, top } = entry.profile
+    let reference = Number.NEGATIVE_INFINITY
+    for (let i = 0; i < along.length; i++) {
+      const distance = (along[i] - end) * direction
+      if (distance < interior.from || distance > interior.to) continue
+      if (top[i] > reference) reference = top[i]
+    }
+    if (!Number.isFinite(reference)) continue
+    let worst = 0
+    let extent = 0
+    for (let i = 0; i < along.length; i++) {
+      const distance = (along[i] - end) * direction
+      if (distance < -1e-12 || distance > band) continue
+      const excess = top[i] - reference
+      if (excess <= tolerance) continue
+      if (excess > worst) worst = excess
+      if (distance > extent) extent = distance
+    }
+    if (worst > height + 1e-12) {
+      height = worst
+      width = extent
+      angle = entry.angle
+    }
+  }
+  return { width, height, angle }
+}
+
+/** Linear resampling of a material profile onto another along grid (#1155 rn-e). */
+export function resample(profile: WallFootProfile, along: readonly number[]): WallFootProfile {
+  const top: number[] = []
+  let next = 0
+  for (const x of along) {
+    while (next + 1 < profile.along.length && profile.along[next + 1] < x) next++
+    if (x <= profile.along[0]) {
+      top.push(profile.top[0])
+      continue
+    }
+    const last = profile.along.length - 1
+    if (x >= profile.along[last]) {
+      top.push(profile.top[last])
+      continue
+    }
+    const span = profile.along[next + 1] - profile.along[next]
+    const t = span > 0 ? (x - profile.along[next]) / span : 0
+    top.push(profile.top[next] + (profile.top[next + 1] - profile.top[next]) * t)
+  }
+  return { along: [...along], top }
 }

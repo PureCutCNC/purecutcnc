@@ -21,16 +21,31 @@
  *   npx tsx scripts/issue-1155-rn-e-ends-probe.ts [project.camj [ops...]]
  *
  * With no argument it builds the handoff's fixtures in code:
- *  - the Hex 0.75..1.25 (across flats 1.5) over the bar, ball rough + finish,
- *    measured against the analytic Hex at both of its ends;
- *  - the Turn 1.25..3.75 (the Hex's end face) with the flat rough at leave 0 and
- *    0.02, reporting each layer's first cut and the material left on the Hex
- *    face below the flats.
+ *  - case 1: the Hex 0.75..1.25 (across flats 1.5) over the bar, ball rough +
+ *    1/8" ball finish + flat finish, measured against the analytic Hex at both
+ *    of its ends;
+ *  - case 2: the Turn 1.25..3.75 (starting at the Hex's end face) with the flat
+ *    rough and finish at leave 0 and 0.02, reporting the first full ring and the
+ *    material left past the leave boundary.
  *
- * The ridge is measured with the cutter's own body (`src/test/rotaryWallFootSweep.ts`):
- * one radial profile per degree, the profile starting at the blank the operation
- * sees, swept by every cutter pose, and the first along position at which the
- * material comes down to the target's surface read off it.
+ * The measurement is the one the committed check
+ * (`src/engine/toolpaths/rotaryTargetEnds.test.ts`) uses, out of the shared
+ * helper `src/test/rotaryWallFootSweep.ts`:
+ *
+ *  - one radial material profile per whole degree, cut by every cutter pose the
+ *    operation emits, so the cutter **body** is swept and not the generator's
+ *    sampled heights;
+ *  - a ball finish is measured on the material the **rough** left, because a
+ *    ball's section cannot remove the overhang above its own band; measuring it
+ *    on the untouched bar reported the whole uncharted shell as a ridge at the
+ *    end (the review's "0.375 in wide, worst 0.16555 in above the Hex at A4°");
+ *  - the **far** end is walked outwards from the end face, not inward from the
+ *    window's lower edge, which is why the old probe reported a 0.75 in ridge
+ *    there with a height of exactly zero: it broke out of its scan before
+ *    reading a single position;
+ *  - the ridge is read against the operation's **own interior** (`endRidge`), so
+ *    the stepover scallop and the conservative sampler's lift cancel and only
+ *    the extra material beside the end is measured.
  */
 
 import { readFileSync } from 'node:fs'
@@ -39,7 +54,6 @@ import type { BarStock, Operation, Project, Tool } from '../src/types/project'
 import { defaultTool, newProject, roundStock } from '../src/types/project'
 import { normalizeProject } from '../src/store/helpers/projectFormat'
 import { isBarStock } from '../src/types/barStock'
-import { barMaxRadius } from '../src/types/barStock'
 import { computeOperationToolpath } from '../src/engine/toolpaths/generateOperation'
 import { normalizeToolForProject } from '../src/engine/toolpaths/geometry'
 import type { NormalizedTool, ToolpathMove } from '../src/engine/toolpaths/types'
@@ -47,7 +61,11 @@ import { defaultOperationForTarget } from '../src/store/helpers/operationDefault
 import { planRotarySolid } from '../src/store/helpers/rotarySolids'
 import type { SelectionState } from '../src/store/types'
 import { minRenderHeight } from '../src/engine/csg'
-import { blankProfile, cutterPosesByAngle, sweepProfile } from '../src/test/rotaryWallFootSweep'
+import { barPivotZ } from '../src/types/barStock'
+import {
+  blankProfile, endRidge, resample, sweepByAngle,
+} from '../src/test/rotaryWallFootSweep'
+import type { SweptAngle, WallFootProfile } from '../src/test/rotaryWallFootSweep'
 
 const EMPTY_SELECTION = {
   mode: 'feature', selectedFeatureId: null, selectedFeatureIds: [], selectedTabIds: [],
@@ -62,6 +80,7 @@ const HEX_LENGTH = 0.5
 const HEX_ACROSS_FLATS = 1.5
 const HEX_SIDES = 6
 const HEX_END = HEX_START + HEX_LENGTH
+const HEX_APOTHEM = HEX_ACROSS_FLATS / 2
 const TURN_DIAMETER = 1
 const FLAT_TOOL_ID = 'flat-025'
 const BALL_TOOL_ID = 'ball-025'
@@ -154,209 +173,263 @@ function movesSummary(moves: readonly ToolpathMove[]): { total: number; ring: nu
   return { total: moves.length, ring, helix }
 }
 
-/** The Hex's own surface radius at one physical angle, for a flat-up hexagon. */
-function hexRadius(angleDeg: number): number {
-  const apothem = HEX_ACROSS_FLATS / 2
-  const sector = 360 / HEX_SIDES
-  // Flat-up: the apothem faces A0, so the radius runs from the apothem to the
-  // corner every half sector.
-  const local = ((angleDeg % sector) + sector) % sector
-  const off = Math.abs(local - sector / 2)
-  return apothem / Math.cos((off * Math.PI) / 180)
+/** The along extent of the moves that actually cut. */
+function cuttingSpan(moves: readonly ToolpathMove[]): { min: number; max: number } {
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    min = Math.min(min, move.from.x, move.to.x)
+    max = Math.max(max, move.from.x, move.to.x)
+  }
+  return { min, max }
+}
+
+/** The first full ring's along position and tip radius, or `null` when there is none. */
+function firstRing(moves: readonly ToolpathMove[], stock: BarStock): { along: number; radius: number } | null {
+  const pivot = barPivotZ(stock)
+  let best: { along: number; radius: number } | null = null
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    if (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) < 360) continue
+    const along = Math.min(move.from.x, move.to.x)
+    if (best === null || along < best.along) best = { along, radius: move.to.z - pivot }
+  }
+  return best
+}
+
+// ── case 1: the Hex's own ends ────────────────────────────────────────────
+
+interface HexMaterial {
+  readonly label: string
+  /** The target's own along start and end, the band the operation is clamped to. */
+  readonly start: number
+  readonly end: number
+  readonly swept: readonly SweptAngle[]
+  readonly tool: NormalizedTool
+  readonly moves: readonly ToolpathMove[]
+  readonly ms: number
 }
 
 /**
- * The material the operation leaves above the Hex's own surface at one of its
- * ends: for each angle, the along width from the end face to the first position
- * where the swept material is at the Hex surface, and the highest material left
- * inside that band.
+ * The Hex's three operations on the material each actually runs on: the ball
+ * rough on the bar, the 1/8" ball finish on the rough's material (resampled onto
+ * the finish's own along grid), the flat finish on the bar.
  */
-function hexEndLeftover(
-  moves: readonly ToolpathMove[],
-  project: Project,
-  operation: Operation,
-  end: number,
-  direction: 1 | -1,
-): { width: number; height: number; worstAngle: number; angles: number } {
+function hexMaterials(project: Project, hexId: string): HexMaterial[] {
   const stock = project.stock as BarStock
-  const tool = toolOf(project, operation)
-  const tolerance = minRenderHeight(project.meta.units) + (operation.stockToLeaveRadial ?? 0)
-  const span = 3 * tool.radius
-  const from = direction > 0 ? end - span / 2 : end - span * 2.5
-  const to = direction > 0 ? end + span * 2.5 : end + span / 2
-  const angles = cutterPosesByAngle(moves, stock, tool)
-  let width = 0
-  let height = 0
-  let worstAngle = 0
-  for (const entry of angles) {
-    // The blank the op sees: the bar at every position. The Hex is the shape
-    // the operation leaves, so material it does not reach stays at the bar.
-    const base = blankProfile(stock, from, to, tool, end)
-    const swept = sweepProfile(base, entry.poses, tool, entry.angle)
-    // The ridge is the band beside the end face that no cut reaches at all: the
-    // material there still stands at the blank. Measuring "down to the target"
-    // instead would read the ball's own scallop as a ridge everywhere.
-    const blank = barMaxRadius(stock)
-    const clearedBelow = blank - Math.max(tolerance, 1e-3)
-    let edge = end + direction * span * 2
-    let highest = 0
-    let found = false
-    for (let i = 0; i < swept.along.length; i++) {
-      const along = swept.along[i]
-      if (direction > 0 ? along < end - 1e-12 : along > end + 1e-12) continue
-      if (direction > 0 && along > end + span * 2) break
-      if (direction < 0 && along < end - span * 2) break
-      if (!found && swept.top[i] < clearedBelow) {
-        edge = along
-        found = true
-        continue
-      }
-      if (!found && swept.top[i] - hexRadius(entry.angle) > highest) highest = swept.top[i] - hexRadius(entry.angle)
-    }
-    const measured = direction > 0 ? edge - end : end - edge
-    if (measured > width + 1e-12) {
-      width = measured
-      height = highest
-      worstAngle = entry.angle
-    }
-  }
-  return { width, height, worstAngle, angles: angles.length }
+  const window = { from: HEX_START - 0.3, to: HEX_END + 0.3 }
+  const rough = rotaryOperation(project, [hexId], 'rotary_rough', {
+    name: 'hex ball rough', toolRef: BALL_TOOL_ID, stepover: 0.16, stepdown: 0.075, stockToLeaveRadial: 0.02,
+  })
+  const fine = rotaryOperation(project, [hexId], 'rotary_finish', {
+    name: 'hex 1/8" ball finish', toolRef: BALL_TOOL_ID_8, stepover: 0.16, stepdown: 0.03, stockToLeaveRadial: 0,
+  })
+  const flat = rotaryOperation(project, [hexId], 'rotary_finish', {
+    name: 'hex flat finish', toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: 0,
+  })
+  const materials: HexMaterial[] = []
+  // `ms` is the generation alone, the figure the handoff asks for; the sweep is
+  // measurement and is not charged to the operation.
+  let started = performance.now()
+  const roughMoves = generate(project, rough)
+  const roughMs = performance.now() - started
+  const roughTool = toolOf(project, rough)
+  const roughSwept = sweepByAngle(roughMoves, stock, roughTool, window, HEX_START)
+  materials.push({ label: 'case 1 hex ball rough (leave 0.02)', start: HEX_START, end: HEX_END, swept: roughSwept, tool: roughTool, moves: roughMoves, ms: roughMs })
+  const roughByAngle = new Map(roughSwept.map((entry) => [entry.angle, entry.profile]))
+  started = performance.now()
+  const fineMoves = generate(project, fine)
+  const fineMs = performance.now() - started
+  const fineTool = toolOf(project, fine)
+  const fineGrid = blankProfile(stock, window.from, window.to, fineTool, HEX_START).along
+  const fineSwept = sweepByAngle(fineMoves, stock, fineTool, window, HEX_START, (angle) => {
+    const left = roughByAngle.get(angle)
+    return left === undefined ? null : resample(left, fineGrid)
+  })
+  materials.push({ label: 'case 1 hex 1/8" ball finish (on the rough\'s material)', start: HEX_START, end: HEX_END, swept: fineSwept, tool: fineTool, moves: fineMoves, ms: fineMs })
+  started = performance.now()
+  const flatMoves = generate(project, flat)
+  const flatMs = performance.now() - started
+  const flatTool = toolOf(project, flat)
+  materials.push({
+    label: 'case 1 hex flat finish', start: HEX_START, end: HEX_END,
+    swept: sweepByAngle(flatMoves, stock, flatTool, window, HEX_START),
+    tool: flatTool, moves: flatMoves, ms: flatMs,
+  })
+  return materials
 }
 
-/** Each rough layer's first cutting along position, from the moves. */
-function layerFirstCuts(moves: readonly ToolpathMove[], stock: BarStock, pivot: number): Map<number, number> {
-  const firsts = new Map<number, number>()
+function reportHexEnds(material: HexMaterial, turnStart: number | null): void {
+  const summary = movesSummary(material.moves)
+  const span = cuttingSpan(material.moves)
+  const tolerance = minRenderHeight('inch')
+  const length = material.end - material.start
+  const interiorOf = (radius: number) => ({ from: 1.5 * radius, to: length - 1.5 * radius })
+  const interior = interiorOf(material.tool.radius)
+  console.log(`${material.label}: ${summary.total} moves (${summary.ring} ring, ${summary.helix} helix), `
+    + `${material.ms.toFixed(0)} ms`)
+  console.log(`  cutting along ${span.min.toFixed(5)}..${span.max.toFixed(5)} in (the model is `
+    + `${material.start}..${material.end})`)
+  for (const [end, direction] of [[material.start, 1], [material.end, -1]] as const) {
+    const ridge = endRidge(material.swept, end, direction, 2 * material.tool.radius, interior, tolerance)
+    console.log(`  ${direction > 0 ? 'near' : 'far '} end ${end}: ridge ${ridge.width.toFixed(5)} in wide, `
+      + `${ridge.height.toFixed(5)} in above the operation's own interior (worst A${ridge.angle}°)`)
+  }
+  if (turnStart !== null && turnStart < material.end) {
+    console.log(`  far neighbour: the Turn's face is at ${turnStart.toFixed(5)} in, but its surface `
+      + `(${(TURN_DIAMETER / 2).toFixed(5)} in radius) is below the Hex's apothem `
+      + `(${HEX_APOTHEM.toFixed(5)} in), so it is not a wall: the model cuts to ${material.end} in`)
+  }
+}
+
+// ── case 2: the Turn starting at the Hex's face ───────────────────────────
+
+function reportTurnFace(project: Project, operation: Operation, face: number, leave: number, label = operation.name): void {
+  const stock = project.stock as BarStock
+  const pivot = barPivotZ(stock)
+  const started = performance.now()
+  const moves = generate(project, operation)
+  const ms = performance.now() - started
+  const tool = toolOf(project, operation)
+  const summary = movesSummary(moves)
+  const level = TURN_DIAMETER / 2 + leave
+  const foot = face + leave + tool.radius
+  const ring = firstRing(moves, stock)
+  // The deepest ring at the foot: the rough has one per layer, the finish one.
+  let deepest: number | null = null
   for (const move of moves) {
     if (move.kind === 'rapid') continue
-    const along = stock.axis === 'x' ? move.to.x : move.to.y
-    const z = move.to.z
-    const key = Math.round((z - pivot) * 1e4) / 1e4
-    const current = firsts.get(key)
-    if (current === undefined || along < current) firsts.set(key, along)
+    if (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) < 360) continue
+    if (ring !== null && Math.abs(move.to.x - ring.along) > 0.001) continue
+    const radius = move.to.z - pivot
+    if (deepest === null || radius < deepest) deepest = radius
   }
-  return new Map([...firsts.entries()].filter(([key]) => key > 0).sort((a, b) => b[0] - a[0]))
+  console.log(`${label}: ${summary.total} moves (${summary.ring} ring, ${summary.helix} helix), ${ms.toFixed(0)} ms`)
+  console.log(`  first full ring along ${ring === null ? 'none' : ring.along.toFixed(5)} in`
+    + `${deepest === null ? '' : `, its deepest ring at z ${deepest.toFixed(5)} in`} (the wall's foot is `
+    + `${face.toFixed(5)} + ${leave.toFixed(5)} leave + ${tool.radius.toFixed(5)} radius = ${foot.toFixed(5)} in, `
+    + `the surface ${level.toFixed(5)} in)`)
+  if (ring !== null) {
+    console.log(`  cutter body stands ${(ring.along - tool.radius - face).toFixed(5)} in off the neighbour's `
+      + `face ${face.toFixed(5)} in (the leave is ${leave.toFixed(5)} in)`)
+  }
+  const window = { from: face - 0.5, to: face + 0.5 }
+  const swept = sweepByAngle(moves, stock, tool, window, face)
+  const tolerance = minRenderHeight('inch')
+  const interior = { from: 2 * tool.radius, to: 2 * tool.radius + 0.5 }
+  const boundary = face + leave + 0.002
+  const ridge = endRidge(swept, boundary, 1, 2 * tool.radius, interior, tolerance)
+  console.log(`  leftover past the leave boundary ${boundary.toFixed(5)} in: `
+    + `${ridge.height.toFixed(5)} in above the operation's own interior (worst A${ridge.angle}°)`)
 }
 
-function reportHexEnds(project: Project, operation: Operation, label: string): void {
-  const stock = project.stock as BarStock
-  const started = performance.now()
-  const moves = generate(project, operation)
-  const ms = performance.now() - started
-  const summary = movesSummary(moves)
-  const near = hexEndLeftover(moves, project, operation, HEX_START, 1)
-  const far = hexEndLeftover(moves, project, operation, HEX_END, -1)
-  console.log(`${label}: ${summary.total} moves (${summary.ring} ring, ${summary.helix} helix), ${ms.toFixed(0)} ms`)
-  console.log(`  near end ${HEX_START}: ridge ${near.width.toFixed(5)} in wide, `
-    + `worst ${near.height.toFixed(5)} in above the Hex at A${near.worstAngle}° (${near.angles} angles)`)
-  console.log(`  far end ${HEX_END}: ridge ${far.width.toFixed(5)} in wide, `
-    + `worst ${far.height.toFixed(5)} in above the Hex at A${far.worstAngle}° (${far.angles} angles)`)
-  void stock
-}
-
-function reportTurnFace(project: Project, operation: Operation, label: string): void {
-  const stock = project.stock as BarStock
-  const started = performance.now()
-  const moves = generate(project, operation)
-  const ms = performance.now() - started
-  if (process.env.RN_E_DEBUG) {
-    const shown = moves.filter((m) => m.kind !== 'rapid' && m.to.x <= 1.6 && m.to.x >= 1.2 && m.to.z - 1 <= 0.56).slice(0, 24)
-    for (const m of shown) {
-      console.log(`   dbg ${m.kind} ${m.from.x.toFixed(5)}->${m.to.x.toFixed(5)} z ${(m.from.z - 1).toFixed(5)}->${(m.to.z - 1).toFixed(5)} a ${(m.from.a ?? 0).toFixed(2)}->${(m.to.a ?? 0).toFixed(2)}`)
-    }
-  }
-  const summary = movesSummary(moves)
-  const pivot = stock.profile.start.y + BAR_DIAMETER / 2
-  const layers = layerFirstCuts(moves, stock, pivot)
-  console.log(`${label}: ${summary.total} moves (${summary.ring} ring, ${summary.helix} helix), ${ms.toFixed(0)} ms`)
-  console.log(`  layer first cuts: ${[...layers.entries()].slice(0, 8).map(([z, x]) => `${z.toFixed(3)}@${x.toFixed(5)}`).join(' ')}`)
-  // The material left on the Hex's face below its flats: the profile swept from
-  // the Turn's own surface, read from the face outwards.
-  const tool = toolOf(project, operation)
-  const tolerance = minRenderHeight(project.meta.units)
-  const leave = operation.stockToLeaveRadial ?? 0
-  const level = TURN_DIAMETER / 2 + leave
-  const from = HEX_END - 0.5
-  const to = HEX_END + 0.5
-  const angles = cutterPosesByAngle(moves, stock, tool)
-  let worst = 0
-  let worstAngle = 0
-  let edgeMax = 0
-  for (const entry of angles) {
-    const base = blankProfile(stock, from, to, tool, HEX_END + leave)
-    for (let i = 0; i < base.along.length; i++) {
-      const along = base.along[i]
-      if (along < HEX_END) base.top[i] = hexRadius(entry.angle)
-      else base.top[i] = barMaxRadius(stock)
-    }
-    const swept = sweepProfile(base, entry.poses, tool, entry.angle)
-    // From the leave boundary outwards: the first position at or below the level.
-    let edge = HEX_END + leave + 2 * tool.radius
-    let cleared = false
-    let highest = 0
-    for (let i = 0; i < swept.along.length; i++) {
-      const along = swept.along[i]
-      if (along < HEX_END + leave - 1e-12) continue
-      if (along > HEX_END + leave + 2 * tool.radius) break
-      if (!cleared && swept.top[i] <= level + tolerance) {
-        edge = along
-        cleared = true
-      }
-      if (!cleared && swept.top[i] > highest) highest = swept.top[i]
-    }
-    const ledge = edge - (HEX_END + leave)
-    if (ledge > edgeMax) edgeMax = ledge
-    if (highest - level > worst) {
-      worst = highest - level
-      worstAngle = entry.angle
-    }
-  }
-  console.log(`  ledge past the face ${edgeMax.toFixed(5)} in; highest leftover above the Turn level `
-    + `${worst.toFixed(5)} in at A${worstAngle}°`)
-}
+// ── the two fixtures ──────────────────────────────────────────────────────
 
 function fromFixture(): void {
   const case1 = boltFixture(1.2)
-  const ballRough = rotaryOperation(case1.project, [case1.hexId], 'rotary_rough', {
-    name: 'hex ball rough', toolRef: BALL_TOOL_ID, stepover: 0.16, stepdown: 0.075, stockToLeaveRadial: 0.02,
-  })
-  const ballFinish = rotaryOperation(case1.project, [case1.hexId], 'rotary_finish', {
-    name: 'hex ball finish', toolRef: BALL_TOOL_ID_8, stepover: 0.16, stepdown: 0.03, stockToLeaveRadial: 0,
-  })
-  reportHexEnds(case1.project, ballRough, 'case 1 hex ball rough (leave 0.02)')
-  reportHexEnds(case1.project, ballFinish, 'case 1 hex 1/8 ball finish')
-  const flatFinishHex = rotaryOperation(case1.project, [case1.hexId], 'rotary_finish', {
-    name: 'hex flat finish', toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: 0,
-  })
-  reportHexEnds(case1.project, flatFinishHex, 'case 1 hex flat finish')
-
+  for (const material of hexMaterials(case1.project, case1.hexId)) {
+    reportHexEnds(material, 1.2)
+  }
   for (const leave of [0, 0.02]) {
     const case2 = boltFixture(HEX_END)
-    const turnRough = rotaryOperation(case2.project, [case2.turnId], 'rotary_rough', {
-      name: `turn flat rough leave ${leave}`, toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125,
-      stockToLeaveRadial: leave,
-    })
-    reportTurnFace(case2.project, turnRough, `case 2 turn flat rough (turn 1.25..3.75, leave ${leave})`)
-    const turnFinish = rotaryOperation(case2.project, [case2.turnId], 'rotary_finish', {
-      name: `turn flat finish leave ${leave}`, toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125,
-      stockToLeaveRadial: leave,
-    })
-    reportTurnFace(case2.project, turnFinish, `case 2 turn flat finish (leave ${leave})`)
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      const operation = rotaryOperation(case2.project, [case2.turnId], kind, {
+        name: `case 2 turn flat ${kind} (turn ${HEX_END}..3.75, leave ${leave})`,
+        toolRef: FLAT_TOOL_ID, stepover: 0.32, stepdown: 0.125, stockToLeaveRadial: leave,
+      })
+      reportTurnFace(case2.project, operation, HEX_END, leave)
+    }
   }
+}
+
+// ── a saved project ───────────────────────────────────────────────────────
+
+/** One rotary model feature's along extent, read off its own sheet profile. */
+interface FeatureExtent {
+  readonly id: string
+  readonly kind: string
+  readonly min: number
+  readonly max: number
+}
+
+function featureExtents(project: Project, axis: 'x' | 'y'): FeatureExtent[] {
+  const extents: FeatureExtent[] = []
+  for (const feature of project.features) {
+    const definition = project.featureDefinitions[feature.definitionId]
+    if (!definition) continue
+    const canned = (definition as { canned?: { kind?: string } }).canned
+    if (canned?.kind === undefined) continue
+    let min = Number.POSITIVE_INFINITY
+    let max = Number.NEGATIVE_INFINITY
+    const profile = (definition as { profile?: { start?: { x?: number; y?: number }; segments?: Array<{ to?: { x?: number; y?: number } }> } }).profile
+    const points = [profile?.start, ...(profile?.segments ?? []).map((segment) => segment.to)]
+    for (const point of points) {
+      const value = point === undefined ? undefined : point[axis]
+      if (value === undefined) continue
+      min = Math.min(min, value)
+      max = Math.max(max, value)
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue
+    extents.push({ id: feature.id, kind: canned.kind, min, max })
+  }
+  return extents
+}
+
+/**
+ * The face a turn operation's band starts against: the **polygon** neighbour's
+ * end that stands at or before the cutter's flank. That is the wall this probe
+ * is about (a Turn against the Hex); a Turn against another turned feature is
+ * not modelled here.
+ */
+function faceBefore(extents: readonly FeatureExtent[], flank: number): number {
+  let face = Number.NEGATIVE_INFINITY
+  for (const extent of extents) {
+    if (extent.kind !== 'polygon') continue
+    for (const end of [extent.min, extent.max]) {
+      if (end <= flank + 1e-9 && end > face) face = end
+    }
+  }
+  return Number.isFinite(face) ? face : Number.NaN
 }
 
 function fromFile(path: string, wanted: string[]): void {
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
   const project = normalizeProject(raw as Parameters<typeof normalizeProject>[0])
   if (!isBarStock(project.stock)) throw new Error('the project is not on a bar')
+  const stock = project.stock
+  const axis = stock.axis
+  const extents = featureExtents(project, axis)
   const ids = wanted.length > 0 ? wanted : project.operations.filter((op) => op.enabled).map((op) => op.id)
   for (const id of ids) {
     const operation = project.operations.find((candidate) => candidate.id === id)
     if (!operation) throw new Error(`no operation ${id}`)
     if (operation.kind !== 'rotary_rough' && operation.kind !== 'rotary_finish') continue
-    const target = operation.target
-    const isHex = target.source === 'features' && target.featureIds.includes('f0184')
-    if (isHex) reportHexEnds(project, operation, `${id} ${operation.name}`)
-    else reportTurnFace(project, operation, `${id} ${operation.name}`)
+    if (operation.target.source !== 'features') continue
+    const targetsPolygon = operation.target.featureIds.some((targetId) => {
+      const extent = extents.find((candidate) => candidate.id === targetId)
+      return extent?.kind === 'polygon'
+    })
+    const started = performance.now()
+    const moves = generate(project, operation)
+    const ms = performance.now() - started
+    const tool = toolOf(project, operation)
+    if (targetsPolygon) {
+      const target = extents.find((candidate) => operation.target.source === 'features'
+        && operation.target.featureIds.includes(candidate.id) && candidate.kind === 'polygon')
+      const start = target?.min ?? HEX_START
+      const end = target?.max ?? HEX_END
+      const window = { from: start - 0.3, to: end + 0.3 }
+      reportHexEnds({
+        label: `${id} ${operation.name}`, start, end,
+        swept: sweepByAngle(moves, stock, tool, window, start),
+        tool, moves, ms,
+      }, null)
+      continue
+    }
+    const ring = firstRing(moves, stock)
+    const face = ring === null ? Number.NaN : faceBefore(extents, ring.along - tool.radius)
+    reportTurnFace(project, operation, face, operation.stockToLeaveRadial ?? 0, `${id} ${operation.name}`)
   }
 }
 
