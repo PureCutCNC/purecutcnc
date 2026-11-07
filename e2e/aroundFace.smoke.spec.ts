@@ -567,6 +567,60 @@ test.describe('Around on a tablet with no rotary machine (#1034)', () => {
   })
 })
 
+test('a square bar cuts sheet work over a Turn above it and offers Start at Turn surface (#1131)', async ({ app, ui }) => {
+  const { page } = app
+  await seedProject(page, JSON.stringify(aroundProject()))
+  await ui.face.switchTo(page, 'Around')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'around')
+
+  // The blank turns square and gets a Turn (Ø20 on the Ø25 bar) over most of
+  // its length, before anything is drawn: the sheet is drawable again and the
+  // pocket drawn now lands below the Turn in the tree.
+  const turnId = await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().setStockShape('square')
+    const created = useProjectStore.getState().addRotarySolid({ kind: 'turn', start: 5, length: 110, diameter: 20 })
+    return created.ok ? created.featureId : null
+  })
+  expect(turnId).not.toBeNull()
+  await drawRect(page, ...fixtureRect('mm'))
+  const drawn = await getProject(page) as unknown as SavedProject
+  const pocket = drawn.features.find((feature) => feature.authoringFace === 'around')!
+  expect(pocket).toBeTruthy()
+  const row = featureRow(page, pocket.id)
+
+  // Over a turned section the work is cut: no kept-work warning. It was drawn
+  // at the bar surface, which is above the Turn's: the row says by how much.
+  await expect(row.locator('[data-uncut-work]')).toHaveCount(0)
+  const marker = row.locator('[data-surface-start]')
+  await expect(marker).toBeVisible()
+  await expect(marker).toHaveAttribute('title', /^Starts 2\.5 mm above the surface of /)
+
+  // Properties offers the one-click fix: it lowers the span by the same
+  // amount, as one undo step.
+  await selectFeatures(page, [pocket.id])
+  const fix = page.getByTestId('around-surface-start-fix')
+  await expect(fix).toBeVisible()
+  await expect(fix).toHaveText('Start at turn surface')
+  const before = (await getProject(page) as unknown as SavedProject).features.find((feature) => feature.id === pocket.id)!
+  await fix.click()
+  const after = (await getProject(page) as unknown as SavedProject).features.find((feature) => feature.id === pocket.id)!
+  expect(after.z_top).toBeCloseTo(22.5, 6)
+  expect(Number(before.z_top) - Number(before.z_bottom)).toBeCloseTo(Number(after.z_top) - Number(after.z_bottom), 6)
+  await expect(row.locator('[data-surface-start]')).toHaveCount(0)
+  await page.keyboard.press('ControlOrMeta+z')
+  const undone = (await getProject(page) as unknown as SavedProject).features.find((feature) => feature.id === pocket.id)!
+  expect(undone.z_top).toBe(before.z_top)
+
+  // Move the Turn below the pocket in the tree: it has not cut that section
+  // yet, so the pocket is kept with the reason.
+  await page.evaluate(async (id) => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts') as typeof import('../src/store/projectStore')
+    useProjectStore.getState().moveFeatureTreeFeature(id, null, null)
+  }, turnId!)
+  await expect(row.locator('[data-uncut-work]')).toHaveAttribute('title', /^Kept, but it cannot be cut: turn this section round first\./)
+})
+
 test('kept Around sheet work warns on its tree row and operation after the bar turns square (#1112 K)', async ({ app, ui }) => {
   const { page } = app
   await seedProject(page, JSON.stringify(aroundProject()))
@@ -604,26 +658,25 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   await expect(featureWarning).toBeVisible()
   await expect(featureWarning).toHaveAttribute(
     'title',
-    /^Kept, but it cannot be cut: a square blank cannot machine around sheet work/,
+    /^Kept, but it cannot be cut: turn this section round first\./,
   )
   const operationWarning = pocketOp.locator('[data-uncut-work]')
   await expect(operationWarning).toBeVisible()
   await expect(operationWarning).toHaveAttribute(
     'title',
-    /^Kept, but it cannot be cut: a square blank only machines a rotary rough or finish/,
+    /^Kept, but it cannot be cut: turn this section round first\. A target/,
   )
 
   // The stock-blocked rows are in the menu itself, disabled with the reason:
-  // "Not available on a square bar yet" must not live behind an expand step
-  // (review of K). That is decision 17's wording — turning the blank works, it
-  // is the sheet work that is missing, so "Needs a round bar" was wrong here.
+  // it must not live behind an expand step (review of K). Turning the blank
+  // works; sheet work needs a section a Turn has made round first (#1131).
   await ui.setupCam.add(page).click()
   await expect(ui.setupCam.addMenu(page)).toBeVisible()
   const squarePocketRow = ui.setupCam.addMenu(page)
     .locator('.cam-operation-item')
     .filter({ has: page.getByRole('button', { name: 'Pocket', exact: true }) })
   await expect(squarePocketRow).toBeVisible()
-  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Not available on a square bar yet')
+  await expect(squarePocketRow.locator('.cam-operation-hint__text')).toHaveText('Turn a section of the square bar round first')
   await expect(squarePocketRow.getByRole('button', { name: 'Rough', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(ui.setupCam.addMenu(page)).toBeHidden()
@@ -634,7 +687,7 @@ test('kept Around sheet work warns on its tree row and operation after the bar t
   }
   await expect(pocketOp).toHaveClass(/tree-row--selected/)
   await expect(page.locator('.cam-operation-properties [data-uncut-work]')).toContainText(
-    'Kept, but it cannot be cut: a square blank only machines a rotary rough or finish against a model.',
+    'Kept, but it cannot be cut: turn this section round first.',
   )
 
   // A ghost operation keeps its warning: switching to Top hides the row's

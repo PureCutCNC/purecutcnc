@@ -46,6 +46,7 @@
 import { isRotaryOperationKind, type OperationKind, type OperationPass, type Project, type SetupFace } from '../../types/project'
 import type { SelectionState } from '../../store/types'
 import { isSquareStock } from '../../types/barStock'
+import { squareSheetFeatureBlock, squareSheetHasRoundSection } from '../../store/helpers/turnedSheet'
 import {
   getOperationAddHint,
   operationSelectionHint,
@@ -163,7 +164,8 @@ interface OperationAddBlock {
  * The blocking reason for one kind, and where the reason comes from. The
  * project type is stated first, then a stock shape the user can change, and
  * only then the selection: on a square blank's Around face a round-only row
- * says the work is not available on a square bar yet, whatever is selected.
+ * says to turn a section round first while no Turn has made one round, and a
+ * selection over a still-square section says the same (#1131).
  * It used to say "Needs a round bar", which was wrong about what is missing —
  * turning a square blank works, it is the sheet work that does not
  * (issue #1112 decision 17).
@@ -178,10 +180,18 @@ function operationAddBlock(
   if (operationOffer(machine, kind) === 'needs-plasma-project') {
     return { hint: camT('cam.addMenu.needsPlasmaProject'), selectionBlocked: false, blockedInPlace: false }
   }
-  if (face === 'around' && isSquareStock(project.stock) && !isRotaryOperationKind(kind)) {
+  const squareSheet = face === 'around' && isSquareStock(project.stock) && !isRotaryOperationKind(kind)
+  // A square blank's sheet work needs a section a Turn has made round (#1131):
+  // with none on the bar at all, no selection can help.
+  if (squareSheet && !squareSheetHasRoundSection(project)) {
     return { hint: camT('cam.addMenu.squareBarUnavailable'), selectionBlocked: false, blockedInPlace: true }
   }
   const hint = getOperationAddHint(project, selection, kind)
+  if (hint === null && squareSheet && selection.selectedFeatureIds.some(
+    (featureId) => squareSheetFeatureBlock(project, featureId) !== null,
+  )) {
+    return { hint: camT('cam.addMenu.squareSectionTurnFirst'), selectionBlocked: true, blockedInPlace: false }
+  }
   return { hint, selectionBlocked: hint !== null, blockedInPlace: false }
 }
 

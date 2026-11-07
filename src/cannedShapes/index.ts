@@ -42,6 +42,7 @@ import {
   type SketchProfile,
 } from '../types/project'
 import { transformProfile } from '../geometry/profile'
+import { isCirclePreservingTransform, transformProfileByMatrix } from '../geometry/profileMatrix'
 import { getCannedShapeEditor, getCannedShapeGenerator } from './registry'
 import { cachedCannedShapeOutlines } from './cache'
 import type {
@@ -163,6 +164,10 @@ function nestingDepths(outlines: CannedShapeOutline[]): number[] {
  * an arc's centre and endpoint keeps it an arc; a mirror flips its winding.
  */
 function transformProfileForPlacement(profile: SketchProfile, transform: Matrix2D): SketchProfile {
+  // A non-similar placement (the across-the-bar scale Around work on a Turn is
+  // planned with, #1131) cannot keep an arc an arc: convert it to Béziers the
+  // way a drawn shape's profile is. Every similarity keeps the path below.
+  if (!isCirclePreservingTransform(transform)) return transformProfileByMatrix(profile, transform)
   const mirror = transform.a * transform.d - transform.b * transform.c < 0
   const placed = transformProfile(profile, (point) => ({
     x: transform.a * point.x + transform.c * point.y + transform.e,

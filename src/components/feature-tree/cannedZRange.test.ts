@@ -173,12 +173,14 @@ function loadWithShapes(): {
   assert.equal(created.authoringFace, 'around', 'the flat shape is drawn on the sheet in view')
   const ellipseId = created.id
 
+  // The Turn comes first: a Thread measures from Turns above it in the tree
+  // (#1131 item 3), and this one is meant to sit on it.
+  const turn = store().addRotarySolid({ kind: 'turn', start: 5, length: 30, diameter: 30 })
+  assert.ok(turn.ok, 'the turn is created')
   const thread = store().addRotaryPattern({ kind: 'thread', start: 5, length: 20, pitch: 2, starts: 1, depth: 1.2 })
   assert.ok(thread.ok, 'the thread is created')
   const flutes = store().addRotaryPattern({ kind: 'flutes', start: 30, length: 20, count: 4, twist: 0.5, depth: 0.8 })
   assert.ok(flutes.ok, 'the flutes are created')
-  const turn = store().addRotarySolid({ kind: 'turn', start: 5, length: 30, diameter: 30 })
-  assert.ok(turn.ok, 'the turn is created')
   const polygon = store().addRotarySolid({ kind: 'polygon', start: 100, length: 20, sides: 6, acrossFlats: 20 })
   assert.ok(polygon.ok, 'the polygon is created')
 
@@ -428,14 +430,14 @@ async function renderSingle(featureId: string): Promise<Mounted> {
 
 // ── a Depth whose surface cannot be resolved keeps its number ─
 //
-// The surface comes from the bar (`rotaryPatternFrame` needs a round one). A
-// file whose bar is no longer round resolves none, so the merged line keeps the
-// Depth and drops only the clause — never the whole line, and never a stale
-// surface Z.
+// The surface comes from the bar (`rotaryPatternFrame` needs a bar; since
+// #1131 a square blank is one too). A file whose stock is no longer a bar
+// resolves none, so the merged line keeps the Depth and drops only the clause —
+// never the whole line, and never a stale surface Z.
 
 {
   const { threadId } = loadWithShapes()
-  store().setStock(squareStock(25, 120, 'x'))
+  store().setStock(newProject('Block', 'mm').stock)
   const mounted = await renderSingle(threadId)
   mounted.openSection('Shape')
   await flush()

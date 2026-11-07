@@ -231,13 +231,15 @@ assert.equal(
   'the reloaded band still resolves to the Turn',
 )
 
-// ── a Turn added after the thread moves it too ──────────────
+// ── a Turn added after the thread sits below it in the tree (#1131) ──
 
 load()
-addThread(25, 20)
+const laterThreadId = addThread(25, 20)
 assertNear(Number(threadFeature().z_top), BAR_DIAMETER, 'on the plain bar the surface is the bar')
-addTurn(20, 40, 10)
-assertNear(Number(threadFeature().z_top), BAR_RADIUS + 5, 'a later Turn moves the existing thread')
+const laterTurnId = addTurn(20, 40, 10)
+assertNear(Number(threadFeature().z_top), BAR_DIAMETER, 'a Turn below the thread in the tree has not cut its surface yet')
+store().moveFeatureTreeFeature(laterTurnId, null, laterThreadId)
+assertNear(Number(threadFeature().z_top), BAR_RADIUS + 5, 'moving the Turn above the thread moves the thread onto it')
 
 // ── two diameters ───────────────────────────────────────────
 

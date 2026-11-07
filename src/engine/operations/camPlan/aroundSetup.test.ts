@@ -389,22 +389,36 @@ function bolt(): { project: Project; polygonId: string; turnId: string; threadId
   assert(applied.ok, `the sheet plan applies: ${applied.ok ? '' : applied.message}`)
 }
 
-// ── a square blank: models still turn, Thread/Flutes are refused with a reason ──
+// ── a square blank: models still turn; a Thread on a Turn above it is planned ──
 
 {
   const { threadId } = bolt()
   store().setStockShape('square')
   const square = store().project
   const plan = createCamPlan(square, [])
-  assert(plan.operations.every((draft) => draft.operation.kind !== 'follow_line'), 'a square blank proposes no Follow line')
+  // The bolt's thread lies wholly on its Turn, which is above it in the tree:
+  // that section is round, so the sheet work is planned as on a round bar (#1131).
+  assert(plan.operations.some((draft) => draft.operation.kind === 'follow_line'
+    && draft.coveredFeatureIds.includes(threadId)), 'a thread over a turned section gets its Follow line')
   assert(plan.operations.some((draft) => draft.operation.kind === 'rotary_rough'), 'models still get a rotary rough')
   assert(plan.operations.some((draft) => draft.operation.kind === 'rotary_finish'), 'models still get a rotary finish')
-  const row = plan.coverage.find((entry) => entry.featureId === threadId)
-  assert.equal(row?.status, 'unsupported', 'the thread stays visible as needing review')
-  assert.equal(row?.detail, translate('cam.plan.aroundNeedsRoundBar'), 'and the reason names the round bar')
-  assert(plan.operations.every((draft) => draft.operation.kind.startsWith('rotary_')), 'no sheet operation is proposed on a square blank')
   const applied = materializeCamPlan(square, plan)
   assert(applied.ok, `the square plan still applies: ${applied.ok ? '' : applied.message}`)
+}
+
+// ── a square blank: a Thread over a section no Turn above it made round ──
+
+{
+  const { threadId, turnId } = bolt()
+  store().setStockShape('square')
+  store().deleteFeature(turnId)
+  const square = store().project
+  const plan = createCamPlan(square, [])
+  assert(plan.operations.every((draft) => draft.operation.kind !== 'follow_line'), 'an uncut square section proposes no Follow line')
+  const row = plan.coverage.find((entry) => entry.featureId === threadId)
+  assert.equal(row?.status, 'unsupported', 'the thread stays visible as needing review')
+  assert.equal(row?.detail, translate('cam.plan.aroundSquareTurnFirst'), 'and the reason says to turn the section round first')
+  assert(plan.operations.every((draft) => draft.operation.kind.startsWith('rotary_')), 'no sheet operation is proposed there')
 }
 
 // ── no V-bit available: the pattern stays a blocking row ──────────────

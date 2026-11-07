@@ -43,7 +43,7 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': '{shape}-Werkzeug abbrechen',
   'sketch.creation.chooseTarget': '{target}-Form wählen',
   'sketch.creation.closeDrawer': 'Formen-Schublade schließen',
-  'sketch.creation.squareBarUnavailable': 'Auf einem Vierkantrohling noch nicht verfügbar',
+  'sketch.creation.squareBarUnavailable': 'Zuerst einen Abschnitt des Vierkantrohlings rund drehen',
   'sketch.creation.rotaryBarUnavailable': 'Benötigt eine Stange in einem Rotationsprojekt',
   'sketch.creation.aroundFaceOnly': 'Nur auf der Rundum-Fläche verfügbar',
   'sketch.creation.featureTargetOnly': 'Nur mit dem Ziel Features verfügbar',

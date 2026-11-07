@@ -96,6 +96,7 @@ const ALL_CODES = [
   'rotaryStockToLeaveInvalid',
   'setupTargetNotThrough', 'setupFlipAxisMismatch', 'postMixedSetups', 'postSetupOperationRefused',
   'workholdingDiameter', 'workholdingPlacement', 'ordinaryClampOverlap',
+  'squareSheetNotTurned', 'squareSheetOnFlats',
   'postSetupNoRegistration', 'exportMachineTypeMismatch', 'exportMachineMissingRotaryAxis', 'exportMachineTemplateInvalid',
   'postPlasmaOperationSkipped', 'postPlasmaCutSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postPlasmaSafeHeightMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',

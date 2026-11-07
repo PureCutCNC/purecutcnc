@@ -21,14 +21,18 @@
  * accessible name, and the same wording is used everywhere the warning appears.
  */
 
-export function NoEffectBadge({ text }: { text: string }) {
+/**
+ * `surfaceStart` is the same marker for an Around shape that starts above the
+ * surface it sits on (#1131): a status about the row, never a block.
+ */
+export function NoEffectBadge({ text, surfaceStart = false }: { text: string; surfaceStart?: boolean }) {
   return (
     <span
       className="tree-no-effect-badge"
       role="img"
       aria-label={text}
       title={text}
-      data-no-effect="true"
+      {...(surfaceStart ? { 'data-surface-start': 'true' } : { 'data-no-effect': 'true' })}
     >
       <span aria-hidden="true">⚠</span>
     </span>

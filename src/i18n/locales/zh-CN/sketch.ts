@@ -49,7 +49,7 @@ export const sketchZhCN: Record<keyof typeof sketchEn, string> = {
   'sketch.creation.cancelTool': '取消{shape}工具',
   'sketch.creation.chooseTarget': '选择{target}形状',
   'sketch.creation.closeDrawer': '关闭形状抽屉',
-  'sketch.creation.squareBarUnavailable': '方料暂不支持',
+  'sketch.creation.squareBarUnavailable': '请先将方料的一段车圆',
   'sketch.creation.rotaryBarUnavailable': '需要旋转项目中的棒料',
   'sketch.creation.aroundFaceOnly': '仅在环绕面可用',
   'sketch.creation.featureTargetOnly': '仅在特征目标下可用',

@@ -57,6 +57,9 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ Erstes 2.5D-Feature muss ',
   'featureTree.tree.warning.firstFeatureSuffix': ' sein. Das 3D-Modell wird erst erstellt, wenn dies behoben ist.',
   'featureTree.treeRow.warning.noEffect': 'Keine Wirkung auf die endgültige Form: spätere Features überdecken sie.',
+  'featureTree.surfaceStart.fix': 'An der Drehoberfläche beginnen',
+  'featureTree.surfaceStart.crossing': 'Kreuzt eine Durchmesseränderung an {turn}: Ein Teil beginnt über der Oberfläche, und es gibt keine einzelne Oberfläche, an der es beginnen kann.',
+  'featureTree.surfaceStart.above': 'Beginnt {distance} über der Oberfläche von {turn}: Der erste Durchgang schneidet Luft.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Ordner ausklappen',

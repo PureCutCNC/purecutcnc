@@ -19,7 +19,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { getFeatureGeometryProfiles } from '../text'
-import { isRoundStock } from '../types/project'
+import { isBarStock } from '../types/barStock'
 import type { Project, SketchFeature, SketchProfile } from '../types/project'
 import { closeLinePolygonIfNeeded, profileToPolygon } from './profilePolyline'
 import { aroundFrame, type AroundFrame } from './aroundFrame'
@@ -66,7 +66,9 @@ function collectLineProfiles(
   features: SketchFeature[],
 ): LineProfileEntry[] {
   const entries: LineProfileEntry[] = []
-  const around = isRoundStock(project.stock) ? aroundFrame(project.stock) : undefined
+  // Either bar wraps its Around lines; a square blank through its nominal
+  // reference cylinder, exactly as its sheet is unrolled (#1131).
+  const around = isBarStock(project.stock) ? aroundFrame(project.stock) : undefined
   for (const feature of features) {
     const zTop = featureZTop(feature, project)
     const frame = feature.authoringFace === 'around' ? around : undefined

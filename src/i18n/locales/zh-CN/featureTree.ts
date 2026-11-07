@@ -63,6 +63,9 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ 第一个 2.5D 特征必须是 ',
   'featureTree.tree.warning.firstFeatureSuffix': '。3D 模型在修复前无法构建。',
   'featureTree.treeRow.warning.noEffect': '对最终形状没有影响：后面的特征会覆盖它。',
+  'featureTree.surfaceStart.fix': '从车削表面开始',
+  'featureTree.surfaceStart.crossing': '跨过 {turn} 上的直径变化：部分起始位置高于表面，且没有单一的起始表面。',
+  'featureTree.surfaceStart.above': '起始位置比 {turn} 的表面高 {distance}：第一刀会空切。',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': '展开文件夹',

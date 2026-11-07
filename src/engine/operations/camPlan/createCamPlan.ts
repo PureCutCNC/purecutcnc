@@ -17,7 +17,9 @@
 import { activeSetup } from '../../../store/helpers/activeFace'
 import type { ToolLibraryEntry } from '../../../toolLibrary'
 import { defaultTool, getStockBounds, isRoundStock, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type SetupFace, type Tab, type ToolType } from '../../../types/project'
-import { barCentre, barMaxRadius, barPivotZ, isBarStock } from '../../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, isSquareStock } from '../../../types/barStock'
+import { buildSurfaceIndex } from '../../../store/helpers/rotarySurface'
+import { squareSheetFeatureBlock } from '../../../store/helpers/turnedSheet'
 import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../../cannedShapes/generators/kinds'
 import { getFeatureGeometryBounds } from '../../../text'
 import { loadSTLTransformedGeometry } from '../../csg'
@@ -1032,10 +1034,27 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
     sequence: 0,
   }
 
-  // Around's sheet coordinates describe a round bar; a square blank can only
-  // turn a model. Keep the work visible and say why rather than silently
-  // dropping it (decision 5, #1112).
-  const aroundSheetPlanning = face !== 'around' || isRoundStock(stockProject.stock)
+  // Around's sheet coordinates describe a round surface. A square blank turns
+  // its models, and plans sheet work only where Turns above it have made the
+  // section round (#1131); everything else is kept visible with the reason
+  // rather than silently dropped (decision 5, #1112).
+  const squareSheet = face === 'around' && isSquareStock(stockProject.stock)
+  const aroundSheetPlanning = face !== 'around' || isRoundStock(stockProject.stock) || squareSheet
+  const sheetBlocked = new Set<string>()
+  if (squareSheet) {
+    const index = buildSurfaceIndex(stockProject)
+    for (const feature of features) {
+      if (isModelFeature(feature)) continue
+      const block = squareSheetFeatureBlock(stockProject, feature.id, 0, index)
+      if (!block) continue
+      sheetBlocked.add(feature.id)
+      builder.blocked.set(
+        feature.id,
+        translate(block === 'flats' ? 'cam.plan.aroundSquareFlats' : 'cam.plan.aroundSquareTurnFirst'),
+      )
+    }
+  }
+  const sheetFeatures = sheetBlocked.size === 0 ? features : features.filter((feature) => !sheetBlocked.has(feature.id))
   if (!aroundSheetPlanning) {
     for (const feature of features) {
       if (isModelFeature(feature)) continue
@@ -1062,7 +1081,7 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
   }
 
   if (aroundSheetPlanning) {
-    const closedAddBoundaries = features.filter((feature) =>
+    const closedAddBoundaries = sheetFeatures.filter((feature) =>
       (feature.operation === 'add' || feature.operation === 'model')
       && feature.kind !== 'stl'
       && feature.sketch.profile.closed,
@@ -1078,7 +1097,7 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
       addRoughFinishPair(builder, 'surface_clean', group, 'This retained surface sits below the stock top and needs cleanup.')
     }
 
-    const subtracts = features.filter((feature) =>
+    const subtracts = sheetFeatures.filter((feature) =>
       feature.operation === 'subtract'
       && feature.sketch.profile.closed,
     )
@@ -1160,7 +1179,7 @@ export function createCamPlan(stockProject: Project, libraryTools: ToolLibraryEn
     }
 
     // Canned Thread/Flutes are planned as Engraves at their own depth.
-    addAroundPatternOperation(builder, features.filter((feature) => isCannedPatternFeature(project, feature)))
+    addAroundPatternOperation(builder, sheetFeatures.filter((feature) => isCannedPatternFeature(project, feature)))
   }
 
   // Tabs are a flat-stock hold-down; the unrolled sheet deliberately has none

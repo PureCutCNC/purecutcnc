@@ -33,6 +33,7 @@ import { isRotaryOperationKind } from '../../types/project'
 import { isBarStock, isSquareStock } from '../../types/barStock'
 import { resolveMachineKind } from '../../engine/gcode/types'
 import { setupFace } from '../../engine/setupOrientation'
+import { squareSheetOperationBlock } from './turnedSheet'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import type { Operation, Project, ProjectMeta, ProjectType, Stock } from '../../types/project'
 
@@ -234,16 +235,17 @@ export function operationHiddenByProjectType(
  * The kind rule ({@link operationCutsUnderProjectType}) plus the setup's face
  * ({@link operationHiddenByProjectType}), plus the square blank's Around sheet
  * (issue #1016 C2-U1): a rotary project on a square blank machines generated
- * rotary models there, so an operation of another kind sitting in an Around
- * setup is kept in the project and the tree but is not part of the job. The
+ * rotary models there, and sheet work only over a section a Turn above it has
+ * made round (#1131), so any other operation of another kind sitting in an
+ * Around setup is kept in the project and the tree but is not part of the job. The
  * wider of the predicates: it answers for "does this operation contribute to
  * the job", so it counts the other family's kind. The export checklist and the
  * export deliberately do **not** use it — they use the narrower
  * hidden-by-type predicate, which the output slice owns.
  */
 export function operationCutsInProject(
-  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
-  operation: Pick<Operation, 'kind' | 'setupId'>,
+  project: Project,
+  operation: Pick<Operation, 'kind' | 'setupId'> & Partial<Pick<Operation, 'target' | 'toolRef'>>,
 ): boolean {
   if (!operationCutsUnderProjectType(projectType(project), operation.kind)) return false
   if (operationHiddenByProjectType(project, operation)) return false
@@ -252,17 +254,21 @@ export function operationCutsInProject(
 
 /**
  * Whether an operation of another kind sits in an Around setup of a rotary
- * square-blank project (issue #1016 C2-U1). The Around sheet of a square blank
- * is authored by generated rotary models alone, so a stored 2D operation there
- * is disabled — it stays exactly where it is, with its geometry and history,
- * and cuts again if the blank is converted back to round.
+ * square-blank project and is not sheet work over a turned section (issue
+ * #1016 C2-U1, #1131). Such a stored 2D operation is disabled — it stays
+ * exactly where it is, with its geometry and history, and cuts again once a
+ * Turn above its targets makes their section round, or if the blank is
+ * converted back to round.
  */
 function nonRotaryOperationOnSquareAround(
-  project: Pick<Project, 'meta' | 'stock' | 'setups'>,
-  operation: Pick<Operation, 'kind' | 'setupId'>,
+  project: Project,
+  operation: Pick<Operation, 'kind' | 'setupId'> & Partial<Pick<Operation, 'target' | 'toolRef'>>,
 ): boolean {
   if (projectType(project) !== 'rotary' || !isSquareStock(project.stock)) return false
   if (isRotaryOperationKind(operation.kind)) return false
   const setup = project.setups?.find((entry) => entry.id === operation.setupId) ?? project.setups?.[0] ?? null
-  return setup !== null && setupFace(setup) === 'around'
+  if (setup === null || setupFace(setup) !== 'around') return false
+  // An operation with no target is not sheet work over anything.
+  if (!operation.target) return true
+  return squareSheetOperationBlock(project, { target: operation.target, toolRef: operation.toolRef ?? null }) !== null
 }

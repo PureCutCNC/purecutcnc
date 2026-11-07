@@ -36,7 +36,8 @@
  */
 
 import type { Manifold as ManifoldSolid, ManifoldToplevel } from 'manifold-3d'
-import { isRoundStock, type Project, type SketchFeature } from '../types/project'
+import type { Project, SketchFeature } from '../types/project'
+import { isBarStock } from '../types/barStock'
 import { aroundFrame, type AroundFrame } from './aroundFrame'
 import { DEFAULT_ARC_STEP_RADIANS, profileToPolygon } from './profilePolyline'
 import { resolveDimensionRef } from './toolpaths/geometry'
@@ -66,7 +67,9 @@ const BAND_OVERLAP_FRACTION = 0.01
 /**
  * How far past the surface (as a fraction of the bar radius) a slab whose top
  * reaches the surface is pushed, so a subtract breaks through instead of
- * leaving a skin coplanar with the bar's own facets.
+ * leaving a skin coplanar with the bar's own facets. A subtract whose top sits
+ * on a Turn's smaller surface is pushed the same distance past its own top
+ * (#1131 retest): the Turn's facets are as coplanar with it as the bar's are.
  */
 const SURFACE_MARGIN_FRACTION = 0.02
 
@@ -79,6 +82,13 @@ export interface AroundSlabOptions {
    */
   readonly minHeight: number
   readonly arcStepRadians?: number
+  /**
+   * The lowest surface under the feature, as a radius from the bar axis
+   * (`aroundLowestSurfaceRadius`). A subtract whose top reaches it is pushed
+   * past it like one at the bar surface. Display only: the stored span and the
+   * toolpath never see it.
+   */
+  readonly surfaceRadius?: number | null
 }
 
 /**
@@ -96,7 +106,9 @@ export function buildAroundFeatureSolid(
   if (feature.kind === 'stl') return null
   if (feature.operation !== 'add' && feature.operation !== 'subtract' && feature.operation !== 'region') return null
   if (!feature.sketch.profile.closed) return null
-  if (!isRoundStock(project.stock)) return null
+  // A square blank wraps through its nominal reference cylinder (#1131): the
+  // scene only hands it rows over a section a Turn has made round.
+  if (!isBarStock(project.stock)) return null
 
   const contour = profileToPolygon(feature.sketch.profile, options.arcStepRadians ?? DEFAULT_ARC_STEP_RADIANS)
   if (contour.length < 3) return null
@@ -109,7 +121,13 @@ export function buildAroundFeatureSolid(
   const depth = Math.max(Math.abs(zTop - zBottom), options.minHeight)
   const rBottom = Math.max(lowerRadius, options.minHeight)
   const rTopRaw = lowerRadius + depth
-  const rTop = rTopRaw >= frame.radius - 1e-9 ? frame.radius * (1 + SURFACE_MARGIN_FRACTION) : rTopRaw
+  const surfaceRadius = options.surfaceRadius
+  const onSmallerSurface = feature.operation === 'subtract'
+    && typeof surfaceRadius === 'number' && Number.isFinite(surfaceRadius)
+    && rTopRaw >= surfaceRadius - 1e-9
+  const rTop = rTopRaw >= frame.radius - 1e-9
+    ? frame.radius * (1 + SURFACE_MARGIN_FRACTION)
+    : onSmallerSurface ? rTopRaw + frame.radius * SURFACE_MARGIN_FRACTION : rTopRaw
   if (!(rTop > rBottom)) return null
 
   return sweepOntoBar(module, frame, contour, rBottom, rTop)

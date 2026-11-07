@@ -58,6 +58,8 @@ import {
 } from '../../cannedShapes'
 import { CannedShapeSummaryLine } from './CannedShapeSummaryLine'
 import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../../store/helpers/rotarySurface'
+import { aroundSurfaceStarts } from '../../store/helpers/turnedSheet'
+import { aroundSurfaceStartText } from './aroundSurfaceStartText'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
@@ -1572,6 +1574,12 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // A Turn's diameter and a Polygon's across flats are the height Properties
   // reports, so their summary line names the Z those surfaces reach: the axis
   // plus the radius, from the same helper the Thread span uses (rt6-c).
+  // An Around shape whose depth starts above the Turn it sits on (#1131): the
+  // note offers the one-click fix that lowers it onto the surface, keeping its
+  // depth; across a diameter change there is no one surface, so no fix.
+  const surfaceStart = selectedFeature.authoringFace === 'around'
+    ? aroundSurfaceStarts(project, [selectedFeature.id]).get(selectedFeature.id) ?? null
+    : null
   const cannedSurface = isCannedShape ? cannedShapeSurface(selectedFeature.canned) : null
   const cannedSurfaceZ = cannedSurface ? rotarySurfaceZ(project.stock, cannedSurface.diameter) : null
   const cannedShapesOpen = isCannedShape
@@ -1996,6 +2004,26 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         {exceedsStock ? (
           <div className="properties-warning">
             {t('featureTree.properties.warning.exceedsStock')}
+          </div>
+        ) : null}
+        {/* Outside the collapsed sections, like the other warnings: a cut that
+            starts in air must be seen without opening anything (#1131). */}
+        {surfaceStart ? (
+          <div className="properties-warning" data-testid="around-surface-start">
+            <p>{aroundSurfaceStartText(t, surfaceStart, project.meta.units)}</p>
+            {surfaceStart.kind === 'above' ? (
+              <button
+                className="feat-btn"
+                type="button"
+                data-testid="around-surface-start-fix"
+                onClick={() => updateFeature(selectedFeature.id, {
+                  z_top: surfaceStart.zTop,
+                  z_bottom: surfaceStart.zBottom,
+                })}
+              >
+                {t('featureTree.surfaceStart.fix')}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

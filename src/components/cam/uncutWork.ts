@@ -42,6 +42,8 @@
 
 import { isRotaryOperationKind, type Operation, type Project } from '../../types/project'
 import { isBarStock, isSquareStock } from '../../types/barStock'
+import { buildSurfaceIndex, type SurfaceIndex } from '../../store/helpers/rotarySurface'
+import { squareSheetFeatureBlock } from '../../store/helpers/turnedSheet'
 import { aroundFeaturesActive } from '../../store/helpers/projectType'
 import { isMachinable } from '../../store/helpers/featureRoles'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
@@ -55,7 +57,11 @@ export type UncutWorkReason =
   | 'aroundNeedsRotaryProject'
   | 'aroundNeedsBar'
   | 'aroundNeedsRoundBar'
+  | 'aroundSquareNotTurned'
+  | 'aroundSquareFlats'
   | 'operationNeedsRoundBar'
+  | 'operationSquareNotTurned'
+  | 'operationSquareFlats'
   | 'operationWorkholding'
   | 'operationNeedsRotaryProject'
   | 'operationNeedsAroundSetup'
@@ -81,7 +87,11 @@ function isModel(feature: UncutFeature): boolean {
  * can. This is the stock/face half of the rule; the operation half is read
  * from `operationUncutWork` by {@link featureUncutWork}.
  */
-function featureOwnWork(project: Project, feature: UncutFeature): UncutWork | null {
+function featureOwnWork(
+  project: Project,
+  feature: UncutFeature,
+  index?: SurfaceIndex | null,
+): UncutWork | null {
   // Only the Around face loses work when the stock changes; Top and Bottom
   // keep their own geometry on either bar shape.
   if ((feature.authoringFace ?? 'top') !== 'around') return null
@@ -90,7 +100,13 @@ function featureOwnWork(project: Project, feature: UncutFeature): UncutWork | nu
   if (!isMachinable(feature) || isModel(feature)) return null
   if (!aroundFeaturesActive(project)) return { reason: 'aroundNeedsRotaryProject' }
   if (!isBarStock(project.stock)) return { reason: 'aroundNeedsBar' }
-  if (isSquareStock(project.stock)) return { reason: 'aroundNeedsRoundBar' }
+  if (isSquareStock(project.stock)) {
+    // Sheet work on a square blank is cut over a section a Turn above it has
+    // made round (#1131); anywhere else it is kept with the reason.
+    const block = squareSheetFeatureBlock(project, feature.id, 0, index === undefined ? buildSurfaceIndex(project) : index)
+    if (block === 'flats') return { reason: 'aroundSquareFlats' }
+    if (block === 'uncut') return { reason: 'aroundSquareNotTurned' }
+  }
   return null
 }
 
@@ -127,8 +143,10 @@ export function featureUncutWarnings(
 ): Map<string, string> {
   const fromOperations = featureOperationWork(project)
   const warnings = new Map<string, string>()
+  // The Turn facts are read once for the whole tree, not once per row.
+  const index = isSquareStock(project.stock) ? buildSurfaceIndex(project) : null
   for (const feature of features) {
-    const work = featureOwnWork(project, feature) ?? fromOperations.get(feature.id)
+    const work = featureOwnWork(project, feature, index) ?? fromOperations.get(feature.id)
     if (work) warnings.set(feature.id, uncutWorkText(work))
   }
   return warnings
@@ -148,6 +166,8 @@ export function operationUncutWork(project: Project, operation: Operation): Uncu
       return block.refusal
         ? { reason: 'operationWorkholding' }
         : { reason: 'operationNeedsRoundBar' }
+    case 'squareSectionNotRound':
+      return { reason: block.section === 'flats' ? 'operationSquareFlats' : 'operationSquareNotTurned' }
     case 'aroundCentreline':
       return {
         reason: 'operationReachesCentreline',
@@ -174,6 +194,14 @@ export function uncutWorkText(work: UncutWork): string {
       return camT('cam.uncut.aroundNeedsBar')
     case 'aroundNeedsRoundBar':
       return camT('cam.uncut.aroundNeedsRoundBar')
+    case 'aroundSquareNotTurned':
+      return camT('cam.uncut.aroundSquareNotTurned')
+    case 'aroundSquareFlats':
+      return camT('cam.uncut.aroundSquareFlats')
+    case 'operationSquareNotTurned':
+      return camT('cam.uncut.operationSquareNotTurned')
+    case 'operationSquareFlats':
+      return camT('cam.uncut.operationSquareFlats')
     case 'operationNeedsRoundBar':
       return camT('cam.uncut.operationNeedsRoundBar')
     case 'operationWorkholding':

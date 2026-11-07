@@ -32,6 +32,8 @@ import { FaceChip } from './FaceChip'
 import { referencePickIntent } from '../canvas/referencePickIntent'
 import { featureUncutWarnings } from '../cam/uncutWork'
 import { rotaryPatternSurfaceWarnings } from '../../store/helpers/rotarySurface'
+import { aroundSurfaceStarts } from '../../store/helpers/turnedSheet'
+import { aroundSurfaceStartText } from './aroundSurfaceStartText'
 import { UncutWorkBadge } from '../common/UncutWorkBadge'
 import { NoEffectBadge } from '../common/NoEffectBadge'
 import { useFeatureEffectWarnings } from '../../app/featureEffect/useFeatureEffectWarnings'
@@ -104,6 +106,9 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     () => rotaryPatternSurfaceWarnings(project, features.map((feature) => feature.id)),
     [project, features],
   )
+  // An Around shape that starts above the Turn it sits on, or across a Turn's
+  // diameter change (#1131); the marker is a status, like the no-effect one.
+  const surfaceStarts = useMemo(() => aroundSurfaceStarts(project), [project])
   const { t } = useI18n()
   // A canned Turn or Polygon belongs to the bar, not to a face (issue #1112
   // rt3-a, item 27). Its row lives in the Around section only, so that section
@@ -413,6 +418,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     const noEffectWarning = noEffectWarnings.has(feature.id)
       ? t('featureTree.treeRow.warning.noEffect')
       : undefined
+    const surfaceStart = surfaceStarts.get(feature.id)
+    const surfaceStartWarning = surfaceStart ? aroundSurfaceStartText(t, surfaceStart, project.meta.units) : undefined
     const rotaryWarning = rotaryWarnings.get(feature.id)
     const rowWarning = uncutWarning
       ?? (rotaryWarning ? t(rotaryWarning.key, rotaryWarning.values) : undefined)
@@ -433,6 +440,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
           warning={rowWarning}
           effectWarning={noEffectWarning}
+          surfaceStartWarning={surfaceStartWarning}
           chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
           isSelected={false}
           isDragging={false}
@@ -484,6 +492,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         linkedCount={linkedCount}
         warning={rowWarning}
         effectWarning={noEffectWarning}
+        surfaceStartWarning={surfaceStartWarning}
         chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -1107,6 +1116,8 @@ interface TreeRowProps {
   warning?: string
   /** Later features erase this row's contribution; the row shows a warning marker. */
   effectWarning?: string
+  /** An Around shape that starts above its surface (#1131). */
+  surfaceStartWarning?: string
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -1157,6 +1168,7 @@ function TreeRow({
   linkedCount,
   warning,
   effectWarning,
+  surfaceStartWarning,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -1371,6 +1383,7 @@ function TreeRow({
         ) : null}
         {kind === 'feature' && warning ? <UncutWorkBadge text={warning} /> : null}
         {kind === 'feature' && effectWarning ? <NoEffectBadge text={effectWarning} /> : null}
+        {kind === 'feature' && surfaceStartWarning ? <NoEffectBadge text={surfaceStartWarning} surfaceStart /> : null}
         {chips}
       </div>
       <div className="tree-row-actions">

@@ -51,6 +51,7 @@ import { POLYGON_CANNED_KIND, TURN_CANNED_KIND } from '../cannedShapes/generator
 import { normalizePolygonCannedParams } from '../cannedShapes/generators/polygon'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { rotaryTurnSurfaceSections } from '../store/helpers/rotarySurface'
+import { multiplyMatrix } from '../store/helpers/instanceTransforms'
 import { setupForOperation } from './setupOrientation'
 import { resolveDimensionRef } from './toolpaths/geometry'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './toolpaths/types'
@@ -85,6 +86,49 @@ export function aroundFrame(stock: BarStock): AroundFrame {
     zero,
     sheetStart: zero - circumference / 2,
     circumference,
+  }
+}
+
+/**
+ * The same sheet planned at a smaller surface's radius (#1131, Frank
+ * 2026-11-06). Work lying on a Turn of radius `surfaceRadius` is cut on that
+ * surface, so a distance across the bar there is `surfaceRadius / radius` of
+ * the same sheet distance at the reference cylinder. Generators plan in sheet
+ * units — a V-bit's cone, a cutter's offset — so planning on the reference
+ * sheet cuts that much too wide across the bar.
+ *
+ * Only the across direction changes: the circumference (and the sheet edge)
+ * shrink by the ratio, so `wrapPoint` turns the scaled across coordinate into
+ * exactly the angle it had. `radius` stays the reference one: heights keep
+ * their 2026-10-29 meaning (depth from the bar surface, the user sets Z), so
+ * the flat Z of every point is unchanged too. Pair it with
+ * {@link acrossScaledAroundProject}, which scales the features to match.
+ */
+export function surfaceAroundFrame(frame: AroundFrame, surfaceRadius: number): AroundFrame {
+  const circumference = frame.circumference * surfaceRadius / frame.radius
+  return {
+    ...frame,
+    sheetStart: frame.zero - circumference / 2,
+    circumference,
+  }
+}
+
+/**
+ * The project with every Around feature's across coordinates scaled about the
+ * zero line by `ratio` (#1131), composed into its placement so drawn shapes,
+ * text and canned outlines all follow. Arcs become Béziers under the
+ * non-uniform scale (`resolveProfile`), which an affine map keeps exact.
+ */
+export function acrossScaledAroundProject(project: Project, frame: AroundFrame, ratio: number): Project {
+  const scale = frame.axis === 'x'
+    ? { a: 1, b: 0, c: 0, d: ratio, e: 0, f: frame.zero * (1 - ratio) }
+    : { a: ratio, b: 0, c: 0, d: 1, e: frame.zero * (1 - ratio), f: 0 }
+  return {
+    ...project,
+    features: project.features.map((feature) => feature.authoringFace !== 'around' ? feature : {
+      ...feature,
+      transform: multiplyMatrix(scale, feature.transform),
+    }),
   }
 }
 

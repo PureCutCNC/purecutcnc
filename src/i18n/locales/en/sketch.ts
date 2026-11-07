@@ -48,7 +48,7 @@ export const sketchEn = {
   'sketch.creation.cancelTool': 'Cancel {shape} tool',
   'sketch.creation.chooseTarget': 'Choose {target} shape',
   'sketch.creation.closeDrawer': 'Close shape drawer',
-  'sketch.creation.squareBarUnavailable': 'Not available on a square bar yet',
+  'sketch.creation.squareBarUnavailable': 'Turn a section of the square bar round first',
   'sketch.creation.rotaryBarUnavailable': 'Needs a bar in a rotary project',
   'sketch.creation.aroundFaceOnly': 'Only available on the around face',
   'sketch.creation.featureTargetOnly': 'Only available on the feature target',

@@ -31,7 +31,8 @@ import {
   setupToCanonicalPoint,
 } from '../../engine/setupOrientation'
 import { defaultTopSetup, isRoundStock } from '../../types/project'
-import { isBarStock } from '../../types/barStock'
+import { squareSheetHasRoundSection } from './turnedSheet'
+import { isBarStock, isSquareStock } from '../../types/barStock'
 import { featureStockSpan, isThroughFeature as setupIsThroughFeature, spanReachesBothFaces } from '../../engine/setupTargets'
 import type {
   CannedShapeData,
@@ -763,14 +764,21 @@ export function aroundUnavailableReason(
  * availability ({@link aroundUnavailableReason}): a square blank can be a
  * turning job — its generated round target and rotary operations are ordinary
  * authoring — but the unrolled sheet's raw coordinates only describe a round
- * bar, so hand-drawn Thread/Flutes and arbitrary 2D profiles are refused there.
- * A round bar, and a project whose type is not rotary, keep their old answer.
+ * surface. A square blank therefore authors its sheet only once a Turn has made
+ * some section of it round (#1131): before that, hand-drawn Thread/Flutes and
+ * arbitrary 2D profiles are refused there ("Turn a section round first"). A
+ * feature drawn over a section that is still square is kept but not cut — the
+ * per-feature rule is `squareSheetFeatureBlock`. A round bar, and a project
+ * whose type is not rotary, keep their old answer.
  *
  * Free of `aroundUnavailableReason` so the two rules can be read and tested
- * apart: workflow availability admits a square blank, this predicate does not.
+ * apart: workflow availability admits a square blank, this predicate does not
+ * until it has a round section.
  */
-export function aroundSketchAuthoringAvailable(project: Pick<Project, 'stock' | 'meta'>): boolean {
-  return projectType(project) === 'rotary' && isRoundStock(project.stock)
+export function aroundSketchAuthoringAvailable(project: Project): boolean {
+  if (projectType(project) !== 'rotary') return false
+  if (isRoundStock(project.stock)) return true
+  return isSquareStock(project.stock) && squareSheetHasRoundSection(project)
 }
 
 /**
@@ -781,7 +789,7 @@ export function aroundSketchAuthoringAvailable(project: Pick<Project, 'stock' | 
  * the pre-#1016 behavior is untouched.
  */
 export function aroundSketchAuthoringRefused(
-  project: Pick<Project, 'stock' | 'meta'>,
+  project: Project,
   face: SetupFace,
 ): boolean {
   return face === 'around'
@@ -836,7 +844,7 @@ function creationTargetOperation(target: CreationTarget): FeatureOperation | nul
  * (#1096). Everything that would be cut there keeps its refusal.
  */
 export function aroundSheetAuthoringRefused(
-  project: Pick<Project, 'stock' | 'meta'>,
+  project: Project,
   face: SetupFace,
   operation: FeatureOperation | null | undefined,
 ): boolean {
@@ -845,7 +853,7 @@ export function aroundSheetAuthoringRefused(
 
 /** {@link aroundSheetAuthoringRefused} for a creation target rather than a row's operation. */
 export function aroundSheetTargetRefused(
-  project: Pick<Project, 'stock' | 'meta'>,
+  project: Project,
   face: SetupFace,
   target: CreationTarget,
 ): boolean {
