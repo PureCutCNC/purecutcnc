@@ -69,7 +69,9 @@ import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
 import {
+  acrossScaledAroundProject,
   aroundFrameForOperation,
+  surfaceAroundFrame,
   aroundMaterialBands,
   flatFaceProject,
   forwardWrappedToolpath,
@@ -81,6 +83,7 @@ import { setupFrameForOperation } from '../setupOrientation'
 import { operationFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../setupTargets'
 import type { SetupGenerationBlock } from '../setupTargets'
 import { liftSquareSheetTravel, squareSheetPathBlock, squareSheetTravelZ } from './squareSheetPath'
+import { operationTurnSurfaceRadius } from '../../store/helpers/turnedSheet'
 
 export interface ComputeOperationOptions {
   /**
@@ -223,14 +226,22 @@ export function computeOperationToolpath(
   // work authored on the other face as if this setup could reach it (#1079).
   const face = operationFace(project, operation)
 
-  const around = aroundFrameForOperation(project, operation)
+  const reference = aroundFrameForOperation(project, operation)
+  // Work wholly on one Turn is planned across the bar at the Turn's radius
+  // (#1131, Frank 2026-11-06): angles and heights are unchanged, only sheet
+  // distances across shrink to the surface they are cut on.
+  const surfaceRadius = reference && operation.kind !== 'drilling' ? operationTurnSurfaceRadius(project, operation) : null
+  const around = reference && surfaceRadius !== null ? surfaceAroundFrame(reference, surfaceRadius) : reference
+  const sheetProject = reference && surfaceRadius !== null
+    ? acrossScaledAroundProject(project, reference, surfaceRadius / reference.radius)
+    : project
   if (around) {
     // What stands on the sheet, for the Follow line's keep-out (issue #1112
     // rt6-e). Computed from the real project, before the unroll drops the
     // models it is made of, and in the unrolled frame the generator reads.
-    const materials = operation.kind === 'follow_line' ? aroundMaterialBands(project, around) : undefined
+    const materials = operation.kind === 'follow_line' ? aroundMaterialBands(sheetProject, around) : undefined
     const envelope = computeTopDownToolpath(
-      withoutUnreachableSubtracts(unrolledProject(project, around), face),
+      withoutUnreachableSubtracts(unrolledProject(sheetProject, around), face),
       operation,
       options,
       materials,

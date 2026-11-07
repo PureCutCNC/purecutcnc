@@ -305,6 +305,39 @@ export function aroundSurfaceStarts(
 // ── Operations ─────────────────────────────────────────────────
 
 /**
+ * The radius an operation's sheet work is cut at when every target lies wholly
+ * on one constant diameter of a Turn above it in the tree (#1131): the
+ * generator plans across the bar at that radius instead of the reference one.
+ * Null when any target is on the plain bar, crosses a diameter change, is not
+ * Around work, or the operation has no feature targets — those keep the
+ * reference sheet, byte for byte.
+ */
+export function operationTurnSurfaceRadius(
+  project: Project,
+  operation: Pick<Operation, 'target'>,
+): number | null {
+  const target = operation.target
+  if (target.source !== 'features' || target.featureIds.length === 0) return null
+  if (!isBarStock(project.stock)) return null
+  const index = buildSurfaceIndex(project)
+  if (!index) return null
+  let radius: number | null = null
+  for (const featureId of target.featureIds) {
+    const order = project.features.findIndex((feature) => feature.id === featureId)
+    if (order < 0 || project.features[order]!.authoringFace !== 'around') return null
+    const placed = aroundFeatureAlongRange(project, featureId)
+    if (!placed) return null
+    const band = placed.max - placed.min > POINT_BAND ? placed : { min: placed.min - POINT_BAND, max: placed.max + POINT_BAND }
+    const surface = surfaceAtRange(project, index, band, order)
+    if (surface.kind !== 'turn') return null
+    const here = surface.diameter / 2
+    if (radius !== null && Math.abs(here - radius) > TOLERANCE) return null
+    radius = here
+  }
+  return radius !== null && radius < barInscribedRadius(project.stock) - TOLERANCE ? radius : null
+}
+
+/**
  * The cutter's reach along the bar: its radius in project units. A missing or
  * unusable tool reaches everywhere, so the operation is refused rather than
  * judged with no body at all (the same fail-closed rule as the square

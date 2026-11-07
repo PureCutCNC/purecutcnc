@@ -586,4 +586,89 @@ for (const shape of ['round', 'square'] as const) {
   assert(Math.abs(ceiling - (TURN.diameter / 2 - 0.5)) < 0.02, `the buried pocket's ceiling stays at r ${TURN.diameter / 2 - 0.5} (got ${ceiling.toFixed(3)})`)
 }
 
+// ── 9. Across the bar, work on a Turn is planned at the Turn's radius ──
+//
+// Frank's retest of #1163: V-carved text on a Turn came out with rounded stroke
+// ends. The sheet is drawn on the reference cylinder (radius SIDE / 2), but the
+// cut happens on the Turn (radius TURN.diameter / 2), where a sheet distance
+// across the bar is physically shorter by their ratio. Generators plan cones
+// and offsets in sheet units, so they cut that much too wide across. Planning
+// across at the Turn's radius makes the physical cut what was asked for;
+// angles and heights are unchanged (Frank, 2026-11-06: "keep Z as is").
+
+/** Physical across distance from the zero line, on the Turn, of a wrapped point. */
+function acrossOnTurn(point: { a?: number }): number {
+  return ((point.a ?? 0) * Math.PI / 180) * (TURN.diameter / 2)
+}
+
+const RATIO = (TURN.diameter / 2) / (SIDE / 2)
+const ZERO = SIDE / 2
+
+for (const shape of ['round', 'square'] as const) {
+  // A stroke 11 long and 2 wide on the sheet, centred on the zero line, on the
+  // Turn and clear of the chuck's keep-out. Physically it is 2 · RATIO wide.
+  const stroke: SketchFeature = {
+    ...sheetFeature('stroke', 12, 23, TURN_Z, TURN_Z - 3),
+    sketch: { profile: rectProfile(12, ZERO - 1, 11, 2), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  }
+  const { project } = turnedBar(shape, [stroke])
+  const carve: Operation = {
+    ...defaultOperationForTarget(project, 'v_carve_medial', 'rough', { source: 'features', featureIds: ['stroke'] }, 0),
+    id: 'carve-stroke', setupId: 'around', toolRef: VBIT.id, maxCarveDepth: 3,
+  }
+  const result = computeOperationToolpath(project, carve)!.result
+  assert(result.moves.length > 0, `${shape}: the stroke carves: ${JSON.stringify(result.warnings)}`)
+  const cuts = result.moves.filter((move) => move.kind !== 'rapid')
+  const deepest = Math.min(...cuts.flatMap((move) => [move.from.z, move.to.z]))
+  const halfAngle = Math.PI / 6
+  const physicalHalfWidth = RATIO * 1
+  assert(Math.abs((TURN_Z - deepest) * Math.tan(halfAngle) - physicalHalfWidth) < 0.02,
+    `${shape}: the carve's deepest cone spans the stroke's physical half-width ${physicalHalfWidth.toFixed(3)} (got ${((TURN_Z - deepest) * Math.tan(halfAngle)).toFixed(3)})`)
+  // Heights keep their meaning: the carve still travels at the bar's safe
+  // height (bar surface + clearance), not one measured from the Turn.
+  const lowestRapid = Math.min(...result.moves.filter((move) => move.kind === 'rapid'
+    && (move.from.x !== move.to.x || move.from.a !== move.to.a)).flatMap((move) => [move.from.z, move.to.z]))
+  assert(lowestRapid >= SIDE + project.meta.operationClearanceZ - 1e-6,
+    `${shape}: travel stays at the bar's safe height (${lowestRapid.toFixed(3)})`)
+  // Every corner is reached at the surface: a branch ends there.
+  const atSurface = cuts.flatMap((move) => [move.from, move.to]).filter((point) => point.z >= TURN_Z - 1e-3)
+  for (const [along, across] of [[12, -1], [12, 1], [23, -1], [23, 1]] as const) {
+    const target = across * RATIO
+    const nearest = Math.min(...atSurface.map((point) => Math.hypot(point.x - along, acrossOnTurn(point) - target)))
+    assert(nearest < 0.05, `${shape}: the carve reaches the corner (${along}, ${across}) at the surface (nearest ${nearest.toFixed(3)})`)
+  }
+
+  // A pocket's walls are a cutter radius in from the outline, physically,
+  // across and along.
+  const box: SketchFeature = {
+    ...sheetFeature('box', 12, 23, TURN_Z, TURN_Z - 0.5),
+    sketch: { profile: rectProfile(12, ZERO - 3, 11, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  }
+  const { project: boxed } = turnedBar(shape, [box])
+  const pocketOp = pocketOn(boxed, 'box', FLAT.id)
+  const pocketed = computeOperationToolpath(boxed, pocketOp)!.result
+  const floor = pocketed.moves.filter((move) => move.kind !== 'rapid' && Math.max(move.from.z, move.to.z) < TURN_Z - 1e-3)
+  assert(floor.length > 0, `${shape}: the pocket cuts: ${JSON.stringify(pocketed.warnings)}`)
+  const points = floor.flatMap((move) => [move.from, move.to])
+  const radius = FLAT.diameter / 2
+  const acrossEdge = 3 * RATIO
+  const widestAcross = Math.max(...points.map((point) => Math.abs(acrossOnTurn(point))))
+  assert(Math.abs(widestAcross - (acrossEdge - radius)) < 0.01,
+    `${shape}: the pocket wall across is a cutter radius in, physically (${widestAcross.toFixed(3)} vs ${(acrossEdge - radius).toFixed(3)})`)
+  const firstAlong = Math.min(...points.map((point) => point.x))
+  assert(Math.abs(firstAlong - (12 + radius)) < 0.01, `${shape}: and along (${firstAlong.toFixed(3)})`)
+  // Heights keep their meaning: the floor is where the span says.
+  const deepestFloor = Math.min(...points.map((point) => point.z))
+  assert(Math.abs(deepestFloor - (TURN_Z - 0.5)) < 1e-6, `${shape}: the pocket floor is at its Z bottom (${deepestFloor})`)
+}
+
+{
+  // Work on the plain bar keeps the reference sheet, byte for byte.
+  const { project } = turnedBar('round', [sheetFeature('plainBox', 26, 29.5, SIDE, SIDE - 0.5)])
+  const plainOp = pocketOn(project, 'plainBox', FLAT.id)
+  const referenceProject: Project = { ...project, features: project.features.filter((feature) => feature.authoringFace === 'around') }
+  assert.deepEqual(computeOperationToolpath(project, plainOp)!.result.moves,
+    computeOperationToolpath(referenceProject, plainOp)!.result.moves, 'a pocket off the Turn is planned as before')
+}
+
 console.log('squareTurnedSheet: all assertions passed.')
