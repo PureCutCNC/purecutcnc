@@ -2015,16 +2015,6 @@ interface RotaryWallFootRead {
   readonly prep: RotarySamplingPrep
   /** This ring's position within `prep.along`. */
   readonly position: number
-  /**
-   * Whether the conservative cell pad is taken back off this ring's read
-   * (#1155 rn-d correction 2). True when the ring's prep holds the target alone
-   * -- no neighbour and no retained stub within the cutter's reach -- because
-   * there is then nothing but the target's own surface to protect and the
-   * target's surface is the level the acceptance names. The pad otherwise lifts
-   * the ring up to a cell (measured 0.00915 in on Frank's file) above the
-   * surface it must cut.
-   */
-  readonly removeLift: boolean
 }
 
 /**
@@ -2039,6 +2029,13 @@ interface RotaryWallFootRead {
  * cell size, same grid envelope, same retained stubs -- built over the foot
  * positions only, so it costs one angle row per angle and never a second pass
  * over the band.
+ *
+ * The read itself is `exactTipRows` (#1155 rn-d correction 3): the exact maximum
+ * of the projected surface over the cutter's lateral footprint, not the
+ * conservative cell bounds. The conservative read needs a margin to be an upper
+ * bound, and that margin cut the foot 0.00915 in above a smooth target's surface
+ * while taking it back off cut 0.0078 in into a polygon target's corner; the
+ * exact maximum is what the ring is for.
  */
 function wallFootPreps(
   footReads: readonly { readonly index: number; readonly foot: RotaryWallFoot }[],
@@ -2055,20 +2052,9 @@ function wallFootPreps(
   // stock to leave as radius, and the leave is what keeps the body off the face.
   const reach = samplingTool.radius
   const extents = neighbours.map((neighbour) => alongExtremes(neighbour.positions, stock))
-  // The retained bar stubs are the target's own stock left at the operation's
-  // two ends; their faces are the only steps in the foot prep's mesh when no
-  // neighbour is reachable, so a ring within the cutter's reach of one keeps the
-  // conservative pad exactly as before.
-  const bounds = getStockBounds(stock)
-  const lowerEnd = stock.axis === 'x' ? bounds.minX : bounds.minY
-  const upperEnd = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-  const stubFaces: number[] = []
-  if (params.alongStart > lowerEnd + WALL_FOOT_EPSILON) stubFaces.push(params.alongStart)
-  if (upperEnd > params.alongEnd + WALL_FOOT_EPSILON) stubFaces.push(params.alongEnd)
   const groups = new Map<string, {
     readonly kept: RotaryModelMesh[]
     readonly members: Array<{ readonly index: number; readonly foot: RotaryWallFoot }>
-    bare: boolean
   }>()
   for (const member of footReads) {
     const kept: RotaryModelMesh[] = []
@@ -2083,10 +2069,7 @@ function wallFootPreps(
       }
     })
     const id = key.join(',')
-    const group = groups.get(id) ?? { kept, members: [], bare: true }
-    if (kept.length > 0 || stubFaces.some((face) => Math.abs(face - member.foot.foot) <= reach + WALL_FOOT_EPSILON)) {
-      group.bare = false
-    }
+    const group = groups.get(id) ?? { kept, members: [] }
     group.members.push(member)
     groups.set(id, group)
   }
@@ -2096,6 +2079,7 @@ function wallFootPreps(
     const prep = createRotarySamplingPrep(footMesh, stock, samplingTool, {
       along: group.members.map((member) => along[member.index]),
       requestedCellSize: params.requestedCellSize,
+      exactTipRows: true,
       ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
       ...(footMesh.retainedTriangleStart !== undefined
@@ -2103,7 +2087,7 @@ function wallFootPreps(
         : {}),
     })
     group.members.forEach((member, position) => {
-      reads.push({ index: member.index, prep, position, removeLift: group.bare })
+      reads.push({ index: member.index, prep, position })
     })
   }
   return reads
@@ -2347,27 +2331,25 @@ function completeRotaryTargets(
   // the neighbour it is tangent to and the ring would leave the ledge it exists
   // to remove. Its own row is read here, on the mesh without the neighbour the
   // ring is tangent to (see `wallFootPreps`), through the same stock offset and
-  // clamp as every other sample. When nothing but the target is left in that
-  // prep, the conservative cell pad is taken back off the read as well: there is
-  // nothing else to protect, and leaving the pad on put the ring 0.00915 in above
-  // the surface the acceptance names (Frank's file, correction 2).
+  // clamp as every other sample. That row is the **exact** footprint maximum
+  // (`exactTipRows`, correction 3): the conservative cell bounds are an upper
+  // bound only with a margin, and the margin both left the foot 0.00915 in above
+  // a smooth target (correction 2) and, taken back off, cut 0.0078 in into a
+  // polygon target's corner (this correction). Correctness against the material
+  // the cutter may not enter is unchanged: the prep keeps every neighbour the
+  // body reaches besides the tangent one.
   if (plan.wallFootReads.length > 0) {
-    const rowsByPrep = new Map<RotarySamplingPrep, {
-      readonly rows: readonly Float32Array[]
-      readonly lifts: readonly number[]
-    }>()
+    const rowsByPrep = new Map<RotarySamplingPrep, readonly Float32Array[]>()
     for (const read of plan.wallFootReads) {
-      let sampled = rowsByPrep.get(read.prep)
-      if (sampled === undefined) {
+      let rows = rowsByPrep.get(read.prep)
+      if (rows === undefined) {
         const result = sampleAnglesWithPrep(read.prep, angles, warnings)
         if (!result.valid) continue
-        sampled = { rows: result.tipRadius, lifts: result.lifts }
-        rowsByPrep.set(read.prep, sampled)
+        rows = result.tipRadius
+        rowsByPrep.set(read.prep, rows)
       }
-      const { rows, lifts } = sampled
       for (let k = 0; k < tips.length && k < rows.length; k++) {
-        const pad = read.removeLift ? (lifts[k] ?? 0) : 0
-        const raw = rows[k][read.position] - pad
+        const raw = rows[k][read.position]
         tips[k][read.index] = Number.isFinite(raw)
           ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius)
           : NaN

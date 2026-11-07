@@ -70,11 +70,10 @@
  * cutter's body is **tangent** to the face there, so that ring may read the
  * target's own surface (`wallFootPreps` samples it on the mesh without the
  * neighbour it is tangent to) and it clears everything above the target from
- * `face + leave` on, at the **target surface + leave** (`removeLift` -- the
- * conservative cell pad is taken back off a ring that has nothing but the target
- * under it). The ring is cut as its own ring, never as a helix boundary, because
- * the helix resamples each pose on the operation's mesh and a helix starting at
- * the tangent pose rides the wall for a turn. The sections below measure it with
+ * `face + leave` on, at the **target surface + leave**. The ring is cut as its
+ * own ring, never as a helix boundary, because the helix resamples each pose on
+ * the operation's mesh and a helix starting at the tangent pose rides the wall
+ * for a turn. The sections below measure it with
  * `src/test/rotaryWallFootSweep.ts` -- one radial material profile per degree of
  * A, cut by the real cutter body intersected at the profile's own angle -- and
  * read the leftover beside the face per angle against that specified level.
@@ -83,21 +82,24 @@
  *
  * | op | foot cut before (in) | foot cut after (in) | ledge before | ledge after |
  * | --- | --- | --- | --- | --- |
- * | flat finish, leave 0 | 0.50915..0.51001 | 0.49959..0.50000 | 0.25000 | 0.00000 |
- * | flat rough, leave 0.02 | 0.52945..0.52998 | 0.51959..0.52000 | 0.25000 | 0.00000 |
- * | flat rough, leave 0 | 0.50945..0.50998 | 0.49959..0.50000 | 0.25000 | 0.00000 |
- * | ball finish on the rough's material | 0.50916..0.77983 | 0.49959..0.77983 | 0.25000 | 0.11570 |
+ * | flat finish, leave 0 | 0.50915..0.51001 | 0.49999..0.50000 | 0.25000 | 0.00000 |
+ * | flat rough, leave 0.02 | 0.52945..0.52998 | 0.51999..0.52000 | 0.25000 | 0.00000 |
+ * | flat rough, leave 0 | 0.50945..0.50998 | 0.49997..0.50000 | 0.25000 | 0.00000 |
+ * | ball finish on the rough's material | 0.50916..0.77983 | 0.49999..0.77983 | 0.25000 | 0.11570 |
  *
  * The before figures are the review's: the foot ring was read through the
  * conservative cell pad, so it cut 0.00915..0.01001 in above the target and
  * nothing in the foot zone reached the specified level (a 0.25 in zone, the
  * whole of it, which is the "nothing is cleared" reading that the first cut's
- * `leftoverLevel` hid by comparing the profile with itself). The ball's after
- * figure is its own fillet at the foot -- a ball's section cannot reach below
- * `tip + r - sqrt(r² - d²)`, so it leaves a band at a wall that no placement
- * removes (0.115 in for this 1/4 in ball) -- which is why the ball is held to
- * `<= its own radius` and to the ring's position, while the flat cutters are
- * held to the surface tolerance.
+ * `leftoverLevel` hid by comparing the profile with itself). The after figures
+ * are the **exact** footprint maximum (`exactTipRows`, correction 3): taking the
+ * cell pad back off instead reached the flat but cut 0.0078 in into a polygon
+ * target's corner, because a cell-centre read misses a crease's peak and that
+ * crease is what the pad was for. The ball's after figure is its own fillet at
+ * the foot -- a ball's section cannot reach below `tip + r - sqrt(r² - d²)`, so
+ * it leaves a band at a wall that no placement removes (0.115 in for this 1/4 in
+ * ball) -- which is why the ball is held to `<= its own radius` and to the
+ * ring's position, while the flat cutters are held to the surface tolerance.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourPartialOverlap.test.ts
  */
@@ -302,14 +304,25 @@ interface HexSolid {
 }
 
 function hexSolid(stock: BarStock, grow: number): HexSolid {
+  return polygonPrism(stock, HEX_START, HEX_END, HEX_ACROSS_FLATS, grow)
+}
+
+/**
+ * A Polygon prism about the bar's axis over `alongMin..alongMax`: six facets whose
+ * outward normals are `sin/cos` of `k * 60°` from +up at rotation 0, at the
+ * apothem `acrossFlats / 2`. `grow` enlarges it by a radial allowance.
+ */
+function polygonPrism(
+  stock: BarStock, alongMin: number, alongMax: number, acrossFlats: number, grow = 0,
+): HexSolid {
   const normals = Array.from({ length: 6 }, (_, k) => {
     const angle = (k * Math.PI) / 3
     return { across: Math.sin(angle), up: Math.cos(angle) }
   })
   return {
-    alongMin: HEX_START,
-    alongMax: HEX_END,
-    apothem: HEX_ACROSS_FLATS / 2 + grow,
+    alongMin,
+    alongMax,
+    apothem: acrossFlats / 2 + grow,
     normals,
     centre: barCentre(stock),
     pivot: barPivotZ(stock),
@@ -792,8 +805,8 @@ for (const item of [
  * in is the fillet's own 0.115 in and inside one cutter radius, where a foot left
  * one helix turn late would put it a stepover wider than the ball's own shape
  * leaves. Its depth is held to the target surface like the flat cutters': the
- * first rn-d cut read the ring at 0.50915..0.77983 in, the correction at
- * 0.49959..0.77983 in.
+ * first rn-d cut read the ring at 0.50915..0.77983 in, the exact footprint read
+ * at 0.49999..0.77983 in.
  */
 {
   const { project, turnId } = boltFixture()
@@ -1079,6 +1092,57 @@ function polygonRayRadius(angleDeg: number): number {
 }
 
 /**
+ * The wall-foot ring's cutter body clears the **polygon target**
+ * (#1155 rn-d correction 3, review P1).
+ *
+ * The first rn-d cut read the ring through the conservative cell pad, so it cut
+ * 0.00915 in high; correction 2 took the pad back off, which reached the flat but
+ * cut **0.007808 in** into the polygon's corners -- the cell-centre read misses a
+ * crease's peak by up to `slope * cell / 2`, and a crease inside the cutter's
+ * footprint is exactly what the pad was for. The ring now reads the exact
+ * maximum of the projected surface over its footprint (`exactTipRows`), which is
+ * the ring's tip by definition: the max sits on the crease, and it still reaches
+ * the flat at the angles whose footprint lies wholly on it.
+ *
+ * The sweep is the shared cutter-body one, against the polygon prism over the
+ * target's own 1.2..3.75 span. On `9a84048c` it reports 0.007808 in at move 511;
+ * with the exact read it reports 0.
+ */
+{
+  const { project, targetId } = flatWallFixture(0.8)
+  const operation = rotaryOperation(project, [targetId], 'rotary_finish', {
+    name: 'polygon finish against a rising cylinder', toolRef: FLAT_TOOL_ID, stepover: 0.32,
+    stepdown: 0.125, stockToLeaveRadial: 0,
+  })
+  const stock = project.stock as BarStock
+  const tool = toolOf(project, operation)
+  const moves = generate(project, operation)
+  assert.ok(moves.length > 0, 'the polygon finish emits motion')
+  // The target's own prism, not the Hex neighbour's band.
+  const solid = polygonPrism(stock, TURN_START, TURN_END, HEX_ACROSS_FLATS)
+  const report = deepestCutterGouge(moves, stock, { radius: tool.radius, type: 'flat' }, (along, across, up) =>
+    hexDepth(along, across, up, solid))
+  assert.ok(
+    report.depth <= MIN_HEIGHT,
+    `the polygon finish's cutter body is ${report.depth.toFixed(6)} in inside the polygon target `
+      + `(tolerance ${MIN_HEIGHT.toFixed(6)}) at ${report.where}`,
+  )
+  // And it really cuts the target: the foot ring is at the polygon's own surface,
+  // not lifted over the corner crease everywhere.
+  const foot = wallFoot(HEX_END, 0, 1, tool)
+  const pivot = barPivotZ(stock)
+  const atFoot = moves
+    .filter((move) => move.kind !== 'rapid' && Math.abs(move.from.x - foot) < 1e-6)
+    .map((move) => move.from.z - pivot)
+  assert.ok(atFoot.length > 0, 'the wall-foot ring emits motion')
+  assert.ok(
+    Math.min(...atFoot) <= HEX_ACROSS_FLATS / 2 + MIN_HEIGHT,
+    `the wall-foot ring's lowest radius is ${Math.min(...atFoot).toFixed(5)} in, above the polygon's `
+      + `${(HEX_ACROSS_FLATS / 2).toFixed(3)} in flat`,
+  )
+}
+
+/**
  * The control: the same polygon target with a cylinder that stays **below** every
  * angle of it (radius 0.7 against the 0.75 flat) adds no foot ring. The wall test
  * must not fire merely because a neighbour is present.
@@ -1163,6 +1227,62 @@ function polygonRayRadius(angleDeg: number): number {
     onLine.top[0] <= tip + MIN_HEIGHT,
     `the pose on the material's own line cuts the ${material} in top down to ${onLine.top[0].toFixed(5)} in, `
       + `at the ${tip} in tip`,
+  )
+}
+
+/**
+ * The sweep does not credit an **off-line** pose at the axial rim with the reach
+ * of a pose on the line (#1155 rn-d correction 3, review P2).
+ *
+ * A flat body's section at angular offset `delta` reaches only up to
+ * `sqrt(r^2 - d^2) / sin(delta)`, so at the axial rim (`d = r`) an off-line pose
+ * removes nothing above the axis: its section is a single point. The sweep used
+ * to special-case that rim as an infinite reach, which lowered material 0.15485
+ * in from a 0.125 in cutter's axis -- outside the body by 0.030 in -- from 0.75
+ * in to 0.50375 in. The boundary cut the exception was standing in for is made
+ * by the motion's own pose at `delta = 0`, which `cutterPosesByAngle` now groups
+ * on its line (asserted below), not by inventing reach for a pose 7 degrees off.
+ */
+{
+  const { project } = boltFixture()
+  const record = project.tools.find((candidate) => candidate.id === FLAT_TOOL_ID)
+  assert.ok(record, 'the fixture has its 1/4" flat')
+  const tool = normalizeToolForProject(record, project)
+  const stock = project.stock as BarStock
+  const along = tool.radius
+  const tip = 0.5
+  const angle = 7
+  const material = 0.75
+  const profile: WallFootProfile = { along: [0], top: [material] }
+  const distance = Math.hypot(along, material * Math.sin((angle * Math.PI) / 180))
+  assert.ok(
+    distance > tool.radius + 0.02,
+    `the reproducer's point is ${distance.toFixed(5)} in from the cutter's axis, well outside its `
+      + `${tool.radius} in radius`,
+  )
+  const off = sweepProfile(profile, [{ along, radius: tip, angle: 0 }], tool, angle)
+  assert.equal(
+    off.top[0], material,
+    `the pose on the axial rim, 7 degrees off the material's line, left the ${material} in top at `
+      + `${off.top[0].toFixed(5)} in: at the rim its section is a point, not the whole column`,
+  )
+  // The sampling that makes the boundary cut real: the motion's own pose at a
+  // whole degree is in that degree's list with its angle exactly on the line, so
+  // `sweepProfile` sees `delta = 0` there rather than relying on a nearby pose.
+  const moves = [{
+    kind: 'cut' as const,
+    from: { x: 1, y: 0, z: barPivotZ(stock) + tip, a: 0 },
+    to: { x: 1, y: 0, z: barPivotZ(stock) + tip, a: 3.6 },
+  }]
+  const poses = cutterPosesByAngle(moves, stock, tool)
+  const onTheLine = poses[2].poses.filter((pose) => pose.angle === 2)
+  assert.ok(
+    onTheLine.length > 0,
+    `the 2 degree line has a pose of the motion itself (found ${poses[2].poses.length} poses in the bin)`,
+  )
+  assert.ok(
+    onTheLine.every((pose) => Math.abs(pose.along - 1) < 1e-12 && Math.abs(pose.radius - tip) < 1e-12),
+    'the on-line pose carries the interpolated along and tip radius, not an endpoint',
   )
 }
 

@@ -95,6 +95,16 @@ export interface AnglePoses {
  * angle (in degrees, plus half of the one-degree binning), so a pose's section is
  * applied to exactly the lines it can touch. The pose keeps its own angle, and
  * `sweepProfile` uses the offset between the two.
+ *
+ * Every whole degree also gets the pose the **motion itself** passes through
+ * exactly on that line (#1155 rn-d correction 3, review P2). The flat body's
+ * section at `delta = 0` reaches its whole axial footprint, so the first cut at
+ * a wall's leave boundary is made by the pose on the angle line itself; a
+ * sampling that only had poses 0.2 degrees either side would leave the boundary
+ * standing and read the leftover a sampling step out. Adding the pose at the
+ * line is not extra coverage -- the machine interpolates through it -- and it is
+ * what lets `sweepProfile` stop crediting a pose 7 degrees off with the reach a
+ * pose on the line has.
  */
 export function cutterPosesByAngle(
   moves: readonly ToolpathMove[],
@@ -105,6 +115,8 @@ export function cutterPosesByAngle(
   const pivot = barPivotZ(stock)
   const step = Math.max(tool.radius / 4, 1e-4)
   const poses: CutterPose[] = []
+  /** The pose at each whole degree the commanded motion passes through. */
+  const onLine: CutterPose[] = []
   // The motion is continuous in A: the machine interpolates between two emitted
   // points, so the tool passes every angle between them at the same along and
   // radius. Sampling only the emitted points left a foot-wide sliver at a ring's
@@ -133,6 +145,18 @@ export function cutterPosesByAngle(
         angle: (((angleFrom + (angleTo - angleFrom) * t) % 360) + 360) % 360,
       })
     }
+    // The same motion, at the exact whole degrees it crosses.
+    const firstWhole = Math.ceil(Math.min(angleFrom, angleTo))
+    const lastWhole = Math.floor(Math.max(angleFrom, angleTo))
+    for (let whole = firstWhole; whole <= lastWhole; whole++) {
+      const t = angleTo === angleFrom ? 0 : (whole - angleFrom) / (angleTo - angleFrom)
+      onLine.push({
+        along: alongFrom + (alongTo - alongFrom) * t,
+        radius: radiusFrom + (radiusTo - radiusFrom) * t,
+        // The pose's own angle IS the whole degree, so `delta` is exactly 0.
+        angle: ((whole % 360) + 360) % 360,
+      })
+    }
   }
   const outer = Math.max(tool.radius, barMaxRadius(stock))
   const reach = windowDeg ?? (Math.asin(Math.min(1, tool.radius / outer)) * 180) / Math.PI + 0.5
@@ -147,6 +171,9 @@ export function cutterPosesByAngle(
       members[angle].push(pose)
     }
   }
+  // An on-line pose belongs to its own angle only: it is the motion at
+  // `delta = 0`, and `sweepProfile` must not read it as an offset pose.
+  for (const pose of onLine) members[Math.round(pose.angle) % 360].push(pose)
   return members.map((poses, angle) => ({ angle, poses }))
 }
 
@@ -239,11 +266,18 @@ export function sweepProfile(
       }
       const w = Math.sqrt(Math.max(0, radius * radius - offset * offset))
       const lowest = pose.radius / cos
-      // The rim of the body is the tangent line through the tip: it runs along
-      // the tool's radial axis, so it reaches every radius above the bottom face
-      // and a pose covers its own axial end inclusively (the first cut's envelope
-      // reads the leave boundary exactly).
-      const highest = w <= 1e-12 ? Number.POSITIVE_INFINITY : w / sin
+      // The body's surface at this angle reaches radii up to `w / sin`: the
+      // farther the pose's own line is from this one, the less of the axial
+      // footprint its side covers. At the axial rim (`offset = radius`) `w` is
+      // zero, so a pose **off** the line reaches nothing but the axis, whatever
+      // its angle -- the section is a single point, not the whole column. The
+      // same pose **on** the line is the `sin = 0` case above, which cuts its
+      // whole footprint; that pose is in the list by construction
+      // (`cutterPosesByAngle` adds the motion's own pose at every whole degree).
+      // Crediting an off-line pose at the rim with infinite reach lowered
+      // material 0.15485 in from a 0.125 in cutter's axis at 7 degrees offset
+      // (#1155 rn-d correction 3, review P2).
+      const highest = w / sin
       if (current > highest) continue
       if (current > lowest) top[j] = lowest
     }
