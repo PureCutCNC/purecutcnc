@@ -42,7 +42,7 @@ import {
   type SketchProfile,
 } from '../types/project'
 import { transformProfile } from '../geometry/profile'
-import { isCirclePreservingTransform, transformProfileByMatrix } from '../store/helpers/resolveFeatures'
+import { isCirclePreservingTransform, transformProfileByMatrix } from '../geometry/profileMatrix'
 import { getCannedShapeEditor, getCannedShapeGenerator } from './registry'
 import { cachedCannedShapeOutlines } from './cache'
 import type {

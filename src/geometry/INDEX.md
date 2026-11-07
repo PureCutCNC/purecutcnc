@@ -12,6 +12,12 @@ the shared primitives live here instead.
 - `profile.ts` — `clonePoint`, `translatePoint`, `transformProfile`,
   `translateProfile`, `cloneProfile`. Imported by `src/store/**`, `src/text/`,
   and the constraint-solver tests that inject `transformProfile`.
+- `profileMatrix.ts` — `applyMatrixToPoint`, `isIdentityMatrix`,
+  `isCirclePreservingTransform`, `isMirrorTransform`, and
+  `transformProfileByMatrix` (arcs and circles kept under a similarity, turned
+  into Béziers otherwise). Moved here from `store/helpers/resolveFeatures.ts`,
+  which re-exports them, so the canned-shape registry can place outlines under a
+  non-similar transform without importing the text module (#1131).
 - `profile.test.ts` — direct unit tests, including the `circle`-segment cases
   that private copies of these helpers historically got wrong (issue #234).
 

@@ -316,7 +316,26 @@ export function operationTurnSurfaceRadius(
   project: Project,
   operation: Pick<Operation, 'target'>,
 ): number | null {
-  const target = operation.target
+  // Memoised per project snapshot and target object: the toolpath cache asks
+  // this for every Around operation on every edit, and both are immutable.
+  let byTarget = turnRadiusMemo.get(project)
+  if (!byTarget) {
+    byTarget = new WeakMap()
+    turnRadiusMemo.set(project, byTarget)
+  }
+  const known = byTarget.get(operation.target)
+  if (known !== undefined) return known
+  const radius = computeOperationTurnSurfaceRadius(project, operation.target)
+  byTarget.set(operation.target, radius)
+  return radius
+}
+
+const turnRadiusMemo = new WeakMap<Project, WeakMap<Operation['target'], number | null>>()
+
+function computeOperationTurnSurfaceRadius(
+  project: Project,
+  target: Operation['target'],
+): number | null {
   if (target.source !== 'features' || target.featureIds.length === 0) return null
   if (!isBarStock(project.stock)) return null
   // Cheap first: only Around work is ever planned on a Turn, so anything else

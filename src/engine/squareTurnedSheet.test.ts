@@ -40,7 +40,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { defaultTool, newProject, rectProfile, roundStock } from '../types/project'
+import { circleProfile, defaultTool, newProject, rectProfile, roundStock } from '../types/project'
 import type { Operation, Project, SketchFeature, Tool } from '../types/project'
 import { squareStock } from '../types/barStock'
 import { projectWithFeatures } from '../test/projectFixtures'
@@ -70,7 +70,7 @@ import { resolveCannedShapeShapes } from '../cannedShapes'
 import { SLOT_CANNED_KIND } from '../cannedShapes/generators/kinds'
 import { rotarySolidFrame } from '../cannedShapes/generators/rotarySolidParams'
 import { rotarySolidCannedData } from '../store/helpers/rotarySolids'
-import { aroundFrame, acrossScaledAroundProject } from './aroundFrame'
+import { aroundFrame, acrossScaledAroundProject, surfaceAroundFrame } from './aroundFrame'
 import { captureCacheInputs, cacheInputsValid } from '../app/toolpathGeneration/cacheInputs'
 import type { SketchProfile } from '../types/project'
 import { BUNDLED_DEFINITIONS } from './gcode/definitions'
@@ -103,6 +103,7 @@ function tool(id: string, type: Tool['type'], diameter: number): Tool {
 const FLAT = tool('flat-2', 'flat_endmill', 2)
 const WIDE = tool('flat-12', 'flat_endmill', 12)
 const VBIT = tool('vbit-3', 'v_bit', 3)
+const DRILL = { ...tool('drill-2', 'drill', 2), defaultPlungeFeed: 60 }
 
 const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)
 const ROTARY: MachineDefinition = validateMachineDefinition({
@@ -122,7 +123,7 @@ function barProject(shape: 'square' | 'round'): Project {
   base.meta.operationClearanceZ = 1
   const square = squareStock(SIDE, LENGTH, 'x')
   base.stock = shape === 'square' ? square : roundStock(SIDE, LENGTH, 'x')
-  base.tools = [FLAT, WIDE, VBIT]
+  base.tools = [FLAT, WIDE, VBIT, DRILL]
   const project = projectWithFeatures(base, [])
   project.setups.push({ ...project.setups[0]!, id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } })
   project.activeSetupId = 'around'
@@ -763,6 +764,66 @@ for (const shape of ['round', 'square'] as const) {
   }
   assert.equal(operationTurnSurfaceRadius(moved, cachedOp), null, 'the moved Turn no longer carries the whole pocket')
   assert.equal(cacheInputsValid(inputs, cachedOp, moved), false, 'moving the Turn invalidates the cached pocket')
+}
+
+{
+  // Angles are unchanged: a pocket a quarter turn round the bar on the Turn is
+  // cut at A 90 exactly as on the reference sheet.
+  const quarter = Math.PI * SIDE / 4
+  const side: SketchFeature = {
+    ...sheetFeature('quarter', 12, 23, TURN_Z, TURN_Z - 0.5),
+    sketch: { profile: rectProfile(12, ZERO + quarter - 1.5, 11, 3), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  }
+  const { project } = turnedBar('round', [side])
+  const cuts = computeOperationToolpath(project, pocketOn(project, 'quarter', FLAT.id))!.result.moves.filter((move) => move.kind !== 'rapid')
+  const angles = cuts.flatMap((move) => [move.from.a ?? NaN, move.to.a ?? NaN])
+  const middle = (Math.min(...angles) + Math.max(...angles)) / 2
+  assert(Math.abs(middle - 90) < 1e-3, `a quarter-turn pocket on the Turn is centred at A 90 (got ${middle})`)
+}
+
+{
+  // The scaled sheet is centred on the zero line, as the reference one is.
+  const frame = aroundFrame(roundStock(SIDE, LENGTH, 'x'))
+  const scaled = surfaceAroundFrame(frame, TURN.diameter / 2)
+  assert(Math.abs(scaled.circumference - frame.circumference * RATIO) < 1e-12, 'the circumference scales by the radius ratio')
+  assert(Math.abs(scaled.sheetStart - (frame.zero - scaled.circumference / 2)) < 1e-12, 'and the sheet edge stays half of it below the zero line')
+  assert.equal(scaled.radius, frame.radius, 'heights keep the reference radius')
+}
+
+{
+  // Two targets on two Turns of different diameters share no surface: the
+  // operation keeps the reference sheet rather than one Turn's radius.
+  const { project: one } = turnedBar('round', [], { start: 9, length: 7 })
+  store().loadProject(one)
+  assert.equal(switchWorkspaceFace('around'), true)
+  const other = store().addRotarySolid({ kind: 'turn', start: 18, length: 8, diameter: TURN.diameter - 2 })
+  assert.ok(other.ok, 'the second Turn is created')
+  const both = projectWithFeatures(store().project, [
+    ...store().project.features,
+    sheetFeature('left', 11, 14, TURN_Z, TURN_Z - 0.5),
+    sheetFeature('right', 20, 23, TURN_Z - 1, TURN_Z - 1.5),
+  ])
+  const pair = { target: { source: 'features' as const, featureIds: ['left', 'right'] } }
+  assert.equal(operationTurnSurfaceRadius(both, pair), null, 'targets on two diameters keep the reference sheet')
+  assert.equal(operationTurnSurfaceRadius(both, { target: { source: 'features', featureIds: ['left'] } }), TURN.diameter / 2, 'one of them alone is on its Turn')
+}
+
+{
+  // Drilling is not re-planned on the Turn: a hole is a plunge at its centre,
+  // and the across-only scale would turn its circle into an ellipse no drill
+  // cycle can target.
+  const hole: SketchFeature = {
+    ...sheetFeature('hole', 16, 18, TURN_Z, TURN_Z - 1),
+    kind: 'circle',
+    sketch: { profile: circleProfile(17, ZERO, 1), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+  }
+  const { project } = turnedBar('round', [hole])
+  const drill: Operation = {
+    ...defaultOperationForTarget(project, 'drilling', 'rough', { source: 'features', featureIds: ['hole'] }, 0),
+    id: 'drill-hole', setupId: 'around', toolRef: DRILL.id,
+  }
+  const drilled = computeOperationToolpath(project, drill)!.result
+  assert(drilled.moves.length > 0, `the hole on the Turn is drilled: ${JSON.stringify(drilled.warnings)}`)
 }
 
 console.log('squareTurnedSheet: all assertions passed.')
