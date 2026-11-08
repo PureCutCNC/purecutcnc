@@ -471,8 +471,8 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
 
         <footer className="dialog-footer cam-plan-footer">
           <span className="cam-plan-footer__message" role="status">{message}</span>
-          <button type="button" className="secondary" onClick={onClose}>{camT('cam.plan.cancel')}</button>
-          <button type="button" className="primary" disabled={!canCreate} onClick={handleCreate}>{camT('cam.plan.createOperations', { count: enabledCount })}</button>
+          <button type="button" className="btn-secondary" onClick={onClose}>{camT('cam.plan.cancel')}</button>
+          <button type="button" className="btn-primary" disabled={!canCreate} onClick={handleCreate}>{camT('cam.plan.createOperations', { count: enabledCount })}</button>
         </footer>
       </div>
     </div>,
