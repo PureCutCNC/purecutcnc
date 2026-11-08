@@ -44,7 +44,11 @@
  *      (`readExactRows` off in `continuousRoughInput`/`continuousFinishInput`)
  *      -> the last rough layer and the finish ride a whole height-map cell
  *      above the wall-foot ring they close onto, and their Z moves with the
- *      cell alignment from angle to angle.
+ *      cell alignment from angle to angle;
+ *   9. plan the last layer's floor from the ring grid again (`floorPrep` not
+ *      built in `prepareRotaryTargets`) -> the no-Hex control's deepest layer
+ *      rides one conservative cell high (0.529432 against 0.519990 in) and the
+ *      unfiltered with/without-Hex comparison fails.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourOverlapJitter.test.ts
  */
@@ -292,25 +296,15 @@ check('the shank helix cuts the same levels with and without a neighbour it cann
   const withFinish = shankHelixLevels(finish)
   assert.ok(withRough.length >= 4, `the rough helices the shank at its layers (${withRough.join(', ')})`)
   assert.deepEqual(withFinish, plainFinish, 'the finish shank helix changes with a neighbour it cannot reach')
-  // The rough's **layer radii** are planned from the conservative base grid, and
-  // on the Hex run the wall-foot ring's exact read is what pulls the deepest one
-  // down to the Turn plus the leave. A project with no neighbour has no such
-  // column, so its deepest layer is still planned one cell high (0.52943 against
-  // 0.51999) and the helix is floored there. That is the layer plan, not the
-  // helix: the helix's own rows are the exact surface in both runs, which is
-  // what the level check below measures. Making the base grid exact too is the
-  // obvious next step, and it needs `exactFootprintTips` to stop reading a
-  // footprint that only *touches* a feature (the two-boss gap fixture in
-  // `rotaryAroundPasses.test.ts` reads 4 mm low unpadded), so it is out of this
-  // slice.
-  // The shallow layers sit on their planned radii, which the neighbour never
-  // touches: those are the same in both runs.
-  assert.deepEqual(withRough.slice(1), plainRough.slice(1),
-    `the rough's shallow layers are the same with and without the Hex (${withRough.join(', ')} / ${plainRough.join(', ')})`)
-  // The deepest one is the layer plan (see above); the Hex may only pull it
-  // **down**, never lift it.
-  assert.ok(Number(withRough[0]) <= Number(plainRough[0]) + 1e-6,
-    `the rough's deepest layer is not lifted by the Hex (${withRough[0]} / ${plainRough[0]})`)
+  // The rough's **layer radii** are planned from the exact footprint minimum at
+  // the target's own along grid (`exactLayerFloor`), so the deepest layer is
+  // the Turn plus the leave in both runs. The conservative ring grid used to
+  // plan it one cell high (0.529432 against 0.519990 in), and the Hex run's
+  // wall-foot column -- read exactly -- pulled its own floor down instead, so
+  // the two runs' deepest layers differed by 0.24 mm even though the neighbour
+  // reaches no shank column. Every level compares now, the deepest included.
+  assert.deepEqual(withRough, plainRough,
+    `the rough's layers are the same with and without the Hex (${withRough.join(', ')} / ${plainRough.join(', ')})`)
   // One level per pass: the conservative read drifted by the cell alignment from
   // angle to angle (0.50915..0.51010 in on the finish), and each drift was a
   // separate emitted move.
@@ -374,17 +368,15 @@ check('the last rough layer and the finish helix sit level with the wall-foot ri
   }
 
   // The neighbour does not reach a shank column, so the same program without the
-  // Hex digs the same levels: the helix never reads the Hex's facets.
+  // Hex cuts the same levels -- the deepest layer included. The helix reads
+  // exact rows and the layer floor is the exact target minimum at the target's
+  // own along grid in both runs (`exactLayerFloor`), so nothing here depends on
+  // the Hex: no filtering by depth.
   const plain = boltFixture(false)
   const plainFinish = generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_finish'))
   const plainRough = generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_rough'))
   assert.deepEqual(shankHelixTips(plainFinish), finishShank, 'the finish shank helix is the same without the Hex')
-  // The rough's own rows are the exact surface in both runs; its deepest layer
-  // is floored by the layer plan, which is one cell higher without a wall-foot
-  // column to read exactly (see check 2), so only the layers above it compare.
-  assert.deepEqual(shankHelixTips(plainRough).filter((tip) => tip > lastLayer + 0.01).sort(),
-    [...roughShank].filter((tip) => tip > lastLayer + 0.01).sort(),
-    'the rough shank helix above its deepest layer is the same without the Hex')
+  assert.deepEqual(shankHelixTips(plainRough), roughShank, 'the rough shank helix is the same without the Hex')
   console.log(`  shank helix: finish ${finishShank[0].toFixed(5)} in, `
     + `rough last layer ${lastLayer.toFixed(5)} in (wall-foot rings ${finishFoot.toFixed(5)} / ${roughFoot.toFixed(5)})`)
 })
