@@ -32,8 +32,10 @@
  *   3. drop the same-ring gap feed (`feedThroughRingGaps` not called) -> the
  *      overlap rings lift to travel height between the corners;
  *   4. let the gap feed ignore the region -> the region gap is fed through;
- *   5. leave the neighbour columns out of `ringOnlyIndices` -> a helix band runs
- *      through them and the rough loses its leave beside the Hex;
+ *   5. leave the neighbour columns out of `ringOnlyIndices` -> a helix band
+ *      starts at the column the Hex's sampling cell reaches (along 1.4032
+ *      instead of 1.4815) and resamples those poses on the target-only base
+ *      prep;
  *   6. let the link rows share the base prep's workspace -> a ring-to-ring link
  *      reads the target alone and the finish cuts into the Hex;
  *   7. let `raiseShortAroundSegments` drop a point the chord passes under -> the
@@ -129,19 +131,63 @@ function generate(project: Project, operation: Operation): ToolpathMove[] {
   return envelope.result.moves
 }
 
-/** How far inside the Hex prism (grown by `grow`) a point lies; positive is inside. */
+/** The Hex's facet normals: `sin/cos` of `k * 60°` from +up at rotation 0. */
+const HEX_NORMALS = Array.from({ length: 6 }, (_, k) => {
+  const angle = k * Math.PI / 3
+  return { across: Math.sin(angle), up: Math.cos(angle) }
+})
+
+/** The distance from a cross-section point to the Hexagon with `apothem`, 0 inside. */
+function hexagonDistance(across: number, up: number, apothem: number): number {
+  let largest = Number.NEGATIVE_INFINITY
+  for (const normal of HEX_NORMALS) largest = Math.max(largest, normal.across * across + normal.up * up)
+  if (largest <= apothem) return 0
+  const corner = apothem / Math.cos(Math.PI / 6)
+  const vertices = Array.from({ length: 6 }, (_, k) => {
+    const angle = Math.PI / 6 + k * Math.PI / 3
+    return { across: corner * Math.sin(angle), up: corner * Math.cos(angle) }
+  })
+  let nearest = Number.POSITIVE_INFINITY
+  for (let k = 0; k < 6; k++) {
+    const a = vertices[k]
+    const b = vertices[(k + 1) % 6]
+    const dx = b.across - a.across
+    const dy = b.up - a.up
+    const t = Math.min(1, Math.max(0, ((across - a.across) * dx + (up - a.up) * dy) / (dx * dx + dy * dy)))
+    nearest = Math.min(nearest, Math.hypot(across - a.across - t * dx, up - a.up - t * dy))
+  }
+  return nearest
+}
+
+/**
+ * How far inside the Hex prism's **rounded** offset by `grow` a point lies, in
+ * project units; positive is inside.
+ *
+ * The sampler applies the rough's leave as a distance -- the tool enlarged by
+ * it, then added back at the tip -- so over a corner the leave is a rounded
+ * offset (#1173, the same definition the #1155 neighbour suites use). Pushing
+ * each facet out instead keeps a sharp corner `grow * (1 / cos 30° - 1)`
+ * further out (0.062 mm at 0.4 mm), which only the old over-read cleared: the
+ * exact footprint read these columns take is tangent to the rounded offset, so
+ * the sharp hexagon would report 0.0006 in of gouge on every corner. Inside the
+ * prism the depth is to the nearest face (facets and the two end faces) plus
+ * the leave; outside it is the leave less the Euclidean distance to the prism.
+ */
 function hexDepth(stock: BarStock, grow: number) {
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
-  const apothem = HEX_ACROSS_FLATS / 2 + grow
+  const apothem = HEX_ACROSS_FLATS / 2
   return (along: number, across: number, up: number): number => {
-    if (along < HEX_START || along > HEX_END) return Number.NEGATIVE_INFINITY
-    let largest = Number.NEGATIVE_INFINITY
-    for (let k = 0; k < 6; k++) {
-      const angle = (k * Math.PI) / 3
-      largest = Math.max(largest, Math.sin(angle) * (across - centre) + Math.cos(angle) * (up - pivot))
+    const x = across - centre
+    const y = up - pivot
+    const radial = hexagonDistance(x, y, apothem)
+    const axial = Math.max(HEX_START - along, along - HEX_END, 0)
+    if (radial === 0 && axial === 0) {
+      let largest = Number.NEGATIVE_INFINITY
+      for (const normal of HEX_NORMALS) largest = Math.max(largest, normal.across * x + normal.up * y)
+      return grow + Math.min(apothem - largest, along - HEX_START, HEX_END - along)
     }
-    return Math.min(apothem - largest, along - HEX_START, HEX_END - along)
+    return grow - Math.hypot(radial, axial)
   }
 }
 
@@ -177,29 +223,27 @@ check('the first overlap ring rises and falls once over each corner, with no zig
   const firstLayer = rough.filter((move) => isAround(move) && Math.abs(move.to.x - ring) < 1e-6
     && (move.to.a ?? 0) <= 360 + 1e-9)
   assert.ok(firstLayer.length > 6, `the first ring is emitted (${firstLayer.length} moves)`)
-  const layerRadius = Math.min(...firstLayer.map((move) => tipOf(move.to)))
-  // Group the tips into bumps: consecutive points above the layer radius.
-  const bumps: number[][] = []
-  let current: number[] = []
-  for (const move of firstLayer) {
-    const tip = tipOf(move.to)
-    if (tip > layerRadius + 1e-6) current.push(tip)
-    else if (current.length > 0) { bumps.push(current); current = [] }
-  }
-  if (current.length > 0) bumps.push(current)
-  assert.equal(bumps.length, 6, `one bump per Hex corner, found ${bumps.length}`)
+  // Every corner gets its own angular window: between two of them the tip is the
+  // layer radius only to within 0.0001 in (the exact read is not perfectly flat
+  // there), so thresholding at the layer radius would join neighbouring bumps.
   const corner = HEX_ACROSS_FLATS / Math.sqrt(3) + ROUGH_LEAVE
-  for (const [b, bump] of bumps.entries()) {
+  for (let k = 0; k < 6; k++) {
+    const at = 30 + 60 * k
+    const bump = firstLayer
+      .filter((move) => Math.abs((((move.to.a ?? 0) - at + 540) % 360) - 180) <= 15)
+      .sort((a, b) => (a.to.a ?? 0) - (b.to.a ?? 0))
+      .map((move) => tipOf(move.to))
+    assert.ok(bump.length > 3, `corner ${at}: its window is cut (${bump.length} moves)`)
     const peak = bump.indexOf(Math.max(...bump))
     for (let i = 1; i <= peak; i++) {
-      assert.ok(bump[i] >= bump[i - 1] - 1e-6, `bump ${b} falls on its way up at point ${i}: ${bump.join(', ')}`)
+      assert.ok(bump[i] >= bump[i - 1] - 1e-6, `corner ${at} falls on its way up at point ${i}: ${bump.join(', ')}`)
     }
     for (let i = peak + 1; i < bump.length; i++) {
-      assert.ok(bump[i] <= bump[i - 1] + 1e-6, `bump ${b} rises on its way down at point ${i}: ${bump.join(', ')}`)
+      assert.ok(bump[i] <= bump[i - 1] + 1e-6, `corner ${at} rises on its way down at point ${i}: ${bump.join(', ')}`)
     }
     // The peak is the corner plus the leave, as the exact footprint reads it --
     // not the 0.004..0.012 in above it the conservative read put there.
-    assert.ok(Math.abs(bump[peak] - corner) < 0.0005, `bump ${b} peaks at ${bump[peak]}, the corner + leave is ${corner}`)
+    assert.ok(Math.abs(bump[peak] - corner) < 0.0005, `corner ${at} peaks at ${bump[peak]}, the corner + leave is ${corner}`)
   }
 })
 
@@ -278,7 +322,32 @@ check('the gap feed only crosses air that an earlier layer cleared, inside the r
   assert.equal(wideSamples[2], null, 'a 60 degree gap is fed')
 })
 
-// ── 4. the leave and the Hex are kept everywhere ──────────────────────────
+// ── 4. a column the neighbour can reach is its own ring ───────────────────
+
+check('no helix band starts, ends or runs through a column the Hex can reach', () => {
+  // A neighbour-reach column carries the exact footprint read on the mesh **with**
+  // the neighbours, while a helix band resamples every pose of its turn on the
+  // base prep (the target and stubs only). A band over such a column would read
+  // the Turn where the Hex stands, so the columns are cut as their own rings
+  // (`ringOnlyIndices`). The reach is the sampling tool's radius plus the cell it
+  // asks for -- `rotaryOperation.ts` sets that cell to
+  // `min(tool.radius / 3, stepover / 2)`, the same expression the fixture's
+  // operation carries -- so the check is the rule, not a recorded position.
+  const cell = Math.min(FLAT_RADIUS / 3, 0.32 / 2)
+  const reachLow = HEX_START - (FLAT_RADIUS + cell)
+  const reachHigh = HEX_END + (FLAT_RADIUS + cell)
+  for (const [label, moves] of [['rough', rough], ['finish', finish]] as const) {
+    const bands = moves.filter((move) => move.kind === 'cut'
+      && Math.abs((move.from.a ?? 0) - (move.to.a ?? 0)) > 0
+      && Math.abs(move.from.x - move.to.x) > 1e-9
+      && Math.max(move.from.x, move.to.x) >= reachLow
+      && Math.min(move.from.x, move.to.x) <= reachHigh)
+    assert.equal(bands.length, 0,
+      `${label}: ${bands.length} helix move(s) inside the Hex's reach, first at along ${bands[0]?.from.x.toFixed(4)}`)
+  }
+})
+
+// ── 5. the leave and the Hex are kept everywhere ──────────────────────────
 
 check('no move of the rough enters the Hex grown by its leave, and no finish move enters the Hex', () => {
   for (const [label, moves, grow] of [['rough', rough, ROUGH_LEAVE], ['finish', finish, 0]] as const) {
@@ -290,7 +359,7 @@ check('no move of the rough enters the Hex grown by its leave, and no finish mov
   }
 })
 
-// ── 5. the upward-only merge never cuts below a sample ────────────────────
+// ── 6. the upward-only merge never cuts below a sample ────────────────────
 
 check('raiseShortAroundSegments keeps every original sample at or under the merged path', () => {
   const cut = (from: ToolpathPoint, to: ToolpathPoint): ToolpathMove => ({ kind: 'cut', from, to })
