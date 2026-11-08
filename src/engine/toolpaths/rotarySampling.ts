@@ -1313,6 +1313,14 @@ export function runRotaryAngleJob(
     // tested whether or not it lands in the window (#1103 ca-e correction 2).
     rasterWork = count
     candidates = count
+    // #1173: an exact-tip row reads the candidate triangles themselves and
+    // never the map (its lift is 0, and it is never cached), so the raster pass
+    // is skipped. The row is the same; only the wasted map is gone.
+    if (prep.exactTipRows === true) {
+      const row = new Float32Array(along.length)
+      exactFootprintTips(row, prep, plan, subset, candidates, cos, sin)
+      return { index: job.index, row, lift: 0, warnings: angleWarnings, reused: false, rasterWork }
+    }
     const buildOptions = {
       window,
       triangles: subset.subarray(0, count),
@@ -1436,13 +1444,38 @@ function exactFootprintTips(
   const vx = [0, 0, 0]
   const vy = [0, 0, 0]
   const vz = [0, 0, 0]
+  // #1173: the turned `across` and `up` of each candidate vertex, and its along
+  // position, depend only on the angle, so they are computed once here and read
+  // by every ring; only `along - origin` is per ring. The values are the same
+  // expressions the per-ring projection used, so every tip is bit for bit the
+  // same, and a triangle whose along span misses a ring's disc is skipped
+  // before anything else is read.
+  const turned = new Float64Array(count * 9)
+  const spanMin = new Float64Array(count)
+  const spanMax = new Float64Array(count)
+  for (let s = 0; s < count; s++) {
+    const offset = subset[s]
+    let lo = Number.POSITIVE_INFINITY
+    let hi = Number.NEGATIVE_INFINITY
+    for (let j = 0; j < 3; j++) {
+      const v = index[offset + j]
+      const a = positions[v * 3 + alongAxis]
+      turned[s * 9 + j * 3] = a
+      turned[s * 9 + j * 3 + 1] = across[v] * cos - up[v] * sin
+      turned[s * 9 + j * 3 + 2] = pivot + across[v] * sin + up[v] * cos
+      if (a < lo) lo = a
+      if (a > hi) hi = a
+    }
+    spanMin[s] = lo
+    spanMax[s] = hi
+  }
   for (let i = 0; i < along.length; i++) {
     const origin = along[i]
-    const project = (v: number, j: number): void => {
-      const p = v * 3
-      vx[j] = positions[p + alongAxis] - origin
-      vy[j] = across[v] * cos - up[v] * sin
-      vz[j] = pivot + across[v] * sin + up[v] * cos
+    const project = (s: number, j: number): void => {
+      const base = s * 9 + j * 3
+      vx[j] = turned[base] - origin
+      vy[j] = turned[base + 1]
+      vz[j] = turned[base + 2]
     }
     // Barycentric sign test against the projected triangle, in the disc's local
     // frame. Defined once per ring (it reads the triangle scratch above), not per
@@ -1456,10 +1489,10 @@ function exactFootprintTips(
     }
     let best = Number.NEGATIVE_INFINITY
     for (let s = 0; s < count; s++) {
-      const offset = subset[s]
-      project(index[offset], 0)
-      project(index[offset + 1], 1)
-      project(index[offset + 2], 2)
+      if (spanMin[s] - origin > radius || spanMax[s] - origin < -radius) continue
+      project(s, 0)
+      project(s, 1)
+      project(s, 2)
       // A triangle whose projected bounds miss the disc cannot contribute.
       const minX = Math.min(vx[0], vx[1], vx[2])
       if (minX > radius) continue

@@ -2033,8 +2033,10 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
     previousDeepest = Math.min(previousDeepest, ...tips)
   }
   // The revolved mesh is a 64-gon, so its sampled radius sits a few thousandths
-  // under the nominal 5; the layers still have to reach it.
-  approx(previousDeepest, LAYER_MODEL_RADIUS, `${label}: the layers reach the model's deepest cut`, 0.01)
+  // under the nominal 5; the layers still have to reach it. #1173: the
+  // upward-only merge of the refinement's short steps may leave the deepest
+  // point up to its 0.02 mm cap higher (5.0106 here), never lower.
+  approx(previousDeepest, LAYER_MODEL_RADIUS, `${label}: the layers reach the model's deepest cut`, 0.03)
   for (let k = 1; k < layers; k++) {
     const radius = LAYER_BAR_RADIUS - k * LAYER_STEPDOWN
     assert.ok(
@@ -2323,7 +2325,10 @@ console.log('Testing the emitted around sweep on the hex prism...')
   }
   assert.ok(undercut <= 1e-6,
     `every emitted sample is at or above the model (worst endpoint under-read ${undercut.toFixed(6)} mm)`)
-  assert.ok(checked > 2000, `the emitted sweep check walked ${checked} interior points`)
+  // #1173: the upward-only merge joins the refinement's short steps, so the same
+  // ring is fewer moves (1928 interior points here, from just over 2000); every
+  // emitted move is still walked.
+  assert.ok(checked > 1800, `the emitted sweep check walked ${checked} interior points`)
   // And the subdivision is what made it hold: at least one emitted step is
   // finer than the unrefined starting step, while the sagitta cap still bounds
   // the step as a whole.

@@ -25,6 +25,11 @@
  * ring, a helix, an along pass and a radial plunge are all handled by the same
  * parametrisation. Angles are compared modulo 360.
  *
+ * A baseline move at or above `airRadius` is air (a travel-height link) and
+ * never counts as a cut through a point (#1173): it removes nothing, so taking
+ * it as the deepest pass over a spot the baseline cuts with neighbouring helix
+ * turns reported a helix-to-ring change as 2.59 mm too deep.
+ *
  * A point no baseline segment passes through -- a ring the candidate cuts
  * between two turns of a baseline helix, say -- is compared with the baseline
  * **across along**: the adjacent baseline crossings of the same angle on either
@@ -150,6 +155,9 @@ export function compareRotaryDepth(
       return current
     }
     const crossing = (crossAlong: number, tip: number): void => {
+      // A baseline move above the blank cuts nothing (a travel-height link), so
+      // it says nothing about the material there (#1173).
+      if (tip >= options.airRadius) return
       const gap = crossAlong - pointAlong
       if (Math.abs(gap) <= alongTolerance) {
         floor = Math.min(floor, tip)
@@ -179,7 +187,8 @@ export function compareRotaryDepth(
         const t = (pointAlong - s.along0) / run
         if (t >= -alongTolerance / Math.abs(run) && t <= 1 + alongTolerance / Math.abs(run)) {
           const clamped = Math.min(1, Math.max(0, t))
-          floor = Math.min(floor, s.tip0 + clamped * (s.tip1 - s.tip0))
+          const tip = s.tip0 + clamped * (s.tip1 - s.tip0)
+          if (tip < options.airRadius) floor = Math.min(floor, tip)
         } else {
           crossing(s.along0, s.tip0)
           crossing(s.along1, s.tip1)

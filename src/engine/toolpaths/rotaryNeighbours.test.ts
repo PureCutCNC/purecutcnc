@@ -228,8 +228,18 @@ function generate(project: Project, operation: Operation): ToolpathResult {
 interface HexSolid {
   readonly alongMin: number
   readonly alongMax: number
-  /** Twice the apothem grows the solid by the rough's radial stock to leave. */
+  /** The Hex's own apothem. */
   readonly apothem: number
+  /**
+   * The rough's radial stock to leave: the solid is every point closer than this
+   * to the Hex (#1173). The sampler applies the leave as a distance -- the tool
+   * enlarged by it, then added back at the tip -- so over a corner the leave is
+   * a rounded offset. Pushing each face out instead keeps a sharp corner
+   * `grow * (1 / cos 30° - 1)` further out (0.062 mm at 0.4), which only an
+   * over-read could keep clear of; the conservative read did, and the exact
+   * footprint read the neighbour columns take since #1173 does not.
+   */
+  readonly grow: number
   readonly centre: number
   readonly pivot: number
 }
@@ -242,31 +252,54 @@ const HEX_NORMALS = Array.from({ length: 6 }, (_, k) => {
 function hexSolid(stock: BarStock, grow: number, acrossOffset = 0): HexSolid {
   return {
     alongMin: HEX_START, alongMax: HEX_END,
-    apothem: HEX_ACROSS_FLATS / 2 + grow,
+    apothem: HEX_ACROSS_FLATS / 2, grow,
     centre: barCentre(stock) + acrossOffset, pivot: barPivotZ(stock),
   }
 }
 
+/** The distance from a cross-section point to the regular hexagon with `apothem`, 0 inside. */
+function hexagonDistance(across: number, up: number, apothem: number): number {
+  let largest = Number.NEGATIVE_INFINITY
+  for (const normal of HEX_NORMALS) largest = Math.max(largest, normal.across * across + normal.up * up)
+  if (largest <= apothem) return 0
+  const corner = apothem / Math.cos(Math.PI / 6)
+  const vertices = Array.from({ length: 6 }, (_, k) => {
+    const angle = Math.PI / 6 + k * Math.PI / 3
+    return { across: corner * Math.sin(angle), up: corner * Math.cos(angle) }
+  })
+  let nearest = Number.POSITIVE_INFINITY
+  for (let k = 0; k < 6; k++) {
+    const a = vertices[k]
+    const b = vertices[(k + 1) % 6]
+    const dx = b.across - a.across
+    const dy = b.up - a.up
+    const t = Math.min(1, Math.max(0, ((across - a.across) * dx + (up - a.up) * dy) / (dx * dx + dy * dy)))
+    nearest = Math.min(nearest, Math.hypot(across - a.across - t * dx, up - a.up - t * dy))
+  }
+  return nearest
+}
+
 /**
- * How far inside the Hex prism a point lies, in millimetres: the apothem minus
- * the largest facet dot product. Positive is inside, so "no deeper than
- * `minRenderHeight`" is `<= minRenderHeight`.
+ * How far inside the Hex prism grown by `grow` a point lies, in millimetres.
+ * Positive is inside, so "no deeper than `minRenderHeight`" is
+ * `<= minRenderHeight`. Inside the Hex it is the depth to its nearest face
+ * (facets and the two end faces) plus the leave; outside it is the leave less
+ * the Euclidean distance to the Hex.
  */
 function hexDepth(along: number, across: number, up: number, hex: HexSolid): number {
-  if (along < hex.alongMin || along > hex.alongMax) return Number.NEGATIVE_INFINITY
-  let largest = Number.NEGATIVE_INFINITY
-  for (const normal of HEX_NORMALS) {
-    largest = Math.max(largest, normal.across * (across - hex.centre) + normal.up * (up - hex.pivot))
+  const x = across - hex.centre
+  const y = up - hex.pivot
+  const radial = hexagonDistance(x, y, hex.apothem)
+  const axial = Math.max(hex.alongMin - along, along - hex.alongMax, 0)
+  if (radial === 0 && axial === 0) {
+    let largest = Number.NEGATIVE_INFINITY
+    for (const normal of HEX_NORMALS) largest = Math.max(largest, normal.across * x + normal.up * y)
+    // The two end faces are faces of the prism. Without them a body point one
+    // radius inside the band reads as "inside by the whole radial depth", so a
+    // pass tangent to the end face looks like a gouge.
+    return hex.grow + Math.min(hex.apothem - largest, along - hex.alongMin, hex.alongMax - along)
   }
-  // The two end faces are faces of the prism. Without them a body point one
-  // radius inside the band reads as "inside by the whole radial depth", so a
-  // pass tangent to the end face looks like a gouge; with them, a point on the
-  // face is depth 0 and a point behind it is negative.
-  return Math.min(
-    hex.apothem - largest,
-    along - hex.alongMin,
-    hex.alongMax - along,
-  )
+  return hex.grow - Math.hypot(radial, axial)
 }
 
 /** The same sweep the #1155 suites share, against this fixture's Hex solid. */
@@ -532,7 +565,11 @@ check('the shank band helices while the head band falls back to rings', () => {
   // and the extra height turns 26 of the head band's ring samples into air the
   // layer skips). What this asserts is the split, not the count: the head band
   // is cut by rings, never helixed through.
-  assert.equal(headRings.length, 415, `the head band is cut by rings, found ${headRings.length}`)
+  // 415 -> 1939 for #1173: every column the Hex can reach is now read with the
+  // exact footprint and cut as its own ring (2247 such moves), and the rough
+  // feeds through a ring's short air gaps instead of retracting; the upward-only
+  // merge of the refinement's short steps then joins 308 of them.
+  assert.equal(headRings.length, 1939, `the head band is cut by rings, found ${headRings.length}`)
   const pivot = barPivotZ(stock)
   const headFloor = HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6
   for (const ring of headRings) {
@@ -624,7 +661,12 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // the wall-foot ring stay), but the far end at 3.75 is the model's own end:
   // the retained stub there is gone and the band runs 0.125 in further, which
   // adds the end rings and re-eligibility the helix bands needed over them.
-  assert.equal(withNeighbour.length, 7127, 'the overlapping neighbour moves the output: the measured bolt run')
+  //
+  // 7127 -> 3989 for #1173: the base grid is sampled on the target and stubs
+  // only (6871 with the columns the Hex can reach read exactly, as rings, and
+  // the in-ring gaps fed through), and the upward-only merge joins the
+  // refinement's short steps.
+  assert.equal(withNeighbour.length, 3989, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

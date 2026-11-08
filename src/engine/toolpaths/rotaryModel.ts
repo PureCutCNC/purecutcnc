@@ -160,6 +160,99 @@ function distanceFromLine(
 }
 
 /**
+ * How much higher than its sampled heights an around pass may run where
+ * `raiseShortAroundSegments` merges short steps (#1173), in mm.
+ */
+const AROUND_RAISE_TOLERANCE_MM = 0.02
+
+/**
+ * Drop the short steps the around refinement leaves on a smooth surface by
+ * merging upward only (#1173).
+ *
+ * The refinement bisects a segment whenever its sampled midpoint stands more
+ * than 0.005 mm above the chord, and the conservative read's per-angle lift
+ * varies by more than that between neighbouring angles (0.0088-0.0093 in on the
+ * plain Ø1 shank of Frank's bolt). So it halves good chords down to 0.28-0.45
+ * degree steps: 4-10 ms blocks in inverse time next to blocks of a second, which
+ * a controller cannot follow at a steady A speed.
+ *
+ * An interior point of a run of around cuts is dropped only when the chord that
+ * replaces it stands **at or above every original point it spans**, at that
+ * point's own A, and by no more than `raise`. The new path is then at or above
+ * the old one everywhere -- above each original segment, because both are
+ * straight and the chord is above their ends -- so it can never cut deeper than
+ * the sampled heights allowed; it can only leave up to `raise` more material.
+ * Only points next to a step finer than `baseStep` -- the base angular
+ * grid's, so a step the refinement inserted -- are considered, and the
+ * ordinary grid, which the 0.005 mm sagitta cap spaces, is left exactly as it
+ * was. A run is a chain of contiguous cut moves that all turn A the same way
+ * (rings and helices alike; a stepped leg, which does not turn A, ends it), and
+ * a helix point is dropped only when the chord also reaches its along position
+ * within `alongTolerance`.
+ */
+export function raiseShortAroundSegments(
+  moves: readonly ToolpathMove[],
+  baseStep: number,
+  raise: number,
+  alongTolerance: number,
+): ToolpathMove[] {
+  const out: ToolpathMove[] = []
+  const turns = (move: ToolpathMove): number => Math.sign((move.to.a ?? 0) - (move.from.a ?? 0))
+  // A step finer than the base grid's was inserted by the refinement.
+  const short = (a: ToolpathPoint, b: ToolpathPoint): boolean =>
+    Math.abs((b.a ?? 0) - (a.a ?? 0)) < baseStep * (1 - 1e-6)
+  let index = 0
+  while (index < moves.length) {
+    const first = moves[index]
+    const direction = first.kind === 'cut' ? turns(first) : 0
+    if (direction === 0) {
+      out.push(first)
+      index++
+      continue
+    }
+    let end = index
+    while (end + 1 < moves.length) {
+      const next = moves[end + 1]
+      const previous = moves[end]
+      if (next.kind !== 'cut' || turns(next) !== direction) break
+      if (next.from.x !== previous.to.x || next.from.y !== previous.to.y
+        || next.from.z !== previous.to.z || next.from.a !== previous.to.a) break
+      end++
+    }
+    const points: ToolpathPoint[] = [moves[index].from]
+    for (let i = index; i <= end; i++) points.push(moves[i].to)
+    const last = points.length - 1
+    // A point may go only when a step next to it is short.
+    const droppable = points.map((point, i) => i > 0 && i < last
+      && (short(points[i - 1], point) || short(point, points[i + 1])))
+    // Whether the chord from `a` to `b` stands over every original point between them.
+    const chordHolds = (a: number, b: number): boolean => {
+      const from = points[a]
+      const to = points[b]
+      const turn = (to.a ?? 0) - (from.a ?? 0)
+      for (let i = a + 1; i < b; i++) {
+        const f = ((points[i].a ?? 0) - (from.a ?? 0)) / turn
+        const z = from.z + (to.z - from.z) * f
+        const lift = z - points[i].z
+        if (!(lift >= 0 && lift <= raise)) return false
+        if (Math.abs(from.x + (to.x - from.x) * f - points[i].x) > alongTolerance) return false
+        if (Math.abs(from.y + (to.y - from.y) * f - points[i].y) > alongTolerance) return false
+      }
+      return true
+    }
+    let anchor = 0
+    while (anchor < last) {
+      let reach = anchor + 1
+      while (reach < last && droppable[reach] && chordHolds(anchor, reach + 1)) reach++
+      out.push({ kind: 'cut', from: points[anchor], to: points[reach] })
+      anchor = reach
+    }
+    index = end + 1
+  }
+  return out
+}
+
+/**
  * The error a merged around move makes at one original sample (#1045 slice H).
  *
  * The controller interpolates A and Z linearly along one move, so the sample's
@@ -747,6 +840,66 @@ function emitRotaryRuns(
     endedAtEnd = run.atEnd
   }
   return { here: current, endedAtEnd }
+}
+
+/**
+ * Feed a rough ring through its short air gaps instead of retracting (#1173).
+ *
+ * A gap between two cutting runs of one ring is a span where the model stands
+ * at or above the previous layer (`tip >= previousRadius`), so this layer has
+ * nothing to cut there. Every link planner joins **rings** (`toAlong >
+ * fromAlong`), so such a gap used to go to travel height: on Frank's bolt the
+ * Hex corners split the overlap rings into six runs and the tool lifted to Z1,
+ * rapided about 20 degrees and plunged at the plunge feed at every corner.
+ *
+ * A gap of at most `MAX_LINK_ACROSS_DEG` is instead fed through at the gap
+ * samples' own tips. Each of those tips is the drop-cutter height on the model
+ * (stock to leave included), and it is below the blank, so an earlier layer cut
+ * exactly there: the first layer whose radius is at or below the tip cut that
+ * sample to the tip itself. The feed therefore runs in space the earlier layers
+ * cleared, on the same refined angle grid -- and so the same between-sample
+ * chord check -- as every cut. A gap sample that is air for another reason is
+ * not fed: no model under the tool (`NaN`), a tip at the blank's own radius,
+ * or a sample outside the #1096 region, where no layer cut at all. The caller
+ * skips square blanks, whose gaps are the corner gate's air.
+ *
+ * `samples` is changed in place; `tips[k][column]` is the transformed tip.
+ */
+export function feedThroughRingGaps(
+  samples: (ToolpathPoint | null)[],
+  tips: readonly (readonly number[])[],
+  column: number,
+  angles: readonly number[],
+  previousRadius: number,
+  maxRadius: number,
+  insideRegion: ((alongValue: number, angle: number) => boolean) | null,
+  alongValue: number,
+  point: (alongPosition: number, tip: number, angle: number) => ToolpathPoint,
+): void {
+  const last = samples.length - 1
+  let k = 0
+  while (k <= last) {
+    if (samples[k] !== null) {
+      k++
+      continue
+    }
+    let end = k
+    while (end <= last && samples[end] === null) end++
+    // Interior gaps only: a gap touching either ring end is the seam, which the
+    // ring-to-ring links handle.
+    if (k > 0 && end <= last && angles[end] - angles[k - 1] <= MAX_LINK_ACROSS_DEG) {
+      let air = true
+      for (let j = k; j < end && air; j++) {
+        const tip = tips[j][column]
+        air = Number.isFinite(tip) && tip >= previousRadius && tip < maxRadius
+          && (insideRegion === null || insideRegion(alongValue, angles[j]))
+      }
+      if (air) {
+        for (let j = k; j < end; j++) samples[j] = point(alongValue, tips[j][column], angles[j])
+      }
+    }
+    k = end
+  }
 }
 
 /**
@@ -1733,12 +1886,23 @@ interface RotaryTargets {
   prep: RotarySamplingPrep | null
   stockToLeave: number
   /**
-   * The columns in `along` that carry a neighbour's wall foot (#1155 rn-d). Each
-   * one is cut as its **own** ring -- no helix band starts, ends or runs through
-   * it -- because the helix resamples every pose on the operation's mesh, where
-   * the conservative read lifts the tangent pose onto the wall.
+   * The columns in `along` that are cut as their **own** ring -- no helix band
+   * starts, ends or runs through them -- in ascending order:
+   *
+   * - a neighbour's wall foot (#1155 rn-d): the helix resamples every pose on
+   *   the operation's mesh, where the conservative read lifts the tangent pose
+   *   onto the wall;
+   * - a column a neighbour can reach (#1173): its row is the exact footprint
+   *   read on the mesh with the neighbours, while the helix samples the base
+   *   prep, which holds the target and stubs only.
    */
-  wallFootIndices: readonly number[]
+  ringOnlyIndices: readonly number[]
+  /**
+   * The base angular grid's step in degrees, before any refinement (#1173): a
+   * step finer than this was inserted by the between-sample refinement, which
+   * is what `raiseShortAroundSegments` may merge. 360 when there is no grid.
+   */
+  baseAngleStep: number
   stopped: boolean
   refusal: ToolpathWarningCode | null
 }
@@ -1747,7 +1911,7 @@ interface RotaryTargets {
 function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
   return {
     angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, wallFootIndices: [], stopped: false, refusal: code,
+    prep: null, stockToLeave: 0, ringOnlyIndices: [], baseAngleStep: 360, stopped: false, refusal: code,
   }
 }
 
@@ -1755,7 +1919,7 @@ function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
 function targetStopped(angles: number[], along: number[]): RotaryTargets {
   return {
     angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, wallFootIndices: [], stopped: true, refusal: null,
+    prep: null, stockToLeave: 0, ringOnlyIndices: [], baseAngleStep: 360, stopped: true, refusal: null,
   }
 }
 
@@ -1779,6 +1943,14 @@ interface RotaryTargetPlan {
   /** The un-eroded grid envelope (#1095), when there is one. */
   readonly gridExtra?: RotaryModelMesh
   readonly workspace: RotarySamplingWorkspace
+  /**
+   * The workspace the link rows sample `samplingMesh` with (#1173). It is
+   * `workspace` itself unless the base prep samples a different mesh (an around
+   * operation with neighbours): a workspace caches the hull, strip plan and
+   * candidate buffer of the mesh it first saw, so sharing it would read the
+   * link rows on the target alone and let a link cut into a neighbour.
+   */
+  readonly linkWorkspace: RotarySamplingWorkspace
   readonly prep: RotarySamplingPrep
   /**
    * The neighbour wall-foot rings (#1155 rn-d): their columns in `along` and the
@@ -1786,6 +1958,12 @@ interface RotaryTargetPlan {
    * neighbour rises out of the band, so an ordinary operation reads nothing.
    */
   readonly wallFootReads: readonly RotaryWallFootRead[]
+  /**
+   * The columns a neighbour can reach and the prep that reads them exactly
+   * (#1173), or `null` when the operation has no neighbour or is an along pass.
+   * See `rotaryNeighbourColumns`.
+   */
+  readonly neighbourColumns: RotaryNeighbourColumns | null
   /**
    * #1155 rn-e: the ends the target itself ends at, where the retained wall is
    * gone from the sampled mesh. A sample there can read "no model under the
@@ -2278,6 +2456,115 @@ function wallFootPreps(
   return reads
 }
 
+/**
+ * The columns of an around operation that a neighbour can reach, and the prep
+ * that reads them (#1173).
+ */
+interface RotaryNeighbourColumns {
+  /** Ascending column indices in the operation's `along` grid. */
+  readonly indices: readonly number[]
+  /** Exact footprint reads on the mesh with the neighbours, over those columns only. */
+  readonly prep: RotarySamplingPrep
+}
+
+/**
+ * The columns of `along` whose cutter a neighbour can reach (#1173): its along
+ * extent comes within `reach` of the column. `reach` is the sampling tool's
+ * radius plus one cell, the farthest the conservative read looks, so every
+ * column outside it reads no neighbour material at all and is sampled exactly
+ * on the target and stubs alone. Wall-foot columns keep their own read and are
+ * left out.
+ */
+function rotaryNeighbourColumns(
+  along: readonly number[],
+  neighbours: readonly RotaryModelMesh[],
+  stock: BarStock,
+  reach: number,
+  wallFeet: ReadonlySet<number>,
+): number[] {
+  const extents = neighbours
+    .map((neighbour) => alongExtremes(neighbour.positions, stock))
+    .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
+  const columns: number[] = []
+  along.forEach((position, index) => {
+    if (wallFeet.has(index)) return
+    if (extents.some((extent) => extent.min < position + reach && extent.max > position - reach)) {
+      columns.push(index)
+    }
+  })
+  return columns
+}
+
+/**
+ * The neighbour-reach columns' rows (#1173), merged into the operation's grid.
+ *
+ * The base grid samples the target and stubs only, so a neighbour's facets do
+ * not raise the per-angle lift at columns it cannot reach (the lift is one
+ * value per angle, added at every along position: the Hex on Frank's bolt
+ * raised it from 0.009 to 0.019 in for A280-284 along the whole shank). The
+ * columns a neighbour **can** reach take the exact footprint maximum on the
+ * mesh with the neighbours instead of the conservative cell read, whose
+ * full-cell pad and per-angle lift made a Hex corner read differently at every
+ * angle (0.886 / 0.881 / 0.890 in at A19 / 20 / 21, against an exact corner of
+ * 0.886). Those columns are then refined on their exact rows with the around
+ * rule (`refineAroundSampling`), so a chord between two exact samples is
+ * checked against the neighbour too, and every angle that refinement adds is
+ * sampled on the base prep for the other columns. Both drivers call this
+ * synchronously after their own base refinement, so pool and serial runs stay
+ * byte-identical.
+ *
+ * Returns `null` when a row is invalid or the refined grid is over budget.
+ */
+function mergeNeighbourColumns(
+  plan: RotaryTargetPlan,
+  stock: BarStock,
+  tool: NormalizedTool,
+  warnings: ToolpathWarning[],
+  angles: number[],
+  tipRows: readonly Float32Array[],
+  shouldStop: (() => boolean) | undefined,
+): { angles: number[]; tips: readonly Float32Array[]; stopped: boolean } | null {
+  const columns = plan.neighbourColumns
+  if (columns === null) return { angles, tips: tipRows, stopped: false }
+  const hooks = shouldStop ? { shouldStop } : {}
+  const sampled = sampleAnglesWithPrep(columns.prep, angles, warnings, hooks)
+  if (!sampled.valid) return null
+  if (sampled.stopped) return { angles, tips: tipRows, stopped: true }
+  let columnAngles: number[] = angles
+  let columnRows: readonly Float32Array[] = sampled.tipRadius
+  if (angles.length > 1) {
+    const refined = refineAroundSampling({
+      prep: columns.prep, stock, tool, warnings, angles, tips: sampled.tipRadius, ...hooks,
+    })
+    if (refined === null) return null
+    if (refined.stopped) return { angles, tips: tipRows, stopped: true }
+    columnAngles = refined.angles
+    columnRows = refined.tips
+  }
+  if (columnAngles.length * plan.along.length > MAX_ROTARY_SAMPLES) return null
+  const known = new Map<number, number>()
+  angles.forEach((angle, k) => known.set(angle, k))
+  const added = columnAngles.filter((angle) => !known.has(angle))
+  let addedRows: readonly Float32Array[] = []
+  if (added.length > 0) {
+    const base = sampleAnglesWithPrep(plan.prep, added, warnings, hooks)
+    if (!base.valid) return null
+    if (base.stopped) return { angles, tips: tipRows, stopped: true }
+    addedRows = base.tipRadius
+  }
+  const addedAt = new Map<number, number>()
+  added.forEach((angle, j) => addedAt.set(angle, j))
+  const tips = columnAngles.map((angle, k) => {
+    const knownAt = known.get(angle)
+    const row = Float32Array.from(knownAt !== undefined ? tipRows[knownAt] : addedRows[addedAt.get(angle) ?? 0])
+    columns.indices.forEach((column, j) => {
+      row[column] = columnRows[k][j]
+    })
+    return row
+  })
+  return { angles: columnAngles, tips, stopped: false }
+}
+
 /** Preparation, or the warning code that refuses the operation before sampling. */
 function prepareRotaryTargets(
   operationId: string,
@@ -2442,13 +2729,25 @@ function prepareRotaryTargets(
   // measured on the bolt case, against the 0.01 mm the rule requires). Around
   // mode has always read this way; an along operation without a neighbour still
   // takes the old path byte for byte.
-  const prep = createRotarySamplingPrep(samplingMesh, stock, samplingTool, {
+  //
+  // #1173: an around operation with neighbours samples its base grid on the
+  // target and stubs only. The columns a neighbour can reach are read exactly on
+  // `samplingMesh` below (`neighbourColumns`); every other column cannot reach a
+  // neighbour, so leaving it out changes no drop-cutter value there -- it only
+  // stops the neighbour's facets raising that angle's lift along the whole bar.
+  // The link rows keep reading `samplingMesh`, neighbours included.
+  const aroundWithNeighbours = params.passDirection === 'around'
+    && params.neighbours !== undefined && params.neighbours.length > 0
+  const baseMesh = aroundWithNeighbours
+    ? rotarySampledMesh(mesh, undefined, stock, tool.units, params)
+    : samplingMesh
+  const prep = createRotarySamplingPrep(baseMesh, stock, samplingTool, {
     along,
     requestedCellSize: params.requestedCellSize,
     ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
     ...((gridExtra !== undefined) ? { gridExtra } : {}),
-    ...(samplingMesh.retainedTriangleStart !== undefined
-      ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+    ...(baseMesh.retainedTriangleStart !== undefined
+      ? { wallTriangleStart: baseMesh.retainedTriangleStart }
       : {}),
     // #1103 ca-e: an around operation may build a helix over the rings it has
     // just sampled, and the helix reads the same physical angles. Keep the
@@ -2471,11 +2770,32 @@ function prepareRotaryTargets(
   // lift, so the ring can never be read lower than the material it must clear.
   const wallFootReads = wallFootPreps(merged.footReads, mesh, params.neighbours, stock, samplingTool,
     params, along, gridExtra)
+  // #1173: the columns a neighbour can reach, read exactly on the mesh with the
+  // neighbours (see `mergeNeighbourColumns`).
+  const columnIndices = aroundWithNeighbours && params.neighbours !== undefined
+    ? rotaryNeighbourColumns(along, params.neighbours, stock, samplingTool.radius + params.requestedCellSize,
+      new Set(merged.footReads.map((read) => read.index)))
+    : []
+  const neighbourColumns: RotaryNeighbourColumns | null = columnIndices.length === 0 ? null : {
+    indices: columnIndices,
+    prep: createRotarySamplingPrep(samplingMesh, stock, samplingTool, {
+      along: columnIndices.map((index) => along[index]),
+      requestedCellSize: params.requestedCellSize,
+      exactTipRows: true,
+      conservativeCellBounds: true,
+      ...((gridExtra !== undefined) ? { gridExtra } : {}),
+      ...(samplingMesh.retainedTriangleStart !== undefined
+        ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
+        : {}),
+    }),
+  }
   return {
     plan: {
       angles, along, stockToLeave, maxRadius,
       samplingMesh, samplingTool, workspace, prep,
+      linkWorkspace: baseMesh === samplingMesh ? workspace : {},
       wallFootReads,
+      neighbourColumns,
       overrunStart: !ends.stubStart,
       overrunEnd: !ends.stubEnd,
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
@@ -2499,7 +2819,7 @@ function completeRotaryTargets(
   tipRows: readonly Float32Array[],
   warnings: ToolpathWarning[],
 ): RotaryTargets {
-  const { along, stockToLeave, maxRadius, samplingMesh, samplingTool, gridExtra, workspace } = plan
+  const { along, stockToLeave, maxRadius, samplingMesh, samplingTool, gridExtra, linkWorkspace } = plan
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
   // decides it carries the stock offset, so leaving stock does not hide a model
@@ -2684,7 +3004,7 @@ function completeRotaryTargets(
           : {}),
       },
       warnings,
-      workspace,
+      linkWorkspace,
     )
     if (sampled.stopped) return 'stopped'
     if (!sampled.valid) return null
@@ -2725,7 +3045,11 @@ function completeRotaryTargets(
   return {
     angles, along, tips, stubFloor, linkRowAt: linkRowAtPhysical, prep: plan.prep,
     stockToLeave: plan.stockToLeave,
-    wallFootIndices: plan.wallFootReads.map((read) => read.index),
+    ringOnlyIndices: [
+      ...plan.wallFootReads.map((read) => read.index),
+      ...(plan.neighbourColumns?.indices ?? []),
+    ].sort((a, b) => a - b),
+    baseAngleStep: plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360,
     stopped: false, refusal: null,
   }
 }
@@ -2825,7 +3149,10 @@ function rotaryTargets(
     angles = refined.angles
     tipRows = refined.tips
   }
-  return completeRotaryTargets(operationId, stock, tool, params, plan, angles, tipRows, warnings)
+  const columns = mergeNeighbourColumns(plan, stock, tool, warnings, angles, tipRows, hooks.shouldStop)
+  if (columns === null) return targetRefusal('operationStepoverRatioRange')
+  if (columns.stopped) return targetStopped([], [])
+  return completeRotaryTargets(operationId, stock, tool, params, plan, columns.angles, columns.tips, warnings)
 }
 
 /**
@@ -2870,7 +3197,10 @@ async function rotaryTargetsAsync(
     angles = refined.angles
     tipRows = refined.tips
   }
-  return completeRotaryTargets(operationId, stock, tool, params, plan, angles, tipRows, warnings)
+  const columns = mergeNeighbourColumns(plan, stock, tool, warnings, angles, tipRows, hooks.shouldStop)
+  if (columns === null) return targetRefusal('operationStepoverRatioRange')
+  if (columns.stopped) return targetStopped([], [])
+  return completeRotaryTargets(operationId, stock, tool, params, plan, columns.angles, columns.tips, warnings)
 }
 
 /**
@@ -3261,8 +3591,8 @@ function finishFromTargets(
     // tool first follows the target's own surface, so a band crossing it would
     // interpolate its turns across the step -- exactly the stair-step ledge the
     // ring exists to remove.
-    const wallFootAt = sampling.wallFootIndices.length > 0
-      ? new Set(sampling.wallFootIndices)
+    const wallFootAt = sampling.ringOnlyIndices.length > 0
+      ? new Set(sampling.ringOnlyIndices)
       : null
     // One forward-only ring at the cursor's angle. A split ring is partial arcs:
     // its last run can still reach the ring end, but the issue's contract is
@@ -3373,7 +3703,11 @@ function finishFromTargets(
   // the merge may drop the interior points of a ring; along mode keeps the old
   // merge and its byte-identical output (#1045 slice G).
   const merged = mergeCollinearCuts(moves, tolerance, params.passDirection === 'around' ? pivot : undefined)
-  return { operationId, moves: merged.moves, warnings, bounds: boundsOf(merged.moves) }
+  const finalMoves = params.passDirection === 'around'
+    ? raiseShortAroundSegments(merged.moves, sampling.baseAngleStep,
+      convertLength(AROUND_RAISE_TOLERANCE_MM, 'mm', tool.units), convertLength(0.001, 'mm', tool.units))
+    : merged.moves
+  return { operationId, moves: finalMoves, warnings, bounds: boundsOf(finalMoves) }
 }
 
 /**
@@ -4605,8 +4939,8 @@ function roughFromTargets(
     // which the tool first follows the target's own surface at that depth, and a
     // helix pose there is resampled onto the wall it is tangent to (which the
     // layer's air rule then refuses outright, dropping the whole band to rings).
-    const wallFootAt = sampling.wallFootIndices.length > 0
-      ? new Set(sampling.wallFootIndices)
+    const wallFootAt = sampling.ringOnlyIndices.length > 0
+      ? new Set(sampling.ringOnlyIndices)
       : null
     const roughBand = continuousRoughInput(sampling, params, tool, warnings, hooks)
     for (let layer = 1; layer <= layers; layer++) {
@@ -4635,6 +4969,7 @@ function roughFromTargets(
           if (!cuts) full = false
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
+        if (!square) feedThroughRingGaps(samples, tips, i, angles, previousRadius, maxRadius, insideRegion, along[i], point)
         const runs = ringRuns(samples)
         layerRings.push({ runs, full: full && runs.length === 1 })
       }
@@ -4875,11 +5210,15 @@ function roughFromTargets(
     convertLength(0.001, 'mm', tool.units),
     params.passDirection === 'around' ? pivot : undefined,
   )
+  const finalMoves = params.passDirection === 'around'
+    ? raiseShortAroundSegments(merged.moves, sampling.baseAngleStep,
+      convertLength(AROUND_RAISE_TOLERANCE_MM, 'mm', tool.units), convertLength(0.001, 'mm', tool.units))
+    : merged.moves
   return {
     operationId,
-    moves: merged.moves,
+    moves: finalMoves,
     warnings,
-    bounds: boundsOf(merged.moves),
+    bounds: boundsOf(finalMoves),
   }
 }
 

@@ -410,8 +410,10 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   // the at-layer links here are the gate-gap transitions the ring layers keep
   // (42 became 64 as the bands stopped covering them). #1155 rn-c re-recorded it
   // once more: the conservative read reaches a whole cell past each sample, one
-  // more gate-gap boundary clears the proof (65).
-  assert.equal(across.length, 65, `gate-gap links on the dense grid (${across.length})`)
+  // more gate-gap boundary clears the proof (65). #1173: the upward-only merge
+  // of the refinement's short steps joins three of those links into the cuts
+  // beside them (62); a merged move stands at or above both, never lower.
+  assert.equal(across.length, 62, `gate-gap links on the dense grid (${across.length})`)
   console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, `
     + `${wideGroups.filter((group) => group.length > 1).length} of them row-proven`)
 }

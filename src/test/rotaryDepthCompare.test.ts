@@ -22,8 +22,9 @@
  * section would put the reference under it and let a cut into that section
  * pass. At one ring position the deepest layer is the one compared with.
  *
- * Mutation: pick the deepest crossing on each side instead of the adjacent one
- * (the 083eb1a7 helper) -> the raised-section check fails.
+ * Mutations: pick the deepest crossing on each side instead of the adjacent one
+ * (the 083eb1a7 helper) -> the raised-section check fails; count a move above
+ * the air radius as a cut (#1173) -> the travel-link check fails.
  *
  * Run with: npx tsx src/test/rotaryDepthCompare.test.ts
  */
@@ -98,6 +99,21 @@ check('at one ring position the deepest layer is the reference', () => {
 check('a point with no adjacent ring on one side is uncovered, not skipped', () => {
   const result = compareRotaryDepth(ring(0.4, 15), point(0.5, 5), stock, options)
   assert.equal(result.uncoveredInMaterial, 2)
+})
+
+check('a baseline move above the blank is air, not the deepest pass through a point', () => {
+  // #1173: the baseline cuts this angle with passes at along 0.4 and 0.6 (tip 5)
+  // and only crosses along 0.5 exactly with a travel-height link (tip 25, above
+  // the 20 air radius). That link removes nothing, so the point is compared with
+  // the passes beside it.
+  const travel: ToolpathMove[] = [{
+    kind: 'cut', from: { x: 0.5, y: 0, z: pivot + 25, a: 0 }, to: { x: 0.5, y: 0, z: pivot + 25, a: 180 },
+  }]
+  const baseline = [...ring(0.4, 5), ...ring(0.6, 5), ...travel]
+  assert.equal(compareRotaryDepth(baseline, point(0.5, 5), stock, options).tooDeep, 0,
+    'a point level with the passes beside it is judged against the travel link')
+  assert.equal(compareRotaryDepth(baseline, point(0.5, 4.8), stock, options).tooDeep, 2,
+    'a point below the passes beside it is not flagged')
 })
 
 if (failures > 0) {
