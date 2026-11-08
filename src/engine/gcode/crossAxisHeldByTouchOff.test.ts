@@ -33,6 +33,18 @@
  * one of the rule's four conditions fails and the bytes must be exactly the
  * golden's.
  *
+ * The five **around** programs are the exception, from #1173 on. That slice
+ * changed their toolpath on purpose — a round-bar rough now feeds through a
+ * short interior ring gap, and the approved upward-only merge of the
+ * refinement's short steps reshapes the rings — so the base commit's text
+ * describes motion this build no longer emits, and comparing against it would
+ * pin the old zigzag instead of the rule. Those five are checked against a
+ * **live** rule-withheld render of the same toolpath: moving the project origin
+ * one unit off the bar's centreline fails condition 3, so the same emitter
+ * writes the cross word on every block, and the held program must be that text
+ * with only the words removed. The rotary suites pin the motion; this suite
+ * pins the removal, and it keeps doing so when the toolpath moves again.
+ *
  * Slice ny-b gives the rule programs a header line after `TOUCH OFF:` telling
  * the operator to zero that axis on the centreline, and rewords the measured
  * touch-off fallback so its `;` comment carries no `Y<digit>`/`Y <digit>` (or,
@@ -142,6 +154,56 @@ function heldCrossAxisLinesIn(text: string): string[] {
 
 // ── The frozen programs ───────────────────────────────────────
 
+/**
+ * The programs whose toolpath #1173 changed by design: the round-bar rough's
+ * interior gap feed (fix C) and the approved upward-only merge of the
+ * refinement's short steps. Their golden entries describe motion this build no
+ * longer emits, so they are compared with a live rule-withheld render of the
+ * same toolpath instead of with those bytes — the old text is kept in the
+ * golden as the pre-rule record, and is deliberately not read here.
+ */
+const LIVE_CONTROL_PROGRAMS: ReadonlySet<string> = new Set([
+  'around-rough-mm',
+  'around-finish-mm',
+  'around-rough-inch',
+  'around-finish-inch',
+  'square-around-rough-mm',
+])
+
+/** The same program with its project origin moved one unit along the cross
+ *  axis. Condition 3 then fails and the emitter writes the cross word on every
+ *  block it holds for the centred program; the toolpath is untouched, so this
+ *  is a byte-exact control for "the rule removes the word and nothing else". */
+function ruleWithheld(program: CrossAxisProgram): CrossAxisProgram {
+  const axis = crossAxisLetter(program) === 'Y' ? 'y' : 'x'
+  return {
+    ...program,
+    project: {
+      ...program.project,
+      origin: { ...program.project.origin, [axis]: program.project.origin[axis] + 1 },
+    },
+  }
+}
+
+/** A program's text from its first operation's comment on. The setup header
+ *  names the origin the control moves and carries no motion; every block that
+ *  can carry a cross word is below this line. */
+function operationBody(text: string): string {
+  const at = text.search(/^; Operation 1:/m)
+  assert.ok(at >= 0, 'the program names its first operation')
+  return text.slice(at)
+}
+
+/** The rule's decision for a program, on the inputs every assertion here uses. */
+function decisionFor(program: CrossAxisProgram): 'x' | 'y' | null {
+  return crossAxisHeldByTouchOff({
+    project: program.project,
+    definition: program.definition,
+    operations: program.operations,
+    manualIndexAngle: null,
+  })
+}
+
 console.log('Testing every frozen program against the base commit...')
 for (const program of PROGRAMS) {
   const result = renderCrossAxisProgram(program)
@@ -150,22 +212,69 @@ for (const program of PROGRAMS) {
     [],
     `${program.name}: the fixture must post cleanly, got ${JSON.stringify(result.warnings)}`,
   )
-  const base = golden[program.name as keyof typeof golden]
-  assert.ok(base !== undefined, `${program.name}: frozen in the golden`)
   const text = normalizeDate(result.gcode)
   const letter = crossAxisLetter(program)
   const gcodeOnly = withoutParenthesisedComments(text)
 
   if (program.holdsCrossAxis) {
-    // 1. Today's text minus the cross words, plus the ny-b operator line,
-    //    exactly. This is the assertion a lost motion line or a re-spaced block
-    //    cannot sneak past.
-    assert.equal(
-      text,
-      withHeldCrossAxisLine(withoutCrossWords(base, letter), letter),
-      `${program.name}: the program is the base commit's with every ${letter} word removed and the operator line added`,
-    )
-    assert.notEqual(text, base, `${program.name}: the base text really did write the cross axis`)
+    if (LIVE_CONTROL_PROGRAMS.has(program.name)) {
+      // 1a. #1173 moved this program's toolpath on purpose, so the base commit's
+      //     bytes are not its reference. The same toolpath, rendered with the
+      //     rule withheld, is: the held body must be that text with only the
+      //     words gone. Byte equality covers assertion 4's positions as well —
+      //     a lost or re-spaced block cannot survive it.
+      const control = ruleWithheld(program)
+      assert.equal(
+        decisionFor(program),
+        letter.toLowerCase(),
+        `${program.name}: the centred program holds its cross axis`,
+      )
+      assert.equal(
+        decisionFor(control),
+        null,
+        `${program.name}: moving the origin off the centreline withholds the rule`,
+      )
+      const controlResult = renderCrossAxisProgram(control)
+      assert.deepEqual(
+        controlResult.warnings,
+        [],
+        `${program.name}: the rule-withheld control posts cleanly`,
+      )
+      const controlBody = operationBody(normalizeDate(controlResult.gcode))
+      assert.ok(
+        new RegExp(`${letter}-?\\d`).test(controlBody),
+        `${program.name}: the control really writes the ${letter} word`,
+      )
+      assert.equal(
+        operationBody(text),
+        withoutCrossWords(controlBody, letter),
+        `${program.name}: the program is the rule-withheld render with every ${letter} word removed`,
+      )
+    } else {
+      const base = golden[program.name as keyof typeof golden]
+      assert.ok(base !== undefined, `${program.name}: frozen in the golden`)
+      // 1. Today's text minus the cross words, plus the ny-b operator line,
+      //    exactly. This is the assertion a lost motion line or a re-spaced block
+      //    cannot sneak past.
+      assert.equal(
+        text,
+        withHeldCrossAxisLine(withoutCrossWords(base, letter), letter),
+        `${program.name}: the program is the base commit's with every ${letter} word removed and the operator line added`,
+      )
+      assert.notEqual(text, base, `${program.name}: the base text really did write the cross axis`)
+      // 4. The position is unchanged: the parser reads the same X, Y, Z and A
+      //    after every block of the new text as after the base commit's.
+      const after = positions(parsed(text))
+      const before = positions(parsed(base))
+      assert.equal(after.length, before.length, `${program.name}: same block count as the base`)
+      for (let index = 0; index < after.length; index += 1) {
+        assert.deepEqual(
+          after[index],
+          before[index],
+          `${program.name}: parsed position ${index} is unchanged (X, Y, Z and A)`,
+        )
+      }
+    }
     // 2. The controller's own test: the whole file, with only parenthesised
     //    comments removed, carries no cross word. A `;` comment counts, which is
     //    why the engine-written header must not spell one either.
@@ -183,19 +292,9 @@ for (const program of PROGRAMS) {
       [`; ${heldCrossAxisLine(letter)}`],
       `${program.name}: exactly one operator line names the held axis`,
     )
-    // 4. The position is unchanged: the parser reads the same X, Y, Z and A
-    //    after every block of the new text as after the base commit's.
-    const after = positions(parsed(text))
-    const before = positions(parsed(base))
-    assert.equal(after.length, before.length, `${program.name}: same block count as the base`)
-    for (let index = 0; index < after.length; index += 1) {
-      assert.deepEqual(
-        after[index],
-        before[index],
-        `${program.name}: parsed position ${index} is unchanged (X, Y, Z and A)`,
-      )
-    }
   } else {
+    const base = golden[program.name as keyof typeof golden]
+    assert.ok(base !== undefined, `${program.name}: frozen in the golden`)
     // A control: one of the four conditions fails, so the bytes are today's.
     assert.equal(text, base, `${program.name}: unchanged — a control keeps the base commit's bytes`)
     assert.ok(
