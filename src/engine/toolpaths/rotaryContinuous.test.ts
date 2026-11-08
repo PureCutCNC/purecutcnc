@@ -1187,8 +1187,16 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   assert.ok(!monotoneA(wrapped), 'and it breaks the monotone-A contract')
 }
 
-assert.ok(splitSeeds > 0,
-  `a refused band is split into helices and rings rather than given up (${splitSeeds} seeds)`)
+// #1173: the helix reads each row as the **exact** footprint maximum on a round
+// bar, so the refinement on these chiral bands converges instead of chasing the
+// conservative cell rise's per-angle noise -- every seed above now verifies as
+// one helix per band, and the production path no longer splits here. The split's
+// rules (a helix - rings - helix around the failing span, the bracketing rings
+// cut whole) are the synthetic `walkBand` cases above, which take a refusal
+// directly; this block still checks every emitted ring, seam and coverage of each
+// seed, whichever motion it chose.
+assert.ok(splitSeeds >= 0,
+  `the split seeds are counted, not required (${splitSeeds} seeds)` )
 console.log(
   `  finish integration: ${helixSeeds} chiral seeds (${chiralHelixSeeds} helixed, ${splitSeeds} split into `
   + `helix and rings over ${splitRings} required rings), ${helixSegments} emitted segments `

@@ -1054,13 +1054,21 @@ const NO_REGION_HASHES: Record<string, string> = {
   // split-ring eligibility rule refusing it outright, so #1117's same-A links
   // between the rings a helix leaves behind stay down. The links' heights and
   // material bounds are unchanged.
-  'round/rotary_rough/around': 'moves=55de189fa03daa9a warnings= gcode=7ef25b73223eae93',
+  // #1173 re-recorded this row on purpose, for **both** of the approved output
+  // changes and for no other reason: the round-bar rough is the one no-region
+  // fixture the round gap feed reaches (fix C -- a short interior gap the layer
+  // below cleared is fed through instead of retracted) and the one the
+  // upward-only merge of the refinement's short steps also reshapes. With the
+  // merge switched off this row still differs (fix C alone); with the gap feed
+  // switched off and the merge on it differs too. The other three around rows
+  // below change for the merge alone.
+  'round/rotary_rough/around': 'moves=7c739898ea5a95d4 warnings= gcode=ff89e86e908fefe3',
   'round/rotary_finish/along': 'moves=b1b5c85c4e482903 warnings=rotaryFinishWithoutRough gcode=3efbbcdcf39ad8e9',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
-  'round/rotary_finish/around': 'moves=1085d4ff6b1a9879 warnings=rotaryFinishWithoutRough gcode=d28edbb97670d730',
+  'round/rotary_finish/around': 'moves=5211c8f05d44d785 warnings=rotaryFinishWithoutRough gcode=c538f280e6e9b7aa',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=c8e19d47e3a0b8c1',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer
@@ -1076,9 +1084,16 @@ const NO_REGION_HASHES: Record<string, string> = {
   // and the finish alike** (review P1: the finish was admitted in correction
   // round 1), so the rings and their at-layer links there are replaced by the
   // helix. Every along row is unchanged.
-  'square/rotary_rough/around': 'moves=d28beb23c9ecec1f warnings= gcode=94853fbb5764c197',
+  'square/rotary_rough/around': 'moves=cfdc12df9188c018 warnings= gcode=fe24c049898a783c',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
-  'square/rotary_finish/around': 'moves=d3390a0b69e35539 warnings=rotaryFinishWithoutRough gcode=49098309c88859d3',
+  'square/rotary_finish/around': 'moves=567f8fcd6012bb1a warnings=rotaryFinishWithoutRough gcode=95a606809357ecfd',
+  // #1173 re-recorded the three remaining around rows for the **approved
+  // upward-only merge** alone (`raiseShortAroundSegments`, which drops a refined
+  // point only when the chord over it stays 0..0.02 mm
+  // above every sample it spans): measured on the tip with the merge switched
+  // off, each of these rows is the bytes recorded above. No neighbor exists in
+  // these fixtures, so neither the exact-neighbour columns nor the gap feed can
+  // reach them.
 }
 
 const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)

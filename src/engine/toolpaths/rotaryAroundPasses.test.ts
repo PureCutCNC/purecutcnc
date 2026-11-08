@@ -2033,8 +2033,10 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
     previousDeepest = Math.min(previousDeepest, ...tips)
   }
   // The revolved mesh is a 64-gon, so its sampled radius sits a few thousandths
-  // under the nominal 5; the layers still have to reach it.
-  approx(previousDeepest, LAYER_MODEL_RADIUS, `${label}: the layers reach the model's deepest cut`, 0.01)
+  // under the nominal 5; the layers still have to reach it. #1173: the
+  // upward-only merge of the refinement's short steps may leave the deepest
+  // point up to its 0.02 mm cap higher (5.0106 here), never lower.
+  approx(previousDeepest, LAYER_MODEL_RADIUS, `${label}: the layers reach the model's deepest cut`, 0.03)
   for (let k = 1; k < layers; k++) {
     const radius = LAYER_BAR_RADIUS - k * LAYER_STEPDOWN
     assert.ok(
@@ -2052,9 +2054,18 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
   assert.deepEqual(result.warnings, [], 'the around layering rough has no warning')
   const points = orderedCutPoints(result.moves)
   // #1103 slice ca-d: the layer's full rings are one continuous helix, so its
-  // cuts visit many along positions instead of three ring planes.
-  assert.ok(new Set(points.map(alongOf)).size > 3,
-    `the around band is cut continuously (${new Set(points.map(alongOf)).size} along positions)`)
+  // cuts visit many along positions instead of three ring planes. #1173 makes
+  // the helix's rows the exact surface, so on a cylinder its Z is one level and
+  // the collinear merge joins a whole layer into one move: the *emitted* along
+  // positions are then the move's two ends, and the continuous advance is what
+  // that single move says.
+  const advancing = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(alongOf(move.to) - alongOf(move.from)) > 1e-9
+    && angleOf(move.to) !== angleOf(move.from))
+  const longest = advancing.reduce((best, move) => Math.max(best, Math.abs(alongOf(move.to) - alongOf(move.from))), 0)
+  assert.ok(longest > 1,
+    `the around band is cut continuously (longest advancing cut ${longest.toFixed(3)}, `
+    + `${new Set(points.map(alongOf)).size} emitted along positions)`)
   checkLayering('around', aroundLayers(result.moves, pivot))
 }
 
@@ -2323,7 +2334,10 @@ console.log('Testing the emitted around sweep on the hex prism...')
   }
   assert.ok(undercut <= 1e-6,
     `every emitted sample is at or above the model (worst endpoint under-read ${undercut.toFixed(6)} mm)`)
-  assert.ok(checked > 2000, `the emitted sweep check walked ${checked} interior points`)
+  // #1173: the upward-only merge joins the refinement's short steps, so the same
+  // ring is fewer moves (1928 interior points here, from just over 2000); every
+  // emitted move is still walked.
+  assert.ok(checked > 1800, `the emitted sweep check walked ${checked} interior points`)
   // And the subdivision is what made it hold: at least one emitted step is
   // finer than the unrefined starting step, while the sagitta cap still bounds
   // the step as a whole.

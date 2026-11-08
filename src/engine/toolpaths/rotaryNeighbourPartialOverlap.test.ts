@@ -298,6 +298,14 @@ interface HexSolid {
   readonly alongMin: number
   readonly alongMax: number
   readonly apothem: number
+  /**
+   * The radial stock to leave the solid is grown by, as a distance (#1173): every
+   * point closer than this to the prism. The sampler applies the leave that way
+   * (the tool enlarged by it, added back at the tip), so over a corner it is a
+   * rounded offset; pushing the faces out keeps a sharp corner that only an
+   * over-read could clear, which the exact neighbour read no longer is.
+   */
+  readonly grow: number
   readonly normals: readonly { readonly across: number; readonly up: number }[]
   readonly centre: number
   readonly pivot: number
@@ -322,7 +330,8 @@ function polygonPrism(
   return {
     alongMin,
     alongMax,
-    apothem: acrossFlats / 2 + grow,
+    apothem: acrossFlats / 2,
+    grow,
     normals,
     centre: barCentre(stock),
     pivot: barPivotZ(stock),
@@ -336,12 +345,37 @@ function polygonPrism(
  * tangent to a face reads 0 rather than the whole radial depth.
  */
 function hexDepth(along: number, across: number, up: number, hex: HexSolid): number {
-  if (along < hex.alongMin || along > hex.alongMax) return Number.NEGATIVE_INFINITY
+  const x = across - hex.centre
+  const y = up - hex.pivot
   let largest = Number.NEGATIVE_INFINITY
-  for (const normal of hex.normals) {
-    largest = Math.max(largest, normal.across * (across - hex.centre) + normal.up * (up - hex.pivot))
+  for (const normal of hex.normals) largest = Math.max(largest, normal.across * x + normal.up * y)
+  const axial = Math.max(hex.alongMin - along, along - hex.alongMax, 0)
+  if (largest <= hex.apothem && axial === 0) {
+    return hex.grow + Math.min(hex.apothem - largest, along - hex.alongMin, hex.alongMax - along)
   }
-  return Math.min(hex.apothem - largest, along - hex.alongMin, hex.alongMax - along)
+  // Outside: the leave less the Euclidean distance to the prism, the
+  // cross-section distance taken to the polygon's edges (each vertex is where
+  // two neighbouring facet lines meet).
+  let radial = 0
+  if (largest > hex.apothem) {
+    radial = Number.POSITIVE_INFINITY
+    const count = hex.normals.length
+    const vertex = (k: number) => {
+      const a = hex.normals[k]
+      const b = hex.normals[(k + 1) % count]
+      const scale = hex.apothem / (1 + a.across * b.across + a.up * b.up)
+      return { across: (a.across + b.across) * scale, up: (a.up + b.up) * scale }
+    }
+    for (let k = 0; k < count; k++) {
+      const p = vertex((k + count - 1) % count)
+      const q = vertex(k)
+      const dx = q.across - p.across
+      const dy = q.up - p.up
+      const t = Math.min(1, Math.max(0, ((x - p.across) * dx + (y - p.up) * dy) / (dx * dx + dy * dy)))
+      radial = Math.min(radial, Math.hypot(x - p.across - t * dx, y - p.up - t * dy))
+    }
+  }
+  return hex.grow - Math.hypot(radial, axial)
 }
 
 /**

@@ -441,18 +441,23 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `crossAxisHeldByTouchOff.test.ts` (issue #1156: the
   programs `src/test/crossAxisPrograms.ts` builds are posted against
-  `crossAxisHeldPrograms.golden.json`, frozen from the base commit — each
+  `crossAxisHeldPrograms.golden.json`, frozen from the base commit — a
   rule-holding program's text is that golden with every cross word removed and
   the ny-b operator line added, byte for byte, the gSender axis-word test finds
-  none, and `parseGcodeMotion` reads the same X/Y/Z/A after every block; a bar
-  along Y drops X and keeps Y; and each control — a tool-change template naming
-  Y, an origin off the centreline, a manual-index Top setup — is byte-identical,
-  still writes the word and gets no operator line. Slice ny-b's own cases: the
-  measured touch-off fallback on a bar along X and along Y is reworded with no
-  `Y<digit>`/`X<digit>` word while a block program at the same off-named origin
-  keeps `X… Y… FROM THE FRONT-LEFT CORNER`; a borrowed-Y machine and every
-  bundled (non-rotary) machine carry no operator line. A multi-line tool-change
-  entry and a compact/leading-zero home
+  none, and `parseGcodeMotion` reads the same X/Y/Z/A after every block. From
+  #1173 the five around programs are the exception: that slice changed their
+  toolpath by design, so they are compared with a live rule-withheld render of
+  the same toolpath instead (the origin one unit off the bar's centreline makes
+  the emitter write the word on every block, and the held text must be that
+  render with only the words removed), while their frozen entries stay as the
+  pre-rule record. A bar along Y drops X and keeps Y; and each control — a
+  tool-change template naming Y, an origin off the centreline, a manual-index
+  Top setup — is byte-identical, still writes the word and gets no operator
+  line. Slice ny-b's own cases: the measured touch-off fallback on a bar along
+  X and along Y is reworded with no `Y<digit>`/`X<digit>` word while a block
+  program at the same off-named origin keeps `X… Y… FROM THE FRONT-LEFT
+  CORNER`; a borrowed-Y machine and every bundled (non-rotary) machine carry no
+  operator line. A multi-line tool-change entry and a compact/leading-zero home
   (`G90G28`, `G028`, `G90G30`) each withhold the rule; a sub-format cross move
   keeps its block, and the X repetition on it, in a differential control whose
   origin is shifted off the centreline; and a 5 mm machine-plane arc program

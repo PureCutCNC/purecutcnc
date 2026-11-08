@@ -923,6 +923,23 @@ export interface RotarySamplingSetup {
    * needs the triangle candidates the raster pass gathered.
    */
   readonly exactTipRows?: boolean
+  /**
+   * Grow the exact footprint read's disc by this much (#1173).
+   *
+   * The exact read is the maximum over the cutter's **own** disc, and a disc
+   * that only grazes a feature -- a boss's end face two millimetres from the
+   * sample, say -- can take that feature's *rim* height instead of its top. A
+   * whole-bar base grid meets that at every model end: on the two-boss gap
+   * fixture the unpadded read came back 4 mm low. Growing the disc by one
+   * half a sampling cell is the uncertainty the conservative cell read's own
+   * centre sample has, so a grazing footprint still reads the material it
+   * grazes, while a smooth
+   * turned surface keeps its maximum inside the disc either way -- a shank still
+   * reads the target's own radius. The ring-only columns (a wall foot, a
+   * neighbour) keep the unpadded read: they exist to sit exactly on the surface
+   * they are tangent to.
+   */
+  readonly exactTipPad?: number
   /** See `RotarySampleOptions.wallTriangleStart`. */
   readonly wallTriangleStart?: number
   /** See `RotarySampleOptions.gridExtra`. */
@@ -963,6 +980,8 @@ export interface RotarySamplingPrep {
   readonly conservativeCellBounds: boolean
   /** See `RotarySamplingSetup.exactTipRows` (#1155 rn-d correction 3). */
   readonly exactTipRows?: boolean
+  /** See `RotarySamplingSetup.exactTipPad` (#1173). */
+  readonly exactTipPad?: number
   readonly wallTriangleStart?: number
   readonly gridExtra?: RotaryModelMesh
   /** See `RotarySamplingSetup.angleMaps` (#1103 ca-e). */
@@ -1025,6 +1044,7 @@ export function createRotarySamplingPrep(
     requestedCellSize: setup.requestedCellSize,
     conservativeCellBounds,
     ...(setup.exactTipRows === true ? { exactTipRows: true } : {}),
+    ...(setup.exactTipPad !== undefined ? { exactTipPad: setup.exactTipPad } : {}),
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
     ...(setup.gridExtra !== undefined ? { gridExtra: setup.gridExtra } : {}),
     angleMaps: setup.angleMaps ?? 'off',
@@ -1313,6 +1333,14 @@ export function runRotaryAngleJob(
     // tested whether or not it lands in the window (#1103 ca-e correction 2).
     rasterWork = count
     candidates = count
+    // #1173: an exact-tip row reads the candidate triangles themselves and
+    // never the map (its lift is 0, and it is never cached), so the raster pass
+    // is skipped. The row is the same; only the wasted map is gone.
+    if (prep.exactTipRows === true) {
+      const row = new Float32Array(along.length)
+      exactFootprintTips(row, prep, plan, subset, candidates, cos, sin)
+      return { index: job.index, row, lift: 0, warnings: angleWarnings, reused: false, rasterWork }
+    }
     const buildOptions = {
       window,
       triangles: subset.subarray(0, count),
@@ -1429,21 +1457,57 @@ function exactFootprintTips(
   const index = mesh.index
   const across = plan.across
   const up = plan.up
-  const radius = tool.radius
+  // #1173: the disc a whole-grid read uses is the cutter's own, grown by one
+  // sampling cell when the prep asks for it (see `exactTipPad`).
+  const radius = tool.radius + (prep.exactTipPad ?? 0)
   const radiusSq = radius * radius
   const alongAxis = stock.axis === 'x' ? 0 : 1
   // The projected triangle in one ring's local `(along, across)` frame.
   const vx = [0, 0, 0]
   const vy = [0, 0, 0]
   const vz = [0, 0, 0]
+  // #1173: the turned `across` and `up` of each candidate vertex, and its along
+  // position, depend only on the angle, so they are computed once here and read
+  // by every ring; only `along - origin` is per ring. The values are the same
+  // expressions the per-ring projection used, so every tip is bit for bit the
+  // same, and a triangle whose along span misses a ring's disc is skipped
+  // before anything else is read.
+  const turned = new Float64Array(count * 9)
+  const spanMin = new Float64Array(count)
+  const spanMax = new Float64Array(count)
+  // #1173: a candidate's turned `across` does not depend on the ring, so its
+  // bounds against the footprint's `[-radius, radius]` window are hoisted out of
+  // the ring walk -- one pair per candidate per angle instead of one per ring.
+  // The exact reads are now the whole around grid's read, so this is the hot
+  // path; the arithmetic it skips is a pure bound test, so every value below is
+  // the statement it was.
+  const acrossMin = new Float64Array(count)
+  const acrossMax = new Float64Array(count)
+  for (let s = 0; s < count; s++) {
+    const offset = subset[s]
+    let lo = Number.POSITIVE_INFINITY
+    let hi = Number.NEGATIVE_INFINITY
+    let low = Number.POSITIVE_INFINITY
+    let high = Number.NEGATIVE_INFINITY
+    for (let j = 0; j < 3; j++) {
+      const v = index[offset + j]
+      const a = positions[v * 3 + alongAxis]
+      const y = across[v] * cos - up[v] * sin
+      turned[s * 9 + j * 3] = a
+      turned[s * 9 + j * 3 + 1] = y
+      turned[s * 9 + j * 3 + 2] = pivot + across[v] * sin + up[v] * cos
+      if (a < lo) lo = a
+      if (a > hi) hi = a
+      if (y < low) low = y
+      if (y > high) high = y
+    }
+    spanMin[s] = lo
+    spanMax[s] = hi
+    acrossMin[s] = low
+    acrossMax[s] = high
+  }
   for (let i = 0; i < along.length; i++) {
     const origin = along[i]
-    const project = (v: number, j: number): void => {
-      const p = v * 3
-      vx[j] = positions[p + alongAxis] - origin
-      vy[j] = across[v] * cos - up[v] * sin
-      vz[j] = pivot + across[v] * sin + up[v] * cos
-    }
     // Barycentric sign test against the projected triangle, in the disc's local
     // frame. Defined once per ring (it reads the triangle scratch above), not per
     // candidate.
@@ -1456,19 +1520,26 @@ function exactFootprintTips(
     }
     let best = Number.NEGATIVE_INFINITY
     for (let s = 0; s < count; s++) {
-      const offset = subset[s]
-      project(index[offset], 0)
-      project(index[offset + 1], 1)
-      project(index[offset + 2], 2)
+      if (spanMin[s] - origin > radius || spanMax[s] - origin < -radius) continue
+      // A triangle whose turned `across` misses the disc cannot contribute, and
+      // neither bound depends on the ring.
+      if (acrossMin[s] > radius || acrossMax[s] < -radius) continue
+      // Inlined projection (the same three statements the scratch closure wrote).
+      const base = s * 9
+      vx[0] = turned[base] - origin
+      vy[0] = turned[base + 1]
+      vz[0] = turned[base + 2]
+      vx[1] = turned[base + 3] - origin
+      vy[1] = turned[base + 4]
+      vz[1] = turned[base + 5]
+      vx[2] = turned[base + 6] - origin
+      vy[2] = turned[base + 7]
+      vz[2] = turned[base + 8]
       // A triangle whose projected bounds miss the disc cannot contribute.
       const minX = Math.min(vx[0], vx[1], vx[2])
       if (minX > radius) continue
       const maxX = Math.max(vx[0], vx[1], vx[2])
       if (maxX < -radius) continue
-      const minY = Math.min(vy[0], vy[1], vy[2])
-      if (minY > radius) continue
-      const maxY = Math.max(vy[0], vy[1], vy[2])
-      if (maxY < -radius) continue
       const e1x = vx[1] - vx[0]
       const e1y = vy[1] - vy[0]
       const e2x = vx[2] - vx[0]
