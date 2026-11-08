@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from './fixtures'
-import { getProject } from './helpers'
+import { getProject, reloadWhenIdle } from './helpers'
 import { builtinTheme, type BuiltinThemeId } from '../src/theme/registry'
 import { parseColor } from '../src/theme/color'
 import type { ThemeTokenKey } from '../src/theme/tokens'
@@ -56,7 +56,7 @@ test('switches and restores appearance without changing the project', async ({ a
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('light')
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect(ui.appearance.trigger(app.page)).toHaveAttribute('aria-label', 'Appearance: Light')

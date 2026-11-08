@@ -17,7 +17,7 @@
 import type { Locator, Page } from '@playwright/test'
 import type { SetupFace, SketchFeature } from '../src/types/project'
 import { canvasWorldPoint } from './overlapFeatureSelection.helpers'
-import { seedProject, getProject } from './helpers'
+import { seedProject, getProject, reloadWhenIdle } from './helpers'
 
 function rectProfile(x: number, y: number, w: number, h: number) {
   return { start: { x, y }, segments: [{ type: 'line' as const, to: { x: x + w, y } }, { type: 'line' as const, to: { x: x + w, y: y + h } }, { type: 'line' as const, to: { x, y: y + h } }, { type: 'line' as const, to: { x, y } }], closed: true }
@@ -28,7 +28,7 @@ export interface ReferenceFixtureOptions { face: SetupFace; axis: 'x' | 'y'; hid
 /** Canonical profiles; the guide lives on the opposite authoring face. */
 export async function seedConstructionReferences(page: Page, options: ReferenceFixtureOptions): Promise<Record<string, unknown>> {
   await page.evaluate(() => localStorage.setItem('camcam.snapSettings', JSON.stringify({ enabled: true, modes: ['point'], pixelRadius: 8 })))
-  await page.reload()
+  await reloadWhenIdle(page)
   await page.waitForSelector('canvas.sketch-canvas')
   const { face, axis } = options
   const foreign = face === 'top' ? 'bottom' : 'top'
