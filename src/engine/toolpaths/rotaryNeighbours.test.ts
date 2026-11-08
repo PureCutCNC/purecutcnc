@@ -540,8 +540,12 @@ check('the shank band helices while the head band falls back to rings', () => {
   const helixMoves = result.moves.filter((move) => move.kind === 'cut'
     && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) >= 360
     && Math.abs(alongOf(move.to) - alongOf(move.from)) > 1e-9)
-  // The rough has two layers on the shank; each is one continuous helix.
-  assert.equal(helixMoves.length, 2, `the shank is cut by one continuous helix per layer, found ${helixMoves.length}`)
+  // The rough has two layers on the shank; each is one continuous helix. #1173
+  // correction round 2 can split one of them into two moves where the exact read
+  // meets a layer floor at a different angle, so the count is a floor and the
+  // per-move checks below are the contract: every helix starts past the head and
+  // advances along.
+  assert.ok(helixMoves.length >= 2, `the shank is cut by continuous helices, found ${helixMoves.length}`)
   for (const move of helixMoves) {
     const low = Math.min(alongOf(move.from), alongOf(move.to))
     const high = Math.max(alongOf(move.from), alongOf(move.to))
@@ -666,7 +670,13 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // only (6871 with the columns the Hex can reach read exactly, as rings, and
   // the in-ring gaps fed through), and the upward-only merge joins the
   // refinement's short steps.
-  assert.equal(withNeighbour.length, 3989, 'the overlapping neighbour moves the output: the measured bolt run')
+  //
+  // 3989 -> 1340 for #1173 correction round 2: the finish's helix reads each row
+  // as the exact footprint maximum, so the shank's Z is one level instead of
+  // drifting by the cell alignment and `mergeCollinearCuts` joins the whole
+  // shank (its turns included) into one straight move per band. Fewer, longer
+  // blocks -- the per-move geometry is the same surface.
+  assert.equal(withNeighbour.length, 1340, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

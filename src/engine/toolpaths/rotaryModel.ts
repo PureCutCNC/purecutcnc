@@ -3343,6 +3343,16 @@ function continuousFinishInput(
     stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
+    // #1173: a round bar's helix reads the exact footprint maximum, the read
+    // its wall-foot ring and its neighbour columns already take. The
+    // conservative cell rise is one value per angle and saturates at a whole
+    // cell on any shoulder, so the helix rode that cell above the target over
+    // the whole shank (0.0098 in on Frank's bolt) while the ring beside it sat
+    // at target + leave. A square blank keeps the conservative read: its helix
+    // rides the retained-corner rules the ring path built on it.
+    ...(isSquareStock(prep.stock) || tool.type !== 'flat_endmill'
+      ? {}
+      : { readExactRows: true, exactTipPad: params.requestedCellSize * 1.25 }),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
@@ -3379,6 +3389,16 @@ function continuousRoughInput(
     stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
+    // #1173: a round bar's helix reads the exact footprint maximum, the read
+    // its wall-foot ring and its neighbour columns already take. The
+    // conservative cell rise is one value per angle and saturates at a whole
+    // cell on any shoulder, so the helix rode that cell above the target over
+    // the whole shank (0.0098 in on Frank's bolt) while the ring beside it sat
+    // at target + leave. A square blank keeps the conservative read: its helix
+    // rides the retained-corner rules the ring path built on it.
+    ...(isSquareStock(prep.stock) || tool.type !== 'flat_endmill'
+      ? {}
+      : { readExactRows: true, exactTipPad: params.requestedCellSize * 1.25 }),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),

@@ -39,7 +39,12 @@
  *   6. let the link rows share the base prep's workspace -> a ring-to-ring link
  *      reads the target alone and the finish cuts into the Hex;
  *   7. let `raiseShortAroundSegments` drop a point the chord passes under -> the
- *      merged path runs below an original sample.
+ *      merged path runs below an original sample;
+ *   8. read the helix's rows with the conservative cell rise again
+ *      (`readExactRows` off in `continuousRoughInput`/`continuousFinishInput`)
+ *      -> the last rough layer and the finish ride a whole height-map cell
+ *      above the wall-foot ring they close onto, and their Z moves with the
+ *      cell alignment from angle to angle.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourOverlapJitter.test.ts
  */
@@ -249,35 +254,139 @@ check('the first overlap ring rises and falls once over each corner, with no zig
 
 // ── 2. a neighbour the cutter cannot reach leaves the shank alone ─────────
 
-check('the shank tips do not change with a neighbour the shank columns cannot reach', () => {
+/**
+ * The shank's helix poses, in project units above the pivot.
+ *
+ * A helix move advances along while it turns. With the exact read the whole
+ * shank's helix is one level, so `mergeCollinearCuts` joins its turns into one
+ * straight move in `(x, A, z)` -- its two ends are the only pose values the
+ * emitted program still carries, and they are enough: the level *is* the
+ * property.
+ */
+function shankHelixTips(moves: readonly ToolpathMove[]): number[] {
+  // The move reaches the shank: a helix that spans the whole Turn qualifies (its
+  // band starts at the Turn's own start when no neighbour is there), a ring does
+  // not (it does not change along).
+  return moves
+    .filter((move) => move.kind === 'cut' && move.from.a !== undefined
+      && Math.abs(move.to.x - move.from.x) > 1e-9
+      && Math.min(move.from.x, move.to.x) < 3.6
+      && Math.max(move.from.x, move.to.x) > 1.6)
+    .flatMap((move) => [tipOf(move.from), tipOf(move.to)])
+}
+
+/** The distinct Z levels the shank's helix cuts at, ascending. */
+function shankHelixLevels(moves: readonly ToolpathMove[]): string[] {
+  return [...new Set(shankHelixTips(moves).map((tip) => tip.toFixed(6)))].sort((a, b) => Number(a) - Number(b))
+}
+
+check('the shank helix cuts the same levels with and without a neighbour it cannot reach', () => {
   // Every shank column is out of the Hex's reach, so it must cut exactly the
   // tips it cuts with no Hex at all. Before #1173 the Hex's facets raised the
   // per-angle lift for A280..284 along the whole shank (0.0193 in, against
   // 0.0090 elsewhere): a 0.24 mm step on every helix turn.
-  const shank = (moves: readonly ToolpathMove[]): Map<string, number> => {
-    const tips = new Map<string, number>()
-    for (const move of moves) {
-      if (move.kind !== 'cut' || Math.min(move.from.x, move.to.x) < 2) continue
-      tips.set(`${move.to.x.toFixed(6)}@${(((move.to.a ?? 0) % 360) + 360) % 360}`, tipOf(move.to))
-    }
-    return tips
-  }
   const plain = boltFixture(false)
-  const without = shank(generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_rough')))
-  const withHex = shank(rough)
-  assert.ok(withHex.size > 100, `the shank is cut (${withHex.size} points)`)
-  // The final layer's spread on the shank: the Turn plus the leave, flat.
-  const lowest = [...withHex.values()].filter((tip) => tip < 0.6)
-  const spread = Math.max(...lowest) - Math.min(...lowest)
-  assert.ok(spread <= 0.001, `the shank's final tips spread over ${spread.toFixed(5)} in`)
-  let compared = 0
-  for (const [key, tip] of withHex) {
-    const plainTip = without.get(key)
-    if (plainTip === undefined) continue
-    compared++
-    assert.ok(Math.abs(plainTip - tip) < 1e-9, `the shank at ${key} cuts ${tip}, without the Hex ${plainTip}`)
+  const plainRough = shankHelixLevels(generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_rough')))
+  const plainFinish = shankHelixLevels(generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_finish')))
+  const withRough = shankHelixLevels(rough)
+  const withFinish = shankHelixLevels(finish)
+  assert.ok(withRough.length >= 4, `the rough helices the shank at its layers (${withRough.join(', ')})`)
+  assert.deepEqual(withFinish, plainFinish, 'the finish shank helix changes with a neighbour it cannot reach')
+  // The rough's **layer radii** are planned from the conservative base grid, and
+  // on the Hex run the wall-foot ring's exact read is what pulls the deepest one
+  // down to the Turn plus the leave. A project with no neighbour has no such
+  // column, so its deepest layer is still planned one cell high (0.52943 against
+  // 0.51999) and the helix is floored there. That is the layer plan, not the
+  // helix: the helix's own rows are the exact surface in both runs, which is
+  // what the level check below measures. Making the base grid exact too is the
+  // obvious next step, and it needs `exactFootprintTips` to stop reading a
+  // footprint that only *touches* a feature (the two-boss gap fixture in
+  // `rotaryAroundPasses.test.ts` reads 4 mm low unpadded), so it is out of this
+  // slice.
+  // The shallow layers sit on their planned radii, which the neighbour never
+  // touches: those are the same in both runs.
+  assert.deepEqual(withRough.slice(1), plainRough.slice(1),
+    `the rough's shallow layers are the same with and without the Hex (${withRough.join(', ')} / ${plainRough.join(', ')})`)
+  // The deepest one is the layer plan (see above); the Hex may only pull it
+  // **down**, never lift it.
+  assert.ok(Number(withRough[0]) <= Number(plainRough[0]) + 1e-6,
+    `the rough's deepest layer is not lifted by the Hex (${withRough[0]} / ${plainRough[0]})`)
+  // One level per pass: the conservative read drifted by the cell alignment from
+  // angle to angle (0.50915..0.51010 in on the finish), and each drift was a
+  // separate emitted move.
+  assert.equal(withFinish.length, 1, `the finish's shank helix is one level (${withFinish.join(', ')})`)
+})
+
+// ── 2b. the last rough layer and the finish sit on the target + leave ─────
+
+check('the last rough layer and the finish helix sit level with the wall-foot ring', () => {
+  // The cut that clears the Hex wall is the wall-foot ring: one ring at
+  // `face + leave + radius`, read on the target's own surface, so its tip is the
+  // Turn plus the leave. The helix that closes onto it must sit at that same
+  // level along the whole shank, not one conservative height-map cell above it
+  // with a Z that drifts by the cell alignment from angle to angle (the last
+  // retest: 0.52943..0.53010 in on the rough's last layer against the ring's
+  // 0.51999, and 0.50915..0.51010 on the finish against 0.49999).
+  const footAt = (leave: number): number => HEX_END + leave + FLAT_RADIUS
+  const footLevel = (moves: readonly ToolpathMove[], leave: number): number => {
+    const ring = footAt(leave)
+    const tips = moves
+      .filter((move) => isAround(move) && Math.abs(move.to.x - ring) < 1e-6)
+      .map((move) => tipOf(move.to))
+    assert.ok(tips.length > 0, `the wall-foot ring at ${ring} is cut (${tips.length} moves)`)
+    return Math.min(...tips)
   }
-  assert.ok(compared > 100, `the two runs share shank points (${compared})`)
+  const target = TURN_DIAMETER / 2
+
+  // The finish cuts to the model itself: every shank pose is the Turn's surface.
+  const finishFoot = footLevel(finish, 0)
+  assert.ok(Math.abs(finishFoot - target) < 0.0005, `the finish wall-foot ring is ${finishFoot}, the Turn is ${target}`)
+  const finishShank = shankHelixTips(finish)
+  assert.ok(finishShank.length > 1, `the finish helices the shank (${finishShank.length} poses)`)
+  const finishSpread = Math.max(...finishShank) - Math.min(...finishShank)
+  assert.ok(finishSpread <= 1e-9,
+    `the finish's shank helix Z is one level (spread ${finishSpread.toFixed(6)} in)`)
+  // The helix reads the target-and-stubs mesh; the foot ring reads the target
+  // alone at its own along position. Both are the exact surface of the same
+  // cylinder, so they agree to the last Float32 bit the sampler stores, not to a
+  // bit of double arithmetic.
+  assert.ok(Math.abs(finishShank[0] - finishFoot) <= 1e-6,
+    `the finish helix sits at ${finishShank[0]} in, its wall-foot ring at ${finishFoot} in`)
+
+  // The rough's last layer is the lowest level it cuts on the shank, and it is
+  // the same Turn plus leave the wall-foot ring reaches.
+  const roughFoot = footLevel(rough, ROUGH_LEAVE)
+  assert.ok(Math.abs(roughFoot - (target + ROUGH_LEAVE)) < 0.0005,
+    `the rough wall-foot ring is ${roughFoot}, the Turn plus the leave is ${target + ROUGH_LEAVE}`)
+  const roughShank = shankHelixTips(rough)
+  assert.ok(roughShank.length >= 8, `the rough helices the shank (${roughShank.length} poses)`)
+  const lastLayer = Math.min(...roughShank)
+  assert.ok(Math.abs(lastLayer - roughFoot) <= 1e-6,
+    `the rough's last helix layer sits at ${lastLayer} in, its wall-foot ring at ${roughFoot} in`)
+  // Every shank pose is that last layer or a layer's own radius (the floor the
+  // rough cuts at above it): the conservative read put a third kind of value
+  // there, a cell above the surface at every angle.
+  const layers = new Set(roughShank.map((tip) => tip.toFixed(6)))
+  for (const level of layers) {
+    const value = Number(level)
+    assert.ok(Math.abs(value - lastLayer) <= 1e-6 || value - lastLayer >= 0.1 - 1e-6,
+      `the rough's shank helix cuts at ${value} in, between the last layer ${lastLayer} and the next ${lastLayer + 0.1}`)
+  }
+
+  // The neighbour does not reach a shank column, so the same program without the
+  // Hex digs the same levels: the helix never reads the Hex's facets.
+  const plain = boltFixture(false)
+  const plainFinish = generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_finish'))
+  const plainRough = generate(plain.project, turnOperation(plain.project, plain.turnId, 'rotary_rough'))
+  assert.deepEqual(shankHelixTips(plainFinish), finishShank, 'the finish shank helix is the same without the Hex')
+  // The rough's own rows are the exact surface in both runs; its deepest layer
+  // is floored by the layer plan, which is one cell higher without a wall-foot
+  // column to read exactly (see check 2), so only the layers above it compare.
+  assert.deepEqual(shankHelixTips(plainRough).filter((tip) => tip > lastLayer + 0.01).sort(),
+    [...roughShank].filter((tip) => tip > lastLayer + 0.01).sort(),
+    'the rough shank helix above its deepest layer is the same without the Hex')
+  console.log(`  shank helix: finish ${finishShank[0].toFixed(5)} in, `
+    + `rough last layer ${lastLayer.toFixed(5)} in (wall-foot rings ${finishFoot.toFixed(5)} / ${roughFoot.toFixed(5)})`)
 })
 
 // ── 3. the overlap rings stay down between the corners ────────────────────

@@ -2054,9 +2054,18 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
   assert.deepEqual(result.warnings, [], 'the around layering rough has no warning')
   const points = orderedCutPoints(result.moves)
   // #1103 slice ca-d: the layer's full rings are one continuous helix, so its
-  // cuts visit many along positions instead of three ring planes.
-  assert.ok(new Set(points.map(alongOf)).size > 3,
-    `the around band is cut continuously (${new Set(points.map(alongOf)).size} along positions)`)
+  // cuts visit many along positions instead of three ring planes. #1173 makes
+  // the helix's rows the exact surface, so on a cylinder its Z is one level and
+  // the collinear merge joins a whole layer into one move: the *emitted* along
+  // positions are then the move's two ends, and the continuous advance is what
+  // that single move says.
+  const advancing = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(alongOf(move.to) - alongOf(move.from)) > 1e-9
+    && angleOf(move.to) !== angleOf(move.from))
+  const longest = advancing.reduce((best, move) => Math.max(best, Math.abs(alongOf(move.to) - alongOf(move.from))), 0)
+  assert.ok(longest > 1,
+    `the around band is cut continuously (longest advancing cut ${longest.toFixed(3)}, `
+    + `${new Set(points.map(alongOf)).size} emitted along positions)`)
   checkLayering('around', aroundLayers(result.moves, pivot))
 }
 

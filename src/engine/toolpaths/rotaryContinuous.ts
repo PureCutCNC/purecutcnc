@@ -144,6 +144,7 @@ import { convertLength, type Units } from '../../utils/units'
 import {
   AROUND_ANGLE_TOLERANCE_MM,
   MAX_ROTARY_SAMPLES,
+  cachedAngleKey,
   createRotarySamplingPrep,
   rotaryAngleRowWork,
   sampleAnglesWithPrep,
@@ -331,6 +332,41 @@ export interface ContinuousHelixInput {
   readonly sampleSpacing: number
   /** Material left on the model, added back to every sampled tip. */
   readonly stockToLeave: number
+  /**
+   * Read each row's tip as the **exact** footprint maximum of the sampled mesh
+   * instead of the conservative height-map read (#1173).
+   *
+   * The conservative read is an upper bound built from a cell's centre sample
+   * plus the angle's cell rise (`min(cellRise, cellSize)`, one value for the
+   * whole row). On a turned part with any shoulder that rise saturates at a
+   * full cell -- the retained stub's end face alone sets it -- so every pose of
+   * every row rides that cell high, at a level that also varies by the cell
+   * alignment from angle to angle. Around mode's ring path reads the columns a
+   * neighbour can reach exactly for the same reason (#1173 fix A), and the
+   * wall-foot ring has always read exactly (#1155 rn-d correction 3), so the
+   * helix is the one part of the path left on the loose margin: on Frank's bolt
+   * it cut the shank 0.0098 in (0.25 mm) above the ring that closes onto it, and
+   * the finish rode the same cell high over its whole length.
+   *
+   * The exact read is the geometry -- the maximum of the turned surface over
+   * the cutter's own footprint, computed from the same candidate triangles the
+   * raster pass gathers -- so it is never lower than the surface and never
+   * higher than the conservative bound. The rows are cached on the operation
+   * ({@link exactHelixRow}) because a roughing layer after the first asks for
+   * the same physical angles at the same poses again.
+   *
+   * Absent (the default) keeps the conservative read and its map reuse: a
+   * square blank stays on it, because its helix rides the retained-corner rules
+   * the ring path built on that read (`stubFloor`, and the layer's material
+   * touch gate).
+   */
+  readonly readExactRows?: boolean
+  /**
+   * The slack the exact read's disc takes (see `RotarySamplingSetup.exactTipPad`,
+   * #1173): the driver passes 1.25 sampling cells, so a pose cannot sit
+   * tangentially on a feature's face at a whole-cell grid position.
+   */
+  readonly exactTipPad?: number
   /**
    * The roughing layer to cut (#1103 slice ca-d); absent for a finish, whose
    * path cuts to the model itself. See {@link ContinuousHelixLayer}.
@@ -607,6 +643,121 @@ function rowAngle(startAngle: number, row: HelixRow, phaseScale: number): number
  * per row, because a round can be cut short by them without crossing the work
  * cap.
  */
+/**
+ * The exact rows one operation's helix has already read (#1173).
+ *
+ * An exact row depends on the row's own `(angle, along list)` -- nothing else:
+ * the prep fixes the mesh, the tool, the cell size and the envelope, and the
+ * stock offset is keyed in -- so a roughing layer after the first asks for the
+ * same rows again and pays for the sampling once. The cache is keyed by the
+ * operation's prep (one object per operation) and dies with it.
+ */
+const exactHelixRows = new WeakMap<RotarySamplingPrep, Map<string, Float32Array>>()
+
+/** The most exact rows one operation may keep: far past any real band set. */
+const MAX_EXACT_HELIX_ROWS = 32768
+
+/** One scratch pair for hashing a row's along list by its exact double bits. */
+const rowKeyBits = new Float64Array(1)
+const rowKeyWords = new Uint32Array(rowKeyBits.buffer)
+
+/**
+ * The identity of one exact row: its physical angle, its pose count and a
+ * 64-bit hash of its along list's **bits** (plus the stock offset, which the row
+ * carries). A helix rebuilds a layer's rows from the same band parameters, so
+ * the same row names the same key; two rows that differ anywhere in along do not.
+ */
+function exactRowKey(angle: number, stockToLeave: number, along: readonly number[]): string {
+  let h1 = 0x811c9dc5
+  let h2 = 0x9e3779b1
+  rowKeyBits[0] = stockToLeave
+  h1 = Math.imul(h1 ^ rowKeyWords[0], 16777619)
+  h2 = Math.imul(h2 ^ rowKeyWords[1], 2246822519)
+  for (let i = 0; i < along.length; i++) {
+    rowKeyBits[0] = along[i]
+    h1 = Math.imul(h1 ^ rowKeyWords[0], 16777619)
+    h2 = Math.imul(h2 ^ rowKeyWords[1], 2246822519)
+  }
+  return `${cachedAngleKey(angle)}:${along.length}:${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`
+}
+
+/** The cached exact row for this pose set, or `undefined` when it is new. */
+function exactHelixRow(
+  prep: RotarySamplingPrep,
+  angle: number,
+  stockToLeave: number,
+  along: readonly number[],
+): Float32Array | undefined {
+  return exactHelixRows.get(prep)?.get(exactRowKey(angle, stockToLeave, along))
+}
+
+/** Keep one exact row on the operation's cache, up to its cap. */
+function storeExactHelixRow(
+  prep: RotarySamplingPrep,
+  angle: number,
+  stockToLeave: number,
+  along: readonly number[],
+  row: Float32Array,
+): void {
+  const rows = exactHelixRows.get(prep)
+  if (rows === undefined) {
+    exactHelixRows.set(prep, new Map([[exactRowKey(angle, stockToLeave, along), row]]))
+    return
+  }
+  if (rows.size >= MAX_EXACT_HELIX_ROWS) return
+  rows.set(exactRowKey(angle, stockToLeave, along), row)
+}
+
+/**
+ * Put the operation's stock offset, the clamp the ring path applies
+ * (`completeRotaryTargets`) and one layer's own rules on a row's sampled
+ * surface: a pose with no material standing (`tip >= previousRadius`) is air
+ * this layer skips, a pose that does cut is floored at the layer's radius, the
+ * layer's material gate applies, and the retained-stub contact floor is taken at
+ * the pose's own along and angle.
+ *
+ * It reads the sampler's **raw** row, so the offset stays a double until the one
+ * Float32 store this loop makes -- exactly the arithmetic the single loop this
+ * replaced did. A cached row is the raw row too, so a layer that reuses it takes
+ * the identical path.
+ */
+function applyHelixRowRules(
+  raw: Float32Array,
+  along: readonly number[],
+  angle: number,
+  input: ContinuousHelixInput,
+  maxRadius: number,
+): { tips: Float32Array; ineligible: boolean } {
+  const tips = new Float32Array(raw.length)
+  const layer = input.layer
+  const stubFloor = input.stubFloor
+  let ineligible = false
+  for (let i = 0; i < raw.length; i++) {
+    if (!Number.isFinite(raw[i])) {
+      tips[i] = NaN
+      continue
+    }
+    let tip = Math.min(Math.max(raw[i] + input.stockToLeave, 0), maxRadius)
+    if (layer !== undefined) {
+      if (!(tip < layer.previousRadius)) {
+        ineligible = true
+        continue
+      }
+      if (layer.material !== undefined && !layer.material(angle)) {
+        ineligible = true
+        continue
+      }
+      tip = Math.max(tip, layer.radius)
+    }
+    if (stubFloor !== undefined) {
+      const floor = stubFloor(along[i], angle)
+      if (floor > tip) tip = floor
+    }
+    tips[i] = tip
+  }
+  return { tips, ineligible }
+}
+
 function sampleHelixRows(
   rows: readonly HelixRow[],
   input: ContinuousHelixInput,
@@ -617,16 +768,27 @@ function sampleHelixRows(
   const prep = input.prep
   const startAngle = input.startAngle ?? 0
   const maxRadius = barMaxRadius(prep.stock)
-  const stubFloor = input.stubFloor
   const spent = input.spent ?? ZERO_HELIX_SPEND
   if (input.shouldStop?.() === true) return 'stopped'
-  // A row's prep reads the cache whenever the operation's does (see the
-  // `'read-write'` prep below), and a price must know which rows are free.
+  // #1173: the driver may ask for the exact footprint maximum (a flat cutter on
+  // a round bar). The rows it reads that way are cached on the operation, so a
+  // price must know which of them are already there -- otherwise the whole set
+  // looks like new work on every roughing layer and the budget would refuse
+  // bands it used to cut.
+  const exactRows = input.readExactRows === true
+  // A row's prep reads the angle-map cache whenever the operation's does (see
+  // the `'read-write'` prep below), and a price must know which rows are free.
   const readCache = prep.angleMaps !== 'off'
   const remaining = budget.work - spent.work - sampling.work
   let roundWork = 0
   for (const row of rows) {
-    roundWork += rotaryAngleRowWork(prep, rowAngle(startAngle, row, phaseScale), readCache)
+    const angle = rowAngle(startAngle, row, phaseScale)
+    const price = exactRows
+      ? (exactHelixRow(prep, angle, input.stockToLeave, row.along) === undefined
+        ? rotaryAngleRowWork(prep, angle, false)
+        : 0)
+      : rotaryAngleRowWork(prep, angle, readCache)
+    roundWork += price
     // Once the round's price has passed what the budget has left, the rest of it
     // cannot change the answer, and pricing it would be the very work the price
     // exists to avoid.
@@ -647,30 +809,46 @@ function sampleHelixRows(
     if (spent.work + sampling.work > budget.work) return 'exhausted'
     // The row is one physical angle: its poses differ only in along.
     const angle = rowAngle(startAngle, row, phaseScale)
-    const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
-      along: row.along,
-      requestedCellSize: prep.requestedCellSize,
-      conservativeCellBounds: true,
-      ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
-      ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
-      workspace: prep.workspace,
-      // #1103 ca-e: the ring grid has just rasterised the same physical angles
-      // on this workspace; read those maps instead of building a second set.
-      ...(prep.angleMaps === 'off' ? {} : { angleMaps: 'read-write' as const }),
-    })
-    const sampled = sampleAnglesWithPrep(
-      rowPrep,
-      [angle],
-      input.warnings,
-      input.shouldStop ? { shouldStop: input.shouldStop } : {},
-    )
-    if (!sampled.valid) return 'exhausted'
-    if (sampled.stopped) return 'stopped'
-    sampling.reused += sampled.reused
-    sampling.work += sampled.rasterWork
-    // The row arrives lifted by the angle's conservative cell rise, exactly as
-    // the ring grid reads it; every finite value takes the operation's stock
-    // offset and the clamp the ring path applies (`completeRotaryTargets`).
+    // An exact row is the operation's own geometry, so a layer that asks for the
+    // same poses at the same angle is answered from the cache -- the same free
+    // repeat the angle-map cache gives a conservative row (#1103 ca-e).
+    let raw = exactRows ? exactHelixRow(prep, angle, input.stockToLeave, row.along) : undefined
+    if (raw !== undefined) {
+      sampling.reused++
+    } else {
+      const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
+        along: row.along,
+        requestedCellSize: prep.requestedCellSize,
+        conservativeCellBounds: true,
+        ...(exactRows
+          ? { exactTipRows: true, ...(input.exactTipPad !== undefined ? { exactTipPad: input.exactTipPad } : {}) }
+          : {}),
+        ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
+        ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
+        workspace: prep.workspace,
+        // #1103 ca-e: the ring grid has just rasterised the same physical angles
+        // on this workspace; read those maps instead of building a second set.
+        ...(prep.angleMaps === 'off' ? {} : { angleMaps: 'read-write' as const }),
+      })
+      const sampled = sampleAnglesWithPrep(
+        rowPrep,
+        [angle],
+        input.warnings,
+        input.shouldStop ? { shouldStop: input.shouldStop } : {},
+      )
+      if (!sampled.valid) return 'exhausted'
+      if (sampled.stopped) return 'stopped'
+      sampling.reused += sampled.reused
+      sampling.work += sampled.rasterWork
+      // The row arrives lifted by the angle's conservative cell rise, exactly as
+      // the ring grid reads it -- or, in the exact mode, as the footprint
+      // maximum itself. The **raw** row is what the cache keeps (the sampler's
+      // own Float32 values, before the stock offset and the layer's rules), so
+      // one row serves every layer that visits it and the offset arithmetic is
+      // the same statement for a cached row and a fresh one.
+      raw = sampled.tipRadius[0]
+      if (exactRows) storeExactHelixRow(prep, angle, input.stockToLeave, row.along, raw)
+    }
     // A roughing layer (#1103 slice ca-d) adds the two rules the ring sample
     // takes there: a pose with no material standing (`tip >= previousRadius`)
     // is air this layer skips, which makes the band not uninterrupted, and a
@@ -679,38 +857,12 @@ function sampleHelixRows(
     // ca-j) the layer also carries the ring path's material-touch gate, and the
     // pose then takes the retained-stub contact floor the ring sample takes --
     // at the pose's own along and angle, not only at a ring position.
-    const layer = input.layer
-    const raw = sampled.tipRadius[0]
-    const tips = new Float32Array(raw.length)
-    let ineligible = false
-    for (let i = 0; i < raw.length; i++) {
-      if (!Number.isFinite(raw[i])) {
-        tips[i] = NaN
-        continue
-      }
-      let tip = Math.min(Math.max(raw[i] + input.stockToLeave, 0), maxRadius)
-      if (layer !== undefined) {
-        if (!(tip < layer.previousRadius)) {
-          ineligible = true
-          continue
-        }
-        if (layer.material !== undefined && !layer.material(angle)) {
-          ineligible = true
-          continue
-        }
-        tip = Math.max(tip, layer.radius)
-      }
-      if (stubFloor !== undefined) {
-        const floor = stubFloor(row.along[i], angle)
-        if (floor > tip) tip = floor
-      }
-      tips[i] = tip
-    }
-    row.tips = tips
-    row.ineligible = ineligible
+    const ruled = applyHelixRowRules(raw, row.along, angle, input, maxRadius)
+    row.tips = ruled.tips
+    row.ineligible = ruled.ineligible
     sampling.samples += row.along.length
     sampling.rows++
-    if (ineligible) return 'ineligible'
+    if (ruled.ineligible) return 'ineligible'
   }
   return 'ok'
 }
