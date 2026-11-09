@@ -547,6 +547,9 @@ export function ExportedMotionDebugDialog({
                 selectedZ={selectedZ}
                 showNonCutting={showNonCutting}
                 aRange={wrapped.aRange}
+                // A wrapped-only path has no plan to fall back to, so a failed
+                // WebGL context must not claim one is still shown.
+                fallbackPlan={planView}
               />
             ) : (
             <div

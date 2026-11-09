@@ -60,7 +60,10 @@
  *  - the Inspect gate put back to the plan view's eligibility alone → the
  *    rotary-rough test finds no button;
  *  - the cutting-level selector shown again for variable-Z motion → the debug
- *    assertions find the level list and the per-level rows.
+ *    assertions find the level list and the per-level rows;
+ *  - the wrapped view's WebGL fallback put back to the plan sentence → the
+ *    rotary-rough test catches it promising a 2D plan this path never builds
+ *    (correction round 4).
  *
  * Run with: npx tsx src/components/export/exportDialogMachinePreview.test.ts
  */
@@ -432,6 +435,25 @@ await test('a variable-Z rotary rough opens the debug view on the wrapped 3D sce
     assert(
       dialog.host.querySelector('.motion-debug__diagnostic') === null,
       'no exported-vs-source verdict is claimed for a path never compared',
+    )
+
+    // This environment provides no WebGL2, so the wrapped view reports the
+    // fallback instead of drawing. The dialog never builds a 2D plan for this
+    // path and the toggle above is absent, so the message must not promise one
+    // (review of #1179, correction round 4). Waiting for the message itself
+    // rather than sleeping lets the view's passive effect land first.
+    await dialog.waitFor(
+      () => dialog.host.querySelector('[data-testid="motion-debug-webgl-unavailable"]') !== null,
+      'the WebGL fallback message',
+    )
+    const fallback = text(dialog.host, '[data-testid="motion-debug-webgl-unavailable"]')
+    assert(
+      fallback === message('dialogs.motionDebug.webglUnavailableNoPlan'),
+      `the WebGL fallback says the motion cannot be shown, got "${fallback}"`,
+    )
+    assert(
+      fallback !== message('dialogs.motionDebug.webglUnavailable'),
+      `the WebGL fallback does not promise a 2D plan this path never builds, got "${fallback}"`,
     )
   } finally {
     dialog.unmount()

@@ -264,6 +264,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.angleNoTurn': 'Rango de A: sin giro',
   'dialogs.motionDebug.variableZAllLevels': 'La Z de corte cambia en cada movimiento, así que se dibuja cada corte y la comparación nivel por nivel no se aplica.',
   'dialogs.motionDebug.webglUnavailable': 'La vista 3D necesita WebGL2, que este navegador no proporciona. El plano 2D sigue visible.',
+  'dialogs.motionDebug.webglUnavailableNoPlan': 'La vista 3D necesita WebGL2, que este navegador no proporciona. Este programa rotativo no tiene un plano 2D al que recurrir, así que su movimiento no puede mostrarse.',
   'dialogs.modelExport.title': 'Exportar modelo',
   'dialogs.modelExport.format': 'Formato',
   'dialogs.modelExport.fileName': 'Nombre del archivo',
