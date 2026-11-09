@@ -806,12 +806,20 @@ export function CAMPanel({
     selectFeatures(operation.target.featureIds)
   }
 
-  function handleOperationDragStart(operationId: string) {
+  // WebKitGTK (the Linux desktop webview) will not complete an HTML5 drag whose
+  // data store is empty: `dragover` fires but `drop` never does, so operations
+  // dragged in the desktop build never reordered (#1178). The id also keeps the
+  // payload available to other drop targets; the local drag state still decides
+  // what the drop means.
+  function handleOperationDragStart(event: DragEvent, operationId: string) {
+    event.dataTransfer.setData('text/plain', operationId)
+    event.dataTransfer.effectAllowed = 'move'
     setDragOperationId(operationId)
   }
 
   function handleOperationDragOver(event: DragEvent, operationId: string) {
     event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
     dragOverOperationId.current = operationId
   }
 
@@ -2336,7 +2344,7 @@ export function CAMPanel({
                           role="button"
                           tabIndex={0}
                           draggable={ghost ? undefined : true}
-                          onDragStart={ghost ? undefined : () => handleOperationDragStart(operation.id)}
+                          onDragStart={ghost ? undefined : (event) => handleOperationDragStart(event, operation.id)}
                           onDragEnd={ghost ? undefined : () => setDragOperationId(null)}
                           onDragOver={ghost ? undefined : (event) => handleOperationDragOver(event, operation.id)}
                           onDrop={ghost ? undefined : handleOperationDrop}
