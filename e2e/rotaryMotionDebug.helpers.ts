@@ -15,14 +15,19 @@
  */
 
 /**
- * A rotary project with one Around operation, for the exported-motion debug
- * spec (issue #1179).
+ * Rotary projects for the exported-motion debug spec (issue #1179).
  *
- * The project is seeded through the page's store, as `around3d.smoke.spec.ts`
- * does: the export fixture, then a bar, a rotary machine and an Around pocket
- * whose wrapped program carries A words. That makes the debug dialog's 3D
- * wrapped view available — and, because the pocket is the only operation, the
- * Export dialog's "Inspect exported motion" action is offered for it.
+ * Two fixtures, because the dialog has two distinct cases:
+ *
+ * - {@link seedAroundRotaryProject} is an Around **pocket** — a wrapped path at
+ *   one cutting level, the case the plan view can draw and the level selector
+ *   can filter. Its program carries A words, so the wrapped view is offered;
+ * - {@link seedRotaryModelProject} is an imported model on a round bar with an
+ *   Around setup and no operation: the spec adds a real **Rotary rough** to it.
+ *   That operation's cutting Z changes on every move, which is what Frank's
+ *   app check of the slice found missing from the coverage (correction round 3):
+ *   the pocket alone let the spec pass while a real rotary operation could not
+ *   open the dialog at all.
  */
 
 import { readFileSync } from 'node:fs'
@@ -31,13 +36,20 @@ import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject, seedProject } from './helpers'
 import {
   defaultTool,
+  newProject,
+  rectProfile,
   roundStock,
   roundStockCentre,
+  IDENTITY_MATRIX,
+  type FeatureDefinition,
+  type FeatureInstance,
   type MachineDefinition,
   type Project,
   type RoundStock,
   type SketchProfile,
 } from '../src/types/project'
+import { computeMeshBounds, serializeImportedMesh } from '../src/engine/importedMesh'
+import { defaultRoundWorkholding } from '../src/store/helpers/roundWorkholding'
 
 /** A 40 mm round bar along X. */
 export const ROTARY_BAR: RoundStock = roundStock(40, 200, 'x', { x: 10, y: 30 })
@@ -152,5 +164,61 @@ export async function seedAroundRotaryProject(page: Page): Promise<Project> {
     },
   ]
   await seedProject(page, JSON.stringify(project))
+  return await getProject(page) as unknown as Project
+}
+
+/**
+ * A round bar with one imported model inside it and the Around setup active,
+ * but **no operation**: the caller adds the rotary operation through the app,
+ * so the spec exercises the real generator and its real (variable-Z) motion.
+ *
+ * Written out here rather than imported from `src/test/rotaryOperationFixture.ts`
+ * for the reason `rotaryModel.smoke.spec.ts` gives: that module reaches
+ * `src/text`, whose JSON font imports the Playwright runner refuses.
+ */
+export async function seedRotaryModelProject(page: Page): Promise<Project> {
+  const base = newProject('Rotary bar model', 'mm')
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.maxTravelZ = 25
+  // The Around face and its rotary operations exist only on a rotary project
+  // (issue #1028).
+  base.meta.projectType = 'rotary'
+  const bar = roundStock(12, 30, 'x')
+  base.stock = bar
+  base.tools = [{
+    ...defaultTool('mm', 1),
+    id: 't1',
+    type: 'ball_endmill',
+    diameter: 2,
+    defaultStepover: 0.8,
+    defaultStepdown: 1,
+  }]
+  // A small closed asymmetric prism inside the bar, the shape the rotary
+  // engine tests cut.
+  const positions = new Float32Array([
+    3, 4, 4, 27, 4, 4, 27, 8, 4, 3, 8, 4,
+    3, 4, 8, 27, 4, 9, 27, 8, 9, 3, 8, 8,
+  ])
+  const index = new Uint32Array([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7])
+  base.modelAssets = { asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl') }
+  const definition: FeatureDefinition = {
+    id: 'model', kind: 'stl', profile: rectProfile(3, 4, 24, 4), dimensions: [], text: null,
+    stl: { format: 'stl', meshAssetId: 'asset', scale: 1, axisSwap: 'none' }, operation: 'model',
+  }
+  const feature: FeatureInstance = {
+    id: 'model', name: 'Model', definitionId: 'model', transform: IDENTITY_MATRIX, textLayout: null,
+    constraints: [], z_top: 9, z_bottom: 4, authoringFace: 'top', folderId: null, visible: true, locked: false,
+  }
+  base.featureDefinitions = { model: definition }
+  base.features = [feature]
+  base.featureTree = [{ type: 'feature', featureId: 'model' }]
+  base.setups = [...base.setups, { ...base.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis: 'x', angleDeg: 0 } }]
+  base.activeSetupId = 'around'
+  // The app's own workholding for this bar, not an arbitrary block: a chuck
+  // that did not clear the blank's envelope would make the generator refuse.
+  base.clamps = [{ id: 'chuck', name: 'Chuck', visible: true, ...defaultRoundWorkholding('chuck', bar, 'mm') }]
+  base.meta.machineDefinitions = [...(base.meta.machineDefinitions ?? []), rotaryMachine()]
+  base.meta.selectedMachineId = 'e2e-rotary'
+  await seedProject(page, JSON.stringify(base))
   return await getProject(page) as unknown as Project
 }

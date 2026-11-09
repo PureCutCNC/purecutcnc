@@ -21,14 +21,18 @@
  * then exercises the layer toggles, the non-cutting-moves toggle, and the
  * cutting-Z selector, and asserts the diagnostic reports "verified".
  *
- * Since #1179 a rotary program also offers a 3D wrapped view: the second test
- * seeds an Around pocket on a bar and asserts the view draws and reads out its
- * A span, while a flat operation keeps only the 2D plan.
+ * Since #1179 a rotary program also offers a 3D wrapped view, and it is where
+ * the dialog opens: the third test seeds an Around pocket on a bar (one cutting
+ * level, so both views stay available) and asserts the wrapped scene draws and
+ * reads out its A span, while a flat operation keeps only the 2D plan. The
+ * fourth test adds a real **Rotary rough** to an imported model — the case the
+ * app check found unreachable (correction round 3): its cutting Z changes on
+ * every move, and the plan view's eligibility used to gate the button itself.
  */
 
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
-import { seedAroundRotaryProject } from './rotaryMotionDebug.helpers'
+import { seedAroundRotaryProject, seedRotaryModelProject } from './rotaryMotionDebug.helpers'
 
 test.describe('Exported-motion debug view smoke', () => {
   test('open from the export dialog for one operation and toggle layers', async ({ app, ui }) => {
@@ -113,15 +117,13 @@ test.describe('Exported-motion debug view smoke', () => {
     await expect(ui.exportDialog.root(app.page)).toBeVisible()
     await ui.exportDialog.inspectButton(app.page).click()
 
-    // The plan view stays the default; the rotary program adds the toggle.
-    await expect(ui.motionDebug.svg(app.page)).toBeVisible()
-    const toggle = ui.motionDebug.viewToggle(app.page)
-    await expect(toggle).toBeVisible()
-
-    await ui.motionDebug.view3dButton(app.page).click()
+    // A rotary program lands on the wrapped view (correction round 3); its one
+    // cutting level keeps the plan a click away.
     const canvas = ui.motionDebug.wrappedCanvas(app.page)
     await expect(canvas).toBeVisible()
     await expect(ui.motionDebug.svg(app.page)).toHaveCount(0)
+    const toggle = ui.motionDebug.viewToggle(app.page)
+    await expect(toggle).toBeVisible()
     const size = await canvas.evaluate((element) => ({ width: element.clientWidth, height: element.clientHeight }))
     expect(size.width).toBeGreaterThan(0)
     expect(size.height).toBeGreaterThan(0)
@@ -165,5 +167,74 @@ test.describe('Exported-motion debug view smoke', () => {
     // Switching back restores the flat plan.
     await ui.motionDebug.view2dButton(app.page).click()
     await expect(ui.motionDebug.svg(app.page)).toBeVisible()
+  })
+
+  test('opens the wrapped view for a real Rotary rough on a round bar', async ({ app, ui }) => {
+    // A real rotary operation generates thousands of moves and the export then
+    // posts them; two workers on a software-rendered runner need the room.
+    test.setTimeout(180_000)
+    await seedRotaryModelProject(app.page)
+
+    // The Around face is active from the seed; add the operation the wrapped
+    // view exists for. A rotary kind takes no rough/finish split, so its row
+    // carries a single Add.
+    await ui.face.switchTo(app.page, 'Around')
+    await ui.setupCam.add(app.page).click()
+    await expect(ui.setupCam.addMenu(app.page)).toBeVisible()
+    await ui.setupCam.addMenu(app.page).locator('.cam-operation-item')
+      .filter({ has: app.page.getByRole('button', { name: 'Rotary rough', exact: true }) })
+      .getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(ui.operations.rowByName(app.page, 'Rotary rough')).toBeVisible()
+
+    // Wait for the operation to generate before opening the export: the Inspect
+    // action needs a prepared program, and the dialog needs the generated path.
+    await expect(ui.generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
+
+    // Add leaves the new operation selected, so its properties header carries
+    // the per-operation export action. Clicking the row again would deselect
+    // it (the panel toggles selection).
+    await ui.operations.propertiesExportButton(app.page, 'Rotary rough').click()
+    await expect(ui.exportDialog.root(app.page)).toBeVisible()
+
+    // This is the app-check finding: the button must be there for a variable-Z
+    // rotary operation, which 89f434ab refused.
+    const inspect = ui.exportDialog.inspectButton(app.page)
+    await expect(inspect).toBeVisible()
+    await inspect.click()
+
+    const dialog = ui.motionDebug.root(app.page)
+    await expect(dialog).toBeVisible()
+
+    // It lands on the wrapped 3D scene and draws the program there.
+    const canvas = ui.motionDebug.wrappedCanvas(app.page)
+    await expect(canvas).toBeVisible()
+    await expect(ui.motionDebug.svg(app.page)).toHaveCount(0)
+    const size = await canvas.evaluate((element) => ({ width: element.clientWidth, height: element.clientHeight }))
+    expect(size.width).toBeGreaterThan(0)
+    expect(size.height).toBeGreaterThan(0)
+
+    const host = app.page.locator('[data-testid="motion-debug-3d"]')
+    await expect.poll(async () => Number(await host.getAttribute('data-motion-pieces'))).toBeGreaterThan(20)
+    await expect(host.locator('.motion-debug__empty')).toHaveCount(0)
+
+    const readout = ui.motionDebug.angleReadout(app.page)
+    await expect(readout).toContainText(/A range: -?[\d.]+° … -?[\d.]+°/)
+
+    // A rough changes cutting Z on every move, so there is no cutting-level
+    // selector to offer, no per-level table, and no plan model — the flat plan
+    // is not offered at all rather than listing thousands of levels
+    // (correction round 3).
+    await expect(ui.motionDebug.zLevelSelect(app.page)).toHaveCount(0)
+    await expect(app.page.locator('[data-testid="motion-debug-per-level"]')).toHaveCount(0)
+    await expect(app.page.locator('[data-testid="motion-debug-variable-z-note"]')).toBeVisible()
+    await expect(ui.motionDebug.viewToggle(app.page)).toHaveCount(0)
+
+    // The sidebar still reports the program it is showing. A rotary generator
+    // reports no separate raw path, so only the optimized count is claimed.
+    const sidebar = dialog.locator('.motion-debug__sidebar')
+    await expect(sidebar).toContainText('Optimized moves')
+    await expect(sidebar).not.toContainText('Raw moves:')
+    await expect(sidebar).not.toContainText('Generated (raw)')
+    await expect(sidebar).not.toContainText('—')
   })
 })

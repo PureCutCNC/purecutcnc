@@ -25,13 +25,15 @@ import {
   getExportedMotionEligibility,
 } from '../../engine/gcode'
 import type { PostProcessorResult } from '../../engine/gcode'
-import type { ToolpathGenerationTrace } from '../../engine/toolpaths/types'
+import type { ToolpathGenerationTrace, ToolpathResult } from '../../engine/toolpaths/types'
 import type { MachineDefinition } from '../../engine/gcode'
 import { pinRotaryAxis } from '../../engine/gcode/types'
-import type { Operation, Project } from '../../types/project'
+import { isRotaryOperationKind, type Operation, type Project } from '../../types/project'
 import { isBarStock } from '../../types/barStock'
 import { buildMotionLayerPathD } from './motionDebugSvg'
 import { exportDialectLabels } from './exportDialectLabels'
+import { planInspectMotion } from './inspectMotionPlan'
+import { summaryMotionModel } from './motionDebugSummary'
 import { buildWrappedMotion, type WrappedMotionModel } from './motionDebugWrapped'
 import { MotionDebugWrappedView, type WrappedViewLayer } from './MotionDebugWrappedView'
 
@@ -47,6 +49,14 @@ interface ExportedMotionDebugDialogProps {
   definition: MachineDefinition
   /** The already-computed postprocessor result from the Export dialog. */
   previewResult: PostProcessorResult
+  /**
+   * The prepared toolpath for this operation, when the Export dialog has it.
+   * A rotary generator emits one final path and reports no separate raw path
+   * (the engine's envelope is `{ result, raw: null }`), so the trace request
+   * answers nothing for exactly the operations the wrapped view exists for.
+   * This path is that same motion, and stands in for both debug layers.
+   */
+  toolpath?: ToolpathResult
   onClose: () => void
 }
 
@@ -87,6 +97,7 @@ export function ExportedMotionDebugDialog({
   project,
   definition,
   previewResult,
+  toolpath,
   onClose,
 }: ExportedMotionDebugDialogProps) {
   useRestoreCanvasFocus()
@@ -96,12 +107,28 @@ export function ExportedMotionDebugDialog({
   // a request, not a derivation, and since #675 its answer arrives in a later
   // tick. A completion that lands after the dialog closes — or after the
   // preparation it belongs to has changed — is dropped rather than rendered.
+  // The exported-motion debug view is gated on one operation's generated
+  // motion. The plan view's eligibility refuses variable-Z cutting, which every
+  // rotary operation has by design, so a motion carrying rotary angles is
+  // admitted through its wrapped view instead (issue #1179 correction round 3).
   const [model, setModel] = useState<ReturnType<typeof buildExportedMotionDebugModel> | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The 3D wrapped view's geometry (issue #1179): null for a program with no
   // rotary angle, which is what keeps the toggle off a flat operation.
   const [wrapped, setWrapped] = useState<WrappedMotionModel | null>(null)
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
+  // Whether the path has discrete cutting levels, so the level selector and the
+  // level-by-level comparison apply. A rotary rough/finish changes Z on every
+  // move; the selector and the comparison are meaningless for it, and its plan
+  // model costs seconds to build, so it has neither (#1179 correction round 3).
+  const [levelsApply, setLevelsApply] = useState(true)
+  // Whether the flat plan view exists for this path. The wrapped-only path has
+  // no plan model to draw, so 2D is not offered at all.
+  const [planView, setPlanView] = useState(true)
+  // Whether the generator reported a separate raw path. A rotary operation has
+  // none, so its "Generated (raw)" layer and the raw/removed counts are not
+  // shown rather than reporting the prepared path twice under two names.
+  const [hasRawTrace, setHasRawTrace] = useState(true)
 
   // The exported layer is named after what the machine exports: G-code, or a
   // ShopBot part file (issue #953).
@@ -120,15 +147,28 @@ export function ExportedMotionDebugDialog({
     const controller = new AbortController()
     void (async () => {
       try {
-        const trace = await requestGenerationTrace(operation.id, controller.signal)
+        const requested = await requestGenerationTrace(operation.id, controller.signal)
         if (cancelled) return
+        // A rotary operation has no separate raw path — the generator emits its
+        // final motion — so the trace request correctly answers nothing for the
+        // rotary kinds, which are exactly the operations the wrapped view is
+        // for. The toolpath the Export dialog prepared is that same final path,
+        // so it stands in for both source layers (#1179 correction round 3).
+        const trace: ToolpathGenerationTrace | null = requested ?? (
+          toolpath !== undefined && isRotaryOperationKind(operation.kind)
+            ? { operationId: operation.id, raw: toolpath, optimized: toolpath }
+            : null
+        )
         if (!trace) {
           throw new Error('no-trace')
         }
-        const eligibility = getExportedMotionEligibility(trace.optimized.moves)
-        if (!eligibility.eligible) {
-          throw new Error(`ineligible:${eligibility.reason ?? ''}`)
+        const plan = planInspectMotion(trace.optimized.moves)
+        if (!plan.offer) {
+          throw new Error(`ineligible:${plan.reason ?? ''}`)
         }
+        // The plan view's own eligibility, true only for a trace with discrete
+        // constant-Z cutting levels.
+        const planar = getExportedMotionEligibility(trace.optimized.moves)
         const tolerance = exportGeometryTolerance(project.meta.units)
         const postprocessorTrace = previewResult.motionTraces?.[0]
         if (!postprocessorTrace) {
@@ -137,7 +177,7 @@ export function ExportedMotionDebugDialog({
         // The bar axis decides a borrowed motor's letter (#1153).
         const pinned = pinRotaryAxis(definition, project.stock)
         const parsed = parseExportedMotion(previewResult.gcode, pinned)
-        const built = buildExportedMotionDebugModel({
+        const buildPlan = (): ReturnType<typeof buildExportedMotionDebugModel> => buildExportedMotionDebugModel({
           trace,
           parsed,
           postprocessorTrace,
@@ -145,24 +185,39 @@ export function ExportedMotionDebugDialog({
           definition: pinned,
           tolerance,
         })
+        // The plan model is a per-cutting-level comparison, quadratic in the
+        // move count: it is built only where its levels mean something. A
+        // rotary path changes Z on every move, so its wrapped view is the view
+        // and the sidebar gets the counts alone (#1179 correction round 3).
+        let built = planar.eligible ? buildPlan() : null
+        const wrappedModel = isBarStock(project.stock)
+          ? buildWrappedMotion({
+            parsed,
+            origin: project.origin,
+            definition: pinned,
+            stock: project.stock,
+            trace,
+            // The 2D model already snapped its exported segments to these
+            // levels; the 3D view must agree, or the selector hides the
+            // exported cuts it should show (review of #1179). A variable-Z
+            // rotary program has no level to snap to — its selector is gone.
+            zSnap: planar.eligible && built !== null ? { levels: built.zLevels, tolerance } : undefined,
+          })
+          : null
+        // A rotary motion the machine's program carries no angle for has no
+        // wrapped view either; the plan is all that is left, so it is built
+        // even without discrete levels.
+        if (wrappedModel === null && built === null) built = buildPlan()
         if (!cancelled) {
-          setModel(built)
-          // A wrapped rotary program can be seen around the bar (issue #1179).
-          // The conversion returns null unless the exported motion actually
-          // carries angles, so a flat operation never reaches the 3D view.
-          setWrapped(isBarStock(project.stock)
-            ? buildWrappedMotion({
-              parsed,
-              origin: project.origin,
-              definition: pinned,
-              stock: project.stock,
-              trace,
-              // The 2D model already snapped its exported segments to these
-              // levels; the 3D view must agree, or the selector hides the
-              // exported cuts it should show (review of #1179).
-              zSnap: { levels: built.zLevels, tolerance },
-            })
-            : null)
+          setModel(built ?? summaryMotionModel(trace, parsed))
+          // A wrapped rotary program is the reason this dialog was opened: it
+          // lands on the wrapped view, and the plan stays a click away where
+          // its levels are meaningful (#1179 correction round 3).
+          setWrapped(wrappedModel)
+          setLevelsApply(planar.eligible)
+          setPlanView(built !== null)
+          setHasRawTrace(requested !== null)
+          setViewMode(wrappedModel !== null ? '3d' : '2d')
           setError(null)
         }
       } catch (e) {
@@ -208,31 +263,45 @@ export function ExportedMotionDebugDialog({
     exported: true,
   })
   const [showNonCutting, setShowNonCutting] = useState(false)
-  const show3d = viewMode === '3d' && wrapped !== null
+  // The wrapped view is the only view a variable-Z rotary path has, so it is
+  // shown even though the toggle that normally selects it is not offered.
+  const show3d = wrapped !== null && (viewMode === '3d' || !planView)
   // The 3D scene's layers, rebuilt only with the model: the same colours and
   // opacities the sidebar swatches show.
+  // The layers this dialog has a source for. Without a raw path there is no
+  // Generated layer to draw, so it is not offered.
+  const sourceLayers = useMemo<LayerId[]>(
+    () => (hasRawTrace ? (Object.keys(LAYER_STYLE) as LayerId[]) : ['optimized', 'exported']),
+    [hasRawTrace],
+  )
   const wrappedLayers = useMemo<WrappedViewLayer[]>(() => {
     if (!wrapped) return []
-    return (Object.keys(LAYER_STYLE) as LayerId[]).map((id) => ({
+    return sourceLayers.map((id) => ({
       id,
       color: LAYER_STYLE[id].color,
       opacity: LAYER_STYLE[id].opacity,
       pieces: wrapped.layers[id],
     }))
-  }, [wrapped])
+  }, [wrapped, sourceLayers])
   const [selectedZ, setSelectedZ] = useState<number | 'all'>('all')
   const [zoomSelectMode, setZoomSelectMode] = useState(false)
   const selectionRef = useRef<{ startX: number; startY: number } | null>(null)
   const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const didInitZRef = useRef(false)
   // Default to the first cutting Z once the model loads (issue: defaults to the
-  // first cutting Z in machine order; "All cutting levels" is opt-in).
+  // first cutting Z in machine order; "All cutting levels" is opt-in). A path
+  // whose Z varies on every move has no levels to choose: it draws all of them.
   useEffect(() => {
+    if (!levelsApply) {
+      didInitZRef.current = true
+      setSelectedZ('all')
+      return
+    }
     if (model && model.zLevels.length > 0 && !didInitZRef.current) {
       didInitZRef.current = true
       setSelectedZ(model.zLevels[0])
     }
-  }, [model])
+  }, [model, levelsApply])
 
   function handleFit() {
     if (model?.bounds && cssSize.w && cssSize.h) {
@@ -350,24 +419,31 @@ export function ExportedMotionDebugDialog({
 
         <div className="dialog-body dialog-body--motion-debug">
           <div className="motion-debug__sidebar">
-            <div>
-              <div className="motion-debug__section-title">{t('dialogs.motionDebug.cuttingLevel')}</div>
-              <select
-                value={selectedZ === 'all' ? 'all' : String(selectedZ)}
-                onChange={(e) => setSelectedZ(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                disabled={!model || model.zLevels.length === 0}
-              >
-                <option value="all">{t('dialogs.motionDebug.allLevels')}</option>
-                {model?.zLevels.map((z) => (
-                  <option key={z} value={z}>{Number(z.toFixed(4))}</option>
-                ))}
-              </select>
-            </div>
+            {levelsApply ? (
+              <div data-testid="motion-debug-level">
+                <div className="motion-debug__section-title">{t('dialogs.motionDebug.cuttingLevel')}</div>
+                <select
+                  value={selectedZ === 'all' ? 'all' : String(selectedZ)}
+                  onChange={(e) => setSelectedZ(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  disabled={!model || model.zLevels.length === 0}
+                >
+                  <option value="all">{t('dialogs.motionDebug.allLevels')}</option>
+                  {model?.zLevels.map((z) => (
+                    <option key={z} value={z}>{Number(z.toFixed(4))}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div data-testid="motion-debug-variable-z-note">
+                <div className="motion-debug__section-title">{t('dialogs.motionDebug.cuttingLevel')}</div>
+                <div className="motion-debug__note">{t('dialogs.motionDebug.variableZAllLevels')}</div>
+              </div>
+            )}
 
             <div>
               <div className="motion-debug__section-title">{t('dialogs.export.options')}</div>
               <div className="motion-debug__layers">
-                {(Object.keys(LAYER_STYLE) as LayerId[]).map((id) => (
+                {sourceLayers.map((id) => (
                   <label key={id} className="motion-debug__layer-row">
                     <input
                       type="checkbox"
@@ -389,9 +465,13 @@ export function ExportedMotionDebugDialog({
             <div>
               <div className="motion-debug__section-title">{t('dialogs.motionDebug.rawMoves')}</div>
               <div className="motion-debug__metrics">
-                <div>{t('dialogs.motionDebug.rawMoves')}: <strong>{model?.metrics.rawMoveCount ?? '—'}</strong></div>
+                {hasRawTrace && (
+                  <div>{t('dialogs.motionDebug.rawMoves')}: <strong>{model?.metrics.rawMoveCount ?? '—'}</strong></div>
+                )}
                 <div>{t('dialogs.motionDebug.optimizedMoves')}: <strong>{model?.metrics.optimizedMoveCount ?? '—'}</strong></div>
-                <div>{t('dialogs.motionDebug.removed')}: <strong>{model?.metrics.removedMoveCount ?? '—'}</strong></div>
+                {hasRawTrace && (
+                  <div>{t('dialogs.motionDebug.removed')}: <strong>{model?.metrics.removedMoveCount ?? '—'}</strong></div>
+                )}
               </div>
             </div>
 
@@ -405,8 +485,8 @@ export function ExportedMotionDebugDialog({
               </div>
             </div>
 
-            {model && model.zLevelStats.length > 0 && (
-              <div>
+            {levelsApply && model && model.zLevelStats.length > 0 && (
+              <div data-testid="motion-debug-per-level">
                 <div className="motion-debug__section-title">{t('dialogs.motionDebug.perLevel')}</div>
                 <div className="motion-debug__metrics">
                   {model.zLevelStats.map((zs) => (
@@ -422,7 +502,7 @@ export function ExportedMotionDebugDialog({
 
           <div className="motion-debug__view">
             <div className="motion-debug__toolbar">
-              {wrapped && (
+              {wrapped && planView && (
                 <div className="motion-debug__view-toggle" role="group" aria-label={t('dialogs.motionDebug.viewMode')}>
                   <button
                     className={`btn-secondary${show3d ? '' : ' btn-primary'}`}
@@ -488,7 +568,7 @@ export function ExportedMotionDebugDialog({
               ) : (
                 <svg className="motion-debug__svg" viewBox={viewBoxStr} preserveAspectRatio="xMidYMid meet">
                   <rect x={view!.x} y={view!.y} width={view!.w} height={view!.h} fill="transparent" pointerEvents="all" />
-                  {(Object.keys(LAYER_STYLE) as LayerId[]).map((id) => {
+                  {sourceLayers.map((id) => {
                     if (!visibleLayers[id]) return null
                     const { cutting, nonCutting } = filterSegments(id)
                     return (
@@ -510,6 +590,9 @@ export function ExportedMotionDebugDialog({
               )}
             </div>
             )}
+            {/* No comparison is run for a wrapped-only path, so it is not
+                reported as a verdict; the sidebar says why. */}
+            {planView && (
             <div className={`motion-debug__diagnostic ${model?.diagnostic.state === 'verified' ? 'motion-debug__diagnostic--verified' : 'motion-debug__diagnostic--warning'}`}>
               {model ? (
                 <>
@@ -529,6 +612,7 @@ export function ExportedMotionDebugDialog({
                 </>
               ) : null}
             </div>
+            )}
           </div>
         </div>
 

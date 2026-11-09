@@ -41,6 +41,12 @@
  * four of the saved file's six operations have it off), the preparation blocks
  * on `no-operations`, and the pane must say that rather than "select a machine".
  *
+ * The last test opens the exported-motion debug view from the same real
+ * project (issue #1179 correction round 3): that project's only operation is a
+ * rotary rough, whose Z changes on every move, so the plan view's eligibility
+ * refused it and the "Inspect exported motion" button was missing for the
+ * operation the 3D wrapped view exists for.
+ *
  * Mutations checked one at a time:
  *  - the pane's fallback put back to `previewPlaceholder` → the first-frame and
  *    the blocked assertions fail with "Select a machine…" on screen;
@@ -50,7 +56,11 @@
  *    blocked state reads as "blocked, see the errors" instead of naming the
  *    empty selection;
  *  - `hasPreview` forced true → the first frame claims a program it has not
- *    got.
+ *    got;
+ *  - the Inspect gate put back to the plan view's eligibility alone → the
+ *    rotary-rough test finds no button;
+ *  - the cutting-level selector shown again for variable-Z motion → the debug
+ *    assertions find the level list and the per-level rows.
  *
  * Run with: npx tsx src/components/export/exportDialogMachinePreview.test.ts
  */
@@ -80,10 +90,19 @@ if (typeof globals.navigator === 'undefined') {
   dispatchEvent: () => false,
 })
 Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 })
+// The debug dialog's wrapped view measures its host; there is no layout here,
+// so an observer that never fires is enough for it to mount.
+globals.ResizeObserver = class {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
 ;(globalThis as unknown as { React?: typeof React }).React = React
 
 const { ExportDialog } = await import('./ExportDialog')
 const { I18nProvider } = await import('../../i18n/I18nProvider')
+const { ThemeContext } = await import('../../theme/themeContext')
+type ThemeContextValue = import('../../theme/themeContext').ThemeContextValue
 const { translate } = await import('../../i18n/store')
 const { useProjectStore } = await import('../../store/projectStore')
 const { createToolpathGenerationService } = await import('../../app/toolpathGeneration/service')
@@ -92,6 +111,15 @@ const { validateMachineDefinition } = await import('../../engine/gcode/types')
 const { createRoot } = await import('react-dom/client')
 const { flushSync } = await import('react-dom')
 import type { Project } from '../../types/project'
+
+/**
+ * The scene palette the debug dialog's wrapped view reads. Only the two colours
+ * matter here; the view never draws in this environment (there is no WebGL2),
+ * but it still mounts and reports its state.
+ */
+const THEME = {
+  palette: { three: { background: '#000000', stockDefault: '#888888' } },
+} as unknown as ThemeContextValue
 
 let passed = 0
 let failed = 0
@@ -136,13 +164,25 @@ function mount(project: Project): MountedDialog {
   const service = createToolpathGenerationService({ getCurrentContext: () => context, executor: 'inline' })
   const host = document.createElement('div')
   document.body.appendChild(host)
-  const root = createRoot(host)
-  flushSync(() => root.render(createElement(I18nProvider, null, createElement(ExportDialog, {
-    onClose: () => {},
-    service,
-    contextRef: { current: context },
-    requestGenerationTrace: async () => null,
-  }))))
+  const root = createRoot(host, { onUncaughtError: (error) => console.error('[uncaught]', error) })
+  // The debug dialog asks for a trace the same way the app does (purpose
+  // `debug`, trace requested). The tests that never open it are unaffected.
+  const requestGenerationTrace = async (operationId: string, signal?: AbortSignal) => {
+    const outcome = await service.request(context, operationId, { purpose: 'debug', trace: true, signal })
+    return outcome.status === 'completed' && outcome.raw
+      ? { operationId, raw: outcome.raw, optimized: outcome.result }
+      : null
+  }
+  flushSync(() => root.render(createElement(I18nProvider, null,
+    createElement(ThemeContext.Provider, { value: THEME },
+      createElement(ExportDialog, {
+        onClose: () => {},
+        service,
+        contextRef: { current: context },
+        requestGenerationTrace,
+      }),
+    ),
+  )))
   return {
     host,
     // Real timers, so the debounce and generation run as they do in the app;
@@ -298,6 +338,101 @@ await test('a machine that zeroes A itself shows no rotary-zeroing note', async 
     await dialog.waitFor(() => text(dialog.host, '.dialog-preview').includes('G20'), 'the program')
     assert(text(dialog.host, '[data-testid="export-rotary-zero-notice"]') === '',
       'the note is absent when the machine carries a Zero A line')
+  } finally {
+    dialog.unmount()
+  }
+})
+
+/** Dispatch a click, the way a pointer press reaches React's root. */
+function click(element: Element): void {
+  // linkedom's window has no MouseEvent; its HTMLElement.click() dispatches the
+  // bubbling click React listens for.
+  ;(element as unknown as { click: () => void }).click()
+}
+
+/**
+ * The Inspect motion button is reachable for the operation the 3D wrapped view
+ * exists for (issue #1179 correction round 3).
+ *
+ * The fixture's only operation is a rotary rough, so its cutting Z changes on
+ * every move. The plan view's eligibility refuses that, and the dialog used it
+ * for the button — which is why Frank's real bolt file, with only a Rotary
+ * rough ticked, offered no way into the wrapped view at all. The button is now
+ * offered from the motion carrying angles, and the dialog lands on 3D.
+ */
+await test('a variable-Z rotary rough opens the debug view on the wrapped 3D scene', async () => {
+  const project = reportedRotaryProject(REPORTED, REPORTED.id, 1)
+  const dialog = mount(project)
+  try {
+    await dialog.waitFor(() => text(dialog.host, '.dialog-preview').includes('G20'), 'the program')
+    const inspect = [...dialog.host.querySelectorAll('.dialog-footer button')]
+      .find((button) => button.textContent?.includes(message('dialogs.export.inspectMotion')))
+    assert(inspect, 'the dialog offers "Inspect exported motion" for a variable-Z rotary rough')
+    click(inspect)
+
+    await dialog.waitFor(
+      () => dialog.host.querySelector('[data-testid="motion-debug-3d"]') !== null,
+      'the wrapped 3D scene',
+    )
+    assert(
+      dialog.host.querySelector('.dialog--motion-debug .motion-debug__svg') === null,
+      'the dialog lands on the wrapped view, not the flat plan',
+    )
+    // The plan model is a per-level comparison that costs seconds on this path
+    // and cannot offer a level, so the plan view is not offered at all — the
+    // wrapped scene is the view, not a mode of one.
+    assert(
+      dialog.host.querySelector('.motion-debug__view-toggle') === null,
+      'the plan view is not offered for a path with a level per move',
+    )
+
+    // The angle readout names the program's A span — the thing the flat plan
+    // could never show.
+    await dialog.waitFor(
+      () => /A range: -?[\d.]+° … -?[\d.]+°/.test(text(dialog.host, '.motion-debug__angle-readout')),
+      'the A range readout',
+    )
+
+    // A level selector would list one entry per move's Z (hundreds) and the
+    // per-level table one row per level, so neither is offered for this path;
+    // it draws every cut and says so instead.
+    assert(
+      dialog.host.querySelector('[data-testid="motion-debug-level"]') === null,
+      'no cutting-level selector for a path whose Z changes every move',
+    )
+    assert(
+      dialog.host.querySelector('[data-testid="motion-debug-per-level"]') === null,
+      'and no per-level table',
+    )
+    assert(
+      text(dialog.host, '[data-testid="motion-debug-variable-z-note"]')
+        .includes(message('dialogs.motionDebug.variableZAllLevels')),
+      'the sidebar explains why every cut is drawn',
+    )
+
+    // Metrics that do not assume one level still report the program.
+    const sidebar = text(dialog.host, '.motion-debug__sidebar')
+    assert(sidebar.includes(message('dialogs.motionDebug.optimizedMoves')), 'the optimized move count stays')
+    assert(!sidebar.includes('—'), 'and it is filled in, not left as a placeholder')
+    // The rotary generator reports no separate raw path, so the dialog neither
+    // claims one in the layer list nor reports the prepared path twice under
+    // two names.
+    assert(!sidebar.includes(message('dialogs.motionDebug.layerGenerated')),
+      'no "Generated (raw)" layer is offered for a path with no raw trace')
+    assert(!sidebar.includes(`${message('dialogs.motionDebug.rawMoves')}:`),
+      'and no raw move count is shown for it')
+
+    // The dialog never tells this operator their rotary rough cannot be shown.
+    assert(
+      !dialog.host.textContent?.includes(message('dialogs.motionDebug.ineligibleVariableZ')),
+      'the variable-Z refusal sentence is not shown for the rotary operation it refused',
+    )
+    // No comparison is run for the wrapped-only path, so no verdict is claimed
+    // either way (the sidebar says why instead).
+    assert(
+      dialog.host.querySelector('.motion-debug__diagnostic') === null,
+      'no exported-vs-source verdict is claimed for a path never compared',
+    )
   } finally {
     dialog.unmount()
   }

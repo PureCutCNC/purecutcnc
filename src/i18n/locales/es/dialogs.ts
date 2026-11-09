@@ -262,6 +262,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.angleRange': 'Rango de A: {min}° … {max}°',
   'dialogs.motionDebug.angleAtPointer': 'A en el puntero: {angle}°',
   'dialogs.motionDebug.angleNoTurn': 'Rango de A: sin giro',
+  'dialogs.motionDebug.variableZAllLevels': 'La Z de corte cambia en cada movimiento, así que se dibuja cada corte y la comparación nivel por nivel no se aplica.',
   'dialogs.motionDebug.webglUnavailable': 'La vista 3D necesita WebGL2, que este navegador no proporciona. El plano 2D sigue visible.',
   'dialogs.modelExport.title': 'Exportar modelo',
   'dialogs.modelExport.format': 'Formato',

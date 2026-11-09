@@ -293,6 +293,7 @@ export const dialogsEn = {
   'dialogs.motionDebug.angleRange': 'A range: {min}° … {max}°',
   'dialogs.motionDebug.angleAtPointer': 'A at pointer: {angle}°',
   'dialogs.motionDebug.angleNoTurn': 'A range: no turn',
+  'dialogs.motionDebug.variableZAllLevels': 'Cutting Z changes from move to move, so every cut is drawn and the level-by-level comparison does not apply.',
   'dialogs.motionDebug.webglUnavailable': 'The 3D view needs WebGL2, which this browser did not provide. The 2D plan is still shown.',
 
   // ── Model Export dialog ──
