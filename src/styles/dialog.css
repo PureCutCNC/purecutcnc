@@ -1768,6 +1768,11 @@
   margin: 0 0 4px;
 }
 
+.motion-debug__note {
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
 .motion-debug__layers {
   display: grid;
   gap: 6px;

@@ -44,6 +44,13 @@
  *    comparison fails, so a filter applied in only one of the two places is
  *    caught either way.
  *
+ * Correction round 4 added the WebGL fallback message: it used to promise a 2D
+ * plan unconditionally, which is false for a wrapped-only rotary program (the
+ * plan is never built and its toggle is gone). The message now follows the
+ * `fallbackPlan` prop; dropping that prop from the message choice makes
+ * "a wrapped-only operation does not promise a 2D plan" render the plan
+ * sentence and fail.
+ *
  * Run with: npx tsx src/components/export/MotionDebugWrappedView.test.ts
  */
 
@@ -77,6 +84,7 @@ const { I18nProvider } = await import('../../i18n/I18nProvider')
 const { ThemeContext } = await import('../../theme/themeContext')
 type ThemeContextValue = import('../../theme/themeContext').ThemeContextValue
 const { MotionDebugWrappedView } = await import('./MotionDebugWrappedView')
+const { enMessages } = await import('../../i18n/locales/en')
 const { roundStock } = await import('../../types/project')
 type BarStock = import('../../types/project').BarStock
 type WrappedPiece = import('./motionDebugWrapped').WrappedPiece
@@ -207,6 +215,7 @@ interface Props {
   selectedZ: number | 'all'
   showNonCutting: boolean
   aRange: { min: number; max: number } | null
+  fallbackPlan: boolean
 }
 
 const BASE_PROPS: Props = {
@@ -216,6 +225,7 @@ const BASE_PROPS: Props = {
   selectedZ: 'all',
   showNonCutting: false,
   aRange: A_RANGE,
+  fallbackPlan: true,
 }
 
 interface Mounted {
@@ -225,11 +235,18 @@ interface Mounted {
   unmount: () => void
 }
 
-function mount(log: RenderLog): Mounted {
+interface MountOptions {
+  /** `false` refuses a context, the way a browser without WebGL2 does. */
+  webgl?: boolean
+  /** Base-fixture props to change for the first mount. */
+  props?: Partial<Props>
+}
+
+function mount(log: RenderLog, options: MountOptions = {}): Mounted {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
-  const factory = fakeRendererFactory(log)
+  const factory = options.webgl === false ? (() => null) : fakeRendererFactory(log)
   const render = (props: Props) => {
     flushSync(() => root.render(React.createElement(I18nProvider, null,
       React.createElement(ThemeContext.Provider, { value: themeValue },
@@ -237,7 +254,7 @@ function mount(log: RenderLog): Mounted {
       ),
     )))
   }
-  render(BASE_PROPS)
+  render({ ...BASE_PROPS, ...options.props })
   return {
     host,
     render,
@@ -358,6 +375,46 @@ await test('the sidebar level and non-cutting filters reach the 3D view', async 
     assertDrawn(log, mounted.host, 0, 0, 'an empty level')
   } finally {
     mounted.unmount()
+  }
+})
+
+/**
+ * Without WebGL2 the view says so. Whether it also says a 2D plan is still
+ * shown must depend on the dialog: a wrapped-only rotary program is never
+ * built as a plan and its toggle is removed, so that promise would be false.
+ * (Review of #1179, correction round 4.)
+ */
+await test('the WebGL fallback only promises a 2D plan when the dialog has one', async () => {
+  const fallback = () => {
+    const element = document.querySelector('[data-testid="motion-debug-webgl-unavailable"]')
+    return element?.textContent?.trim() ?? ''
+  }
+
+  const withPlanLog: RenderLog = { renders: 0, disposed: 0, frames: [] }
+  const withPlan = mount(withPlanLog, { webgl: false })
+  try {
+    await flush()
+    assert(withPlan.canvasCount() === 0, 'no canvas is built without a context')
+    assert(fallback() === enMessages['dialogs.motionDebug.webglUnavailable'],
+      `a view that has a plan reports it, got "${fallback()}"`)
+  } finally {
+    withPlan.unmount()
+  }
+
+  const wrappedOnlyLog: RenderLog = { renders: 0, disposed: 0, frames: [] }
+  const wrappedOnly = mount(wrappedOnlyLog, { webgl: false, props: { fallbackPlan: false } })
+  try {
+    await flush()
+    // The failing case before the fix: the plan sentence again.
+    assert(fallback() !== enMessages['dialogs.motionDebug.webglUnavailable'],
+      `a wrapped-only operation does not promise a 2D plan, got "${fallback()}"`)
+    assert(fallback() === enMessages['dialogs.motionDebug.webglUnavailableNoPlan'],
+      `the wrapped-only fallback says the motion cannot be shown, got "${fallback()}"`)
+    // The message replaces the scene it could not build, so it is visible
+    // rather than hidden behind a canvas that does not exist.
+    assert(fallback().length > 0, 'the wrapped-only fallback is shown')
+  } finally {
+    wrappedOnly.unmount()
   }
 })
 

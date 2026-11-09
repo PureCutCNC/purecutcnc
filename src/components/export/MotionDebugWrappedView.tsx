@@ -61,6 +61,12 @@ interface MotionDebugWrappedViewProps {
   /** The exported program's A span, in degrees. */
   aRange: { min: number; max: number } | null
   /**
+   * Whether the dialog has a 2D plan to fall back to. A variable-Z rotary
+   * program has no plan view at all, so the WebGL-unavailable message must not
+   * promise one (review of #1179, correction round 4).
+   */
+  fallbackPlan: boolean
+  /**
    * Renderer factory, injectable so a test can watch the draw calls: the unit
    * suite has no WebGL2 context, but the redraw-on-toggle behaviour is exactly
    * what must not regress (review of #1179).
@@ -105,6 +111,7 @@ export function MotionDebugWrappedView({
   selectedZ,
   showNonCutting,
   aRange,
+  fallbackPlan,
   rendererFactory,
 }: MotionDebugWrappedViewProps) {
   const { t } = useI18n()
@@ -143,8 +150,9 @@ export function MotionDebugWrappedView({
     const createRenderer = rendererFactory ?? createViewportRenderer
     const renderer = createRenderer('MotionDebugWrappedView')
     if (!renderer) {
-      // No WebGL2 context: the 2D plan view still works, so the dialog reports
-      // this instead of failing the open (#786).
+      // No WebGL2 context: the dialog reports this instead of failing the open
+      // (#786). Whether a 2D plan stands in is the dialog's answer, not this
+      // view's — a wrapped-only rotary program has none.
       setWebglStatus('unavailable')
       return () => setWebglStatus('ok')
     }
@@ -442,7 +450,11 @@ export function MotionDebugWrappedView({
       onPointerLeave={() => setPointerAngle(null)}
     >
       {webglStatus === 'unavailable' && (
-        <div className="motion-debug__empty">{t('dialogs.motionDebug.webglUnavailable')}</div>
+        <div className="motion-debug__empty" data-testid="motion-debug-webgl-unavailable">
+          {t(fallbackPlan
+            ? 'dialogs.motionDebug.webglUnavailable'
+            : 'dialogs.motionDebug.webglUnavailableNoPlan')}
+        </div>
       )}
       <div className="motion-debug__angle-readout">
         <span className="motion-debug__angle-range">{rangeText}</span>

@@ -295,7 +295,9 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.angleRange': 'A 范围：{min}° … {max}°',
   'dialogs.motionDebug.angleAtPointer': '指针处 A：{angle}°',
   'dialogs.motionDebug.angleNoTurn': 'A 范围：无旋转',
+  'dialogs.motionDebug.variableZAllLevels': '切削 Z 高度逐条移动变化，因此会绘制每一次切削，逐层比较不适用。',
   'dialogs.motionDebug.webglUnavailable': '3D 视图需要 WebGL2，此浏览器未提供。2D 平面视图仍可查看。',
+  'dialogs.motionDebug.webglUnavailableNoPlan': '3D 视图需要 WebGL2，此浏览器未提供。此旋转程序没有可回退的 2D 平面，因此无法显示其运动。',
 
   // ── Model Export dialog ──
   'dialogs.modelExport.title': '导出模型',
