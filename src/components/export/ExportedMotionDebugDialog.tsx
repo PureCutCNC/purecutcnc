@@ -62,6 +62,15 @@ interface ExportedMotionDebugDialogProps {
 
 type LayerId = 'generated' | 'optimized' | 'exported'
 
+/**
+ * The drawing area's state while the trace is acquired (issue #1183). A
+ * failure keeps the message it caught, which the old placeholder threw away.
+ */
+type PreparationState =
+  | { state: 'preparing' }
+  | { state: 'ready' }
+  | { state: 'failed'; message: string }
+
 const LAYER_STYLE: Record<LayerId, { color: string; opacity: number; labelKey: MessageKey }> = {
   generated: { color: '#e69138', opacity: 0.65, labelKey: 'dialogs.motionDebug.layerGenerated' }, // theme-exempt: developer-only motion-debug overlay
   optimized: { color: '#3d7df4', opacity: 0.6, labelKey: 'dialogs.motionDebug.layerOptimized' }, // theme-exempt: developer-only motion-debug overlay
@@ -112,7 +121,10 @@ export function ExportedMotionDebugDialog({
   // rotary operation has by design, so a motion carrying rotary angles is
   // admitted through its wrapped view instead (issue #1179 correction round 3).
   const [model, setModel] = useState<ReturnType<typeof buildExportedMotionDebugModel> | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // What the drawing area is showing (issue #1183): preparing the trace takes
+  // seconds on a big rotary path, and it used to be indistinguishable from a
+  // failure because both rendered the same "Warning" placeholder.
+  const [preparation, setPreparation] = useState<PreparationState>({ state: 'preparing' })
   // The 3D wrapped view's geometry (issue #1179): null for a program with no
   // rotary angle, which is what keeps the toggle off a flat operation.
   const [wrapped, setWrapped] = useState<WrappedMotionModel | null>(null)
@@ -218,11 +230,11 @@ export function ExportedMotionDebugDialog({
           setPlanView(built !== null)
           setHasRawTrace(requested !== null)
           setViewMode(wrappedModel !== null ? '3d' : '2d')
-          setError(null)
+          setPreparation({ state: 'ready' })
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e))
+          setPreparation({ state: 'failed', message: e instanceof Error ? e.message : String(e) })
           setModel(null)
           setWrapped(null)
         }
@@ -265,6 +277,9 @@ export function ExportedMotionDebugDialog({
   const [showNonCutting, setShowNonCutting] = useState(false)
   // The wrapped view is the only view a variable-Z rotary path has, so it is
   // shown even though the toggle that normally selects it is not offered.
+  // It is built from the prepared model, so 3D cannot be on screen while the
+  // trace is still preparing: the drawing area's preparing/failure placeholder
+  // is the whole 3D empty state too, not just the 2D one (#1183).
   const show3d = wrapped !== null && (viewMode === '3d' || !planView)
   // The 3D scene's layers, rebuilt only with the model: the same colours and
   // opacities the sidebar swatches show.
@@ -562,12 +577,14 @@ export function ExportedMotionDebugDialog({
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerUp}
             >
-              {error ? (
-                <div className="motion-debug__empty">
-                  {error.startsWith('ineligible:') ? t(ineligibleKey[error.slice('ineligible:'.length)] ?? 'dialogs.motionDebug.ineligibleNoCut') : t('dialogs.motionDebug.warning')}
+              {preparation.state === 'failed' ? (
+                <div className="motion-debug__empty" data-testid="motion-debug-status">
+                  {preparation.message.startsWith('ineligible:')
+                    ? t(ineligibleKey[preparation.message.slice('ineligible:'.length)] ?? 'dialogs.motionDebug.ineligibleNoCut')
+                    : t('dialogs.motionDebug.prepareFailed', { message: preparation.message })}
                 </div>
-              ) : !model || !viewBoxStr ? (
-                <div className="motion-debug__empty">{t('dialogs.motionDebug.warning')}</div>
+              ) : preparation.state === 'preparing' || !model || !viewBoxStr ? (
+                <div className="motion-debug__empty" data-testid="motion-debug-status">{t('dialogs.motionDebug.preparing')}</div>
               ) : (
                 <svg className="motion-debug__svg" viewBox={viewBoxStr} preserveAspectRatio="xMidYMid meet">
                   <rect x={view!.x} y={view!.y} width={view!.w} height={view!.h} fill="transparent" pointerEvents="all" />

@@ -251,6 +251,8 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.arcCcw': 'Arcs CCW',
   'dialogs.motionDebug.verified': 'Vérifié — le mouvement exporté correspond au tracé généré dans la tolérance.',
   'dialogs.motionDebug.warning': 'Avertissement',
+  'dialogs.motionDebug.preparing': 'Préparation du mouvement exporté…',
+  'dialogs.motionDebug.prepareFailed': 'Impossible de préparer le mouvement exporté : {message}',
   'dialogs.motionDebug.ineligibleDrilling': 'Les opérations de perçage ne sont pas visualisables comme trace 2D.',
   'dialogs.motionDebug.ineligibleNoCut': 'Cette opération ne produit aucun mouvement de coupe à inspecter.',
   'dialogs.motionDebug.ineligibleVariableZ': 'Cette opération a une Z de coupe continuellement variable et ne peut pas être affichée comme trace 2.5D plane.',

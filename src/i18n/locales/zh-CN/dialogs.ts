@@ -286,6 +286,8 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.arcCcw': '逆时针圆弧',
   'dialogs.motionDebug.verified': '已验证 — 导出运动在公差范围内与生成路径一致。',
   'dialogs.motionDebug.warning': '警告',
+  'dialogs.motionDebug.preparing': '正在准备导出运动…',
+  'dialogs.motionDebug.prepareFailed': '无法准备导出运动：{message}',
   'dialogs.motionDebug.ineligibleDrilling': '钻孔操作无法显示为 2D 平面轨迹。',
   'dialogs.motionDebug.ineligibleNoCut': '此操作没有可检查的切削运动。',
   'dialogs.motionDebug.ineligibleVariableZ': '此操作的切削 Z 连续变化，无法显示为平坦的 2.5D 轨迹。',
