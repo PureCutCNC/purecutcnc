@@ -19,6 +19,7 @@ import type { BarStock, Clamp, RotaryPassDirection, RoundStock } from '../../typ
 import { barCentre, barInscribedRadius, barMaxRadius, barPivotZ, isSquareStock } from '../../types/barStock'
 import { convertLength, type Units } from '../../utils/units'
 import { minRenderHeight } from '../csg'
+import { appendAll } from './appendAll'
 import { chooseHeightMapCellSize } from './finishSurfaceParallel'
 import {
   AROUND_ANGLE_TOLERANCE_MM,
@@ -168,24 +169,22 @@ const AROUND_RAISE_TOLERANCE_MM = 0.02
 /**
  * The finest angular step a shoulder-cleanup ring is cut at (#1177), degrees.
  *
- * A flat disc on a neighbour's plane leaves a scallop between two angle samples
- * of its own `R (1 - cos dA)`, but the larger term is the exact read's corner
- * lift at the uphill edge: about 0.03 mm at 0.45 degrees, which is what the
- * handoff's 0.05 mm bounds. The step is also the block time: 0.45 degrees at the
- * flat's own 0.75 in radius and a 30 ipm feed is 11 ms, so this grid never adds
- * the 4-10 ms blocks #1173's rule is about. A refinement step below the
- * threshold is dropped from the cleanup ring (see `cleanupRuns`); the threshold
- * sits just under the refinement's own 0.45 degree bisection so that bisection
- * is kept, and the ring's own uniform grid is the second spring pass.
+ * The step is a **block time** before it is a scallop: 0.4 degrees at the flat's
+ * own 0.75 in radius and a 30 ipm feed is a 10.5 ms block, which is what #1173's
+ * smoothness rule bounds from below -- a finer step would add the 4-10 ms blocks
+ * the corner-lift fix removed. The scallop the step leaves is not one pass's
+ * business (`cleanupRuns`): each spring pass cuts on a grid a third of a step on
+ * from the last, so three passes give a third of this step's effective landing
+ * without shortening a single block.
  */
 const CLEANUP_MIN_STEP_DEG = 0.4
 
 /**
  * The coarsest step a shoulder-cleanup ring may be cut at (#1177). A coarser
- * base grid (`sampleSpacing` over the tool radius / 4) would leave a scallop
- * above the neighbour's plane greater than the handoff's 0.05 mm, so the ring's
- * own grid is capped here rather than following it. 0.5 degrees is still 13 ms
- * at the flat's 0.75 in radius and a 30 ipm feed.
+ * base grid (`sampleSpacing` over the tool radius / 4) would leave the three
+ * passes' landing coarser than the handoff's 0.05 mm, so the ring's own grid is
+ * capped here rather than following it. 0.5 degrees is still 13 ms at the flat's
+ * 0.75 in radius and a 30 ipm feed.
  */
 const CLEANUP_MAX_STEP_DEG = 0.5
 
@@ -1678,9 +1677,18 @@ function rotaryBandEnds(
  * added. A square blank keeps both ends (`KEEP_BAND_ENDS`), so it never
  * qualifies.
  *
- * The ring's own tips are not read here: the position is merged into the along
- * grid before `rotaryNeighbourColumns`, so it is a neighbour-reach column and
- * takes the exact footprint read on the mesh *with* the neighbours. That is the
+ * Each face gets **two** rings, on the quarters of the overlap rather than one
+ * on its middle (#1177 correction 2). A flat disc reaches only radii up to
+ * `sqrt(r^2 - d^2) / sin(delta)` at angular offset `delta` from its own pose, and
+ * the pose that clears the flat's corner is the one at that limit -- so the along
+ * distance `d` to the nearest ring bounds what the sweep can reach. Halving the
+ * overlap's largest distance from `0.025 in` to `0.0125 in` takes the worst
+ * residual from 0.080 mm (the correction's single middle ring) to 0.062 mm; the
+ * second improvement, the three spring passes, is in `cleanupRuns`.
+ *
+ * The rings' own tips are not read here: the positions are merged into the along
+ * grid before `rotaryNeighbourColumns`, so they are neighbour-reach columns and
+ * take the exact footprint read on the mesh *with* the neighbours. That is the
  * protection -- the cutter's body never goes below the neighbour's surface -- and
  * it is why the cleanup needs no new sampling code.
  */
@@ -1699,27 +1707,24 @@ function shoulderCleanFaces(
     .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
   const crossing = (face: number): typeof extents => extents.filter((extent) =>
     extent.min < face - tolerance && extent.max > face + tolerance)
-  // The ring sits in the **middle** of the overlap, not on the band face: it is
-  // a flat disc, so the material its rim can reach on the far side of the
-  // overlap shrinks as the pose moves away from the ring's own along position
-  // (the reach is `sqrt(r^2 - offset^2) / sin(delta)`). Centred on the overlap,
-  // one ring reaches both the band face and the neighbour's end; on the face it
-  // could not reach the far edge, and the handoff's X=31.496 mm spot would keep
-  // its ledge.
-  const centred = (face: number, fromStart: boolean): number | null => {
+  // The two rings sit on the overlap's quarters, so the whole overlap is within
+  // a quarter of its width of one of them. A ring on the band face itself would
+  // leave the far half that far away, and the handoff's X=31.496 mm spot would
+  // keep its ledge.
+  const centred = (face: number, fromStart: boolean): number[] => {
     const near = crossing(face)
-    if (near.length === 0) return null
+    if (near.length === 0) return []
     const edge = fromStart
       ? Math.min(...near.map((extent) => extent.max))
       : Math.max(...near.map((extent) => extent.min))
-    const middle = (face + edge) / 2
-    return (middle > face) === fromStart ? middle : null
+    const width = edge - face
+    return [0.25, 0.75]
+      .map((fraction) => face + width * fraction)
+      .filter((position) => (position > face) === fromStart)
   }
   const faces: number[] = []
-  const start = ends.pullStart && !ends.stubStart ? centred(params.alongStart, true) : null
-  const end = ends.pullEnd && !ends.stubEnd ? centred(params.alongEnd, false) : null
-  if (start !== null) faces.push(start)
-  if (end !== null) faces.push(end)
+  if (ends.pullStart && !ends.stubStart) appendAll(faces, centred(params.alongStart, true))
+  if (ends.pullEnd && !ends.stubEnd) appendAll(faces, centred(params.alongEnd, false))
   return faces
 }
 
@@ -2009,7 +2014,12 @@ function retainedStubStepForced(
 interface RotaryShoulderCleanRing {
   /** The cleanup column's index in `RotaryTargets.along`. */
   readonly index: number
-  /** The ring's angular grid, degrees, `0 .. 360` inclusive. */
+  /**
+   * The ring's angular grid, degrees, ascending over one turn. Three rings share
+   * a column, the first starting at 0 and the others a third and two thirds of a
+   * step later, and they are cut in that order; the last one ends on the turn
+   * itself, which is the angle the next unit starts at.
+   */
   readonly angles: readonly number[]
   /** The exact tool tip at each angle, already through the stock offset and clamp. */
   readonly tips: readonly number[]
@@ -2075,6 +2085,10 @@ interface RotaryTargets {
    * retract/rapid/plunge takes it.
    */
   shoulderCleanIndices: readonly number[]
+  /**
+   * The cleanup rings' cut points, three per column in emission order: see
+   * `RotaryShoulderCleanRing`.
+   */
   shoulderCleanRings: readonly RotaryShoulderCleanRing[]
   /**
    * The base angular grid's step in degrees, before any refinement (#1173): a
@@ -3312,16 +3326,31 @@ function completeRotaryTargets(
       if (index >= firstNormal) continue
       const position = neighbourColumns.indices.indexOf(index)
       if (position < 0) continue
-      const ringAngles = Array.from({ length: count + 1 }, (_, k) => 360 * k / count)
-      const sampled = sampleAnglesWithPrep(neighbourColumns.prep, ringAngles, warnings)
-      if (!sampled.valid) continue
-      if (sampled.stopped) break
-      const ringTips = Array.from({ length: ringAngles.length }, (_, k) => {
-        const raw = sampled.tipRadius[k][position]
-        return Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN
-      })
-      if (ringTips.some((tip) => Number.isFinite(tip))) {
-        shoulderCleanRings.push({ index, angles: ringAngles, tips: ringTips })
+      // Three spring passes per column, each on a grid a third of a step on
+      // from the last: see `RotaryShoulderCleanRing`. A pass can only spend the
+      // one pose per angle whose rim reaches furthest, so a pass lowers the
+      // shoulder by one landing step and the next pass -- on the grid between
+      // the last one's samples -- spends the next. The seam between two passes
+      // is more than one step (the emitter's `cleanupTurns` accounting), and
+      // the last pass ends on the turn itself, which is the angle the next unit
+      // starts at.
+      const stepDeg = 360 / count
+      const grids = [
+        Array.from({ length: count }, (_, k) => k * stepDeg),
+        Array.from({ length: count }, (_, k) => stepDeg / 3 + k * stepDeg),
+        [...Array.from({ length: count - 1 }, (_, k) => 2 * stepDeg / 3 + k * stepDeg), 360],
+      ]
+      for (const ringAngles of grids) {
+        const sampled = sampleAnglesWithPrep(neighbourColumns.prep, ringAngles, warnings)
+        if (!sampled.valid) continue
+        if (sampled.stopped) break
+        const ringTips = Array.from({ length: ringAngles.length }, (_, k) => {
+          const raw = sampled.tipRadius[k][position]
+          return Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN
+        })
+        if (ringTips.some((tip) => Number.isFinite(tip))) {
+          shoulderCleanRings.push({ index, angles: ringAngles, tips: ringTips })
+        }
       }
     }
   }
@@ -4007,44 +4036,38 @@ function finishFromTargets(
     while (firstNormal < along.length && cleanAt !== null && cleanAt.has(firstNormal)) firstNormal++
     startClean = sampling.shoulderCleanIndices.filter((index) => index < firstNormal)
     const endClean = sampling.shoulderCleanIndices.filter((index) => index > firstNormal)
-    // The cleanup ring's cut points: the start face's own uniform ring when the
-    // sampler built one (exact tips at `CLEANUP_MIN_STEP_DEG`), as a **coarse**
-    // pre-pass on the operation's grid followed by the uniform spring pass; the
-    // refined-grid fallback keeps an end face (and a square blank, which needs
-    // its stub floor) as it was.
-    const cleanupRuns = (index: number): RotaryRun[] => {
+    // The cleanup ring's cut points: the start face's own uniform rings when the
+    // sampler built them (exact tips at `CLEANUP_MIN_STEP_DEG`, one per spring
+    // pass); the refined-grid fallback keeps an end face (and a square blank,
+    // which needs its stub floor) as it was.
+    const cleanupRuns = (index: number, turnBase: number): RotaryRun[] => {
       const samples: (ToolpathPoint | null)[] = []
-      const custom = sampling.shoulderCleanRings.find((ring) => ring.index === index)
-      if (custom !== undefined) {
-        // Two spring passes over the ring. The exact read sets each pose's tip
-        // by the **uphill rim** of its disc, so the first pass leaves the
-        // material its rim could not reach (0.06 mm at A25 on Frank's bolt,
-        // over the handoff's 0.05). On the second pass the material is already
-        // that low, so the rim pose that could not reach it before now applies
-        // and skims the scallop off. The first pass is the operation's own
-        // (coarse) grid -- its pre-cut only has to bring the shoulder under the
-        // rim pose, and it is one merged ring; the second is the uniform
-        // `CLEANUP_MIN_STEP` grid that reaches the flat's plane. Both turns run
-        // in the same direction as every other ring, and the first ends where
-        // the second begins, so nothing retracts and no block gets shorter.
-        let turnAngleBase = 360
-        for (let k = 0; k < angles.length; k++) {
-          const angle = angles[k]
-          if (angle - (k === 0 ? Number.NEGATIVE_INFINITY : angles[k - 1]) < CLEANUP_MIN_STEP_DEG - 1e-9) continue
-          const tip = sampling.tips[k][index]
-          const inside = insideRegion === null || insideRegion(along[index], angle)
-          samples.push(Number.isFinite(tip) && inside
-            ? point(along[index], tip, angle + turnAngleBase)
-            : null)
-        }
-        turnAngleBase += 360
-        for (let k = 1; k < custom.angles.length; k++) {
-          const angle = custom.angles[k]
-          const tip = custom.tips[k]
-          const inside = insideRegion === null || insideRegion(along[index], angle)
-          samples.push(Number.isFinite(tip) && inside
-            ? point(along[index], tip, angle + turnAngleBase)
-            : null)
+      const custom = sampling.shoulderCleanRings.filter((ring) => ring.index === index)
+      if (custom.length > 0) {
+        // Three spring passes over the column, each on a grid a third of a step
+        // on from the last (see `RotaryShoulderCleanRing`). The exact read sets
+        // each pose's tip by the **uphill rim** of its disc, so a pass leaves
+        // the material its rim could not reach -- and a forward ring can only
+        // spend the one pose per angle whose rim reaches furthest, so a pass
+        // lowers the shoulder by a single landing step. The passes that follow,
+        // on the grids between the last one's samples, spend the poses it could
+        // not: three passes come within a third of a step's landing of the
+        // flat's plane without shortening a single block.
+        //
+        // Every turn runs in the same direction as every other ring; each ends
+        // where the next begins, so nothing retracts, and the last ends on the
+        // turn itself, which is the angle the next unit starts at. The seam
+        // between two passes is one and a third steps, never less than one.
+        for (const [position, ring] of custom.entries()) {
+          const turnAngleBase = turnBase + 360 * position
+          for (let k = 0; k < ring.angles.length; k++) {
+            const angle = ring.angles[k]
+            const tip = ring.tips[k]
+            const inside = insideRegion === null || insideRegion(along[index], angle)
+            samples.push(Number.isFinite(tip) && inside
+              ? point(along[index], tip, angle + turnAngleBase)
+              : null)
+          }
         }
         return ringRuns(samples)
       }
@@ -4055,7 +4078,9 @@ function finishFromTargets(
         lastAngle = angle
         const tip = sampling.tips[k][index]
         const inside = insideRegion === null || insideRegion(along[index], angle)
-        samples.push(Number.isFinite(tip) && inside ? point(along[index], tip, angle) : null)
+        samples.push(Number.isFinite(tip) && inside
+          ? point(along[index], tip, angle + turnBase)
+          : null)
       }
       return ringRuns(samples)
     }
@@ -4067,33 +4092,45 @@ function finishFromTargets(
     // transition **out** of the cleanup ring is forward, so the ordinary surface
     // link (`followLink`) already follows the model from the band face to the
     // next ring -- a lift is only needed when a ring cannot be linked.
-    let cleanupPhase: 'enter' | null = null
+    let cleanupEntries = 0
     const cleanupLink = (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
-      if (cleanupPhase === null) return followLink(from, to)
-      cleanupPhase = null
-      // A full cleanup ring starts at the first ring's own end angle; anything
-      // else (a split ring the region trimmed) keeps the ordinary transition.
-      return from.a === to.a ? [{ to, kind: 'cut' }] : followLink(from, to)
+      if (cleanupEntries <= 0) return followLink(from, to)
+      // A full cleanup ring starts at the preceding ring's own end angle;
+      // anything else (a split ring the region trimmed) keeps the ordinary
+      // transition, and the remaining entries stay for the runs still to come.
+      if (from.a !== to.a) return followLink(from, to)
+      cleanupEntries -= 1
+      return [{ to, kind: 'cut' }]
     }
     // One forward-only ring at the cursor's angle. A split ring is partial arcs:
     // its last run can still reach the ring end, but the issue's contract is
     // that a split ring retracts rather than feeding to the next ring. Only a
     // ring that emitted one run may link -- a region-clipped ring's single run
     // is marked above, so it may.
-    const emitRing = (index: number, cleanup?: number): void => {
+    const emitRing = (index: number, cleanup?: readonly number[]): void => {
       const runs = rings[index].runs.map((run) => ({
         ...run,
         points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
       }))
-      let combined = runs
-      if (cleanup !== undefined) {
-        // The cleanup points carry their own turn offsets (`angleBase + 360` and
-        // `+ 720`); the emitter's base is the first ring's.
-        const clean = cleanupRuns(cleanup).map((run) => ({
-          ...run,
-          points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
-        }))
-        cleanupPhase = 'enter'
+      let combined: RotaryRun[] = runs
+      let cleanupTurns = 0
+      if (cleanup !== undefined && cleanup.length > 0) {
+        // The cleanup points carry their own turn offsets -- one turn per spring
+        // pass, starting after the first ring's (`angleBase + 360`); the
+        // emitter's base is the first ring's.
+        const clean: RotaryRun[] = []
+        let turnBase = 360
+        for (const cleanupIndex of cleanup) {
+          for (const run of cleanupRuns(cleanupIndex, turnBase)) {
+            clean.push({
+              ...run,
+              points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
+            })
+          }
+          turnBase += 360 * Math.max(1, sampling.shoulderCleanRings.filter((ring) => ring.index === cleanupIndex).length)
+        }
+        cleanupEntries = clean.length
+        cleanupTurns = turnBase - 360
         combined = [...runs, ...clean]
       }
       // The first run's link is skipped by the emitter itself when there is no
@@ -4103,12 +4140,12 @@ function finishFromTargets(
         cleanup === undefined ? previousEndedAtEnd : true, forceStep, pivot, cleanupLink)
       here = emitted.here
       previousEndedAtEnd = emitted.endedAtEnd && (combined.length <= 1 || cleanup !== undefined)
-      // The first ring's turn plus the cleanup ring's two spring passes.
-      angleBase += cleanup === undefined ? 360 : 1080
+      // The first ring's turn plus every cleanup ring's spring passes.
+      angleBase += 360 + cleanupTurns
       // The entry link is attempted inside the call above; if it was not (a
-      // region-split cleanup ring) the phase must not leak into the next ring's
+      // region-split cleanup ring) the count must not leak into the next ring's
       // forward link.
-      cleanupPhase = null
+      cleanupEntries = 0
     }
     const finishBand = continuousFinishInput(sampling, params, tool, warnings, hooks)
     let ring = 0
@@ -4124,9 +4161,9 @@ function finishFromTargets(
         continue
       }
       if (ring === firstNormal && startClean.length > 0) {
-        // #1177: the cleanup ring is cut right after the first ring, through the
-        // two cut transitions above. It is not part of a helix band.
-        emitRing(ring, startClean[0])
+        // #1177: the cleanup rings are cut right after the first ring, through
+        // the cut transitions above. They are not part of a helix band.
+        emitRing(ring, startClean)
         ring++
         continue
       }
