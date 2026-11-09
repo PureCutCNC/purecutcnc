@@ -137,6 +137,31 @@ test.describe('Exported-motion debug view smoke', () => {
     await expect(readout).toContainText('A range')
     await expect(readout).toContainText(/A range: -?[\d.]+° … -?[\d.]+°/)
 
+    // Hiding a layer takes it out of the drawn scene and re-showing it brings it
+    // back. The redraw itself (the review's stale-pixel finding) is asserted in
+    // the unit suite, which counts the renderer's draws through an injected
+    // renderer — the browser's pixels are not observable from here.
+    const pieces = async () => Number(await host.getAttribute('data-motion-pieces'))
+    const exported = ui.motionDebug.layerCheckbox(app.page, 'Exported G-code')
+    await exported.uncheck()
+    await expect.poll(pieces).toBe(0)
+    await exported.check()
+    await expect.poll(pieces).toBeGreaterThan(20)
+
+    // The sidebar's cutting-level and non-cutting filters reach the 3D scene
+    // too: "all levels" draws more than the default level, and turning the
+    // non-cutting moves on adds the rapids (review of #1179).
+    const oneLevel = await pieces()
+    const zSelect = ui.motionDebug.zLevelSelect(app.page)
+    await zSelect.selectOption('all')
+    await expect.poll(pieces).toBeGreaterThan(oneLevel)
+    const allCutting = await pieces()
+    const nonCutting = ui.motionDebug.nonCuttingCheckbox(app.page)
+    await nonCutting.check()
+    await expect.poll(pieces).toBeGreaterThan(allCutting)
+    await nonCutting.uncheck()
+    await expect.poll(pieces).toBe(allCutting)
+
     // Switching back restores the flat plan.
     await ui.motionDebug.view2dButton(app.page).click()
     await expect(ui.motionDebug.svg(app.page)).toBeVisible()

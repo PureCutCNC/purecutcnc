@@ -457,6 +457,11 @@ export function ExportedMotionDebugDialog({
                 stock={project.stock}
                 layers={wrappedLayers}
                 visibleLayers={visibleLayers}
+                // The sidebar's level and non-cutting filters apply to the
+                // wrapped view too (review of #1179): without them every level
+                // and rapid stayed on screen in 3D.
+                selectedZ={selectedZ}
+                showNonCutting={showNonCutting}
                 aRange={wrapped.aRange}
               />
             ) : (

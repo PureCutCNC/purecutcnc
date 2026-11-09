@@ -45,6 +45,7 @@ import {
   barOutline,
   buildWrappedMotion,
   exportedMotionMoves,
+  filterWrappedPieces,
   wrapMoves,
 } from './motionDebugWrapped'
 
@@ -272,9 +273,42 @@ function testTurningArcBecomesChords(): void {
   }
 }
 
+/**
+ * The wrapped pieces carry the two fields the dialog's sidebar filters need
+ * (review of #1179): the commanded (pre-wrap) Z level and whether the move cuts.
+ *
+ * The Z is deliberately the level the program commanded, not the wrapped point's
+ * own z — wrapping turns the point about the bar, so the drawn z is a position
+ * on the bar, never a cutting level.
+ */
+function testWrappedPiecesCarryTheSidebarFilters(): void {
+  console.log('Testing the wrapped pieces carry the sidebar filters...')
+  const pieces = wrapMoves(turningMoves(), BAR)
+  const cutting = pieces.filter((piece) => piece.cutting)
+  const rapids = pieces.filter((piece) => !piece.cutting)
+  assert(cutting.length > 0 && rapids.length > 0, 'the fixture has both cutting and rapid pieces')
+  assert(cutting.every((piece) => approx(piece.z, 20) || approx(piece.z, 30)),
+    'cuts carry their commanded level')
+  // The plunge starts at Z30 and the retract rapid at Z20: the level is the
+  // move's start, exactly as the 2D segment's `z` is.
+  assert(pieces.filter((piece) => piece.cutting && approx(piece.z, 30)).length > 0,
+    'the plunge keeps the level it started at')
+  assert(rapids.every((piece) => approx(piece.z, 20) || approx(piece.z, 30)),
+    'rapids carry the level they started at')
+
+  const level20 = filterWrappedPieces(pieces, 20, false)
+  assert(level20.length > 0 && level20.every((piece) => piece.cutting && approx(piece.z, 20)),
+    'the selected level draws only its own cutting pieces')
+  const otherLevel = filterWrappedPieces(pieces, 25, false)
+  assert(otherLevel.length === 0, 'a level with no moves draws nothing')
+  assert(filterWrappedPieces(pieces, 'all', false).length === cutting.length,
+    'all cutting levels hides the rapids')
+  assert(filterWrappedPieces(pieces, 'all', true).length === pieces.length,
+    'non-cutting moves brings the rapids back')
+}
+
 /** The faint reference outline follows the blank: round bar or square one. */
-function testBarOutline(): void {
-  console.log('Testing the bar outline follows the blank...')
+function testBarOutline(): void {  console.log('Testing the bar outline follows the blank...')
   const round = BAR
   const outline = barOutline(round)
   assert(outline.shape === 'round' && outline.axis === 'x', 'a round bar lies along x')
@@ -294,6 +328,7 @@ testTurningMoveWrapsAtTheCommandedAngles()
 testAngleFreeProgramHasNoWrappedView()
 testWrappedModel()
 testTurningArcBecomesChords()
+testWrappedPiecesCarryTheSidebarFilters()
 testBarOutline()
 
 console.log('motionDebugWrapped tests passed')

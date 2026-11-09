@@ -28,14 +28,14 @@
  * disposed when the dialog closes.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useI18n } from '../../i18n/i18nContext'
 import { useTheme } from '../../theme/themeContext'
 import type { BarStock } from '../../types/project'
 import type { MotionDebugLayerId } from '../../engine/gcode/motionDebug'
 import type { WrappedPiece } from './motionDebugWrapped'
-import { barOutline } from './motionDebugWrapped'
+import { barOutline, filterWrappedPieces } from './motionDebugWrapped'
 import { toolpathPointToWorldTuple } from '../viewport3d/toolpathOverlay'
 import { createOrbitControls } from '../viewport3d/orbitControls'
 import { createViewportRenderer } from '../viewport3d/webglRenderer'
@@ -54,8 +54,18 @@ interface MotionDebugWrappedViewProps {
   stock: BarStock
   layers: readonly WrappedViewLayer[]
   visibleLayers: Record<MotionDebugLayerId, boolean>
+  /** The sidebar's cutting-level selection: `'all'` or one cutting level. */
+  selectedZ: number | 'all'
+  /** The sidebar's "non-cutting moves" checkbox. */
+  showNonCutting: boolean
   /** The exported program's A span, in degrees. */
   aRange: { min: number; max: number } | null
+  /**
+   * Renderer factory, injectable so a test can watch the draw calls: the unit
+   * suite has no WebGL2 context, but the redraw-on-toggle behaviour is exactly
+   * what must not regress (review of #1179).
+   */
+  rendererFactory?: (viewName: string) => THREE.WebGLRenderer | null
 }
 
 /** A drawn point the pointer can be measured against, with its commanded angle. */
@@ -88,7 +98,15 @@ function worldPosition(point: { x: number; y: number; z: number }): THREE.Vector
   return new THREE.Vector3(x, y, z)
 }
 
-export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }: MotionDebugWrappedViewProps) {
+export function MotionDebugWrappedView({
+  stock,
+  layers,
+  visibleLayers,
+  selectedZ,
+  showNonCutting,
+  aRange,
+  rendererFactory,
+}: MotionDebugWrappedViewProps) {
   const { t } = useI18n()
   const { palette } = useTheme()
   const background = palette.three.background
@@ -99,15 +117,31 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
   const objectsRef = useRef<Map<MotionDebugLayerId, THREE.Object3D>>(new Map())
   const samplesRef = useRef<AngleSample[]>([])
   const allSamplesRef = useRef<AngleSample[]>([])
+  /** Draws the current scene; the layer toggles call it to repaint in place. */
+  const renderRef = useRef<(() => void) | null>(null)
   const lastHoverRef = useRef(0)
   const projectedRef = useRef(new THREE.Vector3())
   const [webglStatus, setWebglStatus] = useState<'ok' | 'unavailable'>('ok')
   const [pointerAngle, setPointerAngle] = useState<number | null>(null)
 
+  // What the sidebar leaves visible, in the exported layer. The scene builds the
+  // same filtered pieces; this copy is what the canvas reports, so a test can
+  // tell a filtered scene from an unfiltered one.
+  const exportedPieces = useMemo(
+    () => layers.find((layer) => layer.id === 'exported')?.pieces ?? [],
+    [layers],
+  )
+  const drawnExportedPieces = useMemo(
+    () => filterWrappedPieces(exportedPieces, selectedZ, showNonCutting),
+    [exportedPieces, selectedZ, showNonCutting],
+  )
+  const drawnExportedCount = visibleLayers.exported ? drawnExportedPieces.length : 0
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const renderer = createViewportRenderer('MotionDebugWrappedView')
+    const createRenderer = rendererFactory ?? createViewportRenderer
+    const renderer = createRenderer('MotionDebugWrappedView')
     if (!renderer) {
       // No WebGL2 context: the 2D plan view still works, so the dialog reports
       // this instead of failing the open (#786).
@@ -132,9 +166,16 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 20000)
     cameraRef.current = camera
 
+    // Every draw goes through here, so a layer toggle can redraw without a new
+    // frame loop (review of #1179: visibility used to change with no draw).
+    const renderScene = () => {
+      renderer.render(scene, camera)
+    }
+    renderRef.current = renderScene
+
     const layerObjects = objectsRef.current
     const controls = createOrbitControls(camera, renderer.domElement, {
-      onChange: () => renderer.render(scene, camera),
+      onChange: renderScene,
       onPresetChange: () => {},
       isInteractionBlocked: () => false,
     })
@@ -231,12 +272,15 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
     const exportedSamples: AngleSample[] = []
 
     for (const layer of layers) {
+      // The same sidebar filters the 2D plan applies: one cutting level (or
+      // all), and rapids only with "non-cutting moves" on (review of #1179).
+      const pieces = filterWrappedPieces(layer.pieces, selectedZ, showNonCutting)
       const feedPositions: number[] = []
       const rapidPositions: number[] = []
-      const vertexCount = layer.pieces.length * 2
+      const vertexCount = pieces.length * 2
       const stride = Math.max(1, Math.ceil(vertexCount / MAX_HOVER_SAMPLES))
       let vertexIndex = 0
-      for (const piece of layer.pieces) {
+      for (const piece of pieces) {
         const positions = piece.rapid ? rapidPositions : feedPositions
         const from = worldPosition(piece.from)
         const to = worldPosition(piece.to)
@@ -304,7 +348,7 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
       renderer.setSize(width, height)
       camera.aspect = width / height
       camera.updateProjectionMatrix()
-      renderer.render(scene, camera)
+      renderScene()
     }
     const observer = new ResizeObserver(resize)
     observer.observe(host)
@@ -319,17 +363,22 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
       samplesRef.current = []
       allSamplesRef.current = []
       cameraRef.current = null
+      renderRef.current = null
       renderer.dispose()
       renderer.domElement.remove()
       setWebglStatus('ok')
       setPointerAngle(null)
     }
     // `layers` is rebuilt only with the model (memoized by the dialog), and the
-    // two palette colours are read once per scene build.
+    // two palette colours are read once per scene build. A filter change rebuilds
+    // the scene (the drawn pieces differ), which also refits the camera; the
+    // framing is dominated by the bar outline, so the view does not drift.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stock, layers, background, barColor])
+  }, [stock, layers, background, barColor, selectedZ, showNonCutting, rendererFactory])
 
-  // Layer toggles only hide the built objects; the scene is not rebuilt.
+  // Layer toggles only hide the built objects; the scene is not rebuilt, but it
+  // must be redrawn — `visible` alone changes nothing on screen until the next
+  // orbit or resize (review of #1179: stale pixels).
   const visibleKey = `${visibleLayers.generated ? 1 : 0}${visibleLayers.optimized ? 1 : 0}${visibleLayers.exported ? 1 : 0}`
   useEffect(() => {
     for (const [id, object] of objectsRef.current) {
@@ -339,6 +388,7 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
     // takes the hover angle with it.
     samplesRef.current = visibleLayers.exported ? allSamplesRef.current : []
     if (!visibleLayers.exported) setPointerAngle(null)
+    renderRef.current?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey])
 
@@ -371,7 +421,6 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
     setPointerAngle(bestAngle)
   }
 
-  const exportedPieceCount = layers.find((layer) => layer.id === 'exported')?.pieces.length ?? 0
   const rangeText = aRange === null
     ? t('dialogs.motionDebug.angleNoTurn')
     : t('dialogs.motionDebug.angleRange', {
@@ -379,15 +428,16 @@ export function MotionDebugWrappedView({ stock, layers, visibleLayers, aRange }:
         max: formatAngle(aRange.max),
       })
 
-  // `data-motion-pieces` reports what was actually drawn, so a test can tell a
-  // built scene from an empty canvas (the same idea as the viewport's
+  // `data-motion-pieces` reports what was actually drawn under the current
+  // filters, so a test can tell a built scene from an empty canvas and a
+  // filtered scene from an unfiltered one (the same idea as the viewport's
   // data-toolpath-* counts).
   return (
     <div
       ref={hostRef}
       className="motion-debug__canvas-wrap"
       data-testid="motion-debug-3d"
-      data-motion-pieces={exportedPieceCount}
+      data-motion-pieces={drawnExportedCount}
       onPointerMove={handlePointerMove}
       onPointerLeave={() => setPointerAngle(null)}
     >

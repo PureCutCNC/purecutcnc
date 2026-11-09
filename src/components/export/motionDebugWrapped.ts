@@ -62,6 +62,15 @@ export interface WrappedPiece {
   from: { x: number; y: number; z: number }
   to: { x: number; y: number; z: number }
   rapid: boolean
+  /**
+   * Commanded (project) Z of the move this piece came from. The sidebar's
+   * cutting-level filter keys on it, and it is deliberately the pre-wrap Z: the
+   * wrapped point has been turned about the bar's axis, so its own z is no
+   * longer a cutting level.
+   */
+  z: number
+  /** True for cut/plunge/lead moves; false for rapids, as the 2D layer marks it. */
+  cutting: boolean
   aFrom?: number
   aTo?: number
 }
@@ -228,12 +237,30 @@ export function wrapMoves(moves: readonly ToolpathMove[], stock: BarStock): Wrap
         from: { x: piece.from.x, y: piece.from.y, z: piece.from.z },
         to: { x: piece.to.x, y: piece.to.y, z: piece.to.z },
         rapid: move.kind === 'rapid',
+        z: move.from.z,
+        cutting: move.kind !== 'rapid',
         aFrom,
         aTo,
       })
     })
   }
   return pieces
+}
+
+/**
+ * The pieces the dialog's sidebar filters leave visible, with the same rule the
+ * 2D plan view applies (`filterSegments`): a cutting piece shows at the selected
+ * cutting level (or at every level), and a rapid only with "non-cutting moves"
+ * on. A rapid is never filtered by Z — the 2D view does not filter it either.
+ */
+export function filterWrappedPieces(
+  pieces: readonly WrappedPiece[],
+  selectedZ: number | 'all',
+  showNonCutting: boolean,
+): WrappedPiece[] {
+  return pieces.filter((piece) => (piece.cutting
+    ? selectedZ === 'all' || Math.abs(piece.z - selectedZ) < 1e-6
+    : showNonCutting))
 }
 
 export interface BuildWrappedMotionArgs {
