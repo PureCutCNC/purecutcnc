@@ -36,10 +36,11 @@ import {
   type PinnedMachineDefinition,
 } from '../../engine/gcode/types'
 import { runPostProcessor } from '../../engine/gcode/postprocessor'
-import { parseExportedMotion } from '../../engine/gcode/motionDebug'
+import { buildExportedMotionDebugModel, parseExportedMotion } from '../../engine/gcode/motionDebug'
 import { parseGcodeMotion } from '../../engine/gcode/gcodeMotionParser'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
-import type { ToolpathMove, ToolpathPoint } from '../../engine/toolpaths/types'
+import { exportGeometryTolerance } from '../../utils/units'
+import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../../engine/toolpaths/types'
 import {
   angleRangeOfMoves,
   barOutline,
@@ -135,12 +136,17 @@ function rpt(x: number, y: number, z: number, a: number): ToolpathPoint {
  * program writes as one inverse-time move.
  */
 function turningMoves(): ToolpathMove[] {
+  return turningMovesAt(20)
+}
+
+/** {@link turningMoves} lifted to a cutting level the caller chooses. */
+function turningMovesAt(cutZ: number): ToolpathMove[] {
   return [
-    { kind: 'rapid', from: rpt(0, BAR_CENTRE, 30, 0), to: rpt(0, BAR_CENTRE, 30, 0) },
-    { kind: 'plunge', from: rpt(0, BAR_CENTRE, 30, 0), to: rpt(0, BAR_CENTRE, 20, 0) },
-    { kind: 'cut', from: rpt(0, BAR_CENTRE, 20, 0), to: rpt(10, BAR_CENTRE, 20, 90) },
-    { kind: 'cut', from: rpt(10, BAR_CENTRE, 20, 90), to: rpt(20, BAR_CENTRE, 20, 90) },
-    { kind: 'rapid', from: rpt(20, BAR_CENTRE, 20, 90), to: rpt(20, BAR_CENTRE, 30, 90) },
+    { kind: 'rapid', from: rpt(0, BAR_CENTRE, cutZ + 10, 0), to: rpt(0, BAR_CENTRE, cutZ + 10, 0) },
+    { kind: 'plunge', from: rpt(0, BAR_CENTRE, cutZ + 10, 0), to: rpt(0, BAR_CENTRE, cutZ, 0) },
+    { kind: 'cut', from: rpt(0, BAR_CENTRE, cutZ, 0), to: rpt(10, BAR_CENTRE, cutZ, 90) },
+    { kind: 'cut', from: rpt(10, BAR_CENTRE, cutZ, 90), to: rpt(20, BAR_CENTRE, cutZ, 90) },
+    { kind: 'rapid', from: rpt(20, BAR_CENTRE, cutZ, 90), to: rpt(20, BAR_CENTRE, cutZ + 10, 90) },
   ]
 }
 
@@ -307,6 +313,80 @@ function testWrappedPiecesCarryTheSidebarFilters(): void {
     'non-cutting moves brings the rapids back')
 }
 
+/**
+ * An exported cut whose level the machine cannot write back exactly still draws
+ * at the level the sidebar offers (review of #1179, finding 1).
+ *
+ * The machine writes Z with three decimals, so a project level of 19.876543
+ * leaves the program as 19.877 and comes back 4.57e-4 away from the level the
+ * 2D model lists. Comparing that against the level within 1e-6 drew no exported
+ * pieces at all while the Generated/Optimized layers still matched. The wrapped
+ * model now applies the same rounding accommodation the 2D model applies to its
+ * exported segments.
+ */
+function testExportedLevelRoundingKeepsItsPieces(): void {
+  console.log('Testing an exported cut rounded by the machine still draws at its level...')
+  const level = 19.876543
+  const project = rotaryProject()
+  const definition = rotaryDefinition('own')
+  const moves = turningMovesAt(level)
+  const result = runPostProcessor({
+    project,
+    definition,
+    operations: [{
+      operation: rotaryOperation(),
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: { operationId: 'op-rotary', warnings: [], bounds: null, moves },
+    }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: true },
+  })
+  const pinned = pinRotaryAxis(definition, project.stock)
+  const parsed = parseExportedMotion(result.gcode, pinned)
+  const tolerance = exportGeometryTolerance('mm')
+
+  // The export really does round the level: the program's cut comes back at
+  // 19.877, not at 19.876543.
+  const exported = exportedMotionMoves(parsed, ORIGIN, pinned)
+  const cut = exported.find((move) => Math.abs(move.to.z - 19.877) < 1e-9)
+  assert(cut !== undefined, `the cut survives the read-back, got ${JSON.stringify(exported.map((m) => m.to.z))}`)
+  assert(!approx(cut!.from.z, level, 1e-6),
+    `the program's rounded Z differs from the project level, got ${cut!.from.z}`)
+
+  const trace: ToolpathGenerationTrace = {
+    operationId: 'op-rotary',
+    raw: { operationId: 'op-rotary', warnings: [], bounds: null, moves },
+    optimized: { operationId: 'op-rotary', warnings: [], bounds: null, moves },
+  }
+  const postprocessorTrace = result.motionTraces?.[0]
+  assert(postprocessorTrace !== undefined, 'the postprocessor captured its motion trace')
+  // The level the sidebar offers is the 2D model's own list.
+  const planar = buildExportedMotionDebugModel({
+    trace,
+    parsed,
+    postprocessorTrace: postprocessorTrace!,
+    origin: ORIGIN,
+    definition: pinned,
+    tolerance,
+  })
+  assert(planar.zLevels.length === 1 && approx(planar.zLevels[0], level, 1e-12),
+    `the sidebar offers the project level, got ${JSON.stringify(planar.zLevels)}`)
+
+  const wrapped = buildWrappedMotion({
+    parsed,
+    origin: ORIGIN,
+    definition: pinned,
+    stock: BAR,
+    trace,
+    zSnap: { levels: planar.zLevels, tolerance },
+  })
+  assert(wrapped !== null, 'the rotary program has a wrapped model')
+  const atLevel = filterWrappedPieces(wrapped!.layers.exported, planar.zLevels[0], false)
+  assert(atLevel.length > 0,
+    `selecting ${level} draws its exported cut pieces, got ${atLevel.length}`)
+  assert(atLevel.every((piece) => piece.z === planar.zLevels[0]),
+    'the drawn pieces carry the level the selector offers, not the rounded one')
+}
+
 /** The faint reference outline follows the blank: round bar or square one. */
 function testBarOutline(): void {  console.log('Testing the bar outline follows the blank...')
   const round = BAR
@@ -329,6 +409,7 @@ testAngleFreeProgramHasNoWrappedView()
 testWrappedModel()
 testTurningArcBecomesChords()
 testWrappedPiecesCarryTheSidebarFilters()
+testExportedLevelRoundingKeepsItsPieces()
 testBarOutline()
 
 console.log('motionDebugWrapped tests passed')

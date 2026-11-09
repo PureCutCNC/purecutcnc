@@ -66,7 +66,8 @@ export interface WrappedPiece {
    * Commanded (project) Z of the move this piece came from. The sidebar's
    * cutting-level filter keys on it, and it is deliberately the pre-wrap Z: the
    * wrapped point has been turned about the bar's axis, so its own z is no
-   * longer a cutting level.
+   * longer a cutting level. Exported pieces carry the level after the same
+   * rounding accommodation the 2D model applies (see `BuildWrappedMotionArgs`).
    */
   z: number
   /** True for cut/plunge/lead moves; false for rapids, as the 2D layer marks it. */
@@ -271,6 +272,51 @@ export interface BuildWrappedMotionArgs {
   stock: BarStock
   /** The generation trace, for the optional Generated and Optimized layers. */
   trace?: ToolpathGenerationTrace
+  /**
+   * The 2D model's discrete cutting levels and the export tolerance, when the
+   * caller has them. An exported program writes Z rounded to the machine's
+   * decimal places, so an exported cut lands a hair off the level the sidebar
+   * offers (19.876543 becomes 19.877 at three decimals) and a strict comparison
+   * would draw nothing at that level. Each exported cutting piece's commanded Z
+   * is snapped to the nearest level within `max(tolerance * 4, 1e-3)` — exactly
+   * the accommodation `buildExportedMotionDebugModel` applies to the 2D
+   * segments — so both views agree on which level a cut belongs to.
+   */
+  zSnap?: {
+    levels: readonly number[]
+    /** The same geometric export tolerance the 2D model is built with. */
+    tolerance: number
+  }
+}
+
+/**
+ * Snap each exported cutting piece's commanded Z to the discrete level the
+ * sidebar offers, within the 2D model's own rounding tolerance.
+ *
+ * Only the exported layer needs this: the Generated and Optimized layers are
+ * the source of those levels, so their Z already compares equal. Levels are far
+ * enough apart (stepdowns) that the tolerance never blurs two together.
+ */
+function snapExportedLevels(
+  pieces: WrappedPiece[],
+  levels: readonly number[],
+  tolerance: number,
+): void {
+  if (levels.length === 0) return
+  const snapTolerance = Math.max(tolerance * 4, 1e-3)
+  for (const piece of pieces) {
+    if (!piece.cutting) continue
+    let best = levels[0]
+    let bestDistance = Math.abs(piece.z - best)
+    for (let index = 1; index < levels.length; index++) {
+      const distance = Math.abs(piece.z - levels[index])
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = levels[index]
+      }
+    }
+    if (bestDistance <= snapTolerance) piece.z = best
+  }
 }
 
 /**
@@ -281,15 +327,17 @@ export interface BuildWrappedMotionArgs {
  * has nothing to wrap, and the dialog offers no 3D view for it.
  */
 export function buildWrappedMotion(args: BuildWrappedMotionArgs): WrappedMotionModel | null {
-  const { parsed, origin, definition, stock, trace } = args
+  const { parsed, origin, definition, stock, trace, zSnap } = args
   const exported = exportedMotionMoves(parsed, origin, definition)
   const aRange = angleRangeOfMoves(exported)
   if (aRange === null) return null
+  const exportedPieces = wrapMoves(exported, stock)
+  if (zSnap) snapExportedLevels(exportedPieces, zSnap.levels, zSnap.tolerance)
   return {
     layers: {
       generated: trace ? wrapMoves(trace.raw.moves, stock) : [],
       optimized: trace ? wrapMoves(trace.optimized.moves, stock) : [],
-      exported: wrapMoves(exported, stock),
+      exported: exportedPieces,
     },
     aRange,
   }

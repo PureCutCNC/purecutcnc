@@ -157,6 +157,10 @@ export function ExportedMotionDebugDialog({
               definition: pinned,
               stock: project.stock,
               trace,
+              // The 2D model already snapped its exported segments to these
+              // levels; the 3D view must agree, or the selector hides the
+              // exported cuts it should show (review of #1179).
+              zSnap: { levels: built.zLevels, tolerance },
             })
             : null)
           setError(null)

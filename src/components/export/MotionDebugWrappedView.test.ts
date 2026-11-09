@@ -25,23 +25,30 @@
  *
  * Both are drawn-state contracts, so this suite mounts the real component and
  * watches the real renderer calls (injected, because the unit suite has no
- * WebGL2 context) and the real `data-motion-pieces` count:
+ * WebGL2 context) and the geometry each draw was handed:
  *
- *  - unchecking Exported must both request a draw and report zero drawn pieces;
- *  - the level and non-cutting props must change how many pieces are drawn,
- *    with the same rule the 2D plan applies.
+ *  - unchecking Exported must both request a draw and submit no exported
+ *    geometry;
+ *  - the level and non-cutting props must change how many pieces the renderer
+ *    receives, read off the scene graph itself, with the same rule the 2D plan
+ *    applies. The `data-motion-pieces` count must agree with that geometry, so
+ *    the two computations cannot drift apart.
  *
  * Mutations checked one at a time:
  *  - the `renderRef.current?.()` call dropped from the visibility effect →
  *    "a layer toggle requests a draw" fails with the render count unchanged;
- *  - `filterWrappedPieces` skipped in the scene build and in the reported count
- *    → the filter assertions fail, both props reading as ignored.
+ *  - `filterWrappedPieces` skipped in the scene build (`const pieces =
+ *    layer.pieces`) → the geometry assertions fail with the unfiltered pieces
+ *    submitted to the renderer;
+ *  - the reported count built from the unfiltered pieces → the count-vs-geometry
+ *    comparison fails, so a filter applied in only one of the two places is
+ *    caught either way.
  *
  * Run with: npx tsx src/components/export/MotionDebugWrappedView.test.ts
  */
 
 import * as React from 'react'
-import type { WebGLRenderer } from 'three'
+import type { Object3D, Scene, WebGLRenderer } from 'three'
 import { parseHTML } from 'linkedom'
 
 const { window, document } = parseHTML('<!doctype html><html><body></body></html>')
@@ -107,7 +114,7 @@ function layers(): WrappedViewLayer[] {
   return [
     { id: 'generated', color: '#e69138', opacity: 0.65, pieces: [] },
     { id: 'optimized', color: '#3d7df4', opacity: 0.6, pieces: [] },
-    { id: 'exported', color: '#d6336c', opacity: 0.9, pieces: exportedPieces() },
+    { id: 'exported', color: EXPORTED_COLOR, opacity: 0.9, pieces: exportedPieces() },
   ]
 }
 
@@ -116,15 +123,64 @@ const themeValue = {
   palette: { three: { background: '#000000', stockDefault: '#888888' } },
 } as unknown as ThemeContextValue
 
+/** The exported layer's colour, as the view's line material reports it. */
+const EXPORTED_COLOR = '#d6336c'
+/** The dim grey the view's rapid material is built from. */
+const RAPID_COLOR = '#8a8a8a'
+
+/** Vertices of each kind one draw submitted, not the pieces it was built from. */
+interface DrawnGeometry {
+  feedVertices: number
+  rapidVertices: number
+}
+
 interface RenderLog {
   renders: number
   disposed: number
+  /**
+   * What each draw was handed, captured inside `render` so a later scene
+   * mutation cannot rewrite history.
+   */
+  frames: DrawnGeometry[]
+}
+
+/** Whether an object is drawn: it and every ancestor are visible. */
+function isShown(object: Object3D): boolean {
+  let current: Object3D | null = object
+  while (current !== null) {
+    if (!current.visible) return false
+    current = current.parent
+  }
+  return true
 }
 
 /**
- * A renderer that records each draw and disposal. Every other member the view
- * touches is a no-op; the real scene graph and orbit controls still run, so the
- * effect under test is the real one.
+ * Read the exported layer's submitted geometry off the scene the renderer was
+ * handed: two vertices per line piece, split by the material the scene used for
+ * feeds and rapids. Hidden objects are skipped, as three.js skips them, so this
+ * is the drawn state and not merely the built one.
+ */
+function recordSubmittedGeometry(scene: Scene, log: RenderLog): void {
+  const frame: DrawnGeometry = { feedVertices: 0, rapidVertices: 0 }
+  scene.traverse((object) => {
+    const line = object as unknown as {
+      isLineSegments?: boolean
+      geometry?: { getAttribute(name: string): { count: number } | undefined }
+      material?: { color?: { getHexString(): string } }
+    }
+    if (line.isLineSegments !== true || !isShown(object)) return
+    const vertices = line.geometry?.getAttribute('position')?.count ?? 0
+    const hex = line.material?.color?.getHexString()
+    if (hex === EXPORTED_COLOR.slice(1)) frame.feedVertices += vertices
+    else if (hex === RAPID_COLOR.slice(1)) frame.rapidVertices += vertices
+  })
+  log.frames.push(frame)
+}
+
+/**
+ * A renderer that records each draw, its submitted geometry, and its disposal.
+ * Every other member the view touches is a no-op; the real scene graph and
+ * orbit controls still run, so the effect under test is the real one.
  */
 function fakeRendererFactory(log: RenderLog): () => WebGLRenderer {
   return () => {
@@ -134,7 +190,10 @@ function fakeRendererFactory(log: RenderLog): () => WebGLRenderer {
       setPixelRatio: () => undefined,
       setSize: () => undefined,
       setClearColor: () => undefined,
-      render: () => { log.renders += 1 },
+      render: (scene: Scene) => {
+        log.renders += 1
+        recordSubmittedGeometry(scene, log)
+      },
       dispose: () => { log.disposed += 1 },
     }
     return renderer as unknown as WebGLRenderer
@@ -200,6 +259,33 @@ function drawnPieces(host: HTMLElement): number {
   return Number(element?.getAttribute('data-motion-pieces') ?? '-1')
 }
 
+/**
+ * The scene the renderer was handed must hold exactly the pieces the sidebar
+ * filters leave, and the reported count must describe that same set.
+ *
+ * Reading the submitted geometry — rather than only a separately computed DOM
+ * count — is what makes a filter bypassed inside the scene build fail instead
+ * of passing silently (review of #1179, finding 2).
+ */
+function assertDrawn(
+  log: RenderLog,
+  host: HTMLElement,
+  cutting: number,
+  rapid: number,
+  context: string,
+): void {
+  const frame = log.frames[log.frames.length - 1]
+  assert(frame !== undefined, `${context}: a draw reached the renderer`)
+  assert(frame.feedVertices === cutting * 2,
+    `${context}: ${cutting} cutting pieces reached the renderer, got ${frame.feedVertices / 2}`)
+  assert(frame.rapidVertices === rapid * 2,
+    `${context}: ${rapid} rapid pieces reached the renderer, got ${frame.rapidVertices / 2}`)
+  // The count is the same filtered set. Comparing it against the geometry
+  // catches a filter applied in only one of the two places.
+  assert(drawnPieces(host) === cutting + rapid,
+    `${context}: the reported count matches the drawn geometry, reported ${drawnPieces(host)} for ${cutting + rapid}`)
+}
+
 let passed = 0
 let failed = 0
 
@@ -215,75 +301,68 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
 }
 
 await test('a layer toggle requests a draw instead of leaving stale pixels', async () => {
-  const log: RenderLog = { renders: 0, disposed: 0 }
+  const log: RenderLog = { renders: 0, disposed: 0, frames: [] }
   const mounted = mount(log)
   try {
     await flush()
     assert(mounted.canvasCount() === 1, 'the scene built one canvas')
     const atMount = log.renders
     assert(atMount > 0, `the scene drew on mount, got ${atMount} draws`)
-    assert(drawnPieces(mounted.host) === 3, `the three cutting pieces are drawn, got ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 3, 0, 'the exported layer visible')
 
     // The finding: hiding the exported layer changed visibility but never drew.
     mounted.render({ ...BASE_PROPS, visibleLayers: { ...ALL_LAYERS_VISIBLE, exported: false } })
     await flush()
     assert(log.renders > atMount,
       `unchecking Exported requested a draw, render count stayed ${atMount}`)
-    assert(drawnPieces(mounted.host) === 0,
-      `a hidden exported layer draws nothing, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 0, 0, 'the exported layer hidden')
 
     const afterHide = log.renders
     mounted.render({ ...BASE_PROPS, visibleLayers: ALL_LAYERS_VISIBLE })
     await flush()
     assert(log.renders > afterHide,
       `rechecking Exported requested a draw, render count stayed ${afterHide}`)
-    assert(drawnPieces(mounted.host) === 3,
-      `rechecking restores the three cutting pieces, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 3, 0, 'the exported layer re-shown')
   } finally {
     mounted.unmount()
   }
 })
 
 await test('the sidebar level and non-cutting filters reach the 3D view', async () => {
-  const log: RenderLog = { renders: 0, disposed: 0 }
+  const log: RenderLog = { renders: 0, disposed: 0, frames: [] }
   const mounted = mount(log)
   try {
     await flush()
 
     // All cutting levels, rapids hidden (the dialog's default unchecked box).
-    assert(drawnPieces(mounted.host) === 3,
-      `all cutting levels draw three pieces, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 3, 0, 'all cutting levels')
 
     // One cutting level: the Z=8 piece and the rapid are not at Z=10.
     mounted.render({ ...BASE_PROPS, selectedZ: 10 })
     await flush()
-    assert(drawnPieces(mounted.host) === 2,
-      `Z=10 draws its two pieces, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 2, 0, 'the selected Z=10 level')
 
     // Non-cutting on: the rapid at Z=12 joins the selected level.
     mounted.render({ ...BASE_PROPS, selectedZ: 10, showNonCutting: true })
     await flush()
-    assert(drawnPieces(mounted.host) === 3,
-      `Z=10 plus non-cutting draws three pieces, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 2, 1, 'Z=10 plus non-cutting')
 
     // Every level plus non-cutting is the unfiltered scene.
     mounted.render({ ...BASE_PROPS, showNonCutting: true })
     await flush()
-    assert(drawnPieces(mounted.host) === 4,
-      `all levels plus non-cutting draw four pieces, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 3, 1, 'all levels plus non-cutting')
 
     // A level nothing was cut at draws nothing, rather than everything.
     mounted.render({ ...BASE_PROPS, selectedZ: 4 })
     await flush()
-    assert(drawnPieces(mounted.host) === 0,
-      `an empty level draws nothing, reported ${drawnPieces(mounted.host)}`)
+    assertDrawn(log, mounted.host, 0, 0, 'an empty level')
   } finally {
     mounted.unmount()
   }
 })
 
 await test('closing the view disposes the renderer and removes the canvas', async () => {
-  const log: RenderLog = { renders: 0, disposed: 0 }
+  const log: RenderLog = { renders: 0, disposed: 0, frames: [] }
   const mounted = mount(log)
   await flush()
   assert(mounted.canvasCount() === 1, 'the scene built one canvas')
