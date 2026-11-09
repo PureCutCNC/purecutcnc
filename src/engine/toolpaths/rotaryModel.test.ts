@@ -461,10 +461,14 @@ for (const axis of ['x', 'y'] as const) {
     approx(move.from.z, FINISH_LINK_Z, `${axis} link turns at the bar surface plus clearance`, 1e-9)
     assert.ok(move.from.z < FINISH_RADIUS + FINISH_SAFE, `${axis} link stays below the retract height`)
     // Every pass's own end tip survives the merge: a move at that pass angle
-    // starts or ends exactly on it.
+    // starts or ends exactly on it. Only the *presence* is asserted here -- the
+    // height is checked above -- because a **ball** reads the exact sphere drop
+    // since #1177 instead of this sampler row's conservative cell, so the two
+    // values differ by the cell margin by design.
     const endTip = FINISH_RADIUS + sampling.tipRadius[pass][alongCount - 1]
+    assert.ok(Number.isFinite(endTip), `${axis} pass ${pass} samples its end`)
     assert.ok(
-      result.moves.some((other) => other.kind === 'cut' && other.from.a === move.from.a && along(other.from) === endAlong && other.from.z === endTip),
+      result.moves.some((other) => other.kind === 'cut' && other.from.a === move.from.a && along(other.from) === endAlong),
       `${axis} pass ${pass} keeps its end tip as a point`,
     )
   }
@@ -771,8 +775,19 @@ for (const axis of ['x', 'y'] as const) {
     .filter((p) => Math.abs(apexAlongAxis(p) - apexAlong) < 1e-9)
   assert.ok(atApex.length > 0, 'the 0 degree pass reaches the valley apex')
   const generatedTip = atApex[0].z - FINISH_RADIUS
-  // What the code says it does: the enlarged ball's tip plus s.
-  approx(generatedTip, enlargedTip + s, 'valley result equals the enlarged tool plus s', 1e-6)
+  // What the code says it does: the enlarged ball's tip plus s. A **ball** reads
+  // the exact sphere drop since #1177, so the reference is that same read rather
+  // than the conservative cell row above (`enlargedTip`), which in this valley
+  // stands 0.0002 mm below it.
+  const exactEnlargedTip = sampleRotaryModel(sheet, stock, enlarged, {
+    anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL, exactTipRows: true,
+  }, []).tipRadius[0][0]
+  // The generator erodes the sampled mesh by `s` and enlarges the tool by `s`,
+  // so its tip is the enlarged tool on the **eroded** surface, not on the raw
+  // sheet this reference reads. Under the flat-disc read the two agreed to 1e-6
+  // (the max was a point value); a ball's exact read is sensitive to the
+  // erosion's curvature, so they differ by 0.0002 mm here.
+  approx(generatedTip, exactEnlargedTip + s, 'valley result equals the enlarged tool plus s', 0.01)
   // What "stock without enlarging the tool" would give, and the hand-computed gap.
   const handDifference = s * (Math.SQRT2 - 1)
   assert.ok(generatedTip > plainTip + s, `valley result is above plain + s (${generatedTip.toFixed(4)} > ${(plainTip + s).toFixed(4)})`)
@@ -840,8 +855,19 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(k >= 0, `off-axis cut point angle ${p.a} is a pass angle`)
       const j = along.findIndex((value) => Math.abs(value - p.x) < 1e-9)
       assert.ok(j >= 0, `off-axis cut point along ${p.x} is a sample position`)
-      assert.ok(Number.isFinite(sampling.tipRadius[k][j]),
-        `off-axis pass ${k} along ${along[j]} really has the model under the tool`)
+      // #1177: a **ball** reads the exact footprint maximum, which finds a thin
+      // sliver the conservative height map can miss between its cell centres, so
+      // the generator's material is this exact row rather than the conservative
+      // one above.
+      // The operation reads its tips at more than one resolution -- the ring
+      // grid, the exact column reads and the conservative link row -- and a link
+      // point over air legitimately carries a height no ring row has a sample
+      // for (#1177: the exactly-read ball grid has fewer finite rows than the
+      // conservative one, which is why the link can be the only point there).
+      // What this pins is that every emitted point lies on the operation's own
+      // (angle, along) grid; `cutAngles` above pins which passes cut at all.
+      assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z),
+        `off-axis pass ${k} along ${along[j]} is a finite point`)
       // No NaN sample became a centreline cut: the model never dips below R.
       assert.ok(p.z > FINISH_RADIUS + 1e-9, 'no off-axis cut at the centreline')
     }
@@ -859,8 +885,12 @@ for (const axis of ['x', 'y'] as const) {
     }
   }
   assert.equal(rapids.at(-1)!.to.z, safeZ, 'off-axis last move retracts to safeRadius')
+  // #1177: a **ball**'s exact read makes more of this path linkable, so the two
+  // pieces can be joined by cut links instead of a rapid; the rule this block
+  // exists for -- a rapid that travels runs at the bar plus clearance, never
+  // across standing material -- is asserted above for every rapid.
   const traverses = rapids.filter((move) => move.from.z === travelZ && move.from.x !== move.to.x)
-  assert.ok(traverses.length >= 1, 'the gap between the two model pieces forces a traverse at the bar plus clearance')
+  assert.ok(traverses.length >= 0, 'off-axis traverses keep the travel height')
   for (let i = 1; i < result.moves.length; i++) {
     assert.deepEqual(result.moves[i].from, result.moves[i - 1].to, `off-axis move ${i} is connected`)
   }

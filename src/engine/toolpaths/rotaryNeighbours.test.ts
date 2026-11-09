@@ -676,7 +676,12 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // drifting by the cell alignment and `mergeCollinearCuts` joins the whole
   // shank (its turns included) into one straight move per band. Fewer, longer
   // blocks -- the per-move geometry is the same surface.
-  assert.equal(withNeighbour.length, 1340, 'the overlapping neighbour moves the output: the measured bolt run')
+  // 1340 -> 1344 for #1177 bal-a: the Turn's band ends inside the bar at 3.75,
+  // and that end is now a **stock wall** -- the bar stands above the turned
+  // surface there, so the wall-foot ring the neighbour end already had also
+  // runs at this one (four moves: the band's end column read exactly, cut as its
+  // own ring, instead of the conservative cell row).
+  assert.equal(withNeighbour.length, 1344, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

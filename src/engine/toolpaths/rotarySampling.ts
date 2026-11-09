@@ -1438,10 +1438,25 @@ export function runRotaryAngleJob(
  * `buildHeightMap` skips it; a position with no triangle over its disc stays
  * `NaN`, the "no model under the tool" rule every other row follows.
  *
- * A **ball** endmill's tip is this maximum less `r - sqrt(r^2 - d^2)` at the
- * point it is read from, which is never more than the maximum itself, so the
- * same read is used for both tool types: it is exact for a flat and conservative
- * for a ball, whose wall-foot ring keeps its own fillet either way.
+ * A **ball** endmill does not read this maximum (#1177). The disc maximum is the
+ * answer for a flat bottom, whose tip is the plane it stands on; a ball's tip is
+ * one radius below its centre, so a surface point at distance `d` from the pose
+ * only lifts the tip by `sqrt(r^2 - d^2)` above the contact -- and on a facet
+ * tilted `delta` the disc maximum over-reads the true tip by
+ * `r (sin delta + cos delta - 1) / cos delta`: 0.21 mm at 25 degrees with a
+ * 1/8 in ball, 0.59 mm at the same angle through this read's use on a
+ * neighbour's column. That is the raised band #1177 is about, so a ball reads
+ * the **exact sphere drop** instead: the highest centre at which a sphere of the
+ * tool radius clears each candidate triangle -- its interior plane, its edges
+ * and its vertices, the standard drop-cutter -- and the tip is that centre less
+ * the radius. Both branches are exact; only the tool shape differs.
+ *
+ * `exactTipPad` grows the **disc**, which is the flat bottom's lateral
+ * footprint: it is the slack a flat needs so a pose cannot sit tangentially on a
+ * face at a whole-cell grid position. A ball's pad would have to grow the sphere
+ * itself, which lifts the tip by the pad on a level facet (0.32 mm for the
+ * helix's 1.25 cells), so a ball takes no pad and covers the distance between
+ * two samples by its own chord instead (see `continuousFinishInput`).
  */
 function exactFootprintTips(
   row: Float32Array,
@@ -1459,7 +1474,10 @@ function exactFootprintTips(
   const up = plan.up
   // #1173: the disc a whole-grid read uses is the cutter's own, grown by one
   // sampling cell when the prep asks for it (see `exactTipPad`).
-  const radius = tool.radius + (prep.exactTipPad ?? 0)
+  // #1177: the pad belongs to the flat's lateral disc only. A ball reads its own
+  // sphere, and growing that would lift every tip by the pad, so it takes none.
+  const ball = tool.type === 'ball_endmill'
+  const radius = tool.radius + (ball ? 0 : (prep.exactTipPad ?? 0))
   const radiusSq = radius * radius
   const alongAxis = stock.axis === 'x' ? 0 : 1
   // The projected triangle in one ring's local `(along, across)` frame.
@@ -1546,12 +1564,31 @@ function exactFootprintTips(
       const e2y = vy[2] - vy[0]
       const denom = e1x * e2y - e1y * e2x
       // The height map reads no surface from a projection that collapses to a
-      // line either (`buildHeightMap`'s determinant test).
-      if (Math.abs(denom) < 1e-15) continue
+      // line either (`buildHeightMap`'s determinant test). A flat's bottom face
+      // is right to skip one too -- a vertical wall cannot be under its plane --
+      // but a **ball** is lifted by such a wall (its equator reaches it), and a
+      // sector's radial end face projects exactly that way: skipping it read the
+      // tip 0.40 mm low at the face (#1177). So the ball still reads the
+      // triangle's vertices and edges; only its plane case, whose gradient is
+      // infinite here, is dropped.
+      if (Math.abs(denom) < 1e-15) {
+        if (!ball) continue
+        const contact = ballFootprintTip(vx, vy, vz, 0, 0, radius, contains, false)
+        if (contact > best) best = contact
+        continue
+      }
       const rise1 = vz[1] - vz[0]
       const rise2 = vz[2] - vz[0]
       const gx = (rise1 * e2y - rise2 * e1y) / denom
       const gy = (rise2 * e1x - rise1 * e2x) / denom
+      if (ball) {
+        // #1177: the exact sphere drop onto this triangle. Every candidate below
+        // is the centre height for the ball to touch one surface point, and the
+        // resting height is their maximum.
+        const contact = ballFootprintTip(vx, vy, vz, gx, gy, radius, contains, true)
+        if (contact > best) best = contact
+        continue
+      }
       // (a) Its own vertices, where the height is read off the mesh.
       for (let j = 0; j < 3; j++) {
         if (vx[j] * vx[j] + vy[j] * vy[j] <= radiusSq + 1e-12 && vz[j] > best) best = vz[j]
@@ -1602,6 +1639,123 @@ function exactFootprintTips(
     }
     row[i] = best === Number.NEGATIVE_INFINITY ? NaN : best - pivot
   }
+}
+
+/**
+ * The **exact** ball-nose tip over one projected triangle (#1177).
+ *
+ * The ball is a sphere of `radius` whose lowest point is the tip, so with the
+ * pose's axis vertical the tip is the highest sphere centre that clears the
+ * triangle, less the radius. Every value below is that centre height for the
+ * sphere to touch one surface point, and the answer is their maximum:
+ *
+ * - a **vertex** at `(x, y, z)`: the centre stands `z + sqrt(r^2 - x^2 - y^2)`
+ *   when the point is inside the footprint;
+ * - an **edge**, parametrised `(x, y, z)(t) = v0 + t (v1 - v0)`: the same
+ *   expression, maximised over `t` in `[0, 1]`. Its derivative vanishes where
+ *   `dz sqrt(r^2 - |xy|^2) = A + B t`, whose square is a **quadratic** in `t`
+ *   (`A = v0 . d`, `B = |d|^2`, `dz` the edge's rise), so the exact candidates
+ *   are the closed form's roots plus the edge's ends and the two points where it
+ *   crosses the footprint's circle;
+ * - the **interior**: where the sphere is tangent to the triangle's own plane,
+ *   the contact point is at `r grad / sqrt(1 + |grad|^2)` from the pose and the
+ *   centre is `h(0) + r sqrt(1 + |grad|^2)`. That point is inside the triangle
+ *   when `contains` says so -- and on a triangle far larger than the footprint
+ *   (a long facet strip) it is the only candidate that lies inside at all.
+ *
+ * A projection that collapses to a line never reaches here (`exactFootprintTips`
+ * skips it), so the edge's `B` is always positive for at least one of the three.
+ */
+function ballFootprintTip(
+  vx: readonly number[],
+  vy: readonly number[],
+  vz: readonly number[],
+  gx: number,
+  gy: number,
+  radius: number,
+  contains: (px: number, py: number) => boolean,
+  /**
+   * Whether the triangle's own **plane** is a candidate contact: false when the
+   * projection collapsed to a line (a vertical face, whose gradient is infinite)
+   * -- the vertices and edges still are.
+   */
+  plane: boolean,
+): number {
+  const radiusSq = radius * radius
+  let best = Number.NEGATIVE_INFINITY
+  for (let j = 0; j < 3; j++) {
+    const offset = vx[j] * vx[j] + vy[j] * vy[j]
+    if (offset > radiusSq + 1e-12) continue
+    const value = vz[j] + Math.sqrt(Math.max(0, radiusSq - offset))
+    if (value > best) best = value
+  }
+  /** The centre height for the sphere to touch the edge at parameter `t`. */
+  const at = (x0: number, y0: number, dx: number, dy: number, z0: number, dz: number, t: number): number => {
+    const x = x0 + dx * t
+    const y = y0 + dy * t
+    const offset = x * x + y * y
+    // A rim point sits exactly on the circle; its `sqrt` is zero, so the
+    // tolerance only decides whether roundoff rejects it.
+    if (offset > radiusSq * (1 + 1e-9)) return Number.NEGATIVE_INFINITY
+    return z0 + dz * t + Math.sqrt(Math.max(0, radiusSq - offset))
+  }
+  for (let j = 0; j < 3; j++) {
+    const k = j === 2 ? 0 : j + 1
+    const x0 = vx[j]
+    const y0 = vy[j]
+    const z0 = vz[j]
+    const dx = vx[k] - x0
+    const dy = vy[k] - y0
+    const dz = vz[k] - z0
+    const spanSq = dx * dx + dy * dy
+    const q0 = x0 * x0 + y0 * y0
+    let value = at(x0, y0, dx, dy, z0, dz, 0)
+    if (value > best) best = value
+    value = at(x0, y0, dx, dy, z0, dz, 1)
+    if (value > best) best = value
+    if (!(spanSq > 0)) continue
+    const a = x0 * dx + y0 * dy
+    // `gap = spanSq (r^2 - dmin^2)`, with `dmin` the closest approach of the
+    // edge's horizontal projection to the pose: it decides both where the edge
+    // enters the footprint and whether the eased function has a critical point.
+    // It is written this way, and not as the quadratic's `b^2 - 4ac`, because
+    // that form cancels catastrophically on a **level** edge (`dz = 0`, the
+    // corner edge of a prism parallel to the bar): the discriminant is exactly
+    // zero there, and the difference of two large squares came out negative, so
+    // the ball's contact with the nearest corner was dropped and the tip read up
+    // to 1.5 mm low. The closed form for the critical points' discriminant is
+    // `4 dz^2 (dz^2 + spanSq) gap`, which is exact at `dz = 0`.
+    const gap = a * a + spanSq * (radiusSq - q0)
+    if (!(gap >= 0)) continue
+    const rim = Math.sqrt(gap)
+    // The points where the edge crosses the footprint's circle, where the
+    // `sqrt` vanishes and the eased function can peak.
+    for (const t of [(-a - rim) / spanSq, (-a + rim) / spanSq]) {
+      if (!(t >= 0) || t > 1) continue
+      value = at(x0, y0, dx, dy, z0, dz, t)
+      if (value > best) best = value
+    }
+    // The critical points of `z(t) + sqrt(r^2 - |xy(t)|^2)`.
+    const quadratic = -spanSq * (dz * dz + spanSq)
+    const linear = -2 * a * (dz * dz + spanSq)
+    const root = 2 * Math.abs(dz) * Math.sqrt((dz * dz + spanSq) * gap)
+    for (const t of [(-linear - root) / (2 * quadratic), (-linear + root) / (2 * quadratic)]) {
+      if (!(t >= 0) || t > 1) continue
+      value = at(x0, y0, dx, dy, z0, dz, t)
+      if (value > best) best = value
+    }
+  }
+  if (plane) {
+    const gradientSq = gx * gx + gy * gy
+    const scale = Math.sqrt(1 + gradientSq)
+    const px = (radius * gx) / scale
+    const py = (radius * gy) / scale
+    if (contains(px, py)) {
+      const value = vz[0] - gx * vx[0] - gy * vy[0] + radius * scale
+      if (value > best) best = value
+    }
+  }
+  return best === Number.NEGATIVE_INFINITY ? Number.NEGATIVE_INFINITY : best - radius
 }
 
 /**

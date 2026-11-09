@@ -2509,7 +2509,6 @@ function rotaryWallFeet(
   params: RotaryFinishParams,
   span: { readonly start: number; readonly end: number },
 ): RotaryWallFoot[] {
-  if (neighbours === undefined || neighbours.length === 0) return []
   if (params.passDirection !== 'around') return []
   const tolerance = minRenderHeight(tool.units)
   const leave = Math.max(0, params.stockToLeave)
@@ -2517,7 +2516,7 @@ function rotaryWallFeet(
   // radius along the bar" names: the surface beside the face on each side.
   const window = tool.radius + leave
   const feet: RotaryWallFoot[] = []
-  for (const neighbour of neighbours) {
+  for (const neighbour of neighbours ?? []) {
     const extremes = alongExtremes(neighbour.positions, stock)
     if (!Number.isFinite(extremes.min) || !Number.isFinite(extremes.max)) continue
     for (const direction of [1, -1] as const) {
@@ -2538,6 +2537,61 @@ function rotaryWallFeet(
       }
       if (!rises) continue
       feet.push({ face, foot, direction })
+    }
+  }
+  // #1177: the **stock** is a wall too -- uncut bar, or the bar towards the
+  // chuck. Frank's report is exactly this case: the same edge the cleanup fixes
+  // beside a neighbour feature was left as a ridge where the next material is
+  // the plain bar, because only a neighbour ever produced a foot ring.
+  //
+  // An end qualifies when the target **owns** it (`targetBandOverrun`: the cut
+  // range reaches the model's own extent), the bar still stands beyond it inside
+  // the blank, nothing else has taken that material away (no neighbour covers the
+  // far side -- a turned-down shank beside the target is the "material beyond is
+  // already lower" case, which needs no ring), and the bar's radius stands above
+  // the target's surface on the band side, read per angle like a neighbour's.
+  //
+  // The foot is the **face itself**, not one radius past it: an overrun end
+  // gives up the centre pull (`rotaryBandEnds`), so the cutter's tip is the
+  // point that reaches the wall's foot, and the ring that follows the target's
+  // surface there is the band's own end column. When an end is pulled instead
+  // (a neighbour wall stands at it) this foot falls outside `span` and the
+  // neighbour's own ring is the one that runs -- the same test every neighbour
+  // foot takes.
+  if (!isSquareStock(stock)) {
+    const overrun = targetBandOverrun(mesh, stock, params)
+    const bounds = getStockBounds(stock)
+    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+    const barRadius = barInscribedRadius(stock)
+    const extents = (neighbours ?? [])
+      .map((neighbour) => alongExtremes(neighbour.positions, stock))
+      .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
+    for (const direction of [1, -1] as const) {
+      const owns = direction > 0 ? overrun.start : overrun.end
+      if (!owns) continue
+      const face = direction > 0 ? params.alongStart : params.alongEnd
+      const foot = face
+      if (!(foot >= span.start - WALL_FOOT_EPSILON && foot <= span.end + WALL_FOOT_EPSILON)) continue
+      // The bar has to exist on the far side: an end at the blank's own end has
+      // nothing standing beyond it.
+      if (direction > 0 ? !(face - lower > WALL_FOOT_EPSILON) : !(upper - face > WALL_FOOT_EPSILON)) continue
+      const farFrom = direction > 0 ? face - window : face
+      const farTo = direction > 0 ? face : face + window
+      if (extents.some((extent) => extent.min < farTo - WALL_FOOT_EPSILON
+        && extent.max > farFrom + WALL_FOOT_EPSILON)) continue
+      const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
+      const targetTops = meshSurfaceTops(mesh, stock, bandSide[0], bandSide[1])
+      let rises = false
+      for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) {
+        const top = targetTops[bin]
+        if (!Number.isFinite(top)) continue
+        if (barRadius > top + tolerance) {
+          rises = true
+          break
+        }
+      }
+      if (rises) feet.push({ face, foot, direction })
     }
   }
   return feet.sort((a, b) => a.foot - b.foot)
@@ -2626,29 +2680,32 @@ function wallFootPreps(
   along: readonly number[],
   gridExtra: RotaryModelMesh | undefined,
 ): RotaryWallFootRead[] {
-  if (footReads.length === 0 || neighbours === undefined || neighbours.length === 0) return []
+  if (footReads.length === 0) return []
   // The cutter's own axial reach at the ring: the sampling tool carries the
   // stock to leave as radius, and the leave is what keeps the body off the face.
   const reach = samplingTool.radius
-  const extents = neighbours.map((neighbour) => alongExtremes(neighbour.positions, stock))
+  // #1177: a **stock** wall's foot has no neighbour to drop from the mesh, so
+  // the list is empty and every neighbour the body reaches stays in.
+  const kept = neighbours ?? []
+  const extents = kept.map((neighbour) => alongExtremes(neighbour.positions, stock))
   const groups = new Map<string, {
     readonly kept: RotaryModelMesh[]
     readonly members: Array<{ readonly index: number; readonly foot: RotaryWallFoot }>
   }>()
   for (const member of footReads) {
-    const kept: RotaryModelMesh[] = []
+    const groupKept: RotaryModelMesh[] = []
     const key: number[] = []
-    neighbours.forEach((neighbour, i) => {
+    kept.forEach((neighbour, i) => {
       const extent = extents[i]
       if (!Number.isFinite(extent.min) || !Number.isFinite(extent.max)) return
       if (extent.min < member.foot.foot + reach - WALL_FOOT_EPSILON
         && extent.max > member.foot.foot - reach + WALL_FOOT_EPSILON) {
-        kept.push(neighbour)
+        groupKept.push(neighbour)
         key.push(i)
       }
     })
     const id = key.join(',')
-    const group = groups.get(id) ?? { kept, members: [] }
+    const group = groups.get(id) ?? { kept: groupKept, members: [] }
     group.members.push(member)
     groups.set(id, group)
   }
@@ -2980,6 +3037,16 @@ function prepareRotaryTargets(
   const prep = createRotarySamplingPrep(baseMesh, stock, samplingTool, {
     along,
     requestedCellSize: params.requestedCellSize,
+    // #1177: a **ball** ring grid reads the exact footprint maximum. The
+    // conservative read is a flat-bottom answer -- a cell's centre sample plus
+    // the cell's rise and pad -- and on a facet tilted `delta` it stands above a
+    // ball's true tip by `(r + pad)(1/cos delta - 1) + pad tan delta`: 0.21 mm at
+    // 25 degrees on Frank's bolt, which is the raised band along every facet
+    // edge. The read is exact for both tool shapes (`exactFootprintTips`), so the
+    // ball takes it exactly as its wall-foot rings and its helix do. A square
+    // blank keeps the conservative read for its retained-corner rules, exactly
+    // as its helix does.
+    ...(tool.type === 'ball_endmill' && !isSquareStock(stock) ? { exactTipRows: true } : {}),
     ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
     ...((gridExtra !== undefined) ? { gridExtra } : {}),
     ...(baseMesh.retainedTriangleStart !== undefined
@@ -3751,9 +3818,25 @@ function continuousFinishInput(
     // the whole shank (0.0098 in on Frank's bolt) while the ring beside it sat
     // at target + leave. A square blank keeps the conservative read: its helix
     // rides the retained-corner rules the ring path built on it.
-    ...(isSquareStock(prep.stock) || tool.type !== 'flat_endmill'
+    // #1177: a ball takes that read too. It used to be withheld from every
+    // cutter but a flat, and the conservative cell read then over-read a ball by
+    // its disc maximum -- 0.21 mm at 25 degrees on Frank's bolt, the same band
+    // the exact read removed from the neighbour columns. The pad below is the
+    // **flat's** lateral slack, grown on the disc: a ball reads its own sphere,
+    // where the pad lifts the tip by the pad itself on a level facet, so a ball
+    // takes none. The distance between two samples is covered by the chord
+    // instead: a ball's exact envelope is convex in the angle within a facet
+    // (and C1 across a vertex), so a straight G1 chord between two exact tips
+    // lies at or **above** the envelope -- there is nothing to pad for, and the
+    // measured chord at the operation's own step stays inside 0.002 mm.
+    ...(isSquareStock(prep.stock)
       ? {}
-      : { readExactRows: true, exactTipPad: params.requestedCellSize * 1.25 }),
+      : {
+        readExactRows: true,
+        ...(tool.type === 'ball_endmill'
+          ? {}
+          : { exactTipPad: params.requestedCellSize * 1.25 }),
+      }),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
@@ -3790,16 +3873,16 @@ function continuousRoughInput(
     stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
-    // #1173: a round bar's helix reads the exact footprint maximum, the read
-    // its wall-foot ring and its neighbour columns already take. The
-    // conservative cell rise is one value per angle and saturates at a whole
-    // cell on any shoulder, so the helix rode that cell above the target over
-    // the whole shank (0.0098 in on Frank's bolt) while the ring beside it sat
-    // at target + leave. A square blank keeps the conservative read: its helix
-    // rides the retained-corner rules the ring path built on it.
-    ...(isSquareStock(prep.stock) || tool.type !== 'flat_endmill'
+    // #1173/#1177: the same exact read as the finish's, for the same reasons --
+    // including the ball's, and including the pad being the flat's alone.
+    ...(isSquareStock(prep.stock)
       ? {}
-      : { readExactRows: true, exactTipPad: params.requestedCellSize * 1.25 }),
+      : {
+        readExactRows: true,
+        ...(tool.type === 'ball_endmill'
+          ? {}
+          : { exactTipPad: params.requestedCellSize * 1.25 }),
+      }),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
