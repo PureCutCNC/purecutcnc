@@ -166,6 +166,30 @@ function distanceFromLine(
 const AROUND_RAISE_TOLERANCE_MM = 0.02
 
 /**
+ * The finest angular step a shoulder-cleanup ring is cut at (#1177), degrees.
+ *
+ * A flat disc on a neighbour's plane leaves a scallop between two angle samples
+ * of its own `R (1 - cos dA)`, but the larger term is the exact read's corner
+ * lift at the uphill edge: about 0.03 mm at 0.45 degrees, which is what the
+ * handoff's 0.05 mm bounds. The step is also the block time: 0.45 degrees at the
+ * flat's own 0.75 in radius and a 30 ipm feed is 11 ms, so this grid never adds
+ * the 4-10 ms blocks #1173's rule is about. A refinement step below the
+ * threshold is dropped from the cleanup ring (see `cleanupRuns`); the threshold
+ * sits just under the refinement's own 0.45 degree bisection so that bisection
+ * is kept, and the ring's own uniform grid is the second spring pass.
+ */
+const CLEANUP_MIN_STEP_DEG = 0.4
+
+/**
+ * The coarsest step a shoulder-cleanup ring may be cut at (#1177). A coarser
+ * base grid (`sampleSpacing` over the tool radius / 4) would leave a scallop
+ * above the neighbour's plane greater than the handoff's 0.05 mm, so the ring's
+ * own grid is capped here rather than following it. 0.5 degrees is still 13 ms
+ * at the flat's 0.75 in radius and a 30 ipm feed.
+ */
+const CLEANUP_MAX_STEP_DEG = 0.5
+
+/**
  * Drop the short steps the around refinement leaves on a smooth surface by
  * merging upward only (#1173).
  *
@@ -195,6 +219,14 @@ export function raiseShortAroundSegments(
   baseStep: number,
   raise: number,
   alongTolerance: number,
+  /**
+   * A point that is never dropped (#1177). The finish's shoulder-cleanup ring is
+   * cut on its own 0.45 degree grid -- a step this pass would otherwise merge
+   * back to the base grid because the chord over it stays within `raise` -- and
+   * merging it would put the scallop above the neighbour's flat back over the
+   * handoff's 0.05 mm.
+   */
+  protectedPoint?: (point: ToolpathPoint) => boolean,
 ): ToolpathMove[] {
   const out: ToolpathMove[] = []
   const turns = (move: ToolpathMove): number => Math.sign((move.to.a ?? 0) - (move.from.a ?? 0))
@@ -222,8 +254,10 @@ export function raiseShortAroundSegments(
     const points: ToolpathPoint[] = [moves[index].from]
     for (let i = index; i <= end; i++) points.push(moves[i].to)
     const last = points.length - 1
-    // A point may go only when a step next to it is short.
+    // A point may go only when a step next to it is short, and a pinned point
+    // (#1177: the cleanup ring's own samples) never goes.
     const droppable = points.map((point, i) => i > 0 && i < last
+      && (protectedPoint === undefined || !protectedPoint(point))
       && (short(points[i - 1], point) || short(point, points[i + 1])))
     // Whether the chord from `a` to `b` stands over every original point between them.
     const chordHolds = (a: number, b: number): boolean => {
@@ -315,6 +349,15 @@ export function mergeCollinearCuts(
   moves: readonly ToolpathMove[],
   tolerance: number,
   pivot?: number,
+  /**
+   * A point that is never dropped (#1177). The finish's shoulder-cleanup ring is
+   * cut on its own 0.45 degree grid, whose steps are inside this merge's
+   * 0.001 mm tolerance of one chord; merging them would put the ring back on the
+   * coarse emitted path and the scallop above the neighbour's flat back over the
+   * handoff's 0.05 mm. Nothing else passes a predicate, so every other run
+   * merges as it did.
+   */
+  protectedPoint?: (point: ToolpathPoint) => boolean,
 ): { moves: ToolpathMove[]; dropped: number } {
   const angular = pivot !== undefined
   const merged: ToolpathMove[] = []
@@ -345,9 +388,17 @@ export function mergeCollinearCuts(
     ) end++
     const points: ToolpathPoint[] = [moves[index].from]
     for (let i = index; i <= end; i++) points.push(moves[i].to)
+    // A protected point is never dropped (#1177). The cleanup ring's run can
+    // continue into the forward link that leaves it, so the run is not wholly
+    // at one along position; pinning the ring's own points keeps its 0.45 degree
+    // grid while the link after it still merges as every other link does.
+    const pinned = protectedPoint === undefined
+      ? undefined
+      : Uint8Array.from(points, (candidate, i) => (i > 0 && i < points.length - 1
+        && protectedPoint(candidate) ? 1 : 0))
     // An around run interpolates at each sample's own A; the along and round-bar
     // paths keep the original 3D perpendicular distance byte for byte.
-    const kept = simplifyRun(points, tolerance, angular)
+    const kept = simplifyRun(points, tolerance, angular, pinned)
     for (let i = 0; i + 1 < kept.length; i++) {
       merged.push({ kind: 'cut', from: kept[i], to: kept[i + 1] })
     }
@@ -387,14 +438,30 @@ function angularDirection(from: ToolpathPoint, to: ToolpathPoint): number {
  * **at that point's own A**, as {@link interpolationErrorAtOwnAngle} describes.
  * Without it the distance is the original 3D one, to the bit.
  */
-function simplifyRun(points: readonly ToolpathPoint[], tolerance: number, interpolate = false): ToolpathPoint[] {
+function simplifyRun(
+  points: readonly ToolpathPoint[],
+  tolerance: number,
+  interpolate = false,
+  /** Points that must be kept (#1177); they also bound each merged segment. */
+  pinned?: Uint8Array,
+): ToolpathPoint[] {
   const distance = interpolate
     ? (point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint): number => interpolationErrorAtOwnAngle(point, a, b)
     : (point: ToolpathPoint, a: ToolpathPoint, b: ToolpathPoint): number => distanceFromLine(point, a, b)
   const keep = new Uint8Array(points.length)
   keep[0] = 1
   keep[points.length - 1] = 1
-  const stack: Array<[number, number]> = [[0, points.length - 1]]
+  const stack: Array<[number, number]> = []
+  let segmentStart = 0
+  if (pinned !== undefined) {
+    for (let i = 1; i < points.length - 1; i++) {
+      if (pinned[i] === 0) continue
+      keep[i] = 1
+      stack.push([segmentStart, i])
+      segmentStart = i
+    }
+  }
+  stack.push([segmentStart, points.length - 1])
   while (stack.length > 0) {
     const [first, last] = stack.pop() as [number, number]
     let split = -1
@@ -1630,11 +1697,29 @@ function shoulderCleanFaces(
   const extents = neighbours
     .map((neighbour) => alongExtremes(neighbour.positions, stock))
     .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
-  const crosses = (face: number): boolean => extents.some((extent) =>
+  const crossing = (face: number): typeof extents => extents.filter((extent) =>
     extent.min < face - tolerance && extent.max > face + tolerance)
+  // The ring sits in the **middle** of the overlap, not on the band face: it is
+  // a flat disc, so the material its rim can reach on the far side of the
+  // overlap shrinks as the pose moves away from the ring's own along position
+  // (the reach is `sqrt(r^2 - offset^2) / sin(delta)`). Centred on the overlap,
+  // one ring reaches both the band face and the neighbour's end; on the face it
+  // could not reach the far edge, and the handoff's X=31.496 mm spot would keep
+  // its ledge.
+  const centred = (face: number, fromStart: boolean): number | null => {
+    const near = crossing(face)
+    if (near.length === 0) return null
+    const edge = fromStart
+      ? Math.min(...near.map((extent) => extent.max))
+      : Math.max(...near.map((extent) => extent.min))
+    const middle = (face + edge) / 2
+    return (middle > face) === fromStart ? middle : null
+  }
   const faces: number[] = []
-  if (ends.pullStart && !ends.stubStart && crosses(params.alongStart)) faces.push(params.alongStart)
-  if (ends.pullEnd && !ends.stubEnd && crosses(params.alongEnd)) faces.push(params.alongEnd)
+  const start = ends.pullStart && !ends.stubStart ? centred(params.alongStart, true) : null
+  const end = ends.pullEnd && !ends.stubEnd ? centred(params.alongEnd, false) : null
+  if (start !== null) faces.push(start)
+  if (end !== null) faces.push(end)
   return faces
 }
 
@@ -1920,6 +2005,16 @@ function retainedStubStepForced(
   }
 }
 
+/** One start-face shoulder-cleanup ring on its own uniform angular grid (#1177). */
+interface RotaryShoulderCleanRing {
+  /** The cleanup column's index in `RotaryTargets.along`. */
+  readonly index: number
+  /** The ring's angular grid, degrees, `0 .. 360` inclusive. */
+  readonly angles: readonly number[]
+  /** The exact tool tip at each angle, already through the stock offset and clamp. */
+  readonly tips: readonly number[]
+}
+
 /**
  * The rows every generator emits from, and how a ring link finds its surface.
  *
@@ -1980,6 +2075,7 @@ interface RotaryTargets {
    * retract/rapid/plunge takes it.
    */
   shoulderCleanIndices: readonly number[]
+  shoulderCleanRings: readonly RotaryShoulderCleanRing[]
   /**
    * The base angular grid's step in degrees, before any refinement (#1173): a
    * step finer than this was inserted by the between-sample refinement, which
@@ -2002,7 +2098,7 @@ function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
   return {
     angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
     prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
-    baseAngleStep: 360, layerFloor: null,
+    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null,
     stopped: false, refusal: code,
   }
 }
@@ -2012,7 +2108,7 @@ function targetStopped(angles: number[], along: number[]): RotaryTargets {
   return {
     angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
     prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
-    baseAngleStep: 360, layerFloor: null,
+    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null,
     stopped: true, refusal: null,
   }
 }
@@ -3194,6 +3290,41 @@ function completeRotaryTargets(
   const linkRows = linkRowAt
   const linkRowAtPhysical = (angleDeg: number, bucket?: RotaryLinkBucket): RotaryLinkRow | null =>
     linkRows(turnAngle(angleDeg), bucket)
+  // #1177: a start-face cleanup ring on its own uniform `CLEANUP_MIN_STEP_DEG`
+  // grid, read exactly on the mesh with the neighbours. The operation's grid is
+  // too coarse for the 0.05 mm bound (its scallop over the flat is 0.06 mm) and
+  // the refined grid's sub-0.45 degree steps would be new sub-10 ms blocks. The
+  // ring is only built where the neighbour columns' prep already reads this
+  // column -- the cleanup face is inside a neighbour's span, so it always is.
+  const shoulderCleanRings: RotaryShoulderCleanRing[] = []
+  const neighbourColumns = plan.neighbourColumns
+  if (neighbourColumns !== null && !isSquareStock(stock)) {
+    const baseStep = plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360
+    const step = Math.min(Math.max(baseStep / 4, CLEANUP_MIN_STEP_DEG), CLEANUP_MAX_STEP_DEG)
+    const count = Math.max(1, Math.round(360 / step))
+    // A **start** cleanup ring is the one below the operation's first ordinary
+    // ring (the band face the cutter was pulled in from). An end-face ring is
+    // above every ordinary ring and keeps the operation's own grid.
+    const clean = new Set(plan.shoulderCleanIndices)
+    let firstNormal = 0
+    while (firstNormal < along.length && clean.has(firstNormal)) firstNormal++
+    for (const index of plan.shoulderCleanIndices) {
+      if (index >= firstNormal) continue
+      const position = neighbourColumns.indices.indexOf(index)
+      if (position < 0) continue
+      const ringAngles = Array.from({ length: count + 1 }, (_, k) => 360 * k / count)
+      const sampled = sampleAnglesWithPrep(neighbourColumns.prep, ringAngles, warnings)
+      if (!sampled.valid) continue
+      if (sampled.stopped) break
+      const ringTips = Array.from({ length: ringAngles.length }, (_, k) => {
+        const raw = sampled.tipRadius[k][position]
+        return Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN
+      })
+      if (ringTips.some((tip) => Number.isFinite(tip))) {
+        shoulderCleanRings.push({ index, angles: ringAngles, tips: ringTips })
+      }
+    }
+  }
   return {
     angles, along, tips, stubFloor, linkRowAt: linkRowAtPhysical, prep: plan.prep,
     stockToLeave: plan.stockToLeave,
@@ -3202,6 +3333,7 @@ function completeRotaryTargets(
       ...(plan.neighbourColumns?.indices ?? []),
     ].sort((a, b) => a - b),
     shoulderCleanIndices: plan.shoulderCleanIndices,
+    shoulderCleanRings,
     baseAngleStep: plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360,
     layerFloor,
     stopped: false, refusal: null,
@@ -3756,6 +3888,9 @@ function finishFromTargets(
   const moves: ToolpathMove[] = []
   let here: ToolpathPoint | undefined
   let previousEndedAtEnd = false
+  // #1177: the start-face shoulder-cleanup rings, in emission order. Declared
+  // here so the merge protection below can see them.
+  let startClean: readonly number[] = []
   if (params.passDirection === 'around') {
     // #1103 slice ca-c: A never reverses. Every ring turns the same way, and the
     // next ring continues from the angle the last one reached instead of
@@ -3854,25 +3989,126 @@ function finishFromTargets(
     const wallFootAt = sampling.ringOnlyIndices.length > 0
       ? new Set(sampling.ringOnlyIndices)
       : null
-    // #1177: a shoulder-cleanup ring is emitted after the operation's rings, not
-    // in grid order -- see `shoulderCleanIndices`.
+    // #1177: a shoulder-cleanup ring is cut on **thinned** angular grids: the
+    // refined grid's 0.11-0.22 degree steps by the neighbour's corners would be
+    // new blocks under 10 ms on top of the first ring's. The ring is also
+    // emitted **immediately after the first ring**
+    // rather than last: the band face is the innermost along position, so a
+    // ring emitted last needs a retract/rapid/plunge back to it (a new G0 Z
+    // lift), while the move back from the first ring is a short cut along the
+    // neighbour's surface and then straight into the ring at the same angle.
     const cleanAt = sampling.shoulderCleanIndices.length > 0
       ? new Set(sampling.shoulderCleanIndices)
       : null
+    // The first ring the operation itself cuts. Every cleanup index below it is
+    // a **start** face (the band face the #1177 ring cleans); the ones above are
+    // an end face, which keeps the old last-position emission.
+    let firstNormal = 0
+    while (firstNormal < along.length && cleanAt !== null && cleanAt.has(firstNormal)) firstNormal++
+    startClean = sampling.shoulderCleanIndices.filter((index) => index < firstNormal)
+    const endClean = sampling.shoulderCleanIndices.filter((index) => index > firstNormal)
+    // The cleanup ring's cut points: the start face's own uniform ring when the
+    // sampler built one (exact tips at `CLEANUP_MIN_STEP_DEG`), as a **coarse**
+    // pre-pass on the operation's grid followed by the uniform spring pass; the
+    // refined-grid fallback keeps an end face (and a square blank, which needs
+    // its stub floor) as it was.
+    const cleanupRuns = (index: number): RotaryRun[] => {
+      const samples: (ToolpathPoint | null)[] = []
+      const custom = sampling.shoulderCleanRings.find((ring) => ring.index === index)
+      if (custom !== undefined) {
+        // Two spring passes over the ring. The exact read sets each pose's tip
+        // by the **uphill rim** of its disc, so the first pass leaves the
+        // material its rim could not reach (0.06 mm at A25 on Frank's bolt,
+        // over the handoff's 0.05). On the second pass the material is already
+        // that low, so the rim pose that could not reach it before now applies
+        // and skims the scallop off. The first pass is the operation's own
+        // (coarse) grid -- its pre-cut only has to bring the shoulder under the
+        // rim pose, and it is one merged ring; the second is the uniform
+        // `CLEANUP_MIN_STEP` grid that reaches the flat's plane. Both turns run
+        // in the same direction as every other ring, and the first ends where
+        // the second begins, so nothing retracts and no block gets shorter.
+        let turnAngleBase = 360
+        for (let k = 0; k < angles.length; k++) {
+          const angle = angles[k]
+          if (angle - (k === 0 ? Number.NEGATIVE_INFINITY : angles[k - 1]) < CLEANUP_MIN_STEP_DEG - 1e-9) continue
+          const tip = sampling.tips[k][index]
+          const inside = insideRegion === null || insideRegion(along[index], angle)
+          samples.push(Number.isFinite(tip) && inside
+            ? point(along[index], tip, angle + turnAngleBase)
+            : null)
+        }
+        turnAngleBase += 360
+        for (let k = 1; k < custom.angles.length; k++) {
+          const angle = custom.angles[k]
+          const tip = custom.tips[k]
+          const inside = insideRegion === null || insideRegion(along[index], angle)
+          samples.push(Number.isFinite(tip) && inside
+            ? point(along[index], tip, angle + turnAngleBase)
+            : null)
+        }
+        return ringRuns(samples)
+      }
+      let lastAngle = Number.NEGATIVE_INFINITY
+      for (let k = 0; k < angles.length; k++) {
+        const angle = angles[k]
+        if (angle - lastAngle < CLEANUP_MIN_STEP_DEG - 1e-9) continue
+        lastAngle = angle
+        const tip = sampling.tips[k][index]
+        const inside = insideRegion === null || insideRegion(along[index], angle)
+        samples.push(Number.isFinite(tip) && inside ? point(along[index], tip, angle) : null)
+      }
+      return ringRuns(samples)
+    }
+    // #1177: the cleanup ring is entered **back** from the first ring's end to
+    // the band face at one angle. The first ring's own exact read covers the
+    // whole span the move steps back over, and both end tips stand at that
+    // read, so the straight cut skims the neighbour's flat instead of retracting
+    // off it. It is a cut move, not a rapid, so no G0 Z lift is added. The
+    // transition **out** of the cleanup ring is forward, so the ordinary surface
+    // link (`followLink`) already follows the model from the band face to the
+    // next ring -- a lift is only needed when a ring cannot be linked.
+    let cleanupPhase: 'enter' | null = null
+    const cleanupLink = (from: ToolpathPoint, to: ToolpathPoint): readonly RotaryLinkStep[] | null => {
+      if (cleanupPhase === null) return followLink(from, to)
+      cleanupPhase = null
+      // A full cleanup ring starts at the first ring's own end angle; anything
+      // else (a split ring the region trimmed) keeps the ordinary transition.
+      return from.a === to.a ? [{ to, kind: 'cut' }] : followLink(from, to)
+    }
     // One forward-only ring at the cursor's angle. A split ring is partial arcs:
     // its last run can still reach the ring end, but the issue's contract is
     // that a split ring retracts rather than feeding to the next ring. Only a
     // ring that emitted one run may link -- a region-clipped ring's single run
     // is marked above, so it may.
-    const emitRing = (index: number): void => {
+    const emitRing = (index: number, cleanup?: number): void => {
       const runs = rings[index].runs.map((run) => ({
         ...run,
         points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
       }))
-      const emitted = emitRotaryRuns(moves, here, runs, safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink)
+      let combined = runs
+      if (cleanup !== undefined) {
+        // The cleanup points carry their own turn offsets (`angleBase + 360` and
+        // `+ 720`); the emitter's base is the first ring's.
+        const clean = cleanupRuns(cleanup).map((run) => ({
+          ...run,
+          points: run.points.map((sample) => ({ ...sample, a: (sample.a ?? 0) + angleBase })),
+        }))
+        cleanupPhase = 'enter'
+        combined = [...runs, ...clean]
+      }
+      // The first run's link is skipped by the emitter itself when there is no
+      // position yet; `true` here is what lets the cleanup run that follows the
+      // first ring take its cut transition instead of the travel-height one.
+      const emitted = emitRotaryRuns(moves, here, combined, safeZ, travelZ,
+        cleanup === undefined ? previousEndedAtEnd : true, forceStep, pivot, cleanupLink)
       here = emitted.here
-      previousEndedAtEnd = emitted.endedAtEnd && runs.length <= 1
-      angleBase += 360
+      previousEndedAtEnd = emitted.endedAtEnd && (combined.length <= 1 || cleanup !== undefined)
+      // The first ring's turn plus the cleanup ring's two spring passes.
+      angleBase += cleanup === undefined ? 360 : 1080
+      // The entry link is attempted inside the call above; if it was not (a
+      // region-split cleanup ring) the phase must not leak into the next ring's
+      // forward link.
+      cleanupPhase = null
     }
     const finishBand = continuousFinishInput(sampling, params, tool, warnings, hooks)
     let ring = 0
@@ -3884,6 +4120,13 @@ function finishFromTargets(
       // tangent to -- so a helix starting there would ride the wall for one turn
       // and leave exactly the ledge the ring removes.
       if (cleanAt !== null && cleanAt.has(ring)) {
+        ring++
+        continue
+      }
+      if (ring === firstNormal && startClean.length > 0) {
+        // #1177: the cleanup ring is cut right after the first ring, through the
+        // two cut transitions above. It is not part of a helix band.
+        emitRing(ring, startClean[0])
         ring++
         continue
       }
@@ -3925,7 +4168,7 @@ function finishFromTargets(
             emitHelix: (helix) => {
               const emitted = emitRotaryRuns(
                 moves, here, [{ points: helix.points, atStart: true, atEnd: true }],
-                safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, followLink,
+                safeZ, travelZ, previousEndedAtEnd, forceStep, pivot, cleanupLink,
               )
               here = emitted.here
               previousEndedAtEnd = emitted.endedAtEnd
@@ -3942,14 +4185,12 @@ function finishFromTargets(
       emitRing(ring)
       ring++
     }
-    // #1177: the shoulder-cleanup rings, on the material the operation's own
-    // passes have already removed. The traverse back to the band face has no
-    // forward surface link, so the emitter's retract/rapid/plunge takes it.
-    if (cleanAt !== null) {
-      for (const index of sampling.shoulderCleanIndices) {
-        if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
-        emitRing(index)
-      }
+    // #1177: an **end**-face cleanup ring (the target ends inside a neighbour's
+    // span) keeps the last-position emission: it is the furthest along position,
+    // so the move to it is forward and it is the operation's last cut.
+    for (const index of endClean) {
+      if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+      emitRing(index)
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
@@ -3981,10 +4222,21 @@ function finishFromTargets(
   // An around pass's moves are straight on the controller in (along, A, Z), so
   // the merge may drop the interior points of a ring; along mode keeps the old
   // merge and its byte-identical output (#1045 slice G).
-  const merged = mergeCollinearCuts(moves, tolerance, params.passDirection === 'around' ? pivot : undefined)
+  // #1177: the finish's cleanup rings are cut on their own grids, whose steps
+  // are inside the merge's tolerance of one chord; merging them would put the
+  // ring back on the coarse path and the scallop above the neighbour's flat back
+  // over 0.05 mm. Only those along positions are protected -- every other run
+  // merges exactly as before.
+  const cleanFaces = new Set(startClean.map((index) => along[index]))
+  const protectedPoint = cleanFaces.size > 0
+    ? (candidate: ToolpathPoint): boolean => cleanFaces.has(alongCoordinate(stock, candidate))
+    : undefined
+  const merged = mergeCollinearCuts(moves, tolerance,
+    params.passDirection === 'around' ? pivot : undefined, protectedPoint)
   const finalMoves = params.passDirection === 'around'
     ? raiseShortAroundSegments(merged.moves, sampling.baseAngleStep,
-      convertLength(AROUND_RAISE_TOLERANCE_MM, 'mm', tool.units), convertLength(0.001, 'mm', tool.units))
+      convertLength(AROUND_RAISE_TOLERANCE_MM, 'mm', tool.units), convertLength(0.001, 'mm', tool.units),
+      protectedPoint)
     : merged.moves
   return { operationId, moves: finalMoves, warnings, bounds: boundsOf(finalMoves) }
 }

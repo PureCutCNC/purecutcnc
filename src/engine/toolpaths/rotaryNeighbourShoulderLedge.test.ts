@@ -16,7 +16,8 @@
 
 /**
  * #1177: a rotary Turn whose band starts **inside** a neighbour's flat clears the
- * stock across that flat at the shoulder, and still cuts no lower than it.
+ * stock across that flat at the shoulder within the handoff's 0.05 mm, and still
+ * cuts no lower than it.
  *
  * Frank's `bolt-test-02-x.camj` is built in code with the canned planner (a Ø2
  * in bar along X, a 1.5 in across-flats Hex over 0.75..1.25, a Ø1 Turn over
@@ -31,26 +32,35 @@
  * wedge tapering to nothing at the Hex's end face: 0.50 mm above the Hex plane
  * at (X 1.21, A 25°) before this fix.
  *
- * **The fix.** `shoulderCleanFaces` adds one ring at the band face (emitted after
- * the operation's own rings, so the commanded A of every other ring is byte for
- * byte what it was). The ring is a neighbour-reach column, so it is read with
- * the exact footprint maximum on the mesh *with* the neighbours -- the cutter
- * body never goes below the Hex -- and it clears the flat to the exact read's
- * tangent envelope: 0.12 mm at that spot, 0.17 mm worst inside the overlap,
- * against a flat whose own finish allowance is 0.15 mm.
+ * **The fix.** `shoulderCleanFaces` adds a ring in the **middle** of the
+ * overlap (1.225 in), so one flat disc reaches both the band face and the Hex's
+ * end; the ring is a neighbour-reach column, so it is read with the exact
+ * footprint maximum on the mesh *with* the neighbours and the cutter body never
+ * goes below the Hex. It is emitted **right after the first ring**, at that
+ * ring's own end angle and height: the move back is a short cut along the
+ * neighbour's surface, not a retract, so the operation keeps its one G0 Z lift
+ * (the final retract) and #1173's first-ring A0..A360 is untouched.
  *
- * **Why not 0.05 mm.** The exact read touches the flat at one angle per pose --
- * where its disc's rim leaves the flat -- so the residual between two rim
- * angles is the flat's height change over the pose spacing, and clearing it
- * further needs a pose whose rim lands on that very point. A pose at the band
- * face subtends `asin(toolRadius / flatRadius)` = 8.66 degrees there, but
- * `cutterPosesByAngle` (the shared sweep these figures come from) assigns poses
- * with a window sized by the **blank's** radius, 7.68 degrees, so the rim poses
- * are dropped before the sweep sees them: the same program measures 0.115 mm
- * with that window and 0.071 mm with the true one (see
- * `scripts/issue-1177-window-probe.ts`). Reaching 0.05 mm would take a
- * three-times-finer angular grid, which is a new block-time profile for the
- * shoulder that #1173's smoothness numbers do not allow.
+ * **Two spring passes, and the measurement window.** The exact read sets each
+ * pose's tip by the **uphill rim** of its disc, so the first pass leaves the
+ * material that rim could not reach: 0.06 mm at A25, just over the handoff's
+ * 0.05. A second pass over the same ring, on the material the first removed, has
+ * a rim pose that now reaches the flat, and takes it to 0.017 mm. The first pass
+ * uses the operation's own grid (one merged ring); the second its own uniform
+ * 0.45 degree grid (`RotaryTargets.shoulderCleanRings`), whose steps are a
+ * 11 ms block at the flat's 0.75 in radius and a 30 ipm feed -- over the 10 ms
+ * #1173's smoothness rule names -- and whose 0.11-0.22 degree refinement steps
+ * are dropped, so the cleanup adds no short block.
+ *
+ * The sweep's pose window matters here. `cutterPosesByAngle`'s default is
+ * `asin(toolRadius / barMaxRadius) + 0.5` = 7.68 degrees, sized by the
+ * **blank**; the shoulder is on the Hex, whose 0.75 in flat subtends
+ * `asin(0.125 / 0.75)` = 9.59 degrees. The default drops the rim poses that
+ * physically touch the flat, so the same program reads 0.11 mm with it and
+ * 0.017 mm with the flat's own window. This test passes the real window; the
+ * reach check inside `sweepProfile` still decides per along position whether a
+ * pose's body covers the sample, so the wider window credits nothing that does
+ * not reach.
  *
  * Mutations this file is checked with (each applied, seen failing, restored):
  *   1. `shoulderCleanFaces` returns no faces -> no ring is added and the
@@ -59,8 +69,16 @@
  *      `rotaryNeighbourColumns` -> the ring is not a neighbour-reach column, the
  *      base prep reads the Turn's own surface there, and the cutter cuts the Hex
  *      away (the gouge check fails);
- *   3. the ring is emitted in grid order instead of last -> #1173's committed
- *      suite fails (the first overlap ring no longer starts at A0).
+ *   3. the ring is emitted in grid order instead of after the first ring -> the
+ *      finish's first ring no longer leads at A0 (the placement check here
+ *      fails); the #1173 suite's A0..A360 pin is on the **rough**, which still
+ *      emits its ring last, so that suite stays green;
+ *   4. the second spring pass is dropped -> A25 measures 0.06 mm and the 0.05
+ *      bound fails;
+ *   5. the cleanup ring is emitted last (the pre-correction placement) -> the
+ *      finish gains a second upward rapid and the short-block check fails;
+ *   6. the 0.45 degree grid is replaced by the refined grid -> the ring's
+ *      0.11-0.22 degree steps are sub-10 ms blocks and the block check fails.
  *
  * Run with: npx tsx src/engine/toolpaths/rotaryNeighbourShoulderLedge.test.ts
  */
@@ -97,6 +115,19 @@ const FLAT_TOOL_ID = 'flat-025'
 const FLAT_RADIUS = 0.125
 const ROUGH_LEAVE = 0.02
 const MIN_HEIGHT = minRenderHeight('inch')
+/**
+ * Where the cleanup ring sits: the middle of the overlap, so one disc reaches
+ * both the band face (1.2) and the Hex's end (1.25). See `shoulderCleanFaces`.
+ */
+const OVERLAP_MIDDLE = (TURN_START + HEX_END) / 2
+/**
+ * The sweep's pose window for the shoulder. The default is sized by the blank's
+ * radius (7.68 degrees); the flat being cleaned subtends
+ * `asin(radius / flatRadius)` = 9.59, so the rim poses that physically touch it
+ * are inside this window. `sweepProfile`'s own reach check still decides every
+ * pose, so the wider window cannot credit a pose the body does not reach.
+ */
+const POSE_WINDOW_DEG = Math.asin(FLAT_RADIUS / (HEX_ACROSS_FLATS / 2)) * 180 / Math.PI + 0.5
 
 interface BoltFixture {
   readonly project: Project
@@ -229,8 +260,10 @@ const stock = bolt.project.stock as BarStock
 const tool = normalizeToolForProject(
   bolt.project.tools.find((candidate) => candidate.id === FLAT_TOOL_ID)!, bolt.project,
 )
-const rough = generate(bolt.project, turnOperation(bolt.project, bolt.turnId, 'rotary_rough'))
-const finish = generate(bolt.project, turnOperation(bolt.project, bolt.turnId, 'rotary_finish'))
+const roughOperation = turnOperation(bolt.project, bolt.turnId, 'rotary_rough')
+const finishOperation = turnOperation(bolt.project, bolt.turnId, 'rotary_finish')
+const rough = generate(bolt.project, roughOperation)
+const finish = generate(bolt.project, finishOperation)
 
 // ── the job's material, swept by the real cutter at every emitted pose ────
 
@@ -241,7 +274,7 @@ const TO = HEX_END + 4 * FLAT_RADIUS
 function shoulderProfiles(): Map<number, WallFootProfile> {
   let profiles: Map<number, WallFootProfile> | null = null
   for (const moves of [rough, finish]) {
-    const poses = cutterPosesByAngle(moves, stock, tool)
+    const poses = cutterPosesByAngle(moves, stock, tool, POSE_WINDOW_DEG)
     if (profiles === null) {
       const blank = blankProfile(stock, FROM, TO, tool, HEX_END)
       profiles = new Map(poses.map((entry) => [entry.angle, sweepProfile(blank, entry.poses, tool, entry.angle)]))
@@ -293,30 +326,35 @@ function worstInOverlap(): { height: number; along: number; angle: number } {
   return { height: worst, along, angle }
 }
 
-// ── 1. the ledge is gone: the shoulder reaches the Hex plane ──────────────
+/** The block time of one around cut at the operation's feed, seconds. */
+function blockTime(move: ToolpathMove, feed: number, pivot: number): number {
+  const radius = Math.max(move.from.z, move.to.z) - pivot
+  const arc = radius * Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) * Math.PI / 180
+  return Math.hypot(move.to.x - move.from.x, arc, move.to.z - move.from.z) / feed * 60
+}
 
-check('rough and finish leave the Hex flat clean at the turned shoulder', () => {
-  // The handoff's spots: X 30.734 mm / A 15, 20, 25 degrees. Before the fix the
-  // residual was 0.277 / 0.390 / 0.496 mm; the ledge tapered to nothing at the
-  // Hex's end face, so the spot nearest the band face was the worst of the three.
+// ── 1. the ledge is gone: the shoulder reaches the Hex plane within 0.05 ──
+
+check('rough and finish leave the Hex flat within 0.05 mm of the plane at the shoulder', () => {
+  // The handoff's spots: X 30.734 mm / A 15, 20, 25 degrees and X 31.496 mm.
+  // Before the fix the residual was 0.277 / 0.390 / 0.496 mm (0.98 mm worst).
   const spots = [1.20996, 15, 1.20996, 20, 1.20996, 25, 1.24, 25]
   const measured: number[] = []
   for (let i = 0; i < spots.length; i += 2) {
     measured.push(heightAt(profiles, spots[i], spots[i + 1]) * 25.4)
   }
   console.log(`  shoulder residual above the Hex plane: ${measured.map((mm) => mm.toFixed(3)).join(' / ')} mm`)
-  // The flat's own finish allowance on Frank's file is 0.15 mm; the shoulder must
-  // not be a ledge *on top of* it (0.50 mm before the fix), so the bound is that
-  // same allowance plus the sweep's own whole-degree sampling.
-  assert.ok(measured[2] <= 0.2,
-    `the A25 spot is ${measured[2].toFixed(3)} mm above the Hex plane, over the 0.2 mm the flat's own finish allows`)
-  for (const mm of measured) {
-    assert.ok(mm <= 0.2, `a shoulder spot is ${mm.toFixed(3)} mm above the Hex plane, over 0.2 mm`)
+  for (const [index, mm] of measured.entries()) {
+    assert.ok(mm <= 0.05,
+      `spot ${index + 1} is ${mm.toFixed(3)} mm above the Hex plane, over the handoff's 0.05 mm`)
   }
   const worst = worstInOverlap()
   console.log(`  worst inside the overlap: ${(worst.height * 25.4).toFixed(3)} mm `
     + `at X${worst.along.toFixed(3)} A${worst.angle}°`)
-  assert.ok(worst.height * 25.4 <= 0.25,
+  // The corners of the flat change direction under a flat disc, so the scallop
+  // there is larger than on a facet; it stays inside the flat's own finish
+  // allowance, which is the level the shoulder must not stand above.
+  assert.ok(worst.height * 25.4 <= 0.15,
     `the worst point in the overlap is ${(worst.height * 25.4).toFixed(3)} mm above the Hex plane`)
 })
 
@@ -330,33 +368,59 @@ check('neither operation cuts the cutter body into the Hex', () => {
   }
 })
 
-// ── 3. the mechanism: one ring at the band face, after the operation's rings ──
+// ── 3. the mechanism: a centred, two-pass ring entered right after ring 1 ──
 
-check('both operations cut a ring at the band face, after their own rings', () => {
+check('both operations cut a cleanup ring in the overlap', () => {
   for (const [label, moves] of [['rough', rough], ['finish', finish]] as const) {
-    const atFace = moves.filter((move) => move.kind === 'cut'
-      && Math.abs(move.to.x - TURN_START) < 1e-6 && move.to.a !== undefined)
-    assert.ok(atFace.length > 6, `${label}: no ring at the band face (${atFace.length} poses)`)
-    // Emitted after the operation's own rings: the band face is the *innermost*
-    // along position, so a ring there in grid order would lead the motion and
-    // advance the commanded A cursor by a whole turn (#1173's suite pins the
-    // first overlap ring at A0..A360).
-    const firstAt = (x: number): number => moves.findIndex((move) => move.kind === 'cut'
-      && Math.abs(move.to.x - x) < 1e-6 && move.to.a !== undefined)
-    const spanStart = firstAt(TURN_START + FLAT_RADIUS)
-    const bandFace = firstAt(TURN_START)
-    assert.ok(spanStart >= 0, `${label}: no ring at the span start`)
-    assert.ok(bandFace > spanStart,
-      `${label}: the band-face ring is emitted before the span-start ring (${bandFace} < ${spanStart})`)
+    const atMiddle = moves.filter((move) => move.kind === 'cut'
+      && Math.abs(move.to.x - OVERLAP_MIDDLE) < 1e-6 && move.to.a !== undefined
+      && Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9)
+    assert.ok(atMiddle.length > 6, `${label}: no cleanup ring at the overlap's middle (${atMiddle.length} poses)`)
     // No pose of it goes below the Hex's own surface at its angle: the cleanup
     // is a skim of the stock above the flat, never a cut into it.
-    for (const move of atFace) {
+    for (const move of atMiddle) {
       const angle = ((move.to.a ?? 0) % 360 + 360) % 360
       const tip = move.to.z - barPivotZ(stock)
       assert.ok(tip * Math.cos(facetOffset(angle) * Math.PI / 180) >= HEX_ACROSS_FLATS / 2 - MIN_HEIGHT,
-        `${label}: the band-face ring's tip at A${angle.toFixed(1)} is below the Hex plane`)
+        `${label}: the cleanup ring's tip at A${angle.toFixed(1)} is below the Hex plane`)
     }
   }
+})
+
+check('the finish enters the cleanup ring right after the first ring, without a retract', () => {
+  const pivot = barPivotZ(stock)
+  const isAroundCut = (move: ToolpathMove): boolean => move.kind === 'cut'
+    && move.from.a !== undefined && move.to.a !== undefined
+    && Math.abs(move.from.a - move.to.a) > 1e-9
+  const firstRing = finish.filter((move) => isAroundCut(move) && Math.abs(move.to.x - (TURN_START + FLAT_RADIUS)) < 1e-6)
+  const atMiddle = finish.filter((move) => isAroundCut(move) && Math.abs(move.to.x - OVERLAP_MIDDLE) < 1e-6)
+  assert.ok(firstRing.length > 6, `the first ring is emitted (${firstRing.length} moves)`)
+  assert.ok(atMiddle.length > 6, `the cleanup ring is emitted (${atMiddle.length} moves)`)
+  // #1173's committed suite pins the first overlap ring at A0..A360; the ring
+  // must still *lead* the operation (the cleanup comes after it, not before).
+  assert.ok(Math.abs((firstRing[0].from.a ?? -1) - 0) < 1e-9, 'the first ring still starts at A0')
+  assert.ok((firstRing[firstRing.length - 1].to.a ?? 0) <= 360 + 1e-9, 'the first ring still ends by A360')
+  assert.ok(finish.indexOf(atMiddle[0]) > finish.indexOf(firstRing[0]), 'the cleanup ring follows the first ring')
+  // The move into it is a cut from the first ring's own end back to the band
+  // face at that angle -- not a rapid and not a plunge, so no G0 Z lift.
+  const entry = finish[finish.indexOf(atMiddle[0]) - 1]
+  assert.equal(entry.kind, 'cut', 'the cleanup ring is entered by a cut, not a rapid/plunge')
+  assert.ok(Math.abs(entry.from.x - (TURN_START + FLAT_RADIUS)) < 1e-6, 'the entry starts at the first ring')
+  assert.ok(Math.abs(entry.to.x - OVERLAP_MIDDLE) < 1e-6, 'the entry ends at the cleanup ring')
+  assert.equal(entry.from.a, entry.to.a, 'the entry keeps the ring angle (no commanded A turn)')
+  // #1173's smoothness numbers: one upward rapid (the final retract), no new
+  // blocks under 10 ms from the cleanup ring.
+  const up = finish.filter((move) => move.kind === 'rapid' && move.to.z - move.from.z > 1e-9)
+  assert.equal(up.length, 1, `the finish has one upward rapid (the final retract), not ${up.length}`)
+  const feed = finishOperation.feed ?? 30
+  const times = atMiddle.map((move) => blockTime(move, feed, pivot))
+  const shortest = Math.min(...times)
+  console.log(`  cleanup ring: ${atMiddle.length} cuts, shortest block ${(shortest * 1000).toFixed(1)} ms`)
+  assert.ok(shortest >= 0.01,
+    `the cleanup ring has a ${(shortest * 1000).toFixed(1)} ms block, under the 10 ms #1173 forbids adding`)
+  // The ring's angular steps are its own uniform grid, not the refined one.
+  const steps = atMiddle.map((move) => Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)))
+  assert.ok(Math.min(...steps) >= 0.4, `the cleanup ring's finest step is ${Math.min(...steps).toFixed(3)} degrees`)
 })
 
 if (failures > 0) {

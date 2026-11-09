@@ -64,6 +64,14 @@ const TURN_LENGTH = 2.55
 const TURN_DIAMETER = 1
 const FLAT_TOOL_ID = 'flat-025'
 const FLAT_RADIUS = 0.125
+/**
+ * The sweep's pose window: the angle a pose's disc subtends on the Hex's flat,
+ * `asin(radius / apothem)`. `cutterPosesByAngle`'s default is sized by the
+ * blank's radius (7.68 degrees), which drops the rim poses that physically
+ * touch the flat; `sweepProfile`'s own reach check still decides every pose, so
+ * this window credits nothing that does not reach.
+ */
+const POSE_WINDOW_DEG = Math.asin(FLAT_RADIUS / (HEX_ACROSS_FLATS / 2)) * 180 / Math.PI + 0.5
 
 /** The spots on Frank's file, in the file's own project (inch) coordinates. */
 const SPOTS: Array<{ along: number; angle: number; label: string }> = [
@@ -177,12 +185,12 @@ function sweptProfiles(
     if (!started) {
       started = true
       const blank = blankProfile(stock, window.from, window.to, tool, anchor)
-      for (const entry of cutterPosesByAngle(moves, stock, tool)) {
+      for (const entry of cutterPosesByAngle(moves, stock, tool, POSE_WINDOW_DEG)) {
         profiles.set(entry.angle, sweepProfile(blank, entry.poses, tool, entry.angle))
       }
       continue
     }
-    for (const entry of cutterPosesByAngle(moves, stock, tool)) {
+    for (const entry of cutterPosesByAngle(moves, stock, tool, POSE_WINDOW_DEG)) {
       const current = profiles.get(entry.angle)
       if (!current) continue
       profiles.set(entry.angle, sweepProfile(current, entry.poses, tool, entry.angle))
