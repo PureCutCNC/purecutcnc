@@ -23,7 +23,11 @@ reuse their conclusions. `scripts/issue-1177-ledge-probe.ts` and
 - Frank's Simulation screenshots at 18d908f6 ("Selected" mode). Open and look at both:
   `/home/frankp/Projects/worktrees/purecutcnc/fix-issue-1177-hex-shoulder-ledge/work/frank-sim-rough-18d908f6.png`
   (rough) and `.../work/frank-sim-finish-18d908f6.png` (finish). There's also the
-  original 3D-view shot `.../work/hex-edge-ledge.png`. In the finish shot a raised band runs
+  original 3D-view shot `.../work/hex-edge-ledge.png`.
+- Frank also checked the inch file `work/bolt-test-02-x.camj` and sees the same thing, so
+  units are not the cause: `.../work/frank-sim-inch-18d908f6.png` (a wider view of the
+  whole Hex between the bar and the turned neck). Look at both ends of the Hex flats, not
+  only the shoulder end, and say whether the band is at one end or both. In the finish shot a raised band runs
   along the edge where the Hex flat meets the turned shoulder, standing above the rest of
   the flat.
 
