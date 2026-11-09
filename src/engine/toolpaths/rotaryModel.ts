@@ -1595,6 +1595,64 @@ function rotaryBandEnds(
 }
 
 /**
+ * The band faces a shoulder-cleanup ring is needed at (#1177).
+ *
+ * `rotaryBandEnds` pulls the cutter's centre one radius inside an end a
+ * neighbour's wall stands at, so the first ring's **rim** is the only part of it
+ * that reaches the band face -- and where that neighbour's flat runs *across*
+ * the face, the material above the flat inside the overlap is left as a wedge
+ * tapering off along the rim: the ledge #1177 is about.
+ *
+ * A face qualifies when the band end is pulled by a neighbour's rising wall
+ * (`overrun.start && wallStart`, which is exactly `pullStart && !stubStart`) and
+ * a neighbour's span **strictly contains** the face, so the flat the ring has to
+ * clear runs across it. A neighbour that merely *ends* at the face is the
+ * #1155 rn-e case: there is no flat beyond the face to sweep, and no ring is
+ * added. A square blank keeps both ends (`KEEP_BAND_ENDS`), so it never
+ * qualifies.
+ *
+ * The ring's own tips are not read here: the position is merged into the along
+ * grid before `rotaryNeighbourColumns`, so it is a neighbour-reach column and
+ * takes the exact footprint read on the mesh *with* the neighbours. That is the
+ * protection -- the cutter's body never goes below the neighbour's surface -- and
+ * it is why the cleanup needs no new sampling code.
+ */
+function shoulderCleanFaces(
+  neighbours: readonly RotaryModelMesh[] | undefined,
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+  ends: RotaryBandEnds,
+): number[] {
+  if (params.passDirection !== 'around') return []
+  if (neighbours === undefined || neighbours.length === 0) return []
+  const tolerance = minRenderHeight(tool.units)
+  const extents = neighbours
+    .map((neighbour) => alongExtremes(neighbour.positions, stock))
+    .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
+  const crosses = (face: number): boolean => extents.some((extent) =>
+    extent.min < face - tolerance && extent.max > face + tolerance)
+  const faces: number[] = []
+  if (ends.pullStart && !ends.stubStart && crosses(params.alongStart)) faces.push(params.alongStart)
+  if (ends.pullEnd && !ends.stubEnd && crosses(params.alongEnd)) faces.push(params.alongEnd)
+  return faces
+}
+
+/**
+ * `base` extended with extra along positions, sorted, within
+ * `WALL_FOOT_EPSILON` (the grid's own spacing tolerance). A position already on
+ * the grid keeps its one column.
+ */
+function mergeAlongPositions(base: readonly number[], extra: readonly number[]): number[] {
+  if (extra.length === 0) return [...base]
+  const merged: number[] = []
+  for (const x of [...base, ...extra].sort((a, b) => a - b)) {
+    if (merged.length === 0 || x - merged[merged.length - 1] > WALL_FOOT_EPSILON) merged.push(x)
+  }
+  return merged
+}
+
+/**
  * The span the cutter's **centre** may travel inside a cut range (#1016 C2-F7).
  *
  * A square blank keeps the bar beyond the cut range as retained stock, so a cut
@@ -1909,6 +1967,20 @@ interface RotaryTargets {
    */
   ringOnlyIndices: readonly number[]
   /**
+   * The shoulder-cleanup rings (#1177): the columns whose ring a driver emits
+   * **after** the operation's own rings instead of in grid order.
+   *
+   * The grid is ascending along the bar, so the band face sorts first -- but the
+   * ring it adds must not lead the motion: a ring emitted before the first one
+   * would advance the commanded A cursor a whole turn, and #1173's committed
+   * suite fixes the first ring at A0..A360 (the corner-bump window). Emitting it
+   * last also cuts it on the material the operation has already removed, which
+   * is what a shoulder clean-up pass should do. The traverse back to the face
+   * has no surface link (links run forward only), so the emitter's own
+   * retract/rapid/plunge takes it.
+   */
+  shoulderCleanIndices: readonly number[]
+  /**
    * The base angular grid's step in degrees, before any refinement (#1173): a
    * step finer than this was inserted by the between-sample refinement, which
    * is what `raiseShortAroundSegments` may merge. 360 when there is no grid.
@@ -1929,7 +2001,8 @@ interface RotaryTargets {
 function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
   return {
     angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, ringOnlyIndices: [], baseAngleStep: 360, layerFloor: null,
+    prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
+    baseAngleStep: 360, layerFloor: null,
     stopped: false, refusal: code,
   }
 }
@@ -1938,7 +2011,8 @@ function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
 function targetStopped(angles: number[], along: number[]): RotaryTargets {
   return {
     angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
-    prep: null, stockToLeave: 0, ringOnlyIndices: [], baseAngleStep: 360, layerFloor: null,
+    prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
+    baseAngleStep: 360, layerFloor: null,
     stopped: true, refusal: null,
   }
 }
@@ -1991,6 +2065,11 @@ interface RotaryTargetPlan {
    * See `rotaryNeighbourColumns`.
    */
   readonly neighbourColumns: RotaryNeighbourColumns | null
+  /**
+   * #1177: the shoulder-cleanup rings' columns in `along` (see
+   * `RotaryTargets.shoulderCleanIndices`). Empty for an ordinary operation.
+   */
+  readonly shoulderCleanIndices: readonly number[]
   /**
    * #1155 rn-e: the ends the target itself ends at, where the retained wall is
    * gone from the sampled mesh. A sample there can read "no model under the
@@ -2639,6 +2718,8 @@ function prepareRotaryTargets(
   if (!span) {
     return { refusal: 'rotaryNoRoom' }
   }
+  // #1177: the shoulder-cleanup ring (see `shoulderCleanFaces`).
+  const cleanFaces = shoulderCleanFaces(params.neighbours, stock, tool, params, ends)
   const maxRadius = barMaxRadius(stock)
   // Around mode is the same sampling grid with the two roles swapped: one ring
   // per along position (`stepover` apart) and the angle sweeping round the blank
@@ -2741,15 +2822,28 @@ function prepareRotaryTargets(
   // the neighbour it is tangent to. An operation with no wall foot keeps the
   // exact grid, the exact rows and the exact motion it had.
   const walls = rotaryWallFeet(mesh, params.neighbours, stock, tool, params, span)
+  // #1177: a face a neighbour's flat runs across, and that the centre pull left
+  // behind the first ring's rim, gets a ring of its own. It is added *after*
+  // `floorAlong` so the exact layer floor still reads the target's own grid
+  // (#1173), and *before* `rotaryNeighbourColumns` so it is sampled exactly on
+  // the mesh with the neighbours and marked ring-only, like any other
+  // neighbour-reach column. It is merged *before* the wall feet so their indices
+  // are the final grid's.
+  const rings = cleanFaces.length === 0 ? along : mergeAlongPositions(along, cleanFaces)
   const merged = walls.length === 0
-    ? { along, footReads: [] as Array<{ index: number; foot: RotaryWallFoot }> }
-    : mergeWallFootPositions(along, walls)
+    ? { along: rings, footReads: [] as Array<{ index: number; foot: RotaryWallFoot }> }
+    : mergeWallFootPositions(rings, walls)
   // #1173 fix 3: the along grid the exact layer floor is read on, taken before
   // the merge below adds the neighbours' wall-foot positions. It is the
   // **target's own** grid, so the same project with the neighbour removed reads
   // the floor at exactly the same along positions and gets the same value.
   const floorAlong = along.slice()
   along = merged.along
+  // #1177: where the cleanup rings landed in the final grid. The merges above
+  // sort and dedupe, so the positions are looked up rather than assumed.
+  const shoulderCleanIndices = cleanFaces
+    .map((face) => along.findIndex((position) => Math.abs(position - face) <= WALL_FOOT_EPSILON))
+    .filter((index) => index >= 0)
   // One workspace for the base grid and every refinement round: the mesh, tool
   // and along positions are the same in all of them, so the hull, the strip
   // index and the candidate buffer are built once (issue #1045 slice T).
@@ -2852,6 +2946,7 @@ function prepareRotaryTargets(
       ...(floorPrep !== undefined ? { floorPrep } : {}),
       wallFootReads,
       neighbourColumns,
+      shoulderCleanIndices,
       overrunStart: !ends.stubStart,
       overrunEnd: !ends.stubEnd,
       ...((gridExtra !== undefined) ? { gridExtra } : {}),
@@ -3106,6 +3201,7 @@ function completeRotaryTargets(
       ...plan.wallFootReads.map((read) => read.index),
       ...(plan.neighbourColumns?.indices ?? []),
     ].sort((a, b) => a - b),
+    shoulderCleanIndices: plan.shoulderCleanIndices,
     baseAngleStep: plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360,
     layerFloor,
     stopped: false, refusal: null,
@@ -3758,6 +3854,11 @@ function finishFromTargets(
     const wallFootAt = sampling.ringOnlyIndices.length > 0
       ? new Set(sampling.ringOnlyIndices)
       : null
+    // #1177: a shoulder-cleanup ring is emitted after the operation's rings, not
+    // in grid order -- see `shoulderCleanIndices`.
+    const cleanAt = sampling.shoulderCleanIndices.length > 0
+      ? new Set(sampling.shoulderCleanIndices)
+      : null
     // One forward-only ring at the cursor's angle. A split ring is partial arcs:
     // its last run can still reach the ring end, but the issue's contract is
     // that a split ring retracts rather than feeding to the next ring. Only a
@@ -3782,6 +3883,10 @@ function finishFromTargets(
       // the conservative read lifts a pose at the foot onto the neighbour it is
       // tangent to -- so a helix starting there would ride the wall for one turn
       // and leave exactly the ledge the ring removes.
+      if (cleanAt !== null && cleanAt.has(ring)) {
+        ring++
+        continue
+      }
       if (wallFootAt !== null && wallFootAt.has(ring)) {
         emitRing(ring)
         ring++
@@ -3790,7 +3895,8 @@ function finishFromTargets(
       if (rings[ring].eligible) {
         let band = ring
         while (band + 1 < along.length && rings[band + 1].eligible
-          && (wallFootAt === null || !wallFootAt.has(band + 1))) band++
+          && (wallFootAt === null || !wallFootAt.has(band + 1))
+          && (cleanAt === null || !cleanAt.has(band + 1))) band++
         // A band of one ring is just a ring: a helix needs an axial step to turn
         // into a pitch, and its two complete end rings would otherwise add a
         // full turn over no advance at all.
@@ -3835,6 +3941,15 @@ function finishFromTargets(
       }
       emitRing(ring)
       ring++
+    }
+    // #1177: the shoulder-cleanup rings, on the material the operation's own
+    // passes have already removed. The traverse back to the band face has no
+    // forward surface link, so the emitter's retract/rapid/plunge takes it.
+    if (cleanAt !== null) {
+      for (const index of sampling.shoulderCleanIndices) {
+        if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+        emitRing(index)
+      }
     }
   } else {
     for (let k = 0; k < angles.length; k++) {
@@ -5116,6 +5231,11 @@ function roughFromTargets(
     const wallFootAt = sampling.ringOnlyIndices.length > 0
       ? new Set(sampling.ringOnlyIndices)
       : null
+    // #1177: the shoulder-cleanup rings are emitted at the end of each layer,
+    // not in grid order -- see `shoulderCleanIndices`.
+    const cleanAt = sampling.shoulderCleanIndices.length > 0
+      ? new Set(sampling.shoulderCleanIndices)
+      : null
     const roughBand = continuousRoughInput(sampling, params, tool, warnings, hooks)
     for (let layer = 1; layer <= layers; layer++) {
       if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
@@ -5244,6 +5364,10 @@ function roughFromTargets(
         // one starting at the foot rides the wall it is tangent to (and, at a
         // roughing layer below the wall's top, the layer's air rule refuses the
         // whole band instead).
+        if (cleanAt !== null && cleanAt.has(ringIndex)) {
+          ringIndex++
+          continue
+        }
         if (wallFootAt !== null && wallFootAt.has(ringIndex)) {
           emitRing(ringIndex)
           ringIndex++
@@ -5252,7 +5376,8 @@ function roughFromTargets(
         if (layerRings[ringIndex].full) {
           let band = ringIndex
           while (band + 1 < along.length && layerRings[band + 1].full
-            && (wallFootAt === null || !wallFootAt.has(band + 1))) band++
+            && (wallFootAt === null || !wallFootAt.has(band + 1))
+            && (cleanAt === null || !cleanAt.has(band + 1))) band++
           // A band of one ring is just a ring: a helix needs an axial step to
           // turn into a pitch, and its two complete end rings would otherwise
           // add a full turn over no advance at all.
@@ -5323,6 +5448,14 @@ function roughFromTargets(
         }
         emitRing(ringIndex)
         ringIndex++
+      }
+      // #1177: the layer's shoulder-cleanup rings, on the material its own
+      // passes have already removed (see `shoulderCleanIndices`).
+      if (cleanAt !== null) {
+        for (const index of sampling.shoulderCleanIndices) {
+          if (hooks.shouldStop?.()) return { operationId, moves: [], warnings: [], bounds: null }
+          emitRing(index)
+        }
       }
     }
   } else {
