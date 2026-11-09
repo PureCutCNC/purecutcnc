@@ -743,6 +743,21 @@ export const motionDebug = {
   /** The bottom diagnostic status bar. */
   diagnostic: (page: Page) => motionDebug.root(page).locator('.motion-debug__diagnostic'),
 
+  /** The 2D/3D view toggle; absent for a program with no rotary angle. */
+  viewToggle: (page: Page) => motionDebug.root(page).locator('.motion-debug__view-toggle'),
+
+  /** The toggle's "3D wrapped" button (issue #1179). */
+  view3dButton: (page: Page) => motionDebug.root(page).locator('[data-testid="motion-debug-view-3d"]'),
+
+  /** The toggle's "2D plan" button. */
+  view2dButton: (page: Page) => motionDebug.root(page).locator('.motion-debug__view-toggle button', { hasText: '2D plan' }),
+
+  /** The three.js canvas the 3D wrapped view appends. */
+  wrappedCanvas: (page: Page) => motionDebug.root(page).locator('[data-testid="motion-debug-3d"] canvas'),
+
+  /** The angle readout the 3D wrapped view shows over the canvas. */
+  angleReadout: (page: Page) => motionDebug.root(page).locator('.motion-debug__angle-readout'),
+
   /** The footer Close button. */
   closeButton: (page: Page) => motionDebug.root(page).locator('.dialog-footer .btn-primary'),
 }

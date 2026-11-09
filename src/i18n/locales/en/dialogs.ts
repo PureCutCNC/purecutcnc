@@ -287,6 +287,13 @@ export const dialogsEn = {
   'dialogs.motionDebug.ineligibleDrilling': 'Drilling operations are not viewable as a 2D plan trace.',
   'dialogs.motionDebug.ineligibleNoCut': 'This operation produces no cutting motion to inspect.',
   'dialogs.motionDebug.ineligibleVariableZ': 'This operation has continuously varying cutting Z and cannot be shown as a flat 2.5D trace.',
+  'dialogs.motionDebug.viewMode': 'View',
+  'dialogs.motionDebug.view2d': '2D plan',
+  'dialogs.motionDebug.view3d': '3D wrapped',
+  'dialogs.motionDebug.angleRange': 'A range: {min}° … {max}°',
+  'dialogs.motionDebug.angleAtPointer': 'A at pointer: {angle}°',
+  'dialogs.motionDebug.angleNoTurn': 'A range: no turn',
+  'dialogs.motionDebug.webglUnavailable': 'The 3D view needs WebGL2, which this browser did not provide. The 2D plan is still shown.',
 
   // ── Model Export dialog ──
   'dialogs.modelExport.title': 'Export model',

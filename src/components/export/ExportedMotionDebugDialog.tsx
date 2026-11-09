@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { exportGeometryTolerance } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
@@ -29,8 +29,11 @@ import type { ToolpathGenerationTrace } from '../../engine/toolpaths/types'
 import type { MachineDefinition } from '../../engine/gcode'
 import { pinRotaryAxis } from '../../engine/gcode/types'
 import type { Operation, Project } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { buildMotionLayerPathD } from './motionDebugSvg'
 import { exportDialectLabels } from './exportDialectLabels'
+import { buildWrappedMotion, type WrappedMotionModel } from './motionDebugWrapped'
+import { MotionDebugWrappedView, type WrappedViewLayer } from './MotionDebugWrappedView'
 
 interface ExportedMotionDebugDialogProps {
   operation: Operation
@@ -95,6 +98,10 @@ export function ExportedMotionDebugDialog({
   // preparation it belongs to has changed — is dropped rather than rendered.
   const [model, setModel] = useState<ReturnType<typeof buildExportedMotionDebugModel> | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The 3D wrapped view's geometry (issue #1179): null for a program with no
+  // rotary angle, which is what keeps the toggle off a flat operation.
+  const [wrapped, setWrapped] = useState<WrappedMotionModel | null>(null)
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
 
   // The exported layer is named after what the machine exports: G-code, or a
   // ShopBot part file (issue #953).
@@ -140,12 +147,25 @@ export function ExportedMotionDebugDialog({
         })
         if (!cancelled) {
           setModel(built)
+          // A wrapped rotary program can be seen around the bar (issue #1179).
+          // The conversion returns null unless the exported motion actually
+          // carries angles, so a flat operation never reaches the 3D view.
+          setWrapped(isBarStock(project.stock)
+            ? buildWrappedMotion({
+              parsed,
+              origin: project.origin,
+              definition: pinned,
+              stock: project.stock,
+              trace,
+            })
+            : null)
           setError(null)
         }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e))
           setModel(null)
+          setWrapped(null)
         }
       }
     })()
@@ -159,7 +179,8 @@ export function ExportedMotionDebugDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputs])
 
-  // Measure the SVG viewport (CSS pixels) for pan/zoom + fit math.
+  // Measure the SVG viewport (CSS pixels) for pan/zoom + fit math. Re-runs when
+  // the 3D view takes the area, so switching back re-attaches to the new box.
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -168,7 +189,7 @@ export function ExportedMotionDebugDialog({
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [viewMode])
 
   // Fit to the model bounds whenever they (or the viewport size) first arrive.
   useEffect(() => {
@@ -183,6 +204,18 @@ export function ExportedMotionDebugDialog({
     exported: true,
   })
   const [showNonCutting, setShowNonCutting] = useState(false)
+  const show3d = viewMode === '3d' && wrapped !== null
+  // The 3D scene's layers, rebuilt only with the model: the same colours and
+  // opacities the sidebar swatches show.
+  const wrappedLayers = useMemo<WrappedViewLayer[]>(() => {
+    if (!wrapped) return []
+    return (Object.keys(LAYER_STYLE) as LayerId[]).map((id) => ({
+      id,
+      color: LAYER_STYLE[id].color,
+      opacity: LAYER_STYLE[id].opacity,
+      pieces: wrapped.layers[id],
+    }))
+  }, [wrapped])
   const [selectedZ, setSelectedZ] = useState<number | 'all'>('all')
   const [zoomSelectMode, setZoomSelectMode] = useState(false)
   const selectionRef = useRef<{ startX: number; startY: number } | null>(null)
@@ -385,15 +418,48 @@ export function ExportedMotionDebugDialog({
 
           <div className="motion-debug__view">
             <div className="motion-debug__toolbar">
-              <button className="btn-secondary" type="button" onClick={handleFit} disabled={!model?.bounds}>{t('dialogs.motionDebug.fit')}</button>
-              <button
-                className={`btn-secondary${zoomSelectMode ? ' btn-primary' : ''}`}
-                type="button"
-                onClick={() => { setZoomSelectMode(!zoomSelectMode); setSelectionRect(null) }}
-              >
-                {t('dialogs.motionDebug.zoomSelection')}
-              </button>
+              {wrapped && (
+                <div className="motion-debug__view-toggle" role="group" aria-label={t('dialogs.motionDebug.viewMode')}>
+                  <button
+                    className={`btn-secondary${show3d ? '' : ' btn-primary'}`}
+                    type="button"
+                    aria-pressed={!show3d}
+                    onClick={() => setViewMode('2d')}
+                  >
+                    {t('dialogs.motionDebug.view2d')}
+                  </button>
+                  <button
+                    className={`btn-secondary${show3d ? ' btn-primary' : ''}`}
+                    type="button"
+                    aria-pressed={show3d}
+                    data-testid="motion-debug-view-3d"
+                    onClick={() => setViewMode('3d')}
+                  >
+                    {t('dialogs.motionDebug.view3d')}
+                  </button>
+                </div>
+              )}
+              {!show3d && (
+                <>
+                  <button className="btn-secondary" type="button" onClick={handleFit} disabled={!model?.bounds}>{t('dialogs.motionDebug.fit')}</button>
+                  <button
+                    className={`btn-secondary${zoomSelectMode ? ' btn-primary' : ''}`}
+                    type="button"
+                    onClick={() => { setZoomSelectMode(!zoomSelectMode); setSelectionRect(null) }}
+                  >
+                    {t('dialogs.motionDebug.zoomSelection')}
+                  </button>
+                </>
+              )}
             </div>
+            {show3d && isBarStock(project.stock) ? (
+              <MotionDebugWrappedView
+                stock={project.stock}
+                layers={wrappedLayers}
+                visibleLayers={visibleLayers}
+                aRange={wrapped.aRange}
+              />
+            ) : (
             <div
               ref={wrapRef}
               className="motion-debug__svg-wrap"
@@ -434,6 +500,7 @@ export function ExportedMotionDebugDialog({
                 </svg>
               )}
             </div>
+            )}
             <div className={`motion-debug__diagnostic ${model?.diagnostic.state === 'verified' ? 'motion-debug__diagnostic--verified' : 'motion-debug__diagnostic--warning'}`}>
               {model ? (
                 <>

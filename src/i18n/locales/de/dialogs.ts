@@ -283,6 +283,13 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.ineligibleDrilling': 'Bohroperationen können nicht als 2D-Plan-Spur dargestellt werden.',
   'dialogs.motionDebug.ineligibleNoCut': 'Diese Operation erzeugt keine schneidende Bewegung zum Prüfen.',
   'dialogs.motionDebug.ineligibleVariableZ': 'Diese Operation hat eine kontinuierlich variierende Schnitt-Z und kann nicht als flache 2.5D-Spur gezeigt werden.',
+  'dialogs.motionDebug.viewMode': 'Ansicht',
+  'dialogs.motionDebug.view2d': '2D-Plan',
+  'dialogs.motionDebug.view3d': '3D gewickelt',
+  'dialogs.motionDebug.angleRange': 'A-Bereich: {min}° … {max}°',
+  'dialogs.motionDebug.angleAtPointer': 'A am Zeiger: {angle}°',
+  'dialogs.motionDebug.angleNoTurn': 'A-Bereich: keine Drehung',
+  'dialogs.motionDebug.webglUnavailable': 'Die 3D-Ansicht benötigt WebGL2, das dieser Browser nicht bereitstellt. Der 2D-Plan bleibt sichtbar.',
 
   // ── Model Export dialog ──
   'dialogs.modelExport.title': 'Modell exportieren',
