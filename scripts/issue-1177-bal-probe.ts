@@ -35,7 +35,7 @@ import { readFileSync } from 'node:fs'
 import { normalizeProject } from '../src/store/helpers/projectFormat'
 import { computeOperationToolpath } from '../src/engine/toolpaths/generateOperation'
 import { normalizeToolForProject } from '../src/engine/toolpaths/geometry'
-import type { NormalizedTool, ToolpathMove, ToolpathResult } from '../src/engine/toolpaths/types'
+import type { NormalizedTool, ToolpathResult } from '../src/engine/toolpaths/types'
 import type { BarStock, Operation, Project } from '../src/types/project'
 import { barPivotZ } from '../src/types/barStock'
 import { cutterPosesByAngle, sweepProfile, type WallFootProfile } from '../src/test/rotaryWallFootSweep'
@@ -179,7 +179,7 @@ function reportA(result: ToolpathResult, stock: BarStock): void {
       const index = facet * 2 + (u >= 30 ? 0 : 1)
       const excess = point.radius - idealBallTip(point.angle)
       if (excess > best[index]) best[index] = excess
-      if (excess < low[index]) { low[index] = excess; if (excess < -0.2) console.log('   LOW', index, point.kind, 'X', point.x.toFixed(3), 'A', point.angle.toFixed(3), 'r', point.radius.toFixed(3), 'ideal', idealBallTip(point.angle).toFixed(3)) }
+      if (excess < low[index]) low[index] = excess
     }
     console.log(`  ${band.label}: max ${best.map((value) => Number.isFinite(value) ? value.toFixed(3) : '  .  ').join(' ')}`)
     console.log(`  ${' '.repeat(band.label.length)}  min ${low.map((value) => Number.isFinite(value) ? value.toFixed(3) : '  .  ').join(' ')}`)
@@ -335,7 +335,6 @@ function reportSequence(project: Project, results: Map<string, ToolpathResult>):
   const stock = project.stock as BarStock
   const from = HEX_X0 - 8
   const to = HEX_X1 + 8
-  const anchor = HEX_X1
   const operations = ['op0195', 'op0196', 'op0197', 'op0198']
     .map((id) => project.operations.find((entry) => entry.id === id))
     .filter((entry): entry is Operation => entry !== undefined)

@@ -107,7 +107,6 @@ function boltFixture(rotationDeg = 0): { project: Project; operation: Operation 
       name: 'Hex finish',
       toolRef: BALL_ID,
       stepover: 0.4,
-      sampleSpacing: 0.4,
       stepdown: 1,
       stockToLeaveRadial: 0,
     },
@@ -219,7 +218,8 @@ function cutPoints(result: ToolpathResult, stock: BarStock): CutPoint[] {
  * **A** and **C**: every cut pose's tip against the exact ball-over-hexagon
  * envelope, on all twelve facet corners, entry and exit separately.
  */
-function checkEnvelope(points: readonly CutPoint[], label: string): void {
+function checkEnvelope(points: readonly CutPoint[], label: string): number {
+  let worst = 0
   const bands: Array<{ name: string; from: number; to: number }> = [
     { name: 'chuck end', from: HEX_START, to: HEX_START + 0.6 },
     { name: 'middle', from: 24.6, to: 25.2 },
@@ -234,7 +234,9 @@ function checkEnvelope(points: readonly CutPoint[], label: string): void {
       if (point.x < band.from || point.x > band.to) continue
       const offset = facetOffset(point.angle)
       if (offset < 24 || offset > 30) continue
-      const wrapped = ((point.angle % 360) + 360) % 360
+      // The fixture's own facet-normal phase: the feature is rotated by
+      // `-phaseDeg` in the commanded frame, so the corner buckets shift with it.
+      const wrapped = ((((point.angle - phaseDeg) % 360) + 360) % 360)
       const facet = Math.floor((wrapped + 30) / 60) % 6
       const u = wrapped - (60 * Math.floor((wrapped + 30) / 60) - 30)
       const index = facet * 2 + (u >= 30 ? 0 : 1)
@@ -245,12 +247,14 @@ function checkEnvelope(points: readonly CutPoint[], label: string): void {
     for (let index = 0; index < 12; index++) {
       if (!Number.isFinite(high[index])) continue
       const corner = `facet ${Math.floor(index / 2)} ${index % 2 === 0 ? 'entry' : 'exit'}`
+      if (high[index] > worst) worst = high[index]
       assert.ok(high[index] <= RESIDUAL,
         `${label} A (${band.name}) ${corner}: tip ${high[index].toFixed(4)} mm above the envelope`)
       assert.ok(low[index] >= GOUGE,
         `${label} C (${band.name}) ${corner}: tip ${low[index].toFixed(4)} mm below the envelope`)
     }
   }
+  return worst
 }
 
 /** **D**: no radial step inside a cutting pass. */
@@ -282,20 +286,27 @@ function run(rotationDeg: number): void {
   const { project, operation } = boltFixture(rotationDeg)
   const stock = project.stock as BarStock
   const label = rotationDeg === 0 ? 'phase 0' : `phase ${rotationDeg}`
-  phaseDeg = rotationDeg
+  // `boltFixture` rotates the Hex by `rotationDeg` in the sketch frame; in the
+  // commanded frame the facet normal moves the other way, so the envelope's
+  // phase is `-rotationDeg`. That is the sign the earlier round could not
+  // settle: with `+rotationDeg` the check reads the envelope half a corner off
+  // and reports 0.19 mm of a residual the fixture does not have.
+  phaseDeg = -rotationDeg
   const tool = toolOf(project, operation)
   assert.equal(tool.type, 'ball_endmill', 'the Hex finish runs the 1/8 in ball')
   const result = generate(project, operation)
-  checkEnvelope(cutPoints(result, stock), label)
+  const worst = checkEnvelope(cutPoints(result, stock), label)
   checkRadialSteps(result, stock, label)
+  console.log(`  ${label}: worst A excess ${worst.toFixed(4)} mm over the envelope`)
 }
 
 console.log('Testing the #1177 ball finish against the exact ball-over-hexagon envelope...')
 run(0)
-// The handoff also asks for the same read at a **shifted sampling phase** (the
-// start line rotated by half a sample). `boltFixture(0.4465)` builds it, but the
-// corner algebra above then needs the rotated feature's own facet-normal phase
-// threaded through `facetOffset`/`idealBallTip`, and the two sign conventions I
-// tried moved the residual the wrong way (0.096 -> 0.190). Left out rather than
-// asserted against a reference I could not confirm: see the slice's report.
+// The handoff's shifted sampling phase: the start line rotated by half a sample.
+// The shift is 0.4465 degrees -- the half-sample value the earlier rounds'
+// probe already used for this file -- so rotating the Hex by that much puts
+// every pass angle half a sample off the facet-normal grid. That is a real
+// re-generation and re-read, not a shifted check angle: A, C and D all run
+// again on it.
+run(0.4465)
 console.log('issue-1177-ballFinish.test.ts: all checks passed')

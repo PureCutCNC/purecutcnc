@@ -66,7 +66,7 @@ import type { RotaryAngleJob, RotaryAngleSample, RotarySamplingPrep } from './ro
  * a result sample: a worker told to emit hands each map it builds back, and the
  * pool caches it in the parent workspace.
  */
-export const ROTARY_ANGLE_PROTOCOL_VERSION = 2
+export const ROTARY_ANGLE_PROTOCOL_VERSION = 3
 
 /** Which sampling mode an installed worker is configured for. */
 export type RotaryAngleMode = 'around' | 'along'
@@ -130,6 +130,15 @@ export interface RotaryAngleSetupPayload {
    * omission the pool's wall test exists to catch.
    */
   readonly wallTriangleStart?: number
+  /**
+   * Read each angle row as the **exact** footprint maximum (#1177), the same
+   * flag the parent's prep carries. It must reach the worker: without it the
+   * worker rebuilds the prep with the flag off and reads the conservative cell
+   * row, so a pooled ball path differs from the serial one (#1177 bal-a
+   * correction 1 -- the round-bar preview drew 3241 segments against the 760 a
+   * fresh generation gave).
+   */
+  readonly exactTipRows?: true
   readonly plan: RotaryAnglePlanPayload
   readonly raster?: RotaryAngleRasterPayload
   readonly mesh?: RotaryAngleMeshPayload
@@ -281,6 +290,7 @@ export function buildRotaryAngleSetup(
     along: [...prep.along],
     requestedCellSize: prep.requestedCellSize,
     ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
+    ...(prep.exactTipRows === true ? { exactTipRows: true as const } : {}),
     // #1103 slice ca-i: the parent's maps live in the parent workspace, so a
     // worker must hand its own back. A parent whose cache is already full gains
     // nothing from that and is not sent the flag at all.

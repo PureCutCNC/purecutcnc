@@ -123,6 +123,7 @@ export function createRotaryAngleKernel(setup: RotaryAngleSetupPayload): RotaryA
     angleMaps: 'off',
     ...(setup.emitAngleMaps === true ? { emitAngleMaps: true } : {}),
     ...(setup.wallTriangleStart !== undefined ? { wallTriangleStart: setup.wallTriangleStart } : {}),
+    ...(setup.exactTipRows === true ? { exactTipRows: true as const } : {}),
     workspace: {
       subset: new Uint32Array(2 * triangleCount),
       ...(setup.raster !== undefined ? { raster: { section: setup.raster.section, along: setup.raster.along } } : {}),

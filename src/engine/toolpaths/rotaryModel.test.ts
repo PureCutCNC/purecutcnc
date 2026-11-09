@@ -460,16 +460,22 @@ for (const axis of ['x', 'y'] as const) {
     assert.equal(next, pass + 1, `${axis} link only turns to the next pass`)
     approx(move.from.z, FINISH_LINK_Z, `${axis} link turns at the bar surface plus clearance`, 1e-9)
     assert.ok(move.from.z < FINISH_RADIUS + FINISH_SAFE, `${axis} link stays below the retract height`)
-    // Every pass's own end tip survives the merge: a move at that pass angle
-    // starts or ends exactly on it. Only the *presence* is asserted here -- the
-    // height is checked above -- because a **ball** reads the exact sphere drop
-    // since #1177 instead of this sampler row's conservative cell, so the two
-    // values differ by the cell margin by design.
+    // Every pass's own end tip survives the merge, at the height the pass cut:
+    // a move at that pass angle starts or ends on it. #1177 reads a **ball**
+    // exactly now, and on this fixture's end column that read is the cylinder
+    // cap's rim -- one 128-gon facet nearer than the row's own cell sample -- so
+    // the emitted tip can stand that facet's chord (0.0010 mm here) above the
+    // row. The equality is kept to the mesh's own sag instead of dropped.
     const endTip = FINISH_RADIUS + sampling.tipRadius[pass][alongCount - 1]
     assert.ok(Number.isFinite(endTip), `${axis} pass ${pass} samples its end`)
+    const endMoves = result.moves.filter(
+      (other) => other.kind === 'cut' && other.from.a === move.from.a && along(other.from) === endAlong,
+    )
+    assert.ok(endMoves.length > 0, `${axis} pass ${pass} keeps its end tip as a point`)
     assert.ok(
-      result.moves.some((other) => other.kind === 'cut' && other.from.a === move.from.a && along(other.from) === endAlong),
-      `${axis} pass ${pass} keeps its end tip as a point`,
+      endMoves.some((other) => Math.abs(other.from.z - endTip) <= 0.002),
+      `${axis} pass ${pass} keeps its end tip at the sampled height `
+      + `(${endMoves[0].from.z.toFixed(4)} versus ${endTip.toFixed(4)})`,
     )
   }
 
@@ -785,9 +791,11 @@ for (const axis of ['x', 'y'] as const) {
   // The generator erodes the sampled mesh by `s` and enlarges the tool by `s`,
   // so its tip is the enlarged tool on the **eroded** surface, not on the raw
   // sheet this reference reads. Under the flat-disc read the two agreed to 1e-6
-  // (the max was a point value); a ball's exact read is sensitive to the
-  // erosion's curvature, so they differ by 0.0002 mm here.
-  approx(generatedTip, exactEnlargedTip + s, 'valley result equals the enlarged tool plus s', 0.01)
+  // (the max was a point value); a ball's exact read follows the erosion's
+  // curvature, and here the difference is 0.0002 mm. The bound is 0.001, five
+  // times the measured value and still a fifth of the 0.005 hand-computed gap
+  // the next line pins.
+  approx(generatedTip, exactEnlargedTip + s, 'valley result equals the enlarged tool plus s', 0.001)
   // What "stock without enlarging the tool" would give, and the hand-computed gap.
   const handDifference = s * (Math.SQRT2 - 1)
   assert.ok(generatedTip > plainTip + s, `valley result is above plain + s (${generatedTip.toFixed(4)} > ${(plainTip + s).toFixed(4)})`)
@@ -838,6 +846,9 @@ for (const axis of ['x', 'y'] as const) {
   const along = Array.from({ length: intervals + 1 }, (_, i) => FINISH_BASE.alongStart + (FINISH_BASE.alongEnd - FINISH_BASE.alongStart) * i / intervals)
   const sampling = sampleRotaryModel(offAxis, stock, FINISH_PASS_MM, {
     anglesDeg: angles, along, requestedCellSize: FINISH_BASE.requestedCellSize,
+    // #1177: the finish's own read -- a ball's exact sphere drop. This is the
+    // independent grid every emitted point below is compared against.
+    exactTipRows: true,
   }, [])
   const result = generateRotaryFinish('op-offaxis', offAxis, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
   const safeZ = FINISH_RADIUS + FINISH_SAFE
@@ -855,19 +866,30 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(k >= 0, `off-axis cut point angle ${p.a} is a pass angle`)
       const j = along.findIndex((value) => Math.abs(value - p.x) < 1e-9)
       assert.ok(j >= 0, `off-axis cut point along ${p.x} is a sample position`)
-      // #1177: a **ball** reads the exact footprint maximum, which finds a thin
-      // sliver the conservative height map can miss between its cell centres, so
-      // the generator's material is this exact row rather than the conservative
-      // one above.
-      // The operation reads its tips at more than one resolution -- the ring
-      // grid, the exact column reads and the conservative link row -- and a link
-      // point over air legitimately carries a height no ring row has a sample
-      // for (#1177: the exactly-read ball grid has fewer finite rows than the
-      // conservative one, which is why the link can be the only point there).
-      // What this pins is that every emitted point lies on the operation's own
-      // (angle, along) grid; `cutAngles` above pins which passes cut at all.
-      assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z),
-        `off-axis pass ${k} along ${along[j]} is a finite point`)
+      // The separate sampling grid must still account for every emitted height.
+      // #1177: a **ball**'s exact read is finite at a sample within its radius
+      // of a model **end face**, so the 5 mm air gap here is bridged at two
+      // samples (16 and 18) that the conservative map left NaN; the pass joins
+      // the two runs instead of retracting between them. A sample that really
+      // has no model under it can therefore carry the neighbouring run's height,
+      // but never one of its own: every emitted tip stays between the lowest and
+      // highest tip this pass's own row holds, and a point on a sampled column
+      // is never below that column's own read. A plunge into the gap, a
+      // centreline slot or a dropped end all fail here.
+      const row = sampling.tipRadius[k]
+      const finite = Array.from(row).filter((value) => Number.isFinite(value))
+      assert.ok(finite.length > 0, `off-axis pass ${k} samples the model somewhere`)
+      const lowestSampled = Math.min(...finite)
+      const highestSampled = Math.max(...finite)
+      const tip = p.z - FINISH_RADIUS
+      assert.ok(tip >= lowestSampled - 1e-3 && tip <= highestSampled + 1e-3,
+        `off-axis pass ${k} along ${along[j]} tip ${tip.toFixed(4)} is within the pass's sampled `
+        + `range ${lowestSampled.toFixed(4)}..${highestSampled.toFixed(4)}`)
+      if (Number.isFinite(row[j])) {
+        assert.ok(tip >= row[j] - 1e-3,
+          `off-axis pass ${k} along ${along[j]} never cuts below its own sample `
+          + `(${tip.toFixed(4)} versus ${row[j].toFixed(4)})`)
+      }
       // No NaN sample became a centreline cut: the model never dips below R.
       assert.ok(p.z > FINISH_RADIUS + 1e-9, 'no off-axis cut at the centreline')
     }
@@ -885,12 +907,16 @@ for (const axis of ['x', 'y'] as const) {
     }
   }
   assert.equal(rapids.at(-1)!.to.z, safeZ, 'off-axis last move retracts to safeRadius')
-  // #1177: a **ball**'s exact read makes more of this path linkable, so the two
-  // pieces can be joined by cut links instead of a rapid; the rule this block
-  // exists for -- a rapid that travels runs at the bar plus clearance, never
-  // across standing material -- is asserted above for every rapid.
-  const traverses = rapids.filter((move) => move.from.z === travelZ && move.from.x !== move.to.x)
-  assert.ok(traverses.length >= 0, 'off-axis traverses keep the travel height')
+  // #1177: a **ball**'s exact read is finite at every sample within its radius
+  // of the prisms' end faces, so the 5 mm air gap is bridged by cut moves at the
+  // surrounding material's height (checked point by point above) and no rapid
+  // travels across it at all. The rule this block exists for -- a rapid that
+  // travels runs at the bar plus clearance, never across standing material -- is
+  // asserted above for every rapid; this pins that there is nothing left for a
+  // traverse to do, where before #1177 the two pieces forced one.
+  const traverses = rapids.filter((move) => move.from.x !== move.to.x || move.from.y !== move.to.y)
+  assert.equal(traverses.length, 0,
+    'the exact ball read joins the two pieces with cuts, so no rapid traverses between them')
   for (let i = 1; i < result.moves.length; i++) {
     assert.deepEqual(result.moves[i].from, result.moves[i - 1].to, `off-axis move ${i} is connected`)
   }
@@ -1100,9 +1126,9 @@ for (const axis of ['x', 'y'] as const) {
   // material is already low enough, which two ridges do.
   const safeZ = FINISH_RADIUS + FINISH_SAFE
   const travelZ = FINISH_RADIUS + Math.min(FINISH_SAFE, FINISH_RADIUS + LINK_CLEARANCE)
-  const checkTravel = (label: string, moves: readonly ToolpathMove[]): void => {
+  const checkTravel = (label: string, moves: readonly ToolpathMove[], minRapids: number): void => {
     const rapids = moves.filter((move) => move.kind === 'rapid')
-    assert.ok(rapids.length >= 3, `${label} has several moves between runs (${rapids.length} rapids)`)
+    assert.ok(rapids.length >= minRapids, `${label} has several moves between runs (${rapids.length} rapids)`)
     approx(rapids[0].to.z, safeZ, `${label} first positioning move is at safeRadius`, 1e-9)
     approx(rapids.at(-1)!.to.z, safeZ, `${label} final retract is at safeRadius`, 1e-9)
     for (let i = 0; i < rapids.length; i++) {
@@ -1134,12 +1160,25 @@ for (const axis of ['x', 'y'] as const) {
     index.set(Array.from(pieceB.index, (i) => i + pieceA.positions.length / 3), pieceA.index.length)
     const finish = generateRotaryFinish('op-travel', { positions, index }, stock, FINISH_PASS_MM,
       { ...FINISH_BASE, stepover: 20 }, {})
-    checkTravel(`${axis} finish`, finish.moves)
+    // #1177: a ball's exact read reaches the prisms' end faces, so this finish
+    // joins its two runs with cuts and keeps only the opening and closing
+    // rapids -- no inter-run traverse to check. `checkTravel` still holds those
+    // two to the clearance rules, and the two assertions below pin the reason:
+    // the gap is cut through, and no rapid travels across it.
+    checkTravel(`${axis} finish`, finish.moves, 2)
+    const along = (point: { readonly x: number; readonly y: number }): number => axis === 'x' ? point.x : point.y
+    assert.ok(finish.moves.some((move) => move.kind !== 'rapid'
+      && Math.min(along(move.from), along(move.to)) >= 14
+      && Math.max(along(move.from), along(move.to)) <= 19),
+      `${axis} finish cuts the air gap between its runs instead of retracting`)
+    assert.equal(finish.moves.filter((move) => move.kind === 'rapid'
+      && (move.from.x !== move.to.x || move.from.y !== move.to.y)).length, 0,
+      `${axis} finish needs no traverse between its runs`)
 
     const ridge = lathe(stock, (x) => 3 + (x - 10) / 10 + 23 * Math.exp(-((x - 15) ** 2)) + 21 * Math.exp(-((x - 24) ** 2)), 10, 30, 200, 64)
     const rough = generateRotaryRough('op-travel', ridge, stock, { ...FLAT_2, radius: 0.1, diameter: 0.2 },
       { ...FINISH_BASE, stepover: 22, sampleSpacing: 1, stockToLeave: 0, stepdown: 5 }, {})
-    checkTravel(`${axis} rough`, rough.moves)
+    checkTravel(`${axis} rough`, rough.moves, 3)
   }
 }
 
@@ -1427,9 +1466,25 @@ for (const axis of ['x', 'y'] as const) {
   const passes = finishPasses(params.stepover)
   const along = Array.from({ length: 21 }, (_, i) => 10 + i)
   const angles = Array.from({ length: passes }, (_, k) => k * (360 / passes))
+  /**
+   * #1177: a ball's exact read is taken on the mesh the generator **erodes** by
+   * `stockToLeave` and the tool it **enlarges** by the same. Eroding a curved
+   * surface is not the same as reading a bigger tool on the raw one, so the two
+   * differ -- 0.0015 mm at this cone's deepest target, 0.0002 mm on the valley
+   * sheet. That is the read's own error, not a cut error: the no-gouge bound
+   * below keeps its original 0.0011 and still passes. The deepest-layer
+   * comparisons allow the read's 0.002.
+   */
+  const DEPTH_TOLERANCE = 0.002
   for (const tool of [BALL, FLAT_2]) {
     const enlarged = { ...tool, radius: tool.radius + params.stockToLeave, diameter: tool.diameter + 2 * params.stockToLeave }
-    const sampled = sampleRotaryModel(cone, stock, enlarged, { anglesDeg: angles, along, requestedCellSize: CELL }, [])
+    // #1177: a **ball** reads the exact sphere drop, so the target the rough
+    // cuts to is that same read -- the enlarged tool on the raw surface. A flat
+    // keeps the pad-grown conservative read below.
+    const sampled = sampleRotaryModel(cone, stock, enlarged, {
+      anglesDeg: angles, along, requestedCellSize: CELL,
+      ...(tool.type === 'ball_endmill' ? { exactTipRows: true } : {}),
+    }, [])
     const targets = sampled.tipRadius.map((row) => Array.from(row, (r) => Math.min(20, Math.max(0, r + params.stockToLeave))))
     const lowest = Math.min(...targets.flat())
     const layers = Math.ceil((20 - lowest) / params.stepdown)
@@ -1444,7 +1499,7 @@ for (const axis of ['x', 'y'] as const) {
     const layerTips = result.moves.filter((m) => m.kind !== 'rapid').map((m) => m.to.z - 20)
     for (let layer = 1; layer <= layers; layer++) {
       const level = Math.max(lowest, 20 - layer * params.stepdown)
-      assert.ok(layerTips.some((tip) => Math.abs(tip - level) < 1e-6),
+      assert.ok(layerTips.some((tip) => Math.abs(tip - level) <= DEPTH_TOLERANCE),
         `${axis} exact layer count: layer ${layer} cuts at its own radius`)
     }
     const depths = targets.map((row) => row.map(() => Infinity))
@@ -1518,13 +1573,21 @@ for (const axis of ['x', 'y'] as const) {
       }
     }
     for (let pass = 0; pass < passes; pass++) for (let j = 0; j < along.length; j++) {
-      approx(depths[pass][j], targets[pass][j], `${axis} deepest cone sample equals final target`, 0.0011)
+      // #1177: at the model's own end the exact read sees the **cap's rim**, which
+      // the public sampler's cell grid does not (the same end-column difference
+      // the finish's end-tip check above documents). This fixture's cone ends on
+      // the cut range, so its two end columns are that case: the generator cuts
+      // their rim exactly (13.3 mm at x = 30) and the reference under-reads it by
+      // 0.015. The interior columns, which is what this check is for, stay at
+      // 0.002; the no-gouge sweep above still covers the ends.
+      if (j === 0 || j === along.length - 1) continue
+      approx(depths[pass][j], targets[pass][j], `${axis} deepest cone sample equals final target`, DEPTH_TOLERANCE)
       for (let layer = 1; layer <= layers; layer++) if (targets[pass][j] >= 20 - (layer - 1) * params.stepdown) skipped++
     }
     assert.ok(links > 0, `${axis} cone exercises finish-style links`)
     assert.ok(checked > 100 && skipped > 0, `${axis} cone checks real cuts and skipped air`)
     const cutTips = result.moves.filter((m) => m.kind !== 'rapid').map((m) => m.to.z - 20)
-    approx(Math.min(...cutTips), lowest, `${axis} no layer below lowest target`, 1e-9)
+    approx(Math.min(...cutTips), lowest, `${axis} no layer below lowest target`, DEPTH_TOLERANCE)
     const stopped = generateRotaryRough('cone-stop', cone, stock, tool, params, { shouldStop: () => true })
     assert.deepEqual(stopped, { operationId: 'cone-stop', moves: [], warnings: [], bounds: null }, `${axis} rough stop discards all output`)
     let done = 0
@@ -1674,9 +1737,14 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   // Re-captured for #1050 slice B for the same reason as the rough fixture
   // above: the wall edges still lift a few cells, so the sampled tips move and
   // the merged run count and positions change. 8844 -> 8866 moves.
-  assert.equal(result.moves.length, 8866, 'finish fixture keeps its move count')
+  // Recaptured for #1177 bal-a: the finish runs a **ball**, and a ball reads
+  // the exact sphere drop instead of the conservative cell row, so the lifted
+  // corners and wall feet its passes ride are 0.2-0.6 mm lower and the merged
+  // points move. 8866 -> 8837 moves. The seeded exact-solid property test below
+  // is the independent check that the new points are on the model, not off it.
+  assert.equal(result.moves.length, 8837, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'fb7ed1fcc4f447edccf6dec0736e750f386e55bdb5a703cc8c3d3e513558b8bc', 'finish fixture keeps its exact points')
+    '0b36aba0c852cbc70d796292c3062ed9fef1c3c6163b0d02b6c3e0c74d9d4737', 'finish fixture keeps its exact points')
 }
 
 // ---------------------------------------------------------------------------
@@ -2323,8 +2391,12 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // Recaptured for #1103 slice ca-d: the around rough's full rings are an
     // edge-clamped helix per layer and its partial rings turn A forward with
     // safe gaps. The along program still does not move.
+    // Recaptured for #1177 bal-a: this fixture's tool is a **ball**, and the
+    // exact sphere drop replaces the conservative cell row the ball shared with
+    // a flat, so both programs' points move. The seeded property test below
+    // checks both shapes against the exact solids.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '3066ffca34b19d29' : '9ab4b867712f5393',
+      direction === 'along' ? '17b52177a490aa37' : '48c7dde6caed35d9',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)
@@ -2365,7 +2437,7 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '8b430361116b9874' : 'd4b344f455927b67',
+      direction === 'along' ? '34eae6a87b569932' : '96b24e623ebeab13',
       `finish ${direction}: zero stock to leave is the expected program`)
     // Recaptured for #1095: the positive-leave fingerprints now carry the
     // un-thickened walls (the old values lifted the outermost pass to ~4.42).
@@ -2376,7 +2448,7 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // zero-leave and positive-leave fingerprints moved; the along program is
     // the base commit's bytes exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '45837f8a39449e24' : 'ade919db141c68f2',
+      direction === 'along' ? '0c76a254e8f861d7' : '4eb7eaea174b0d7a',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + ball.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

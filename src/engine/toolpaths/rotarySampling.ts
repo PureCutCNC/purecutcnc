@@ -101,6 +101,14 @@ export interface RotarySampleOptions {
    */
   readonly conservativeCellBounds?: boolean
   /**
+   * Read a row's tip as the **exact** footprint maximum (#1177) instead of a
+   * height-map cell's centre sample: the highest point of the turned surface
+   * over the disc the cutter's body covers, which is what the rotary generators
+   * read once `prepareRotaryTargets` asks for it. `conservativeCellBounds` is
+   * ignored on an exact row (its lift is 0).
+   */
+  readonly exactTipRows?: boolean
+  /**
    * Extra geometry whose envelope is **unioned** into the height-map grid's
    * bounds (origin, extent and cell size) while `mesh` supplies the sampled
    * values (#1095). A retained stub eroded by the stock to leave is smaller
@@ -1994,6 +2002,7 @@ function samplingSetup(options: RotarySampleOptions, workspace: RotarySamplingWo
     along: options.along,
     requestedCellSize: options.requestedCellSize,
     ...(options.conservativeCellBounds === true ? { conservativeCellBounds: true } : {}),
+    ...(options.exactTipRows === true ? { exactTipRows: true } : {}),
     ...(options.wallTriangleStart !== undefined ? { wallTriangleStart: options.wallTriangleStart } : {}),
     ...(options.gridExtra !== undefined ? { gridExtra: options.gridExtra } : {}),
     workspace,

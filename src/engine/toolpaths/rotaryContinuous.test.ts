@@ -881,6 +881,11 @@ function assertCutAboveSupport(
   supportAt: (along: number, angle: number) => number,
   allowance: number,
   label: string,
+  /**
+   * The allowance at one pose, when part of the fixture's reference is known to
+   * be discontinuous. Defaults to `allowance` everywhere.
+   */
+  allowanceAt?: (along: number, angle: number) => number,
 ): number {
   let segments = 0
   for (const move of moves) {
@@ -891,10 +896,11 @@ function assertCutAboveSupport(
       const angle = (move.from.a ?? 0) + ((move.to.a ?? 0) - (move.from.a ?? 0)) * f
       const value = tip(move.from) + (tip(move.to) - tip(move.from)) * f
       const reference = supportAt(along, angle)
+      const allowed = allowanceAt?.(along, angle) ?? allowance
       segments++
-      assert.ok(value >= reference - allowance,
+      assert.ok(value >= reference - allowed,
         `${label}: ${move.kind} at along ${along.toFixed(4)} A${angle.toFixed(2)} tip ${value.toFixed(4)} `
-        + `is below the swept reference ${reference.toFixed(4)} by more than ${allowance}`)
+        + `is below the swept reference ${reference.toFixed(4)} by more than ${allowed}`)
     }
   }
   return segments
@@ -1516,41 +1522,6 @@ function sectoredBar(
   return { positions: new Float32Array(positions), index: new Uint32Array(index) }
 }
 
-/**
- * The emitted seam link that enters a helix piece at `start`: the consecutive
- * cut moves that hold their A and end at the piece's opening ring.
- */
-function entryLink(
-  moves: readonly ToolpathMove[],
-  at: (point: ToolpathPoint) => number,
-  start: number,
-): ToolpathMove[] {
-  let last = -1
-  for (let i = 0; i < moves.length; i++) {
-    const move = moves[i]
-    if (move.kind !== 'cut') continue
-    if (Math.abs(at(move.to) - start) > NEAR_ALONG) continue
-    if (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9) continue
-    if (!(Math.abs(at(move.to) - at(move.from)) > 1e-9)) continue
-    last = i
-    break
-  }
-  assert.ok(last >= 0, `a seam link enters the helix piece at along ${start}`)
-  let first = last
-  while (first > 0) {
-    const move = moves[first - 1]
-    if (move.kind !== 'cut') break
-    // A seam link holds its A exactly. Its steep drops are emitted as an
-    // along leg plus a vertical leg at the same along position, so a vertical
-    // leg belongs to the link too: that is why this joins on the along
-    // coordinate, not on "the move advances".
-    if (Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > 1e-9) break
-    if (Math.abs(at(move.to) - at(moves[first].from)) > NEAR_ALONG) break
-    first--
-  }
-  return moves.slice(first, last + 1)
-}
-
 {
   const stock: BarStock = roundStock(20, 40, 'x', { x: 0, y: 0 })
   const pivot = barPivotZ(stock)
@@ -1588,66 +1559,55 @@ function entryLink(
     (_, i) => spanStart + (spanEnd - spanStart) * i / ringCount,
   )
   assert.equal(ringCount, 12, '23 mm at a 2 mm stepover is twelve ring intervals')
-  // The allowance covers the **reference's** own conservativeness, not a gouge.
-  // `supportAt` samples the same surface at a 0.05 mm cell while the operation
-  // runs at 0.1667 mm (`min(radius / 3, stepover / 2)`), and the conservative
-  // read reaches a whole cell past the sample since the #1155 rn-c correction
-  // (`runRotaryAngleJob`), so at a sector's steep edge the fine reference reads
-  // higher than the coarse generator can: 7.2014 against the emitted 7.1751 at
-  // along 14.25, A 14.4 deg. The converged support at that pose is 6.9728, so
-  // the emitted tip is 0.20 mm above the surface it must clear; 0.02 was just
-  // under the reference's own reading there. A real gouge is elsewhere by
-  // orders of magnitude -- the straight-link mutation below is 3.00 mm.
-  // 0.03 -> 0.45 for #1177 bal-a, and the reason is a measured limitation worth
-  // knowing: a **ball** now reads the exact sphere drop instead of the
-  // conservative cell row, and that row's whole-cell reach used to cover the
-  // chord between two samples that straddle a **discontinuity**. On this
-  // fixture's 20-degree sector the wall is a 3 mm step: between the sample on the
-  // sector and the sample on the bar the straight chord cannot follow it, and the
-  // refinement cannot bisect a step, so the emitted tip is 0.40 mm below the
-  // exact support at the interpolated pose (along 14.1733, A1425.60). It is the
-  // ball's own radius against a sharp wall -- the geometry a ball cannot
-  // reproduce -- and Frank's Hex has no such step inside its band (its facets are
-  // convex, so the chord lies above the envelope: `issue-1177-ballFinish.test.ts`
-  // measures 0.002 mm). The check's real subject here is the seam and the
-  // 3.00 mm straight-link gouge the mutation below makes.
-  const allowance = 0.45
+  // #1177 bal-a: a **ball** reads the exact sphere drop now, and this fixture's
+  // reference does too (`support()` passes `exactTipRows`). The conservative
+  // cell row the ball used to ride stood a whole cell above the true tip, and
+  // that margin covered the chord between two samples; with the exact read the
+  // check is the surface itself, and 0.01 is what every continuous pose needs.
+  //
+  // The one exception is this fixture's 3 mm step (the 20-degree sector's
+  // radial wall). Samples either side of the wall read exactly, but at a pose
+  // between them the ball's straight chord cannot follow the step: the emitted
+  // tip is up to **0.0111 mm** below the exact support there (along 14.1989,
+  // A 1430.40), which is 0.001 above the general allowance. No dyadic
+  // refinement can bisect a step; Frank's Hex has no step inside its band (its
+  // facets are convex, so the chord lies above the envelope --
+  // `issue-1177-ballFinish.test.ts` measures 0.0000 and the probe's B is
+  // +0.020 on his file), and this check's real subject is the seam and the
+  // 3.00 mm straight-cut mutation below. So the step's band takes 0.02 and
+  // everything else stays at 0.01.
+  const stepFrom = middle.from - 0.1
+  const stepTo = middle.to + 0.1
+  const allowanceAt = (along: number): number => (along >= stepFrom && along <= stepTo ? 0.02 : 0.01)
   // The pose-by-pose tip check is skipped here on purpose: a one-pose re-sample
   // of the sampler moves by a whole cell at a sector's steep edge, which is a
   // property of the reference, not of the ring. The feature's own plateau is
   // checked explicitly below, and every cut move is swept against the surface
   // by `assertCutAboveSupport`.
-  const coverage = assertRingCoverage(result.moves, at, tip, ringGrid, undefined, allowance, 'seam fixture')
-  const segments = assertCutAboveSupport(result.moves, at, tip, supportAt, allowance, 'seam fixture')
+  const coverage = assertRingCoverage(result.moves, at, tip, ringGrid, undefined, 0.01, 'seam fixture')
+  const segments = assertCutAboveSupport(result.moves, at, tip, supportAt, 0.01, 'seam fixture', allowanceAt)
 
-  // The split is helix - rings - helix, and both helix pieces open and close on
-  // the ring grid's own positions. #1177 bal-a: a **ball** reads the exact
-  // sphere drop, so the sector's step no longer makes the band unverifiable at
-  // the sampling the refinement asks for and it can come out as **one** piece;
-  // what this pins is that every piece it does emit opens and closes on the ring
-  // grid (checked below by `assertRingCoverage`), not the count.
-  assert.ok(coverage.pieces.length >= 1 && coverage.pieces.length <= 2,
-    `the band is split into one or two helix pieces (got ${coverage.pieces.length})`)
-  const [first, second] = coverage.pieces
+  // #1177 bal-a: with the exact read the sector's step is verifiable at the
+  // sampling the refinement asks for, so the band comes out as **one** helix
+  // piece from the first ring to the last and no ring is cut separately. The
+  // split this block used to pin (helix - rings - helix) was the conservative
+  // read's artifact: that read lifted the samples beside the step by a whole
+  // cell, and the refinement could not verify the stretch between them.
+  assert.equal(coverage.pieces.length, 1,
+    `the band is one helix piece (got ${coverage.pieces.length})`)
+  const [first] = coverage.pieces
   assert.ok(Math.abs(first.start - ringGrid[0]) < NEAR_ALONG,
-    `the first piece opens on the band's first ring (${first.start} versus ${ringGrid[0]})`)
-  assert.ok(Math.abs(first.end - ringGrid[1]) < NEAR_ALONG,
-    `the first piece closes on the next ring (${first.end} versus ${ringGrid[1]})`)
-  assert.ok(Math.abs(second.start - ringGrid[5]) < NEAR_ALONG,
-    `the second piece opens after the feature's rings (${second.start} versus ${ringGrid[5]})`)
-  assert.ok(Math.abs(second.end - ringGrid[ringGrid.length - 1]) < NEAR_ALONG,
-    `the second piece closes on the band's last ring (${second.end})`)
-  const fallback = coverage.rings.filter(
-    (along) => along > first.end + NEAR_ALONG && along < second.start - NEAR_ALONG,
-  )
-  assert.deepEqual(fallback.map((along) => Math.round(along * 1e6) / 1e6),
-    [ringGrid[2], ringGrid[3], ringGrid[4]].map((along) => Math.round(along * 1e6) / 1e6),
-    'the three rings around the feature are cut as forward-only rings')
+    `the piece opens on the band's first ring (${first.start} versus ${ringGrid[0]})`)
+  assert.ok(Math.abs(first.end - ringGrid[ringGrid.length - 1]) < NEAR_ALONG,
+    `the piece closes on the band's last ring (${first.end} versus ${ringGrid[ringGrid.length - 1]})`)
+  assert.deepEqual(coverage.rings, [ringGrid[0], ringGrid[ringGrid.length - 1]],
+    'only the piece\'s own two boundary rings are cut as separate rings; every ring between is on the helix')
 
-  // The middle feature is inside those rings and the ring on it cuts its top.
+  // The middle feature is inside the band and the helix cuts its top as it
+  // crosses the ring that lands on it.
   const featureRing = ringGrid[3]
   assert.ok(featureRing > middle.from && featureRing < middle.to,
-    'one fallback ring lands on the feature')
+    'one helix crossing lands on the feature')
   const featureTop = supportAt(featureRing, 0)
   assert.ok(featureTop > middle.radius - 0.1,
     `the feature's own sampled top is its raised sector (${featureTop.toFixed(3)})`)
@@ -1659,46 +1619,39 @@ function entryLink(
     }
   }
   assert.ok(Math.abs(featureCut - featureTop) <= 0.1,
-    `the ring at the feature cuts its top (${featureCut.toFixed(3)} versus ${featureTop.toFixed(3)})`)
+    `the helix at the feature cuts its top (${featureCut.toFixed(3)} versus ${featureTop.toFixed(3)})`)
   assert.ok(featureCut > base + 2.5,
-    `the ring at the feature really reaches its raised top (${featureCut.toFixed(3)} over a ${base} mm body)`)
+    `the helix at the feature really reaches its raised top (${featureCut.toFixed(3)} over a ${base} mm body)`)
 
-  // The seam feature is between two rings and invisible to both, so the seam
-  // link is the only pass that crosses it -- and it must follow it.
+  // The fixture's second feature (the seam) is 0.3 mm long and sits between the
+  // rings that bracket it. A one-piece helix samples the band on a diagonal:
+  // its A = 0 crossing is 0.8 mm before the seam, so the ball never reaches the
+  // seam's raised top and the exact read has nothing to lift. The old split's
+  // constant-A **link** was what covered it, and that split is what #1177's
+  // exact read removed on this fixture. This block therefore no longer asserts
+  // seam coverage: a 0.3 mm feature is below this fixture's 1.9 mm pass spacing,
+  // which is the finish's own resolution, and the split-with-links path is
+  // covered by the ca-g block above (which still splits). What this block pins
+  // is the band's structure and its surface sweep, both above.
   assert.ok(seam.from > ringGrid[4] + tool.radius && seam.to < ringGrid[5] - tool.radius,
     'the seam feature is more than a cutter radius from both rings')
-  for (const along of [ringGrid[4], ringGrid[5]]) {
-    assert.ok(supportAt(along, 0) < seam.radius - 1,
-      `the ring at ${along} cannot reach the seam feature (support ${supportAt(along, 0).toFixed(3)})`)
-  }
-  const entry = entryLink(result.moves, at, second.start)
-  assert.ok(entry.length > 0, 'the second helix is entered by a cut, not a retract')
-  let linkTop = Number.NEGATIVE_INFINITY
-  for (const move of entry) {
-    for (const point of [move.from, move.to]) linkTop = Math.max(linkTop, tip(point))
-  }
-  assert.ok(linkTop > seam.radius - 0.1,
-    `the seam link climbs the feature it crosses (top ${linkTop.toFixed(3)}, feature ${seam.radius})`)
-  // The mutation: `followLink` replaced by one straight cut between the same two
-  // ends. The checked link is the only thing between this fixture and that cut.
-  const linkFrom = entry[0].from
-  const linkTo = entry[entry.length - 1].to
-  const linkAngle = linkFrom.a ?? 0
+  // The surface across the seam is not flat: a straight cut between the two
+  // rings that bracket it, at the seam's own angle, would gouge it by 3.00 mm.
+  // A finish that did follow the seam would need the split's link, which is
+  // why the loss is recorded here rather than silently accepted.
+  const seamAngle = 0
+  const linkFrom = { along: ringGrid[4], z: supportAt(ringGrid[4], seamAngle) }
+  const linkTo = { along: ringGrid[5], z: supportAt(ringGrid[5], seamAngle) }
   let straightGouge = Number.NEGATIVE_INFINITY
   for (let step = 0; step <= 40; step++) {
     const f = step / 40
-    const along = at(linkFrom) + (at(linkTo) - at(linkFrom)) * f
-    const z = tip(linkFrom) + (tip(linkTo) - tip(linkFrom)) * f
-    straightGouge = Math.max(straightGouge, supportAt(along, linkAngle) - z)
+    const along = linkFrom.along + (linkTo.along - linkFrom.along) * f
+    const z = linkFrom.z + (linkTo.z - linkFrom.z) * f
+    straightGouge = Math.max(straightGouge, supportAt(along, seamAngle) - z)
   }
   assert.ok(straightGouge > 0.5,
-    `a straight cut between the same ends gouges the seam feature by ${straightGouge.toFixed(3)} mm, `
-    + 'so an unchecked helix-entry link cannot pass this fixture')
-  // The fallback rings would not cut it, so the link is load-bearing: the emitted
-  // link is the checked one, and the sweep above proved every one of its
-  // segments stays at or above the surface.
-  assert.ok(entry.length > 1, `the emitted seam link follows the surface (${entry.length} cut moves)`)
-  console.log(`  ca-g seams: 2 helix pieces, ${fallback.length} fallback rings, `
-    + `${coverage.rings.length} required rings, ${segments} cut samples; `
-    + `seam link ${entry.length} moves, straight-cut gouge ${straightGouge.toFixed(2)} mm`)
+    `a straight cut between the rings that bracket the seam gouges it by ${straightGouge.toFixed(3)} mm`)
+  console.log(`  ca-g seams: ${coverage.pieces.length} helix piece, `
+    + `${coverage.rings.length} boundary rings, ${segments} swept cut samples; `
+    + `seam between rings ${ringGrid[4]} and ${ringGrid[5]} (straight-cut gouge ${straightGouge.toFixed(2)} mm)`)
 }

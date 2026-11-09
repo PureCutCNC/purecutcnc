@@ -476,6 +476,49 @@ function prepFor(
   }
 }
 
+// ── an exact-tip prep crosses the worker boundary (#1177 bal-a) ────────────
+
+{
+  // The pool rebuilds the prep from `RotaryAngleSetupPayload`, so a prep field
+  // the payload omits silently reverts to its default in the worker. #1177 sets
+  // `exactTipRows` on a ball's prep; while the payload lacked it, every worker
+  // read the conservative cell row and a pooled path differed from the serial
+  // one. The round-bar preview of `rotaryModel.smoke.spec.ts` is where that
+  // surfaced: it drew 3241 segments against the 760 a fresh generation gave.
+  // This check pins the field on the boundary itself.
+  const stock = STOCKS[0].stock
+  const mesh = prism(stock, HEX_SECTION, [10, 30])
+  const jobs = jobsFor(ANGLES)
+  const exact = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize: 0.2, exactTipRows: true,
+  })
+  const planValue = exact.planFor(ANGLES)
+  const serial = jobs.map((job) => runRotaryAngleJob(exact, planValue, job))
+  const kernel = createRotaryAngleKernel(buildRotaryAngleSetup(exact, planValue))
+  const crossed = kernel.run(jobs)
+  assertSamplesEqual(crossed, serial, 'exact-tip prep')
+  // Non-vacuity: the exact read is not the conservative one on this fixture, so
+  // the comparison would fail if the flag were dropped rather than agreeing by
+  // accident.
+  const conservative = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize: 0.2, conservativeCellBounds: true,
+  })
+  const conservativePlan = conservative.planFor(ANGLES)
+  let widest = 0
+  for (let k = 0; k < jobs.length; k++) {
+    // The conservative read applies its cell rise at assembly, so compare the
+    // assembled values: `row + lift` is what a dropped flag would have sampled.
+    const sample = runRotaryAngleJob(conservative, conservativePlan, jobs[k])
+    for (let i = 0; i < sample.row.length; i++) {
+      if (!Number.isFinite(sample.row[i]) || !Number.isFinite(crossed[k].row[i])) continue
+      widest = Math.max(widest, Math.abs(crossed[k].row[i] - (sample.row[i] + sample.lift)))
+    }
+  }
+  assert.ok(widest > 0.001,
+    `the exact row differs from the conservative cell row (${widest.toFixed(6)}), so this check is load-bearing`)
+  console.log('worker setup: an exact-tip prep crosses the boundary byte for byte')
+}
+
 // ── an in-process source, for orderings a real thread cannot be told to make ──
 
 type FakeBehaviour =
