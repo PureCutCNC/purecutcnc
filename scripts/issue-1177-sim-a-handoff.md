@@ -27,7 +27,13 @@ reuse their conclusions. `scripts/issue-1177-ledge-probe.ts` and
 - Frank also checked the inch file `work/bolt-test-02-x.camj` and sees the same thing, so
   units are not the cause: `.../work/frank-sim-inch-18d908f6.png` (a wider view of the
   whole Hex between the bar and the turned neck). Look at both ends of the Hex flats, not
-  only the shoulder end, and say whether the band is at one end or both. In the finish shot a raised band runs
+  only the shoulder end, and say whether the band is at one end or both.
+- Frank's own reading of the simulation, in his words: "we seem to have the proper height
+  on the edge and in the middle of the flat area. but around that we don't." So the very
+  edge and the middle of the flat look right, and the region between them does not.
+  Measure that profile from the edge to the middle of the flat (along X, on several
+  angles across the flat), and report where it departs from the flat's height, by how
+  much, and in which direction. In the finish shot a raised band runs
   along the edge where the Hex flat meets the turned shoulder, standing above the rest of
   the flat.
 
