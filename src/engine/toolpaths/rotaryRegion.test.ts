@@ -1071,6 +1071,8 @@ const ROUND_FINISH_PARAMS = {
 // #1177 re-recorded the four **round** rows: the fixture's tool is a ball, and a
 // ball on a round bar reads the exact sphere drop instead of the conservative
 // cell row, so all four programs move. The square rows are untouched.
+// The around rough moved once more when the exact read's refinement took the
+// 0.005 mm floor at the prism's convex corners (2291 moves; 2478 on the base).
 const NO_REGION_HASHES: Record<string, string> = {
   'round/rotary_rough/along': 'moves=4aa9de8d8f6da26e warnings= gcode=b7f10baff78f8b2d',
   // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
@@ -1092,7 +1094,7 @@ const NO_REGION_HASHES: Record<string, string> = {
   // merge switched off this row still differs (fix C alone); with the gap feed
   // switched off and the merge on it differs too. The other three around rows
   // below change for the merge alone.
-  'round/rotary_rough/around': 'moves=199308a5b1f2b32b warnings= gcode=8b3306ece92d6588',
+  'round/rotary_rough/around': 'moves=3f216a2f3e5fd0c2 warnings= gcode=8164c29d897a567d',
   'round/rotary_finish/along': 'moves=e09be094ed17079a warnings=rotaryFinishWithoutRough gcode=0276b51663ba5a86',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
