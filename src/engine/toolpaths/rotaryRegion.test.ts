@@ -45,7 +45,7 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { barCentre, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
 import { isRoundStock, polygonProfile, rectProfile, roundStock } from '../../types/project'
 import type { BarStock, Operation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
@@ -275,18 +275,21 @@ for (const shape of ['round', 'square'] as const) {
 
       // Every cutting tool centre is inside the region: the mask keeps the
       // whole cutter path inside it, not merely the first sample of a run.
-      // #1177: points along each move are checked, at most 1 mm and 1 degree
-      // apart, not only its two ends. A ball reads the exact sphere drop now, so
-      // collinear samples merge into fewer, longer moves (the round along finish
-      // crosses the region in 2 moves, the rough in 10), and a long move's
-      // interior is as much the cutter path as its ends.
+      // #1177: each cut move is sampled every 0.5 mm of its length on the bar's
+      // surface, not only at its two ends, so "the region is exercised" counts
+      // the path the cut covers rather than how many endpoints the emitter
+      // happened to keep. A ball reads the exact sphere drop now, so collinear
+      // samples merge: the round along finish crosses the region in one 12 mm
+      // move where the conservative read emitted 37 short ones.
       let innerCuts = 0
+      const barRadius = barMaxRadius(stock)
       for (const move of cuts) {
         const fromAlong = alongOf(stock, move.from)
         const toAlong = alongOf(stock, move.to)
         const fromA = move.from.a ?? 0
         const toA = move.to.a ?? 0
-        const steps = Math.max(1, Math.ceil(Math.abs(toAlong - fromAlong)), Math.ceil(Math.abs(toA - fromA)))
+        const length = Math.hypot(toAlong - fromAlong, (toA - fromA) * Math.PI / 180 * barRadius)
+        const steps = Math.max(1, Math.ceil(length / 0.5))
         for (let step = 0; step <= steps; step++) {
           const f = step / steps
           const point = { along: fromAlong + (toAlong - fromAlong) * f, a: fromA + (toA - fromA) * f }
