@@ -438,6 +438,8 @@ export function createRotaryAnglePool(
   let disposed = false
   let installed = false
   let setupMode: RotaryAngleSetupPayload['mode'] = 'around'
+  /** Whether the installed setup reads exact rows, so a revised plan keeps its cross-section (#1177). */
+  let setupExact = false
   let planRevision = 0
   /** The plan object the workers are currently sampling against, by identity. */
   let sentPlan: RotaryStripPlanValue | null = null
@@ -700,13 +702,14 @@ export function createRotaryAnglePool(
     installed = true
     setupBytes = rotaryAngleSetupBytes(setup)
     setupMode = setup.mode
+    setupExact = setup.exactTipRows === true
     sentPlan = planValue
     mode = 'parallel'
   }
 
   /** Send a new plan revision when the reach grew (the plan object changed). */
   const revisePlan = async (next: RotaryStripPlanValue): Promise<void> => {
-    const payload = buildRotaryAnglePlan(next, setupMode)
+    const payload = buildRotaryAnglePlan(next, setupMode, setupExact)
     planRevision += 1
     const revision = planRevision
     const wait = awaitPlan(revision)

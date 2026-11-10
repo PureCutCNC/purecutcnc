@@ -168,6 +168,10 @@ const LIVE_CONTROL_PROGRAMS: ReadonlySet<string> = new Set([
   'around-rough-inch',
   'around-finish-inch',
   'square-around-rough-mm',
+  // #1177: a ball on a round bar reads the exact sphere drop, so this along
+  // rough's toolpath changed by design too (96 -> 67 moves, its layers now
+  // level). The removal is checked against the live render, as above.
+  'along-bar-y-rough-mm',
 ])
 
 /** The same program with its project origin moved one unit along the cross

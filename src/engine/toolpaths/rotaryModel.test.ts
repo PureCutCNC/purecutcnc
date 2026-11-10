@@ -387,6 +387,9 @@ for (const axis of ['x', 'y'] as const) {
     anglesDeg: exactAngles,
     along: Array.from({ length: alongCount }, (_, i) => FINISH_BASE.alongStart + (FINISH_BASE.alongEnd - FINISH_BASE.alongStart) * i / (alongCount - 1)),
     requestedCellSize: FINISH_BASE.requestedCellSize,
+    // #1177: the finish reads a **ball** exactly, so its end tips are the exact
+    // read's; this reference takes the same read.
+    exactTipRows: true,
   }, [])
   assert.equal(sampling.tipRadius.length, passes, `${axis} raw sampling covers every pass`)
 
@@ -771,8 +774,13 @@ for (const axis of ['x', 'y'] as const) {
     .filter((p) => Math.abs(apexAlongAxis(p) - apexAlong) < 1e-9)
   assert.ok(atApex.length > 0, 'the 0 degree pass reaches the valley apex')
   const generatedTip = atApex[0].z - FINISH_RADIUS
-  // What the code says it does: the enlarged ball's tip plus s.
-  approx(generatedTip, enlargedTip + s, 'valley result equals the enlarged tool plus s', 1e-6)
+  // What the code says it does: the enlarged ball's tip plus s. A **ball** reads
+  // the exact sphere drop since #1177, so the reference is that same read rather
+  // than the conservative cell row above (`enlargedTip`).
+  const exactEnlargedTip = sampleRotaryModel(sheet, stock, enlarged, {
+    anglesDeg: [0], along: [apexAlong], requestedCellSize: CELL, exactTipRows: true,
+  }, []).tipRadius[0][0]
+  approx(generatedTip, exactEnlargedTip + s, 'valley result equals the enlarged tool plus s', 1e-6)
   // What "stock without enlarging the tool" would give, and the hand-computed gap.
   const handDifference = s * (Math.SQRT2 - 1)
   assert.ok(generatedTip > plainTip + s, `valley result is above plain + s (${generatedTip.toFixed(4)} > ${(plainTip + s).toFixed(4)})`)
@@ -805,10 +813,17 @@ for (const axis of ['x', 'y'] as const) {
   // 5 mm gap split a pass into two runs. The finish cuts where the model is,
   // retracts to safeRadius across the gap, and emits nothing on a pass the
   // model never reaches.
+  //
+  // #1177: the gap is 7 mm (14..21), not 5. A ball reads its exact sphere drop
+  // now, and that read is finite at every sample within one radius (2 mm) of an
+  // end face, so in a 5 mm gap every 2 mm sample (16, 18) still touches a face
+  // and the pass is one run (the travel block below pins that case). At 7 mm the
+  // sample at 18 is 4 and 3 mm from the faces, so it really has no model under
+  // the tool and the pass must split there.
   const stock = insetStock('x')
   const cross: readonly (readonly [number, number])[] = [[8, 8], [12, 8], [12, 12], [8, 12]]
   const pieceA = prism(stock, cross, [10, 14])
-  const pieceB = prism(stock, cross, [19, 23])
+  const pieceB = prism(stock, cross, [21, 25])
   const positions = new Float32Array(pieceA.positions.length + pieceB.positions.length)
   positions.set(pieceA.positions)
   positions.set(pieceB.positions, pieceA.positions.length)
@@ -823,6 +838,9 @@ for (const axis of ['x', 'y'] as const) {
   const along = Array.from({ length: intervals + 1 }, (_, i) => FINISH_BASE.alongStart + (FINISH_BASE.alongEnd - FINISH_BASE.alongStart) * i / intervals)
   const sampling = sampleRotaryModel(offAxis, stock, FINISH_PASS_MM, {
     anglesDeg: angles, along, requestedCellSize: FINISH_BASE.requestedCellSize,
+    // #1177: the finish's own read -- a ball's exact sphere drop. This is the
+    // independent grid every emitted point below is compared against.
+    exactTipRows: true,
   }, [])
   const result = generateRotaryFinish('op-offaxis', offAxis, stock, FINISH_PASS_MM, { ...FINISH_BASE, stepover }, {})
   const safeZ = FINISH_RADIUS + FINISH_SAFE
@@ -842,6 +860,12 @@ for (const axis of ['x', 'y'] as const) {
       assert.ok(j >= 0, `off-axis cut point along ${p.x} is a sample position`)
       assert.ok(Number.isFinite(sampling.tipRadius[k][j]),
         `off-axis pass ${k} along ${along[j]} really has the model under the tool`)
+      // #1177: and never below that read, since the finish takes the same exact
+      // read. (Not equal to it: a steep step is emitted as an along leg at the
+      // higher tip plus a vertical leg, so one sample can carry both heights.)
+      assert.ok(p.z - FINISH_RADIUS >= sampling.tipRadius[k][j] - 1e-9,
+        `off-axis pass ${k} along ${along[j]} tip ${(p.z - FINISH_RADIUS).toFixed(4)} is not below `
+        + `its own sample ${sampling.tipRadius[k][j].toFixed(4)}`)
       // No NaN sample became a centreline cut: the model never dips below R.
       assert.ok(p.z > FINISH_RADIUS + 1e-9, 'no off-axis cut at the centreline')
     }
@@ -1070,9 +1094,9 @@ for (const axis of ['x', 'y'] as const) {
   // material is already low enough, which two ridges do.
   const safeZ = FINISH_RADIUS + FINISH_SAFE
   const travelZ = FINISH_RADIUS + Math.min(FINISH_SAFE, FINISH_RADIUS + LINK_CLEARANCE)
-  const checkTravel = (label: string, moves: readonly ToolpathMove[]): void => {
+  const checkTravel = (label: string, moves: readonly ToolpathMove[], minRapids: number): void => {
     const rapids = moves.filter((move) => move.kind === 'rapid')
-    assert.ok(rapids.length >= 3, `${label} has several moves between runs (${rapids.length} rapids)`)
+    assert.ok(rapids.length >= minRapids, `${label} has several moves between runs (${rapids.length} rapids)`)
     approx(rapids[0].to.z, safeZ, `${label} first positioning move is at safeRadius`, 1e-9)
     approx(rapids.at(-1)!.to.z, safeZ, `${label} final retract is at safeRadius`, 1e-9)
     for (let i = 0; i < rapids.length; i++) {
@@ -1104,12 +1128,38 @@ for (const axis of ['x', 'y'] as const) {
     index.set(Array.from(pieceB.index, (i) => i + pieceA.positions.length / 3), pieceA.index.length)
     const finish = generateRotaryFinish('op-travel', { positions, index }, stock, FINISH_PASS_MM,
       { ...FINISH_BASE, stepover: 20 }, {})
-    checkTravel(`${axis} finish`, finish.moves)
+    // #1177: a ball's exact read reaches the prisms' end faces, so this finish
+    // joins its two runs with cuts and keeps only the opening and closing
+    // rapids -- no inter-run traverse to check. `checkTravel` still holds those
+    // two to the clearance rules, and the two assertions below pin the reason:
+    // the gap is cut through, and no rapid travels across it.
+    checkTravel(`${axis} finish`, finish.moves, 2)
+    const along = (point: { readonly x: number; readonly y: number }): number => axis === 'x' ? point.x : point.y
+    assert.ok(finish.moves.some((move) => move.kind !== 'rapid'
+      && Math.min(along(move.from), along(move.to)) >= 14
+      && Math.max(along(move.from), along(move.to)) <= 19),
+      `${axis} finish cuts the air gap between its runs instead of retracting`)
+    assert.equal(finish.moves.filter((move) => move.kind === 'rapid'
+      && (move.from.x !== move.to.x || move.from.y !== move.to.y)).length, 0,
+      `${axis} finish needs no traverse between its runs`)
+    // The same two prisms 7 mm apart (14..21): the sample at 18 is more than a
+    // ball radius from both faces, so the finish has two runs and the moves
+    // between them are held to the travel rules, as before #1177.
+    const farB = prism(stock, cross, [21, 25])
+    const farPositions = new Float32Array(pieceA.positions.length + farB.positions.length)
+    farPositions.set(pieceA.positions)
+    farPositions.set(farB.positions, pieceA.positions.length)
+    const farIndex = new Uint32Array(pieceA.index.length + farB.index.length)
+    farIndex.set(pieceA.index)
+    farIndex.set(Array.from(farB.index, (i) => i + pieceA.positions.length / 3), pieceA.index.length)
+    const farFinish = generateRotaryFinish('op-travel', { positions: farPositions, index: farIndex }, stock,
+      FINISH_PASS_MM, { ...FINISH_BASE, stepover: 20 }, {})
+    checkTravel(`${axis} finish over a 7 mm gap`, farFinish.moves, 3)
 
     const ridge = lathe(stock, (x) => 3 + (x - 10) / 10 + 23 * Math.exp(-((x - 15) ** 2)) + 21 * Math.exp(-((x - 24) ** 2)), 10, 30, 200, 64)
     const rough = generateRotaryRough('op-travel', ridge, stock, { ...FLAT_2, radius: 0.1, diameter: 0.2 },
       { ...FINISH_BASE, stepover: 22, sampleSpacing: 1, stockToLeave: 0, stepdown: 5 }, {})
-    checkTravel(`${axis} rough`, rough.moves)
+    checkTravel(`${axis} rough`, rough.moves, 3)
   }
 }
 
@@ -1399,7 +1449,13 @@ for (const axis of ['x', 'y'] as const) {
   const angles = Array.from({ length: passes }, (_, k) => k * (360 / passes))
   for (const tool of [BALL, FLAT_2]) {
     const enlarged = { ...tool, radius: tool.radius + params.stockToLeave, diameter: tool.diameter + 2 * params.stockToLeave }
-    const sampled = sampleRotaryModel(cone, stock, enlarged, { anglesDeg: angles, along, requestedCellSize: CELL }, [])
+    // #1177: a **ball** reads the exact sphere drop, so the target the rough
+    // cuts to is that same read -- the enlarged tool on the raw surface. A flat
+    // keeps the pad-grown conservative read below.
+    const sampled = sampleRotaryModel(cone, stock, enlarged, {
+      anglesDeg: angles, along, requestedCellSize: CELL,
+      ...(tool.type === 'ball_endmill' ? { exactTipRows: true } : {}),
+    }, [])
     const targets = sampled.tipRadius.map((row) => Array.from(row, (r) => Math.min(20, Math.max(0, r + params.stockToLeave))))
     const lowest = Math.min(...targets.flat())
     const layers = Math.ceil((20 - lowest) / params.stepdown)
@@ -1644,9 +1700,14 @@ console.log('engine/toolpaths/rotaryModel.test.ts: slice C assertions passed')
   // Re-captured for #1050 slice B for the same reason as the rough fixture
   // above: the wall edges still lift a few cells, so the sampled tips move and
   // the merged run count and positions change. 8844 -> 8866 moves.
-  assert.equal(result.moves.length, 8866, 'finish fixture keeps its move count')
+  // Recaptured for #1177 bal-a: the finish runs a **ball**, and a ball reads
+  // the exact sphere drop instead of the conservative cell row, so the lifted
+  // corners and wall feet its passes ride come down and the merged points
+  // move. 8866 -> 8837 moves. The seeded exact-solid property test below
+  // is the independent check that the new points are on the model, not off it.
+  assert.equal(result.moves.length, 8837, 'finish fixture keeps its move count')
   assert.equal(createHash('sha256').update(JSON.stringify(result.moves)).digest('hex'),
-    'fb7ed1fcc4f447edccf6dec0736e750f386e55bdb5a703cc8c3d3e513558b8bc', 'finish fixture keeps its exact points')
+    '0b36aba0c852cbc70d796292c3062ed9fef1c3c6163b0d02b6c3e0c74d9d4737', 'finish fixture keeps its exact points')
 }
 
 // ---------------------------------------------------------------------------
@@ -2293,8 +2354,12 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // Recaptured for #1103 slice ca-d: the around rough's full rings are an
     // edge-clamped helix per layer and its partial rings turn A forward with
     // safe gaps. The along program still does not move.
+    // Recaptured for #1177 bal-a: this fixture's tool is a **ball**, and the
+    // exact sphere drop replaces the conservative cell row the ball shared with
+    // a flat, so both programs' points move. The seeded property test below
+    // checks both shapes against the exact solids.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '3066ffca34b19d29' : '9ab4b867712f5393',
+      direction === 'along' ? '17b52177a490aa37' : '48c7dde6caed35d9',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)
@@ -2335,7 +2400,7 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '8b430361116b9874' : 'd4b344f455927b67',
+      direction === 'along' ? '34eae6a87b569932' : '96b24e623ebeab13',
       `finish ${direction}: zero stock to leave is the expected program`)
     // Recaptured for #1095: the positive-leave fingerprints now carry the
     // un-thickened walls (the old values lifted the outermost pass to ~4.42).
@@ -2346,7 +2411,7 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // zero-leave and positive-leave fingerprints moved; the along program is
     // the base commit's bytes exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '45837f8a39449e24' : 'ade919db141c68f2',
+      direction === 'along' ? '0c76a254e8f861d7' : '4eb7eaea174b0d7a',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + ball.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

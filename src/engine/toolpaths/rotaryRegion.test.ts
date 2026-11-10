@@ -45,7 +45,7 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { barCentre, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
 import { isRoundStock, polygonProfile, rectProfile, roundStock } from '../../types/project'
 import type { BarStock, Operation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
@@ -275,16 +275,31 @@ for (const shape of ['round', 'square'] as const) {
 
       // Every cutting tool centre is inside the region: the mask keeps the
       // whole cutter path inside it, not merely the first sample of a run.
+      // #1177: each cut move is sampled every 0.5 mm of its length on the bar's
+      // surface, not only at its two ends, so "the region is exercised" counts
+      // the path the cut covers rather than how many endpoints the emitter
+      // happened to keep. A ball reads the exact sphere drop now, so collinear
+      // samples merge: the round along finish crosses the region in one 12 mm
+      // move where the conservative read emitted 37 short ones.
       let innerCuts = 0
+      const barRadius = barMaxRadius(stock)
       for (const move of cuts) {
-        for (const point of [move.from, move.to]) {
-          assert.ok(insideSheetRect(stock, ROUND_REGION, alongOf(stock, point), point.a ?? 0),
-            `${label}: a cut at along ${alongOf(stock, point).toFixed(3)} A${(point.a ?? 0).toFixed(3)} `
+        const fromAlong = alongOf(stock, move.from)
+        const toAlong = alongOf(stock, move.to)
+        const fromA = move.from.a ?? 0
+        const toA = move.to.a ?? 0
+        const length = Math.hypot(toAlong - fromAlong, (toA - fromA) * Math.PI / 180 * barRadius)
+        const steps = Math.max(1, Math.ceil(length / 0.5))
+        for (let step = 0; step <= steps; step++) {
+          const f = step / steps
+          const point = { along: fromAlong + (toAlong - fromAlong) * f, a: fromA + (toA - fromA) * f }
+          assert.ok(insideSheetRect(stock, ROUND_REGION, point.along, point.a),
+            `${label}: a cut at along ${point.along.toFixed(3)} A${point.a.toFixed(3)} `
             + 'is outside the region')
           innerCuts++
         }
       }
-      assert.ok(innerCuts > 20, `${label}: the region is exercised (${innerCuts} cutting endpoints)`)
+      assert.ok(innerCuts > 20, `${label}: the region is exercised (${innerCuts} checked cut points)`)
       outsideChecks++
 
       // Control: without the region the same operation cuts outside it, so the
@@ -488,10 +503,22 @@ const ROUND_FINISH_PARAMS = {
   const unwrapped = generateRotaryFinish(
     'seam-free', cylinderMesh(stock, 4, 3, 27), stock, ROUND_FINISH_TOOL, ROUND_FINISH_PARAMS, {},
   )
-  const unwrappedAngles = unwrapped.moves.flatMap((move) => [move.from.a, move.to.a])
-    .filter((angle): angle is number => angle !== undefined)
-    .map(physical)
-  assert.ok(Math.max(...unwrappedAngles) > 180 + angleSpan,
+  // #1177: the angles each cut **sweeps**, not only its ends. A ball reads the
+  // exact sphere drop now, so on this cylinder the helix is exactly collinear in
+  // (along, A, radius) and merges into a few long moves, each many turns long,
+  // whose end angles alone can all fall inside the band.
+  const sweepsBeyondBand = unwrapped.moves.some((move) => {
+    if (move.kind !== 'cut' || move.from.a === undefined || move.to.a === undefined) return false
+    const from = Math.min(move.from.a, move.to.a)
+    const to = Math.max(move.from.a, move.to.a)
+    if (to - from >= 360) return true
+    for (let angle = from; ; angle += 1) {
+      const at = Math.min(angle, to)
+      if (physical(at) > 180 + angleSpan + 1e-6) return true
+      if (at >= to) return false
+    }
+  })
+  assert.ok(sweepsBeyondBand,
     'the region-free control cuts beyond the seam band, so the wrap is what limits it')
 
   // A rectangle drawn straddling the right edge of the sheet covers both sides
@@ -1041,8 +1068,13 @@ const ROUND_FINISH_PARAMS = {
 // every round program's grid and its end rings move. The four square rows are
 // byte-identical: a square blank keeps its retained corners and both stubs, so
 // the corner gate and the stub floors are untouched.
+// #1177 re-recorded the four **round** rows: the fixture's tool is a ball, and a
+// ball on a round bar reads the exact sphere drop instead of the conservative
+// cell row, so all four programs move. The square rows are untouched.
+// The around rough moved once more when the exact read's refinement took the
+// 0.005 mm floor at the prism's convex corners (2291 moves; 2478 on the base).
 const NO_REGION_HASHES: Record<string, string> = {
-  'round/rotary_rough/along': 'moves=b3ec813a07891957 warnings= gcode=61992f25bf719b9b',
+  'round/rotary_rough/along': 'moves=4aa9de8d8f6da26e warnings= gcode=b7f10baff78f8b2d',
   // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
   // earlier layer actually left (the lowest pass over the ring positions)
   // instead of an upper bound on it, so this fixture's asymmetric prism keeps
@@ -1062,13 +1094,13 @@ const NO_REGION_HASHES: Record<string, string> = {
   // merge switched off this row still differs (fix C alone); with the gap feed
   // switched off and the merge on it differs too. The other three around rows
   // below change for the merge alone.
-  'round/rotary_rough/around': 'moves=7c739898ea5a95d4 warnings= gcode=ff89e86e908fefe3',
-  'round/rotary_finish/along': 'moves=b1b5c85c4e482903 warnings=rotaryFinishWithoutRough gcode=3efbbcdcf39ad8e9',
+  'round/rotary_rough/around': 'moves=3f216a2f3e5fd0c2 warnings= gcode=8164c29d897a567d',
+  'round/rotary_finish/along': 'moves=e09be094ed17079a warnings=rotaryFinishWithoutRough gcode=0276b51663ba5a86',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
-  'round/rotary_finish/around': 'moves=5211c8f05d44d785 warnings=rotaryFinishWithoutRough gcode=c538f280e6e9b7aa',
+  'round/rotary_finish/around': 'moves=7ee460b1b9c7d826 warnings=rotaryFinishWithoutRough gcode=1466ed53586a0114',
   'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=c8e19d47e3a0b8c1',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer
@@ -1156,6 +1188,102 @@ for (const shape of ['round', 'square'] as const) {
   const result = computeOperationToolpath(project, operation)!.result
   const baseResult = computeOperationToolpath(base, { ...base.operations[0], rotaryPassDirection: 'along' })!.result
   assert.deepEqual(result.moves, baseResult.moves, 'a region the operation does not target is not a mask')
+}
+
+// ── #1177: a deeper rough layer does not bury its flank past the region's edge ──
+//
+// The region bounds the cutter's centre, but a ball's body reaches further round
+// the bar the lower its tip. A rough whose every layer ran to the same angular
+// edge cut, at its last layer, a 2.0 mm cavity into wall no layer above it had
+// opened (a D1.5 ball reaching the model at r2 under a 1.5 stepdown). This is
+// measured independently of the generator: rays from the axis past each edge,
+// the ball's body (sphere plus shank) at every pose of every cut move, and the
+// solid each move removes from each ray that nothing before it had removed.
+{
+  const stock = roundStock(10, 14, 'x')
+  const ballTool: NormalizedTool = {
+    id: 'ball-1.5', name: '1.5 mm ball nose', sourceUnits: 'mm', units: 'mm',
+    type: 'ball_endmill', diameter: 1.5, radius: 0.75, vBitAngle: null,
+    flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+    defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+  }
+  const modelRadius = 2
+  const stepdown = 1.5
+  const region: SheetRect = { alongMin: 4, alongMax: 10, acrossMin: 4, acrossMax: 6 }
+  const result = generateRotaryRough('region-draft', cylinderMesh(stock, modelRadius, 2, 12), stock, ballTool, {
+    stepover: 1.125, sampleSpacing: 0.375, stockToLeave: 0, alongStart: 2, alongEnd: 12,
+    safeRadius: 10, requestedCellSize: 0.25, stepdown, passDirection: 'around',
+    region: productionMask(stock, region),
+  }, {})
+  const pivot = barPivotZ(stock)
+  const barRadius = stock.thickness / 2
+  const r = ballTool.radius
+  const DEG = Math.PI / 180
+  const cuts = result.moves.filter((move) => move.kind !== 'rapid')
+  // The region's angular edges, from its across bounds (across 5 is A0).
+  const edge = (region.acrossMax - barCentre(stock)) / (Math.PI * stock.thickness) * 360
+  const rings = [...new Set(cuts.map((move) => move.from.x))].filter((x) => x >= region.alongMin && x <= region.alongMax)
+  assert.ok(rings.length >= 3, `the rough cuts rings inside the region (${rings.length})`)
+  /** The ball's body on one ray, with the cutter at tip `tip` and the ray `delta` degrees off its axis. */
+  const bodyOnRay = (tip: number, delta: number): [number, number] | null => {
+    const c = tip + r
+    const s = Math.abs(Math.sin(delta * DEG))
+    const cos = Math.cos(delta * DEG)
+    if (c * s > r || cos <= 0) return null
+    const half = Math.sqrt(r * r - c * c * s * s)
+    const low = c * cos - half
+    // The shank: every point within r of the tool axis, outward of the centre.
+    const high = s > 1e-12 ? Math.max(c * cos + half, Math.min(r / s, barRadius)) : barRadius
+    return [Math.max(low, modelRadius), Math.min(high, barRadius)]
+  }
+  const removed = new Map<string, [number, number][]>()
+  const fresh = (intervals: [number, number][], span: [number, number]): number => {
+    let length = span[1] - span[0]
+    for (const [a, b] of intervals) length -= Math.max(0, Math.min(b, span[1]) - Math.max(a, span[0]))
+    return Math.max(0, length)
+  }
+  let worst = 0
+  let worstAt = ''
+  let checkedRays = 0
+  for (const move of cuts) {
+    const along = move.from.x
+    if (!rings.includes(along) || move.to.x !== along) continue
+    const fromA = move.from.a ?? 0
+    const toA = move.to.a ?? 0
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    const steps = Math.max(1, Math.ceil(Math.abs(toA - fromA) / 0.25), Math.ceil(Math.abs(toTip - fromTip) / 0.05))
+    for (const side of [1, -1]) {
+      for (let offset = 0.05; offset <= 20; offset += 0.1) {
+        const ray = side * (edge + offset)
+        const key = `${along}:${ray.toFixed(2)}`
+        const before = removed.get(key) ?? []
+        let span: [number, number] | null = null
+        for (let step = 0; step <= steps; step++) {
+          const f = step / steps
+          const angle = fromA + (toA - fromA) * f
+          const delta = ((ray - angle) % 360 + 540) % 360 - 180
+          const body = bodyOnRay(fromTip + (toTip - fromTip) * f, delta)
+          if (body === null || body[1] <= body[0]) continue
+          span = span === null ? body : [Math.min(span[0], body[0]), Math.max(span[1], body[1])]
+        }
+        if (span === null) continue
+        checkedRays++
+        const bite = fresh(before, span)
+        if (bite > worst) {
+          worst = bite
+          worstAt = `along ${along.toFixed(3)} ray A${ray.toFixed(2)} (edge ${(side * edge).toFixed(2)}), `
+            + `move A${fromA.toFixed(2)}->${toA.toFixed(2)} tip ${fromTip.toFixed(3)}->${toTip.toFixed(3)}`
+        }
+        removed.set(key, [...before, span])
+      }
+    }
+  }
+  assert.ok(checkedRays > 100, `the rays past the region's edges are reached (${checkedRays})`)
+  assert.ok(worst <= stepdown + 0.02,
+    `no cut removes more than one stepdown from a ray past the region's edge: ${worst.toFixed(4)} mm at ${worstAt}`)
+  console.log(`  region edge draft: ${checkedRays} ray samples past the edges, worst fresh bite ${worst.toFixed(4)} mm `
+    + `(stepdown ${stepdown})`)
 }
 
 console.log(`rotary region tests passed (${outsideChecks} region cases, ${turnChecks} square turn cases)`)

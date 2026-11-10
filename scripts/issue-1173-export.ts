@@ -18,7 +18,10 @@
  * #1173: write an operation (or a run of them) out as a G-code program the way
  * the app posts it, so a fix can be dry-run on the machine before the PR.
  *
- *   npx tsx scripts/issue-1173-export.ts <project.camj> [outDir] [op ids...] [--units mm|inch]
+ *   npx tsx scripts/issue-1173-export.ts <project.camj> [outDir] [op ids...] [--units mm|inch] [--tag NN]
+ *
+ * `--tag` names the issue the export is for (default `1173`), so a later fix can
+ * produce its own `<stem>-<tag>_<op>.nc` files beside the earlier run's.
  *
  * `--units` converts the project with the app's own conversion
  * (`convertProjectUnits` plus the canned-shape rebuild `setUnits` does, so the
@@ -102,10 +105,14 @@ if (!projectPath) {
 }
 const flags = process.argv.slice(4)
 const unitsFlag = flags.includes('--units') ? flags[flags.indexOf('--units') + 1] : undefined
+const tagIndex = flags.indexOf('--tag')
+const tag = tagIndex >= 0 ? flags[tagIndex + 1] : '1173'
+if (!/^[0-9]+$/.test(tag)) throw new Error(`--tag takes an issue number, not ${tag ?? '(nothing)'}`)
 if (unitsFlag !== undefined && unitsFlag !== 'mm' && unitsFlag !== 'inch') {
   throw new Error(`--units takes mm or inch, not ${unitsFlag}`)
 }
-const requested = flags.filter((value, index) => value !== '--units' && flags[index - 1] !== '--units')
+const requested = flags.filter((value, index) => value !== '--units' && value !== '--tag'
+  && flags[index - 1] !== '--units' && flags[index - 1] !== '--tag')
 const loaded = normalizeProject(JSON.parse(readFileSync(projectPath, 'utf8')))
 const project: Project = unitsFlag === undefined || unitsFlag === loaded.meta.units
   ? loaded
@@ -130,12 +137,12 @@ const guard = (out: string): void => {
   if (resolve(out) === resolve(projectPath)) throw new Error(`${out} is the project itself`)
 }
 const written: string[] = []
-const combinedPath = join(outDir, `${stem}-1173_all.nc`)
+const combinedPath = join(outDir, `${stem}-${tag}_all.nc`)
 guard(combinedPath)
 writeFileSync(combinedPath, post(project, wanted, machine))
 written.push(combinedPath)
 for (const operation of wanted) {
-  const out = join(outDir, `${stem}-1173_${operation.id}.nc`)
+  const out = join(outDir, `${stem}-${tag}_${operation.id}.nc`)
   guard(out)
   writeFileSync(out, post(project, [operation], machine))
   written.push(out)

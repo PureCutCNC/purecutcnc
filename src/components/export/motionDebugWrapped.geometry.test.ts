@@ -319,8 +319,23 @@ interface FacetSample {
 function facetSamples(scenario: Scenario): FacetSample[] {
   const samples: FacetSample[] = []
   for (const piece of drawnFeeds(scenario, 'exported')) {
-    for (const [point, angle] of [[piece.from, piece.aFrom], [piece.to, piece.aTo]] as const) {
-      if (angle === undefined) continue
+    if (piece.aFrom === undefined || piece.aTo === undefined) continue
+    // #1177: each drawn piece is sampled along its length (every 0.5 mm or
+    // less), not only at its two ends. The ball finish reads the exact sphere
+    // drop, so an Along pass over a flat facet holds one radius and merges into
+    // a single piece the length of the Hex, with no endpoint inside the band.
+    // A piece is a straight line in the view, so a point along it is drawn
+    // exactly where the sample puts it.
+    const length = Math.hypot(piece.to.x - piece.from.x, piece.to.y - piece.from.y, piece.to.z - piece.from.z)
+    const steps = Math.max(1, Math.ceil(length / 0.5))
+    for (let step = 0; step <= steps; step++) {
+      const f = step / steps
+      const point = {
+        x: piece.from.x + (piece.to.x - piece.from.x) * f,
+        y: piece.from.y + (piece.to.y - piece.from.y) * f,
+        z: piece.from.z + (piece.to.z - piece.from.z) * f,
+      }
+      const angle = piece.aFrom + (piece.aTo - piece.aFrom) * f
       if (point.x < BAND_START || point.x > BAND_END) continue
       // The Hex is planned with a facet normal up, so the tilt away from the
       // nearest facet normal is the commanded angle folded into one facet.
@@ -356,11 +371,11 @@ function testFlatFaceDrawsFlat(scenario: Scenario): void {
 }
 
 /**
- * The Around finish, the one Frank's bolt exports: the facet is *not* flat in
- * the program (the Around sampler's conservative cell leaves a wedge that grows
- * to the facet edge), so this only pins the view's part of it — nothing gouges
- * the face, the facet's own middle is on the plane, and the wedge the review
- * measured is printed for #1177.
+ * The Around finish, the one Frank's bolt exports. Before #1177 the facet was
+ * *not* flat in the program (the Around sampler's conservative cell left a wedge
+ * growing to the facet edge); the ball now reads the exact sphere drop and the
+ * printed wedge is about 0.001 mm. This still pins only the view's part of it —
+ * nothing gouges the face and the facet's own middle is on the plane.
  */
 function testAroundFinishLiftsTheTip(scenario: Scenario): void {
   console.log('Measuring the Around finish\'s facet wedge (the program, not the view)...')

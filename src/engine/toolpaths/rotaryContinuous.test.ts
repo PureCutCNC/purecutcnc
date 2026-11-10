@@ -200,12 +200,14 @@ function support(
   angle: number,
   stock: BarStock = STOCK,
   cell = CELL,
+  exact = false,
 ): number {
   const sampled = sampleRotaryModel(mesh, stock, tool, {
     anglesDeg: [angle],
     along: [along],
     requestedCellSize: cell,
     conservativeCellBounds: true,
+    ...(exact ? { exactTipRows: true } : {}),
   }, [])
   const raw = sampled.tipRadius[0][0]
   return Number.isFinite(raw) ? Math.min(Math.max(raw, 0), barMaxRadius(stock)) : NaN
@@ -932,7 +934,14 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   }
   const at = (point: ToolpathPoint): number => (axis === 'x' ? point.x : point.y)
   const pivot = barPivotZ(stock)
-  const mesh = chiralMesh(stock, model, 40)
+  // #1177: 160 steps, not 40. The reference is the *analytic* twisted section;
+  // the generator reads this mesh, whose twisted faces are split into flat
+  // triangles that sit inside the analytic face. A ball now reads the mesh
+  // exactly (no cell of margin), so at 40 steps that triangulation alone put an
+  // emitted tip 0.0206 mm below the analytic reference (x-mm ball, along 12,
+  // A 1440). A finer mesh shrinks the fixture's own error, and the allowance
+  // stays the one every chiral check uses.
+  const mesh = chiralMesh(stock, model, 160)
   const result = generateRotaryFinish(`helix-${label}`, mesh, stock, tool, {
     stepover: 2.5 * scale,
     sampleSpacing: 1.5 * scale,
@@ -1455,6 +1464,10 @@ interface SectorFeature {
  * sector is not, so a segment across its edge is the "sharp feature" the split
  * exists for; a sector between two ring positions is reachable only by the link
  * that crosses it.
+ *
+ * `extraThetas` adds mesh columns at those angles (degrees) to the uniform
+ * `segments`. A column just outside a sector's edge makes that side wall
+ * **vertical** instead of one segment wide (#1177; see the seam block below).
  */
 function sectoredBar(
   features: readonly SectorFeature[],
@@ -1462,6 +1475,7 @@ function sectoredBar(
   base: number,
   step = 0.25,
   segments = 360,
+  extraThetas: readonly number[] = [],
 ): RotaryModelMesh {
   const centre = barCentre(stock)
   const pivot = barPivotZ(stock)
@@ -1478,9 +1492,11 @@ function sectoredBar(
   const DEG = Math.PI / 180
   const positions: number[] = []
   const index: number[] = []
+  const thetas = [...Array.from({ length: segments }, (_, j) => 360 * j / segments), ...extraThetas]
+    .sort((left, right) => left - right)
+    .filter((theta, i, all) => i === 0 || theta - all[i - 1] > 1e-9)
   for (const along of rings) {
-    for (let j = 0; j < segments; j++) {
-      const theta = 360 * j / segments
+    for (const theta of thetas) {
       let radius = base
       for (const feature of features) {
         if (along < feature.from - 1e-9 || along > feature.to + 1e-9) continue
@@ -1491,10 +1507,10 @@ function sectoredBar(
       positions.push(along, centre + radius * Math.cos(theta * DEG), pivot + radius * Math.sin(theta * DEG))
     }
   }
-  const n = segments
+  const n = thetas.length
   for (let ring = 0; ring + 1 < rings.length; ring++) {
-    for (let j = 0; j < segments; j++) {
-      const j2 = (j + 1) % segments
+    for (let j = 0; j < n; j++) {
+      const j2 = (j + 1) % n
       const a = ring * n + j
       const b = ring * n + j2
       const c = (ring + 1) * n + j2
@@ -1554,12 +1570,27 @@ function entryLink(
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 8, alongEnd: 32,
     safeRadius: 12, requestedCellSize: 0.05, passDirection: 'around' as const,
   }
-  const mesh = sectoredBar([middle, seam], stock, base)
+  // #1177: the middle feature's two side walls are **vertical** -- a mesh column
+  // 0.001 deg outside each edge -- instead of one 1-degree segment wide. A ball
+  // reads the exact sphere drop now, and over a 1-degree slant its tip is
+  // continuous enough for the refinement to verify the whole band as one helix,
+  // which would leave the split and its seam link untested. Over a vertical
+  // wall the ball's tip jumps (from the body to the feature's top), no bisection
+  // converges, and the band splits exactly where it did under the conservative
+  // read. The seam feature shares those columns, which changes nothing for it:
+  // only the link crosses it.
+  const mesh = sectoredBar([middle, seam], stock, base, 0.25, 360, [79.999, 100.001])
   const result = generateRotaryFinish('ca-g-seams', mesh, stock, tool, params, {})
   assert.deepEqual(result.warnings, [], 'the seam fixture warns about nothing')
   const at = alongOf
   const tip = (point: ToolpathPoint): number => point.z - pivot
-  const supportAt = (along: number, angle: number): number => support(mesh, tool, along, angle, stock)
+  // #1177: the reference is the **exact** read. A ball's conservative read
+  // reaches one cell past the pose, and beside a sector's wall that over-reads
+  // the true ball tip by up to 0.60 mm (along 14.25, A 1786.5: the emitted tip
+  // 7.6907 is the exact read there, and the ball's centre is exactly its radius
+  // from the wall's plane). Since #1177 the finish rides the exact read, so the
+  // conservative reference would measure its own margin, not a gouge.
+  const supportAt = (along: number, angle: number): number => support(mesh, tool, along, angle, stock, CELL, true)
   // The ring grid as the around finish builds it, recomputed here from the
   // operation's own numbers: one position every stepover over the cutter span
   // (one radius inside each retained end), both ends included.
@@ -1571,16 +1602,14 @@ function entryLink(
     (_, i) => spanStart + (spanEnd - spanStart) * i / ringCount,
   )
   assert.equal(ringCount, 12, '23 mm at a 2 mm stepover is twelve ring intervals')
-  // The allowance covers the **reference's** own conservativeness, not a gouge.
-  // `supportAt` samples the same surface at a 0.05 mm cell while the operation
-  // runs at 0.1667 mm (`min(radius / 3, stepover / 2)`), and the conservative
-  // read reaches a whole cell past the sample since the #1155 rn-c correction
-  // (`runRotaryAngleJob`), so at a sector's steep edge the fine reference reads
-  // higher than the coarse generator can: 7.2014 against the emitted 7.1751 at
-  // along 14.25, A 14.4 deg. The converged support at that pose is 6.9728, so
-  // the emitted tip is 0.20 mm above the surface it must clear; 0.02 was just
-  // under the reference's own reading there. A real gouge is elsewhere by
-  // orders of magnitude -- the straight-link mutation below is 3.00 mm.
+  // The allowance is the same 0.03 as before #1177, now against the exact
+  // surface. What it covers is the path's own between-sample tolerance: a
+  // ball's segment, ring or helix, is accepted when its midpoint is within
+  // `s^2 / (8 r)` of the chord (`aroundSegmentationTolerance`,
+  // `helixTolerance`), so the chord can pass that much below a convex
+  // edge: 0.0134 mm at most here, on the ring over the middle feature's top. A
+  // real gouge is elsewhere by orders of magnitude -- the straight-link mutation
+  // below is 3.00 mm.
   const allowance = 0.03
   // The pose-by-pose tip check is skipped here on purpose: a one-pose re-sample
   // of the sampler moves by a whole cell at a sector's steep edge, which is a

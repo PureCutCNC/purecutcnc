@@ -300,8 +300,11 @@ const BASE_HASHES = {
   'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
   'v-carve-noise-test.camj': '24623f98ba01c484',
   'another-pocket-test.camj': '4f96da538edfabb4',
-  around: '084df8c4a7f3363f',
-  aroundMoves: 'b3ec813a07891957',
+  // #1177 recaptured the `around` pair: the fixture's ball reads the exact
+  // sphere drop, so the rough's layers are level and merge (1465 -> 407
+  // moves, the same cut length). The non-rotary rows are untouched.
+  around: 'b8db92e84fd78a29',
+  aroundMoves: '4aa9de8d8f6da26e',
 } as const
 
 // ── 3. The rich project the type changes run on ───────────────

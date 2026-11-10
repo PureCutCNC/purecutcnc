@@ -304,31 +304,36 @@ for (const axis of ['x', 'y'] as const) {
  * adding a full turn per layer, so A stays within [0, 360] and the motion order
  * changes; the same cuts and depths are made. Every finish entry is unchanged.
  */
+// #1177 re-recorded every round row: the fixture's tool is a ball, which reads
+// the exact sphere drop on a round bar. The finish cuts the same 456.1 mm in
+// fewer, merged moves (1749 -> 120); the rough loses its last-layer runs at
+// A90/180/270, which the old read cut 0.014-0.028 mm into the model's side
+// faces (the exact tip there is the face itself). The square rows are unchanged.
 const ROUND_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/own': 'moves=4d644141b3624327|warnings=|gcode=98ffb1a97d092b10|post=',
-  'x/mm/rotary_rough/borrowed': 'moves=4d644141b3624327|warnings=|gcode=4c41044f4e4e800b|post=',
-  'x/mm/rotary_rough/reversed': 'moves=4d644141b3624327|warnings=|gcode=c5f2416e249e7e7e|post=',
-  'x/mm/rotary_finish/own': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=2c452707fdada776|post=',
-  'x/mm/rotary_finish/borrowed': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=72750912f701e915|post=',
-  'x/mm/rotary_finish/reversed': 'moves=d402295500f9efce|warnings=rotaryFinishWithoutRough|gcode=ac9193e47acd18e6|post=',
-  'x/inch/rotary_rough/own': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=a81e69a8dc8aca5a|post=',
+  'x/mm/rotary_rough/own': 'moves=e57cb2b7ad4d67c7|warnings=|gcode=d04728574351a575|post=',
+  'x/mm/rotary_rough/borrowed': 'moves=e57cb2b7ad4d67c7|warnings=|gcode=6181016a0e776afa|post=',
+  'x/mm/rotary_rough/reversed': 'moves=e57cb2b7ad4d67c7|warnings=|gcode=4a9d7df83efea436|post=',
+  'x/mm/rotary_finish/own': 'moves=e8127b2f2af4ee51|warnings=rotaryFinishWithoutRough|gcode=66af3ab545ae2fd3|post=',
+  'x/mm/rotary_finish/borrowed': 'moves=e8127b2f2af4ee51|warnings=rotaryFinishWithoutRough|gcode=806cd851b9d63eb5|post=',
+  'x/mm/rotary_finish/reversed': 'moves=e8127b2f2af4ee51|warnings=rotaryFinishWithoutRough|gcode=2965c9e793158927|post=',
+  'x/inch/rotary_rough/own': 'moves=831333127b8ccf07|warnings=|gcode=3235f5c412d02efe|post=',
   'x/inch/rotary_rough/borrowed': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=8721fe4aa5300906|post=',
-  'x/inch/rotary_rough/reversed': 'moves=6cfbc7fbcbbf6bd7|warnings=|gcode=c9f7e6eff1e9ab1f|post=',
-  'x/inch/rotary_finish/own': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=e85a9dbb688eeca3|post=',
+  'x/inch/rotary_rough/reversed': 'moves=831333127b8ccf07|warnings=|gcode=84241010eace2b87|post=',
+  'x/inch/rotary_finish/own': 'moves=666754269fe469ad|warnings=rotaryFinishWithoutRough|gcode=cdab2b1be805af00|post=',
   'x/inch/rotary_finish/borrowed': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=c1abde3f55ae0db5|post=',
-  'x/inch/rotary_finish/reversed': 'moves=bae8dcfc795a8a53|warnings=rotaryFinishWithoutRough|gcode=733fa0ea977f18bf|post=',
-  'y/mm/rotary_rough/own': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=f21a1f89c9fa2d8e|post=',
-  'y/mm/rotary_rough/borrowed': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=529d17cbca4264e6|post=',
-  'y/mm/rotary_rough/reversed': 'moves=cd24e2fa13ea8fd9|warnings=|gcode=b2b68e6c9bc24a30|post=',
-  'y/mm/rotary_finish/own': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=0006eaa77e5866b3|post=',
-  'y/mm/rotary_finish/borrowed': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=331fbb888d91e775|post=',
-  'y/mm/rotary_finish/reversed': 'moves=5fc9972e396c0ace|warnings=rotaryFinishWithoutRough|gcode=ad9c0138ccefed8b|post=',
-  'y/inch/rotary_rough/own': 'moves=5cd4f55a2bb69f40|warnings=|gcode=8278f549750ffb5b|post=',
+  'x/inch/rotary_finish/reversed': 'moves=666754269fe469ad|warnings=rotaryFinishWithoutRough|gcode=e108cbb4b27feabe|post=',
+  'y/mm/rotary_rough/own': 'moves=d90104bfc754502f|warnings=|gcode=05ac548e39fa739c|post=',
+  'y/mm/rotary_rough/borrowed': 'moves=d90104bfc754502f|warnings=|gcode=1e5c33cec66855bf|post=',
+  'y/mm/rotary_rough/reversed': 'moves=d90104bfc754502f|warnings=|gcode=9458845173176776|post=',
+  'y/mm/rotary_finish/own': 'moves=79e1ee793c9f1fac|warnings=rotaryFinishWithoutRough|gcode=496debad4f95db5c|post=',
+  'y/mm/rotary_finish/borrowed': 'moves=79e1ee793c9f1fac|warnings=rotaryFinishWithoutRough|gcode=482eb37430a1666a|post=',
+  'y/mm/rotary_finish/reversed': 'moves=79e1ee793c9f1fac|warnings=rotaryFinishWithoutRough|gcode=0cac0995b89f6579|post=',
+  'y/inch/rotary_rough/own': 'moves=38f1502466a7ec4d|warnings=|gcode=8f69490929825287|post=',
   'y/inch/rotary_rough/borrowed': 'moves=5cd4f55a2bb69f40|warnings=|gcode=c64e52d650826c0b|post=',
-  'y/inch/rotary_rough/reversed': 'moves=5cd4f55a2bb69f40|warnings=|gcode=e2cf8d625541181e|post=',
-  'y/inch/rotary_finish/own': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=468cb78e34b9bfa9|post=',
+  'y/inch/rotary_rough/reversed': 'moves=38f1502466a7ec4d|warnings=|gcode=a412b912b29e5c60|post=',
+  'y/inch/rotary_finish/own': 'moves=6a129ae1bad6e835|warnings=rotaryFinishWithoutRough|gcode=7573a7b5a2f03bbe|post=',
   'y/inch/rotary_finish/borrowed': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=5c212e392a7240b1|post=',
-  'y/inch/rotary_finish/reversed': 'moves=ddb7b5eac7633185|warnings=rotaryFinishWithoutRough|gcode=9d849480daa3e7cd|post=',
+  'y/inch/rotary_finish/reversed': 'moves=6a129ae1bad6e835|warnings=rotaryFinishWithoutRough|gcode=7c06e7c5d4c43361|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_ROUND === '1') {

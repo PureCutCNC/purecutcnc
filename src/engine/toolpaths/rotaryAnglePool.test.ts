@@ -103,6 +103,7 @@ import { createRotaryAngleKernel } from './rotaryAngleKernel'
 import type { RotaryAngleKernel } from './rotaryAngleKernel'
 import {
   ROTARY_ANGLE_PROTOCOL_VERSION,
+  buildRotaryAnglePlan,
   buildRotaryAngleSetup,
   isRotaryAngleWorkerReply,
 } from './rotaryAngleProtocol'
@@ -474,6 +475,83 @@ function prepFor(
     console.log(`${name} ${mode}: 2 real workers, ${stats.batches} batch, `
       + `${(stats.setupBytes / 1024).toFixed(1)} KB setup, ${stats.installMs} ms install, ${stats.awaitMs} ms await, identical rows`)
   }
+}
+
+// ── an exact-tip prep crosses the worker boundary (#1177 bal-a) ────────────
+
+{
+  // The pool rebuilds the prep from `RotaryAngleSetupPayload`, so a prep field
+  // the payload omits silently reverts to its default in the worker. #1177 sets
+  // `exactTipRows` on a ball's prep; while the payload lacked it, every worker
+  // read the conservative cell row and a pooled path differed from the serial
+  // one. The round-bar preview of `rotaryModel.smoke.spec.ts` is where that
+  // surfaced: it drew 3241 segments against the 760 a fresh generation gave.
+  // This check pins the field on the boundary itself.
+  const stock = STOCKS[0].stock
+  const mesh = prism(stock, HEX_SECTION, [10, 30])
+  const jobs = jobsFor(ANGLES)
+  const exact = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize: 0.2, exactTipRows: true,
+  })
+  const planValue = exact.planFor(ANGLES)
+  const serial = jobs.map((job) => runRotaryAngleJob(exact, planValue, job))
+  const kernel = createRotaryAngleKernel(buildRotaryAngleSetup(exact, planValue))
+  const crossed = kernel.run(jobs)
+  assertSamplesEqual(crossed, serial, 'exact-tip prep')
+  // Non-vacuity: the exact read is not the conservative one on this fixture, so
+  // the comparison would fail if the flag were dropped rather than agreeing by
+  // accident.
+  const conservative = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize: 0.2, conservativeCellBounds: true,
+  })
+  const conservativePlan = conservative.planFor(ANGLES)
+  let widest = 0
+  for (let k = 0; k < jobs.length; k++) {
+    // The conservative read applies its cell rise at assembly, so compare the
+    // assembled values: `row + lift` is what a dropped flag would have sampled.
+    const sample = runRotaryAngleJob(conservative, conservativePlan, jobs[k])
+    for (let i = 0; i < sample.row.length; i++) {
+      if (!Number.isFinite(sample.row[i]) || !Number.isFinite(crossed[k].row[i])) continue
+      widest = Math.max(widest, Math.abs(crossed[k].row[i] - (sample.row[i] + sample.lift)))
+    }
+  }
+  assert.ok(widest > 0.001,
+    `the exact row differs from the conservative cell row (${widest.toFixed(6)}), so this check is load-bearing`)
+
+  // The same in **around** mode, the ball ring grid's own (conservative cell
+  // bounds plus exact rows). An around-mode payload carries only the raster
+  // records, which the exact read never looks at, so the worker must also be
+  // given the mesh and the plan's cross-section -- and a plan revision must keep
+  // that cross-section. Without them every crossed row read no triangle: a
+  // pooled ball finish then skipped its whole band (2590 moves serially, 310
+  // pooled, in the real-operation check below).
+  const around = createRotarySamplingPrep(mesh, stock, BALL, {
+    along: ALONG, requestedCellSize: 0.2, conservativeCellBounds: true, exactTipRows: true,
+  })
+  const aroundPlan = around.planFor(ANGLES)
+  const aroundSerial = jobs.map((job) => runRotaryAngleJob(around, aroundPlan, job))
+  assert.ok(aroundSerial.some((sample) => Array.from(sample.row).some((value) => Number.isFinite(value))),
+    'the around-mode exact rows stand on the prism')
+  const aroundSetup = buildRotaryAngleSetup(around, aroundPlan)
+  assert.equal(aroundSetup.mode, 'around', 'the prep is an around-mode one')
+  const aroundKernel = createRotaryAngleKernel(aroundSetup)
+  assertSamplesEqual(aroundKernel.run(jobs), aroundSerial, 'around exact-tip prep')
+  // A revised plan (a wider reach, as a refinement round sends) keeps its section.
+  const revisedAngles = [...ANGLES, 7.5, 97.5]
+  const revisedPlan = around.planFor(revisedAngles)
+  const revisedJobs = jobsFor(revisedAngles)
+  aroundKernel.applyPlan(buildRotaryAnglePlan(revisedPlan, aroundSetup.mode, true))
+  assertSamplesEqual(aroundKernel.run(revisedJobs),
+    revisedJobs.map((job) => runRotaryAngleJob(around, revisedPlan, job)), 'around exact-tip prep, revised plan')
+  // A payload without the mesh or the section is refused at install, so the
+  // pool falls back to serial instead of returning empty rows.
+  const meshless: RotaryAngleSetupPayload = { ...aroundSetup }
+  delete (meshless as { mesh?: unknown }).mesh
+  assert.throws(() => createRotaryAngleKernel(meshless), /exact-tip rows need the mesh/,
+    'an exact-tip setup without its mesh is refused')
+  assert.throws(() => aroundKernel.applyPlan(buildRotaryAnglePlan(revisedPlan, 'around')), /cross-section/,
+    'an exact-tip plan revision without its cross-section is refused')
+  console.log('worker setup: an exact-tip prep crosses the boundary byte for byte, along and around')
 }
 
 // ── an in-process source, for orderings a real thread cannot be told to make ──
