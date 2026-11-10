@@ -934,14 +934,22 @@ function refineHelix(
         next.push(segment)
         continue
       }
-      const tolerance = helixTolerance(
-        segment.left.tip,
-        segment.right.tip,
-        Math.abs(segment.right.along - segment.left.along),
-        segment.right.angle - segment.left.angle,
-        input.tool,
-        input.tool.units,
-      )
+      // #1177: on the exact read a ball takes the plain floor. A midpoint above
+      // the chord is a tip curve that bends down between the samples -- a ball
+      // rolling over a convex corner -- and the chord then passes inside the
+      // corner; the `s^2 / (8 r)` allowance let it go 0.0145 mm into a Hex's
+      // vertex. The conservative read keeps its allowance: its rows already
+      // stand a cell above the surface.
+      const tolerance = input.readExactRows === true
+        ? convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', input.tool.units)
+        : helixTolerance(
+          segment.left.tip,
+          segment.right.tip,
+          Math.abs(segment.right.along - segment.left.along),
+          segment.right.angle - segment.left.angle,
+          input.tool,
+          input.tool.units,
+        )
       if (mid.tip - (segment.left.tip + segment.right.tip) / 2 > tolerance) {
         next.push({ left: segment.left, right: mid, checked: false })
         next.push({ left: mid, right: segment.right, checked: false })

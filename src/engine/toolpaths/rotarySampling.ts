@@ -2071,6 +2071,13 @@ const MAX_AROUND_REFINEMENT_ROUNDS = 8
  * segment finer the bound approaches the 0.005 mm floor rather than vanishing.
  * A flat end mill has no ball to lift between samples, so it takes the floor.
  *
+ * #1177: a grid that reads **exact** rows does not use this allowance -- the
+ * caller holds it to the floor. A midpoint above the chord is a tip curve that
+ * bends down between the samples (a ball rolling over a convex corner), and
+ * the chord then passes inside the corner by about this much: 0.0145 mm into
+ * a Hex's vertex. The conservative read's rows stand a cell above the surface,
+ * which covers it.
+ *
  * `tipA`/`tipB` are the sampled tip radii at the segment's ends; the smaller
  * one is the surface radius the move's arc actually travels at.
  */
@@ -2180,7 +2187,11 @@ function failingSegments(
       const b = rowB[i]
       const mid = rowMid[i]
       if (!Number.isFinite(a) || !Number.isFinite(b)) continue
-      const tolerance = aroundSegmentationTolerance(a, b, delta, tool, tool.units)
+      // #1177: an exact-tip grid holds a ball to the plain floor; see
+      // `aroundSegmentationTolerance` and the helix's own refinement.
+      const tolerance = args.prep.exactTipRows === true
+        ? convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', tool.units)
+        : aroundSegmentationTolerance(a, b, delta, tool, tool.units)
       // A peak that falls **between** the two samples is invisible to the mid
       // sample when the height map reads it low: the sampler's cell is wider
       // than one angle step near a sharp feature. Detect it from the sampled
