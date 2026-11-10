@@ -969,6 +969,20 @@ export function feedThroughRingGaps(
 }
 
 /**
+ * How far round the bar a cutter's body reaches past its own pose, in degrees,
+ * with its tip at radius `tip` (#1177). A ball's sphere, centred `tip + r` from
+ * the axis, touches rays up to `asin(r / (tip + r))` away; a flat's bottom disc
+ * reaches its rim at `atan(r / tip)`. Both grow as the tip goes down.
+ */
+export function rotaryBodyAngularReachDeg(tool: NormalizedTool, tip: number): number {
+  const r = Math.max(0, tool.radius)
+  const reach = tool.type === 'ball_endmill'
+    ? Math.asin(Math.min(1, r / Math.max(tip + r, 1e-12)))
+    : Math.atan2(r, Math.max(tip, 0))
+  return reach * 180 / Math.PI
+}
+
+/**
  * Split one around-mode ring into the runs of contiguous samples that cut.
  * `samples` is already in the order the ring is traversed (forward or reversed),
  * so `atStart`/`atEnd` speak about that traversal: the emitter links two runs
@@ -4652,6 +4666,24 @@ function roughFromTargets(
   // lowers this minimum: the last layer still never cuts below a sample.
   if (sampling.layerFloor !== null) lowest = Math.min(lowest, sampling.layerFloor)
   const layers = Math.ceil((maxRadius - lowest) / params.stepdown)
+  // #1177: a region's angular edge drafts inwards as the layers go down. The
+  // region bounds the cutter's **centre**, but its body reaches further round
+  // the bar the lower its tip (`rotaryBodyAngularReachDeg`), so a deeper layer
+  // cut to the same edge buries its flank in wall no layer above it opened: on
+  // a D1.5 ball reaching the model at r2 under a 1.5 stepdown that was a 2.0 mm
+  // undercut at 10.4 degrees past the edge. Each layer's edge therefore stands
+  // in from the region's by the reach it gained over the first layer, so it
+  // only reaches rays the first layer already reached. The first layer, and
+  // any operation without a region, is unchanged.
+  const firstLayerRadius = Math.max(lowest, maxRadius - params.stepdown)
+  const firstLayerReach = rotaryBodyAngularReachDeg(tool, firstLayerRadius)
+  const cutsInRegion = (alongPosition: number, angle: number, cutTip: number): boolean => {
+    if (insideRegion === null) return true
+    if (!insideRegion(alongPosition, angle)) return false
+    const draft = rotaryBodyAngularReachDeg(tool, cutTip) - firstLayerReach
+    if (!(draft > 1e-9)) return true
+    return insideRegion(alongPosition, angle - draft) && insideRegion(alongPosition, angle + draft)
+  }
   // A non-finite layer count is not a job any version of this generator ever
   // finished: it is `Number.MIN_VALUE`-sized stepdown, and the loop would never
   // terminate. Refusing that is a hang guard, not the work budget (#1045 slice
@@ -5631,7 +5663,7 @@ function roughFromTargets(
         for (let k = 0; k <= last; k++) {
           const tip = tips[k][i]
           const cuts = tip < previousRadius && (touchesMaterial === null || touchesMaterial[k])
-            && (insideRegion === null || insideRegion(along[i], angles[k]))
+            && cutsInRegion(along[i], angles[k], Math.max(tip, layerRadius))
           if (!cuts) full = false
           samples.push(cuts ? point(along[i], Math.max(tip, layerRadius), angles[k]) : null)
         }
@@ -5860,7 +5892,7 @@ function roughFromTargets(
         const indexAt = (i: number): number => (layerPass + pass) % 2 === 0 ? i : along.length - 1 - i
         const needsCut = (i: number): boolean =>
           touchesMaterial && tips[angleIndex][indexAt(i)] < previousRadius
-          && (insideRegion === null || insideRegion(along[indexAt(i)], angle))
+          && cutsInRegion(along[indexAt(i)], angle, Math.max(tips[angleIndex][indexAt(i)], layerRadius))
         const at = (i: number): ToolpathPoint => {
           const index = indexAt(i)
           return point(along[index], Math.max(tips[angleIndex][index], layerRadius), angle)

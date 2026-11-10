@@ -1188,4 +1188,100 @@ for (const shape of ['round', 'square'] as const) {
   assert.deepEqual(result.moves, baseResult.moves, 'a region the operation does not target is not a mask')
 }
 
+// ── #1177: a deeper rough layer does not bury its flank past the region's edge ──
+//
+// The region bounds the cutter's centre, but a ball's body reaches further round
+// the bar the lower its tip. A rough whose every layer ran to the same angular
+// edge cut, at its last layer, a 2.0 mm cavity into wall no layer above it had
+// opened (a D1.5 ball reaching the model at r2 under a 1.5 stepdown). This is
+// measured independently of the generator: rays from the axis past each edge,
+// the ball's body (sphere plus shank) at every pose of every cut move, and the
+// solid each move removes from each ray that nothing before it had removed.
+{
+  const stock = roundStock(10, 14, 'x')
+  const ballTool: NormalizedTool = {
+    id: 'ball-1.5', name: '1.5 mm ball nose', sourceUnits: 'mm', units: 'mm',
+    type: 'ball_endmill', diameter: 1.5, radius: 0.75, vBitAngle: null,
+    flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+    defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+  }
+  const modelRadius = 2
+  const stepdown = 1.5
+  const region: SheetRect = { alongMin: 4, alongMax: 10, acrossMin: 4, acrossMax: 6 }
+  const result = generateRotaryRough('region-draft', cylinderMesh(stock, modelRadius, 2, 12), stock, ballTool, {
+    stepover: 1.125, sampleSpacing: 0.375, stockToLeave: 0, alongStart: 2, alongEnd: 12,
+    safeRadius: 10, requestedCellSize: 0.25, stepdown, passDirection: 'around',
+    region: productionMask(stock, region),
+  }, {})
+  const pivot = barPivotZ(stock)
+  const barRadius = stock.thickness / 2
+  const r = ballTool.radius
+  const DEG = Math.PI / 180
+  const cuts = result.moves.filter((move) => move.kind !== 'rapid')
+  // The region's angular edges, from its across bounds (across 5 is A0).
+  const edge = (region.acrossMax - barCentre(stock)) / (Math.PI * stock.thickness) * 360
+  const rings = [...new Set(cuts.map((move) => move.from.x))].filter((x) => x >= region.alongMin && x <= region.alongMax)
+  assert.ok(rings.length >= 3, `the rough cuts rings inside the region (${rings.length})`)
+  /** The ball's body on one ray, with the cutter at tip `tip` and the ray `delta` degrees off its axis. */
+  const bodyOnRay = (tip: number, delta: number): [number, number] | null => {
+    const c = tip + r
+    const s = Math.abs(Math.sin(delta * DEG))
+    const cos = Math.cos(delta * DEG)
+    if (c * s > r || cos <= 0) return null
+    const half = Math.sqrt(r * r - c * c * s * s)
+    const low = c * cos - half
+    // The shank: every point within r of the tool axis, outward of the centre.
+    const high = s > 1e-12 ? Math.max(c * cos + half, Math.min(r / s, barRadius)) : barRadius
+    return [Math.max(low, modelRadius), Math.min(high, barRadius)]
+  }
+  const removed = new Map<string, [number, number][]>()
+  const fresh = (intervals: [number, number][], span: [number, number]): number => {
+    let length = span[1] - span[0]
+    for (const [a, b] of intervals) length -= Math.max(0, Math.min(b, span[1]) - Math.max(a, span[0]))
+    return Math.max(0, length)
+  }
+  let worst = 0
+  let worstAt = ''
+  let checkedRays = 0
+  for (const move of cuts) {
+    const along = move.from.x
+    if (!rings.includes(along) || move.to.x !== along) continue
+    const fromA = move.from.a ?? 0
+    const toA = move.to.a ?? 0
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    const steps = Math.max(1, Math.ceil(Math.abs(toA - fromA) / 0.25), Math.ceil(Math.abs(toTip - fromTip) / 0.05))
+    for (const side of [1, -1]) {
+      for (let offset = 0.05; offset <= 20; offset += 0.1) {
+        const ray = side * (edge + offset)
+        const key = `${along}:${ray.toFixed(2)}`
+        const before = removed.get(key) ?? []
+        let span: [number, number] | null = null
+        for (let step = 0; step <= steps; step++) {
+          const f = step / steps
+          const angle = fromA + (toA - fromA) * f
+          const delta = ((ray - angle) % 360 + 540) % 360 - 180
+          const body = bodyOnRay(fromTip + (toTip - fromTip) * f, delta)
+          if (body === null || body[1] <= body[0]) continue
+          span = span === null ? body : [Math.min(span[0], body[0]), Math.max(span[1], body[1])]
+        }
+        if (span === null) continue
+        checkedRays++
+        const bite = fresh(before, span)
+        if (bite > worst) {
+          worst = bite
+          worstAt = `along ${along.toFixed(3)} ray A${ray.toFixed(2)} (edge ${(side * edge).toFixed(2)}), `
+            + `move A${fromA.toFixed(2)}->${toA.toFixed(2)} tip ${fromTip.toFixed(3)}->${toTip.toFixed(3)}`
+        }
+        removed.set(key, [...before, span])
+      }
+    }
+  }
+  assert.ok(checkedRays > 100, `the rays past the region's edges are reached (${checkedRays})`)
+  assert.ok(worst <= stepdown + 0.02,
+    `no cut removes more than one stepdown from a ray past the region's edge: ${worst.toFixed(4)} mm at ${worstAt}`)
+  console.log(`  region edge draft: ${checkedRays} ray samples past the edges, worst fresh bite ${worst.toFixed(4)} mm `
+    + `(stepdown ${stepdown})`)
+}
+
 console.log(`rotary region tests passed (${outsideChecks} region cases, ${turnChecks} square turn cases)`)
