@@ -186,16 +186,29 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   })
 
-  function handleFeatureDragStart(id: string) {
+  // WebKitGTK (the Linux desktop webview) will not complete an HTML5 drag whose
+  // data store is empty: `dragstart` and `dragover` fire, but `drop` never
+  // does, so tree rows dragged in the desktop build reordered nothing (#1178).
+  // Storing the row id keeps the drag non-empty; the local drag state below
+  // still decides what the drop means.
+  function beginReorderDrag(event: DragEvent, id: string) {
+    event.dataTransfer.setData('text/plain', id)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  function handleFeatureDragStart(event: DragEvent, id: string) {
+    beginReorderDrag(event, id)
     setDragItem({ kind: 'feature', id })
   }
 
-  function handleFolderDragStart(id: string) {
+  function handleFolderDragStart(event: DragEvent, id: string) {
+    beginReorderDrag(event, id)
     setDragItem({ kind: 'folder', id })
   }
 
   function handleDragOver(event: DragEvent, target: { kind: 'features' | 'folder' | 'feature'; id?: string }) {
     event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
     dragOverTarget.current = target
   }
 
@@ -519,7 +532,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onMoveUp={canMoveUp ? () => handleMoveFeature(feature.id, -1) : undefined}
         onMoveDown={canMoveDown ? () => handleMoveFeature(feature.id, 1) : undefined}
         draggable
-        onDragStart={() => handleFeatureDragStart(feature.id)}
+        onDragStart={(event) => handleFeatureDragStart(event, feature.id)}
         onDragEnd={() => setDragItem(null)}
         onDragOver={(event) => handleDragOver(event, { kind: 'feature', id: feature.id })}
         onDrop={handleDrop}
@@ -622,7 +635,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
@@ -864,7 +877,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
@@ -952,7 +965,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
@@ -1143,7 +1156,7 @@ interface TreeRowProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   draggable?: boolean
-  onDragStart?: () => void
+  onDragStart?: (event: DragEvent) => void
   onDragEnd?: () => void
   onDragOver?: (event: DragEvent) => void
   onDrop?: () => void

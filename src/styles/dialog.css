@@ -1710,6 +1710,49 @@
   touch-action: none;
 }
 
+/* 3D wrapped view (issue #1179): the same frame as the SVG wrap, holding the
+   three.js canvas the component appends. */
+.motion-debug__canvas-wrap {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line-strong);
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 420px;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+.motion-debug__canvas-wrap:active {
+  cursor: grabbing;
+}
+
+.motion-debug__view-toggle {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.motion-debug__angle-readout {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 14px;
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.motion-debug__angle-pointer {
+  color: var(--text);
+}
+
 .motion-debug__sidebar {
   display: flex;
   flex-direction: column;
@@ -1723,6 +1766,11 @@
   letter-spacing: 0.04em;
   color: var(--text-dim);
   margin: 0 0 4px;
+}
+
+.motion-debug__note {
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
 .motion-debug__layers {
@@ -1813,7 +1861,9 @@
 }
 
 [data-shell-mode="tablet"] .motion-debug__svg-wrap,
-[data-shell-mode="tablet-compact"] .motion-debug__svg-wrap {
+[data-shell-mode="tablet-compact"] .motion-debug__svg-wrap,
+[data-shell-mode="tablet"] .motion-debug__canvas-wrap,
+[data-shell-mode="tablet-compact"] .motion-debug__canvas-wrap {
   min-height: 360px;
 }
 

@@ -21,7 +21,6 @@ import { platform } from '../../platform'
 import {
   formatProgramNumber,
   getActiveMachineDefinition,
-  getExportedMotionEligibility,
   machineExportDiagnostics,
   projectExportsPerSetup,
 } from '../../engine/gcode'
@@ -35,6 +34,7 @@ import {
   listExportOperationOptions,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
+import { planInspectMotion, type InspectMotionPlan } from './inspectMotionPlan'
 import { exportDialectLabels } from './exportDialectLabels'
 import { shouldShowRotaryZeroNotice } from './rotaryZeroNotice'
 import { rotaryFollowsStockNote, rotaryProjectNeedsMm } from './rotaryUnitsNotice'
@@ -174,11 +174,14 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
   type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
   const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
 
-  // The exported-motion debug view is gated on exactly one eligible operation.
-  // Eligibility is derived from the generated motion, not an operation-name list.
-  const inspectEligible = useMemo(() => {
-    if (activeOperations.length !== 1) return false
-    return getExportedMotionEligibility(activeOperations[0].toolpath).eligible
+  // The exported-motion debug view is offered for exactly one operation. The
+  // plan view's eligibility refuses variable-Z cutting, which every rotary
+  // rough/finish has by design; a motion carrying rotary angles is offered
+  // through the wrapped view instead (issue #1179 correction round 3), so the
+  // dialog can be reached for the operations it exists for.
+  const inspectPlan = useMemo<InspectMotionPlan>(() => {
+    if (activeOperations.length !== 1) return { offer: false, wrapped: false, reason: null }
+    return planInspectMotion(activeOperations[0].toolpath)
   }, [activeOperations])
 
   // The engine's codes carry their own severity, so one code lands in the same
@@ -544,7 +547,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
-          {inspectEligible && (
+          {inspectPlan.offer && (
             <button
               className="btn-secondary"
               onClick={() => setDebugOperation(activeOperations[0])}
@@ -573,6 +576,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           project={project}
           definition={activeDefinition}
           previewResult={previewResult}
+          toolpath={debugOperation.toolpath}
           onClose={() => setDebugOperation(null)}
         />
       )}
