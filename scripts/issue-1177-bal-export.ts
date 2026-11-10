@@ -20,8 +20,8 @@
  *
  *   npx tsx scripts/issue-1177-bal-export.ts work/bolt-test-02-x-mm.camj [outDir] [--before]
  *
- * For op0196 (Rotary finish, 1/8 in ball) and op0198 (Rotary finish 2, 1/4 in
- * flat) it writes the posted program and reports, from the **G-code**:
+ * For op0195-op0198 (the Hex rough and finish, the Turn rough and finish; the
+ * finish on the 1/8 in ball) it writes the posted program and reports, from the **G-code**:
  *
  * - fed blocks and A moves (a motion block that changes A);
  * - A direction flips (a sign change in consecutive A moves, shortest arc);
@@ -47,7 +47,7 @@ import { runPostProcessor } from '../src/engine/gcode/postprocessor'
 import type { Project } from '../src/types/project'
 
 const MACHINE_ID = 'grbl-rotary-a'
-const OPERATIONS = ['op0196', 'op0198'] as const
+const OPERATIONS = ['op0195', 'op0196', 'op0197', 'op0198'] as const
 
 interface Stats {
   readonly lines: number

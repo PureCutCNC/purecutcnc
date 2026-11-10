@@ -18,7 +18,7 @@
  * #1177 bal-a correction 1: the handoff's Simulation screenshots, taken from the
  * real app against Frank's file.
  *
- *   npx tsx scripts/issue-1177-bal-shots.ts [project.camj] [outDir]
+ *   npx tsx scripts/issue-1177-bal-shots.ts [project.camj] [outDir] [prefix]
  *
  * Reads the file through the app's own loader, opens the Simulation tab, hides
  * the two non-rotary operations (Engrave, Cutout) so the tab replays the four
@@ -45,6 +45,8 @@ import { chromium, type Page } from '@playwright/test'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const projectPath = resolve(process.argv[2] ?? join(root, 'work/bolt-test-02-x-mm.camj'))
 const outDir = resolve(process.argv[3] ?? join(root, 'work'))
+/** The screenshot file names' prefix (#1177 step 3 takes before and after sets). */
+const prefix = process.argv[4] ?? 'bal-a-fix1'
 const BAR_RADIUS = 25.4
 const FLAT_RADIUS = 19.05
 
@@ -354,12 +356,12 @@ async function main(): Promise<void> {
     console.log(`visible grid: view ${viewport.view}, min Z ${viewport.minZ}, removed ${viewport.removed} cells`)
 
     const shots = [
-      await screenshot(page, 'bal-a-fix1-hex-bar-end', BAR_END_VIEW),
-      await screenshot(page, 'bal-a-fix1-hex-shoulder', SHOULDER_VIEW),
-      await screenshot(page, 'bal-a-fix1-hex-corner-edge', EDGE_VIEW),
-      await screenshot(page, 'bal-a-fix1-hex-overview', OVERVIEW_VIEW),
+      await screenshot(page, `${prefix}-hex-bar-end`, BAR_END_VIEW),
+      await screenshot(page, `${prefix}-hex-shoulder`, SHOULDER_VIEW),
+      await screenshot(page, `${prefix}-hex-corner-edge`, EDGE_VIEW),
+      await screenshot(page, `${prefix}-hex-overview`, OVERVIEW_VIEW),
     ]
-    writeFileSync(join(outDir, 'bal-a-fix1-shots.json'), JSON.stringify({
+    writeFileSync(join(outDir, `${prefix}-shots.json`), JSON.stringify({
       viewport, shots, consoleErrors,
     }, null, 2))
     if (consoleErrors.length > 0) console.log(`console errors:\n  ${consoleErrors.join('\n  ')}`)
