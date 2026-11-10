@@ -280,6 +280,8 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.arcCcw': 'CCW-Bögen',
   'dialogs.motionDebug.verified': 'Verifiziert — die exportierte Bewegung stimmt innerhalb der Toleranz mit dem generierten Pfad überein.',
   'dialogs.motionDebug.warning': 'Warnung',
+  'dialogs.motionDebug.preparing': 'Die exportierte Bewegung wird vorbereitet…',
+  'dialogs.motionDebug.prepareFailed': 'Die exportierte Bewegung konnte nicht vorbereitet werden: {message}',
   'dialogs.motionDebug.ineligibleDrilling': 'Bohroperationen können nicht als 2D-Plan-Spur dargestellt werden.',
   'dialogs.motionDebug.ineligibleNoCut': 'Diese Operation erzeugt keine schneidende Bewegung zum Prüfen.',
   'dialogs.motionDebug.ineligibleVariableZ': 'Diese Operation hat eine kontinuierlich variierende Schnitt-Z und kann nicht als flache 2.5D-Spur gezeigt werden.',

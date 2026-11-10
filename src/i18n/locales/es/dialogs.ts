@@ -253,6 +253,8 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.arcCcw': 'Arcos CCW',
   'dialogs.motionDebug.verified': 'Verificado — el movimiento exportado coincide con la trayectoria generada dentro de la tolerancia.',
   'dialogs.motionDebug.warning': 'Advertencia',
+  'dialogs.motionDebug.preparing': 'Preparando el movimiento exportado…',
+  'dialogs.motionDebug.prepareFailed': 'No se pudo preparar el movimiento exportado: {message}',
   'dialogs.motionDebug.ineligibleDrilling': 'Las operaciones de taladrado no se pueden ver como traza plana 2D.',
   'dialogs.motionDebug.ineligibleNoCut': 'Esta operación no produce movimiento de corte que inspeccionar.',
   'dialogs.motionDebug.ineligibleVariableZ': 'Esta operación tiene una Z de corte continuamente variable y no se puede mostrar como traza 2.5D plana.',

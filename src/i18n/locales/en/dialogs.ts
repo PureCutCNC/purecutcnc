@@ -284,6 +284,8 @@ export const dialogsEn = {
   'dialogs.motionDebug.arcCcw': 'CCW arcs',
   'dialogs.motionDebug.verified': 'Verified — exported motion matches the generated path within tolerance.',
   'dialogs.motionDebug.warning': 'Warning',
+  'dialogs.motionDebug.preparing': 'Preparing the exported motion…',
+  'dialogs.motionDebug.prepareFailed': "Couldn't prepare the exported motion: {message}",
   'dialogs.motionDebug.ineligibleDrilling': 'Drilling operations are not viewable as a 2D plan trace.',
   'dialogs.motionDebug.ineligibleNoCut': 'This operation produces no cutting motion to inspect.',
   'dialogs.motionDebug.ineligibleVariableZ': 'This operation has continuously varying cutting Z and cannot be shown as a flat 2.5D trace.',
