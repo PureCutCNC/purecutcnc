@@ -306,26 +306,31 @@ interface DigestCase {
   readonly recorded: string
 }
 
+// Recaptured for #1177: the four round-bar cases run a **ball**, which reads the
+// exact sphere drop instead of the conservative cell row, so their along
+// programs move. The square-bar cases keep the conservative read and their
+// digests. The chiral and hex blocks below check the new points against
+// independent references.
 const DIGEST_CASES: readonly DigestCase[] = [
   {
     label: 'cone finish', operationId: 'cone', kind: 'finish', mesh: digestCone,
     stock: DIGEST_STOCK, params: DIGEST_FINISH,
-    recorded: 'f7b83ed181b9fb70d2b335dc1015e7a609a84995b8a95dfaecf16c57f5a5cd1b',
+    recorded: 'a4136f2b48b2736031e3d9a68334e1a102026d8836269bbc32b38589bec6879a',
   },
   {
     label: 'cone rough', operationId: 'cone', kind: 'rough', mesh: digestCone,
     stock: DIGEST_STOCK, params: DIGEST_ROUGH,
-    recorded: 'b301f903eb96f9ac81d7448f1b982a358e7302977a86e0c3ac4c530655eccc94',
+    recorded: '9e0e442e2b57c3179137cc53e175948c349aca9020d0f728dd95d53b0f5b599b',
   },
   {
     label: 'stepped finish', operationId: 'step', kind: 'finish', mesh: digestStepped,
     stock: DIGEST_STOCK, params: DIGEST_FINISH,
-    recorded: 'dbb5052518b3066acf31a02cafa8f9a3d816a85400362c52bc38a01fa48a8d2f',
+    recorded: 'e443d49d55524a894b7777bb1b37a5eddde1e109c61dc76fb89a43f722d737c5',
   },
   {
     label: 'stepped rough', operationId: 'step', kind: 'rough', mesh: digestStepped,
     stock: DIGEST_STOCK, params: DIGEST_ROUGH,
-    recorded: 'c8527f5f34b7b5a4ada4e296f745fea49f8ec2a68ab4da7370f81edaa16b3370',
+    recorded: '62fe98e9916e17fdba4ae6dc73c389665be0cdf910366f598850c1086c7bd9cf',
   },
   {
     label: 'square finish', operationId: 'square', kind: 'finish',
@@ -1188,8 +1193,39 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   // that used to be a ring link is now a helix boundary (measured on this
   // fixture: nine rapids and 478 moves before, four rapids and 385 after, with
   // no raised link either way).
-  assert.equal(afterShoulder.length, boundaries,
-    `every ring after the helix links to its neighbour (${afterShoulder.length} links, ${boundaries} boundaries)`)
+  // #1177: a ball reads the exact sphere drop, so a link now follows the model
+  // between two rings (a rise, a run and a drop: up to three moves) where it
+  // used to be one straight move, and the layers' split moved. So the check is
+  // made on the path itself: walking the moves in order, every step from one
+  // ring past the shoulder to the next ring a stepover away is made by link
+  // moves only -- cuts at one A, no retract, rapid or plunge between them.
+  let transitions = 0
+  let linkedTransitions = 0
+  let lastRingMove = -1
+  let lastRingAlong = Number.NaN
+  for (let i = 0; i < result.moves.length; i++) {
+    const move = result.moves[i]
+    const ring = move.kind !== 'rapid' && angleOf(move.from) !== angleOf(move.to)
+      && alongOf(move.from) === alongOf(move.to)
+    if (!ring || alongOf(move.from) < shoulder - 1e-6) continue
+    const along = alongOf(move.from)
+    if (lastRingMove >= 0 && Math.abs(along - lastRingAlong) > 1e-6
+      && Math.abs(along - lastRingAlong) <= params.stepover + 1e-6) {
+      transitions++
+      const between = result.moves.slice(lastRingMove + 1, i)
+      // A link holds its A; a steep rise or drop on it is emitted as a vertical
+      // leg at that A, so those legs belong to the link too.
+      if (between.some(isAlongLink) && between.every((link) => link.kind === 'cut'
+        && link.from.a !== undefined && link.from.a === link.to.a)) linkedTransitions++
+    }
+    lastRingMove = i
+    lastRingAlong = along
+  }
+  assert.ok(afterShoulder.length > 0, 'the rings past the shoulder are joined by links')
+  assert.equal(linkedTransitions, transitions,
+    `every ring after the helix links to its neighbour (${linkedTransitions} of ${transitions} ring-to-ring steps)`)
+  assert.ok(transitions >= boundaries,
+    `every boundary past the shoulder is stepped across (${transitions} steps, ${boundaries} boundaries)`)
   assert.ok(boundaries >= 4,
     `the fixture still has the rings this check is about (${boundaries} boundaries past the shoulder)`)
   // The ring after a helix is entered by a **link**, not a retract: every move
@@ -1548,7 +1584,11 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   assert.ok(Math.abs(angleB - angleA) > 0.3 * scale,
     `${label}: the support moves with A (${angleA.toFixed(3)} vs ${angleB.toFixed(3)})`)
 
-  const result = generateRotaryFinish(`chiral-${label}`, chiralMesh(stock, model, 40), stock, tool, {
+  // #1177: 160 mesh steps, not 40. A ball reads the mesh exactly now (no cell of
+  // margin), and at 40 steps the flat triangles each twisted quad is split into
+  // sat an emitted tip 0.0206 mm inside the analytic face this reference reads
+  // (x-mm ball, along 12, A 1440) -- the fixture's own error, not the cut's.
+  const result = generateRotaryFinish(`chiral-${label}`, chiralMesh(stock, model, 160), stock, tool, {
     stepover: 2.5 * scale,
     sampleSpacing: 1.5 * scale,
     stockToLeave: 0,
@@ -1727,11 +1767,12 @@ const HEX_SECTION = Array.from({ length: 6 }, (_, i): readonly [number, number] 
   const points = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
   const alongs = [...new Set(points.map(alongOf))].sort((a, b) => a - b)
   const angles = [...new Set(points.map(angleOf))].sort((a, b) => a - b)
-  // The emitted tips come from the around-mode sampler's conservative cell
-  // bounds (#1045 slice F): every sample is at or above the model's support, so
-  // the value at that (along, angle) is the one the emitter had.
+  // The emitted tips come from the around-mode sampler (#1045 slice F), which
+  // reads a **ball** exactly since #1177: the value at that (along, angle) is
+  // the one the emitter had.
   const sampling = sampleRotaryModel(mesh, HEX_STOCK, BALL, {
     anglesDeg: angles, along: alongs, requestedCellSize: CELL, conservativeCellBounds: true,
+    exactTipRows: true,
   }, [])
   const maxRadius = barMaxRadius(HEX_STOCK)
   for (const point of points) {

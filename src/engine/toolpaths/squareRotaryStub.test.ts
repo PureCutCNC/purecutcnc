@@ -1043,11 +1043,15 @@ function moveFingerprint(result: { moves: readonly ToolpathMove[]; warnings: Arr
 // now lets the cutter centre reach those ends and the plain bar beyond them be
 // cut. The square rows below are untouched: a square blank keeps its retained
 // corners and both stubs.
+//
+// #1177 re-recorded the two **ball** rows: a ball on a round bar reads the exact
+// sphere drop instead of the conservative cell row, so its program moves. The
+// two flat rows are untouched.
 const ROUND_BASELINE: Record<string, string> = {
   'x/mm/flat_endmill/finish/chuck-model': '68cc1cb6444d1476|rotaryFinishWithoutRough',
-  'x/mm/ball_endmill/rough/model-model': '8901aab7a017c955|',
+  'x/mm/ball_endmill/rough/model-model': '7d3ea127895d9090|',
   'y/mm/flat_endmill/finish/chuck-model': '951d957b7f2e2e71|rotaryFinishWithoutRough',
-  'y/inch/ball_endmill/rough/model-model': '5439c4574d8a3560|',
+  'y/inch/ball_endmill/rough/model-model': 'ba4a1061615ef01d|',
 }
 
 console.log('Testing the round fixtures are byte-identical to the base commit...')

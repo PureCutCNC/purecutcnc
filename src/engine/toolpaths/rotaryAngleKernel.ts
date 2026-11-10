@@ -95,6 +95,14 @@ export function createRotaryAngleKernel(setup: RotaryAngleSetupPayload): RotaryA
     || setup.plan.across === undefined || setup.plan.up === undefined)) {
     throw new Error(`rotary angle kernel: along mode needs the mesh and its cross-section (${describeRotaryAngleSetup(setup)})`)
   }
+  // #1177: an exact-tip row reads the mesh's triangles through the plan's
+  // cross-section in either mode. Without them the read finds nothing and every
+  // row comes back empty, so refuse the setup and let the pool run serially.
+  const exact = setup.exactTipRows === true
+  const sectionMissing = (plan: RotaryAnglePlanPayload): boolean => plan.across === undefined || plan.up === undefined
+  if (exact && (setup.mesh === undefined || sectionMissing(setup.plan))) {
+    throw new Error(`rotary angle kernel: exact-tip rows need the mesh and its cross-section (${describeRotaryAngleSetup(setup)})`)
+  }
   let plan = planFromPayload(setup.plan)
   const positions = setup.mesh?.positions ?? EMPTY_FLOAT32
   const index = setup.mesh?.index ?? EMPTY_UINT32
@@ -144,6 +152,9 @@ export function createRotaryAngleKernel(setup: RotaryAngleSetupPayload): RotaryA
       return samples
     },
     applyPlan(next) {
+      if (exact && sectionMissing(next)) {
+        throw new Error('rotary angle kernel: an exact-tip plan revision needs its cross-section')
+      }
       plan = planFromPayload(next)
     },
     batches: () => served,

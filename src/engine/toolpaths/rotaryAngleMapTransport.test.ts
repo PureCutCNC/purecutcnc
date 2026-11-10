@@ -653,7 +653,16 @@ function helixShare(moves: readonly { kind: string; from: { x: number; y: number
 }
 
 {
-  const project: Project = rotaryOperationFixture('x', 'rotary_finish')
+  const fixture: Project = rotaryOperationFixture('x', 'rotary_finish')
+  // #1177: a **flat** finish. A ball's ring grid reads exact rows since #1177,
+  // and an exact row never builds a height map, so a ball finish has no maps to
+  // send back and this check would have nothing to carry. A flat's ring grid is
+  // still the conservative map read this block exists for. (The ball's pooled
+  // motion is checked against the serial one in `rotaryAnglePool.test.ts`.)
+  const project: Project = {
+    ...fixture,
+    tools: fixture.tools.map((tool) => ({ ...tool, type: 'flat_endmill' as const })),
+  }
   const operation: Operation = { ...project.operations[0], rotaryPassDirection: 'around' }
   const axis = (project.stock as { axis?: 'x' | 'y' }).axis ?? 'x'
   const sync = computeOperationToolpath(project, operation)

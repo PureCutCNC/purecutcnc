@@ -249,9 +249,15 @@ export type RotaryStripPlanValue = ReturnType<RotarySamplingPrep['planFor']>
  *
  * `mode` decides whether the per-vertex cross-section travels: only along mode
  * projects through it, and on a 1.47 M-vertex mesh those two arrays are 23.5 MB
- * per worker, so around mode leaves them behind.
+ * per worker, so around mode leaves them behind -- unless the prep reads
+ * **exact** rows (`exact`, #1177): the exact footprint read projects every
+ * candidate triangle through the same cross-section in either mode.
  */
-export function buildRotaryAnglePlan(plan: RotaryStripPlanValue, mode: RotaryAngleMode): RotaryAnglePlanPayload {
+export function buildRotaryAnglePlan(
+  plan: RotaryStripPlanValue,
+  mode: RotaryAngleMode,
+  exact = false,
+): RotaryAnglePlanPayload {
   return {
     hull: plan.hull,
     minAlong: plan.minAlong,
@@ -260,7 +266,7 @@ export function buildRotaryAnglePlan(plan: RotaryStripPlanValue, mode: RotaryAng
     bucketWords: plan.bucketWords,
     always: plan.always,
     bucketWidth: plan.bucketWidth,
-    ...(mode === 'along' ? { across: plan.across, up: plan.up } : {}),
+    ...(mode === 'along' || exact ? { across: plan.across, up: plan.up } : {}),
   }
 }
 
@@ -281,7 +287,8 @@ export function buildRotaryAngleSetup(
   plan: RotaryStripPlanValue,
 ): RotaryAngleSetupPayload {
   const mode: RotaryAngleMode = prep.conservativeCellBounds ? 'around' : 'along'
-  const planPayload = buildRotaryAnglePlan(plan, mode)
+  const exact = prep.exactTipRows === true
+  const planPayload = buildRotaryAnglePlan(plan, mode, exact)
   const common = {
     protocolVersion: ROTARY_ANGLE_PROTOCOL_VERSION,
     mode,
@@ -300,7 +307,15 @@ export function buildRotaryAngleSetup(
   if (mode === 'around') {
     const raster = prep.workspace.raster ??= buildRotaryRasterGeometry(
       prep.mesh.positions, prep.mesh.index, prep.stock.axis, prep.centre, prep.pivot)
-    return { ...common, raster: { section: raster.section, along: raster.along } }
+    // #1177: an exact-tip row reads the mesh's own triangles, not the raster
+    // records, so an around-mode worker needs the mesh as well. Without it the
+    // worker's read found no triangle and every row came back empty: a pooled
+    // ball finish skipped its whole band while the serial one cut it.
+    return {
+      ...common,
+      raster: { section: raster.section, along: raster.along },
+      ...(exact ? { mesh: { positions: prep.mesh.positions, index: prep.mesh.index } } : {}),
+    }
   }
   return { ...common, mesh: { positions: prep.mesh.positions, index: prep.mesh.index } }
 }
