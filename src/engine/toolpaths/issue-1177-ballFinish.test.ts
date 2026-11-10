@@ -43,8 +43,8 @@
  * stretches of the band; 4b and 4c run Frank's whole rotary sequence (Hex rough
  * and finish, Turn rough and finish) and check X28 to the shoulder face, no
  * cutter behind that face, and the wall-foot band at **both** Hex ends. On
- * 18d908f6 they measure 0.22 (B), 0.26 (4b) and 0.22 / 0.26 at the two ends
- * (4c); the same rays also catch the chord a ball's refinement let dip 0.0145 mm
+ * 18d908f6 they measure 0.22 (B), 0.26 (4b) and 0.22 at the chuck end against
+ * 0.05 at the shoulder, which PR #1180's cleanup already covered (4c); the same rays also catch the chord a ball's refinement let dip 0.0145 mm
  * into a vertex. The fixture uses Frank's stepovers (a fraction of the tool
  * diameter: 0.16 for both balls, 0.32 for the flat), so the scallop between
  * helix turns is his file's 0.02 mm.
@@ -76,8 +76,12 @@ const EMPTY_SELECTION = {
   activeControl: null, groupFolderId: null,
 } as unknown as never
 
-/** Where the Turn starts: the Hex's shoulder face, once the Turn has cut. */
-const SHOULDER = 30.48
+/**
+ * The Hex's shoulder face. The Turn's model starts at 30.48, inside the Hex, but
+ * its operations keep off the Hex (the #1155 neighbour rule), so the step from
+ * the facets down to the turned diameter is the Hex's own end.
+ */
+const SHOULDER = HEX_END
 const ROUGH_BALL_ID = 'ball-025'
 const FLAT_ID = 'flat-025'
 
@@ -553,7 +557,7 @@ function run(rotationDeg: number): void {
   }
 
   // The full rotary sequence: the Hex rough and finish, then the Turn rough and
-  // finish, which cut the Hex down to its shoulder face at X30.48.
+  // finish, which turn the bar down beyond the Hex's shoulder face.
   const sequence = [{ result, tool }, ...others.map((other) => ({
     result: generate(project, other),
     tool: toolOf(project, other),
