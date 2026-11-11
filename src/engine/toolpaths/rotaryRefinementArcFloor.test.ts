@@ -48,7 +48,9 @@
  *    stops when the small ring is satisfied;
  *  - dropping the per-ring test inside a segment that is not settled as a
  *    whole: the small ring's step segment is halved once more than it asks for;
- *  - sampling the midpoint of a settled segment anyway: the row count.
+ *  - sampling the midpoint of a settled segment anyway: the row count;
+ *  - (#1185 R2) the arc floor staying at the surface bound when the caller's
+ *    tolerance floor is larger: block 3.
  */
 
 import assert from 'node:assert/strict'
@@ -216,7 +218,9 @@ function prepFor(mesh: RotaryModelMesh, tool: NormalizedTool, exact: boolean): R
   })
 }
 
-function refine(prep: RotarySamplingPrep, tool: NormalizedTool, baseAngles: readonly number[]): Refined {
+function refine(
+  prep: RotarySamplingPrep, tool: NormalizedTool, baseAngles: readonly number[], toleranceFloor?: number,
+): Refined {
   const base = sampleAnglesWithPrep(prep, baseAngles, [])
   assert.ok(base.valid, 'the base grid samples')
   // The stop callback is polled once before every angle row and never stops:
@@ -225,6 +229,7 @@ function refine(prep: RotarySamplingPrep, tool: NormalizedTool, baseAngles: read
   const refined = refineAroundSampling({
     prep, stock: STOCK, tool, warnings: [], angles: base.anglesDeg, tips: base.tipRadius,
     shouldStop: () => { polled++; return false },
+    ...(toleranceFloor !== undefined ? { toleranceFloor } : {}),
   })
   assert.ok(refined !== null && !refined.stopped, 'the refinement completes')
   return { angles: refined.angles, tips: refined.tips, sampledRows: polled }
@@ -378,6 +383,33 @@ for (const tool of [toolOf('flat_endmill', 1), toolOf('ball_endmill', 1)]) {
     `the hexagon's shortest step (${shortestStep} degrees) is well above the floor`)
   assert.equal(digest, '02fa8129bdd6130fac123bbfaefb400b742c1398b62bdca61033a1b8e7a0a408', 'the hexagon refines to the angles and rows it did before the floor existed')
   console.log(`  hexagon, 1.5 mm ball: ${refined.angles.length} angles, shortest step ${shortestStep} degrees, digest ${digest.slice(0, 16)}`)
+}
+
+// ── block 3: the floor is the refinement's own tolerance (#1185 R2) ─────────
+{
+  // A rough that leaves stock refines to a share of it, and the arc below which
+  // a step is no longer bisected is that same share: a step followed down to
+  // 0.005 mm under a 0.125 mm tolerance would be rows spent on stock the finish
+  // removes. The large cam's step again, with a rough's floor.
+  const tool = toolOf('flat_endmill', 1)
+  const label = 'cams, 1 mm flat, rough floor'
+  const roughFloor = 0.125
+  const prep = prepFor(camsMesh(), tool, true)
+  const step = stepAngle(prep, LARGE, label)
+  const grid = gridBefore(step, LARGE_STEP)
+  const refined = refine(prep, tool, grid, roughFloor)
+  let k = -1
+  for (let n = 0; n + 1 < refined.angles.length; n++) if (refined.angles[n] <= step && step <= refined.angles[n + 1]) k = n
+  assert.ok(k >= 0, `${label}: a segment holds the step`)
+  const arc = (Math.max(refined.tips[k][LARGE], refined.tips[k + 1][LARGE], 0) + tool.radius)
+    * (refined.angles[k + 1] - refined.angles[k]) * Math.PI / 180
+  assert.ok(arc <= roughFloor, `${label}: the step segment sweeps ${arc.toFixed(5)} mm, within the ${roughFloor} mm floor`)
+  assert.ok(arc > roughFloor / 2 * 0.999,
+    `${label}: the step segment sweeps ${arc.toFixed(5)} mm; nothing is bisected below the rough's own floor`)
+  const strict = refine(prep, tool, grid)
+  assert.ok(refined.angles.length < strict.angles.length,
+    `${label}: ${refined.angles.length} angles against ${strict.angles.length} at the surface bound`)
+  console.log(`  ${label}: step segment arc ${arc.toFixed(5)} mm, ${refined.angles.length} angles (${strict.angles.length} at the surface bound)`)
 }
 
 console.log('engine/toolpaths/rotaryRefinementArcFloor.test.ts: all assertions passed')

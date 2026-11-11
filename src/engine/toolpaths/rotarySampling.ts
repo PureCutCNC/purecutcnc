@@ -57,7 +57,7 @@
 
 import { barCentre, barPivotZ } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
-import { convertLength, type Units } from '../../utils/units'
+import { convertLength } from '../../utils/units'
 import { buildHeightMap, chooseHeightMapCellSize, safeToolTipZAt } from './finishSurfaceParallel'
 import type { HeightMap, HeightMapWindow } from './finishSurfaceParallel'
 import { buildRotaryHeightMap, buildRotaryRasterGeometry } from './rotaryRaster'
@@ -2332,9 +2332,8 @@ function aroundSegmentationTolerance(
   tipB: number,
   deltaDegrees: number,
   tool: NormalizedTool,
-  units: Units,
+  floor: number,
 ): number {
-  const floor = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
   if (tool.type !== 'ball_endmill') return floor
   const radius = Math.max(0, Math.min(tipA, tipB))
   const arc = radius * Math.abs(deltaDegrees) * Math.PI / 180
@@ -2382,11 +2381,28 @@ interface AroundRefinementArgs {
   /** The grid to refine and its rows, in angle order. */
   readonly angles: readonly number[]
   readonly tips: readonly Float32Array[]
+  /**
+   * The least between-sample tolerance, in the operation's units (#1185 R2).
+   * Omitted, it is the stated 0.005 mm surface bound, which is what a finish
+   * uses. A rough that leaves stock passes a quarter of that stock: its chord
+   * may dip that far below a sample, because the samples already stand the
+   * whole leave above the model. It is also the arc below which a segment is
+   * not bisected (`aroundArcFloor`).
+   */
+  readonly toleranceFloor?: number
+}
+
+/** The refinement's tolerance floor: the caller's, never below the surface bound. */
+function refinementToleranceFloor(args: AroundRefinementArgs): number {
+  const surface = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', args.tool.units)
+  const floor = args.toleranceFloor
+  return floor !== undefined && Number.isFinite(floor) && floor > surface ? floor : surface
 }
 
 /**
  * The arc length below which a segment is not bisected (#1185 R1), in the
- * operation's units: the stated 0.005 mm surface bound.
+ * operation's units: the refinement's tolerance floor -- the stated 0.005 mm
+ * surface bound, or the rough's share of its stock to leave (#1185 R2).
  *
  * Bisection exists to keep the straight move between two samples from falling
  * below the model by more than the tolerance. Where the tip is a **step** in
@@ -2404,8 +2420,8 @@ interface AroundRefinementArgs {
  * whose arc is within the tolerance is therefore within the tolerance whatever
  * its midpoint reads, and bisecting it buys nothing.
  */
-function aroundArcFloor(tool: NormalizedTool): number {
-  return convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', tool.units)
+function aroundArcFloor(args: AroundRefinementArgs): number {
+  return refinementToleranceFloor(args)
 }
 
 /**
@@ -2426,7 +2442,7 @@ function aroundSegmentArc(tipA: number, tipB: number, radians: number, tool: Nor
 function segmentSettledByArc(state: AroundRefinementState, k: number, args: AroundRefinementArgs): boolean {
   const { angles, tips } = state
   const radians = Math.abs(angles[k + 1] - angles[k]) * Math.PI / 180
-  const floor = aroundArcFloor(args.tool)
+  const floor = aroundArcFloor(args)
   const rowA = tips[k]
   const rowB = tips[k + 1]
   for (let i = 0; i < rowA.length; i++) {
@@ -2483,7 +2499,8 @@ function failingSegments(
   const { angles, tips, midpointRows } = state
   const midRow = (k: number): Float32Array => midpointRows.get(mids[k])!
   const fails = new Set<number>()
-  const arcFloor = aroundArcFloor(tool)
+  const arcFloor = aroundArcFloor(args)
+  const toleranceFloor = refinementToleranceFloor(args)
   for (let k = 0; k + 1 < angles.length && fails.size < mids.length; k++) {
     // #1185 R1: a segment too short to bisect has no midpoint row and cannot fail.
     if (segmentSettledByArc(state, k, args)) continue
@@ -2504,8 +2521,8 @@ function failingSegments(
       // #1177: an exact-tip grid holds a ball to the plain floor; see
       // `aroundSegmentationTolerance` and the helix's own refinement.
       const tolerance = args.prep.exactTipRows === true
-        ? convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', tool.units)
-        : aroundSegmentationTolerance(a, b, delta, tool, tool.units)
+        ? toleranceFloor
+        : aroundSegmentationTolerance(a, b, delta, tool, toleranceFloor)
       // A peak that falls **between** the two samples is invisible to the mid
       // sample when the height map reads it low: the sampler's cell is wider
       // than one angle step near a sharp feature. Detect it from the sampled

@@ -333,6 +333,13 @@ export interface ContinuousHelixInput {
   /** Material left on the model, added back to every sampled tip. */
   readonly stockToLeave: number
   /**
+   * The least between-sample tolerance, in the operation's units (#1185 R2):
+   * the same floor the caller gave the ring refinement, so a band cut as a
+   * helix and a band cut as rings are held to one bound. Omitted, it is the
+   * stated 0.005 mm surface bound.
+   */
+  readonly toleranceFloor?: number
+  /**
    * Read each row's tip as the **exact** footprint maximum of the sampled mesh
    * instead of the conservative height-map read (#1173).
    *
@@ -519,9 +526,8 @@ function helixTolerance(
   axialDistance: number,
   deltaDegrees: number,
   tool: NormalizedTool,
-  units: Units,
+  floor: number,
 ): number {
-  const floor = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
   if (tool.type !== 'ball_endmill') return floor
   const radius = Math.max(0, Math.min(tipA, tipB))
   const arc = radius * Math.abs(deltaDegrees) * Math.PI / 180
@@ -910,6 +916,11 @@ function refineHelix(
   budget: ContinuousHelixBudget,
 ): { status: HelixStatus; uncovered: boolean; chain: HelixSegment[] } {
   let current = [...chain]
+  const surfaceFloor = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', input.tool.units)
+  const toleranceFloor = input.toleranceFloor !== undefined && Number.isFinite(input.toleranceFloor)
+    && input.toleranceFloor > surfaceFloor
+    ? input.toleranceFloor
+    : surfaceFloor
   for (let round = 0; round < budget.rounds; round++) {
     const pending = current.filter((segment) => !segment.checked)
     if (pending.length === 0) return { status: 'ok', uncovered: false, chain: current }
@@ -941,14 +952,14 @@ function refineHelix(
       // vertex. The conservative read keeps its allowance: its rows already
       // stand a cell above the surface.
       const tolerance = input.readExactRows === true
-        ? convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', input.tool.units)
+        ? toleranceFloor
         : helixTolerance(
           segment.left.tip,
           segment.right.tip,
           Math.abs(segment.right.along - segment.left.along),
           segment.right.angle - segment.left.angle,
           input.tool,
-          input.tool.units,
+          toleranceFloor,
         )
       if (mid.tip - (segment.left.tip + segment.right.tip) / 2 > tolerance) {
         next.push({ left: segment.left, right: mid, checked: false })

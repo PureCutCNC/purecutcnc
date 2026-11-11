@@ -573,7 +573,13 @@ check('the shank band helices while the head band falls back to rings', () => {
   // exact footprint and cut as its own ring (2247 such moves), and the rough
   // feeds through a ring's short air gaps instead of retracting; the upward-only
   // merge of the refinement's short steps then joins 308 of them.
-  assert.equal(headRings.length, 1939, `the head band is cut by rings, found ${headRings.length}`)
+  // 1939 -> 1645 for #1185 slice R2: this rough leaves stock, so the Turn's own
+  // grid refines to a quarter of it instead of 0.005 mm and has fewer angles;
+  // the head band's rings are cut at the angles of that shared grid. The Hex's
+  // own columns still refine to 0.005 mm, and every check below -- the helix
+  // split, the tip never under the Hex's surface plus the leave, no gouge --
+  // holds unchanged.
+  assert.equal(headRings.length, 1645, `the head band is cut by rings, found ${headRings.length}`)
   const pivot = barPivotZ(stock)
   const headFloor = HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6
   for (const ring of headRings) {
