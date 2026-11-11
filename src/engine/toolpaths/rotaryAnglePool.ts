@@ -350,6 +350,8 @@ function errorMessage(error: unknown): string {
 function isRotaryAngleMapEntry(entry: NonNullable<RotaryAngleSample['map']>): boolean {
   const map: unknown = entry.map
   if (!Number.isInteger(entry.key) || !Number.isFinite(entry.bytes) || entry.bytes < 0) return false
+  // #1185 L1: the exact angle is what lets a later row prove the map is its own.
+  if (typeof entry.angle !== 'number' || !Number.isFinite(entry.angle)) return false
   if (typeof map !== 'object' || map === null) return false
   const fields = map as Record<string, unknown>
   const data = fields.data

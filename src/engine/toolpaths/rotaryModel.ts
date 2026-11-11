@@ -3330,6 +3330,24 @@ function completeRotaryTargets(
     || (linkIntervals + 1) * along.length > MAX_LINK_WORK
     ? null
     : linkIntervals + 1
+  // #1185 L1: a link row's angle is usually one the ring grid has rasterised
+  // already, and the map depends only on the turn, so the row restores that map
+  // instead of building it a second time. It may only do so when the grid's
+  // maps are the maps this row would build: the same workspace (which means the
+  // same sampled mesh -- `linkWorkspace` is a fresh one when the grid left the
+  // neighbours out), the conservative raster, and the same wall marking. The
+  // tool, cell size and grid envelope are the same arguments on both calls. A
+  // grid that reads exact tips builds no map, so there is nothing to restore
+  // and the row is rasterised as before; the reader checks the turn, the grid
+  // and the arrays of every map it takes (`restoreRotaryAngleMap`).
+  const linkRowsReadGridMaps = linkWorkspace === plan.workspace
+    && plan.prep.conservativeCellBounds
+    && plan.prep.angleMaps !== 'off'
+    && plan.prep.mesh === samplingMesh
+    && plan.prep.tool === samplingTool
+    && plan.prep.requestedCellSize === params.requestedCellSize
+    && plan.prep.gridExtra === gridExtra
+    && plan.prep.wallTriangleStart === samplingMesh.retainedTriangleStart
   const linkRowAt = linkRowBudget(linkRowSamples, (key) => {
     const linkAlong = Array.from({ length: linkIntervals + 1 }, (_, i) => along[0] + linkSpan * i / linkIntervals)
     const sampled = sampleRotaryModelWithWorkspace(
@@ -3345,6 +3363,7 @@ function completeRotaryTargets(
         ...(samplingMesh.retainedTriangleStart !== undefined
           ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
           : {}),
+        ...(linkRowsReadGridMaps ? { angleMaps: 'read' as const } : {}),
       },
       warnings,
       linkWorkspace,
