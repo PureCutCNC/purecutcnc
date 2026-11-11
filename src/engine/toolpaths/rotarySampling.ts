@@ -1437,18 +1437,42 @@ export function runRotaryAngleJob(
     // The two buckets' set bits, each bucket in ascending triangle order: the
     // order a triangle is rasterised in cannot change the map (a cell takes the
     // maximum), but keeping it ascending keeps the reads sequential.
+    //
+    // #1185 F1: the far bucket is listed in two parts. A triangle the near
+    // bucket also holds is submitted a second time exactly as before; the rest
+    // reach this strip **only** on the far side of the bar, and are listed last
+    // so the raster can skip the ones the near side already covers. The list
+    // holds the same triangles the same number of times -- only its order
+    // changed, and a cell takes a maximum.
     const bucketWords = plan.bucketWords
+    let farOnlyStart = count
     if (bucketWords > 0) {
       const bucketBits = plan.bucketBits
-      for (const bucket of [bucketIndex(Math.PI / 2 - t, plan.bucketWidth), bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth)]) {
-        const base = bucket * bucketWords
-        for (let word = 0; word < bucketWords; word++) {
-          let bits = bucketBits[base + word]
-          while (bits !== 0) {
-            const lowest = bits & -bits
-            subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
-            bits ^= lowest
-          }
+      const nearBase = bucketIndex(Math.PI / 2 - t, plan.bucketWidth) * bucketWords
+      const farBase = bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth) * bucketWords
+      for (let word = 0; word < bucketWords; word++) {
+        let bits = bucketBits[nearBase + word]
+        while (bits !== 0) {
+          const lowest = bits & -bits
+          subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
+          bits ^= lowest
+        }
+      }
+      for (let word = 0; word < bucketWords; word++) {
+        let bits = bucketBits[farBase + word] & bucketBits[nearBase + word]
+        while (bits !== 0) {
+          const lowest = bits & -bits
+          subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
+          bits ^= lowest
+        }
+      }
+      farOnlyStart = count
+      for (let word = 0; word < bucketWords; word++) {
+        let bits = bucketBits[farBase + word] & ~bucketBits[nearBase + word]
+        while (bits !== 0) {
+          const lowest = bits & -bits
+          subset[count++] = ((word << 5) + 31 - Math.clz32(lowest)) * 3
+          bits ^= lowest
         }
       }
     }
@@ -1479,7 +1503,7 @@ export function runRotaryAngleJob(
         axis: stock.axis, centre, pivot, cos, sin,
         geometry: prep.workspace.raster ??= buildRotaryRasterGeometry(
           mesh.positions, mesh.index, stock.axis, centre, pivot),
-      }, bbox, cellSize, buildOptions)
+      }, bbox, cellSize, { ...buildOptions, farOnlyStart })
     if (cache !== undefined) storeAngleMap(cache, cacheKey, angle, built, window, stock.axis)
     // #1103 slice ca-i: a worker's workspace is not the parent's, so it hands the
     // map it built back on the sample and the pool caches it there, in job order,

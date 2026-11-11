@@ -50,6 +50,87 @@ export interface RotaryRasterGeometry {
   axisBBoxCells?: Int32Array
   axisCellSize?: number
   axisCellOrigin?: number
+  /**
+   * Each triangle's least distance from the turning axis in the cross-section,
+   * rounded **down** to a Float32 (#1185 F1); `0` when the axis passes through
+   * it. Angle-independent, built on first use by {@link rotaryAxisDistances}.
+   */
+  axisDistance?: Float32Array
+}
+
+/** The least distance from the origin to the segment `a`-`b`. */
+function originSegmentDistance(ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSq = dx * dx + dy * dy
+  let t = lengthSq > 0 ? -(ax * dx + ay * dy) / lengthSq : 0
+  if (t < 0) t = 0
+  else if (t > 1) t = 1
+  const px = ax + dx * t
+  const py = ay + dy * t
+  return Math.sqrt(px * px + py * py)
+}
+
+/** Bytes the per-triangle axis distances cost; what a pool worker is charged for them. */
+export function rotaryAxisDistanceBytes(meshTriangles: number): number {
+  return Math.max(0, Math.floor(meshTriangles)) * Float32Array.BYTES_PER_ELEMENT
+}
+
+/**
+ * Every triangle's least distance from the turning axis, built once per
+ * geometry (#1185 F1).
+ *
+ * A point of the cross-section at distance `rho` from the axis, turned so that
+ * it lies `across` from the centreline on the far side of the bar, stands at
+ * `-sqrt(rho^2 - across^2)` from the pivot. So a triangle that is nowhere nearer
+ * the axis than `d` cannot stand higher than `-sqrt(d^2 - h^2)` anywhere inside
+ * a strip of half-width `h` on the far side: this distance is what bounds a
+ * far-side triangle's height without projecting it.
+ *
+ * The value is rounded down (a smaller distance is a higher, safer bound), and a
+ * triangle the axis passes through, or one whose distance is not a number, gets
+ * `0`, which bounds nothing.
+ */
+export function rotaryAxisDistances(geometry: RotaryRasterGeometry): Float32Array {
+  const cached = geometry.axisDistance
+  if (cached !== undefined) return cached
+  const section = geometry.section
+  const triangleCount = Math.floor(section.length / 6)
+  const distances = new Float32Array(triangleCount)
+  for (let t = 0; t < triangleCount; t++) {
+    const s = t * 6
+    const a0 = section[s], u0 = section[s + 1]
+    const a1 = section[s + 2], u1 = section[s + 3]
+    const a2 = section[s + 4], u2 = section[s + 5]
+    // Edge functions of the origin: unless all three agree in sign it is inside
+    // (or on) the triangle, and the distance is zero.
+    const e0 = (a1 - a0) * -u0 - (u1 - u0) * -a0
+    const e1 = (a2 - a1) * -u1 - (u2 - u1) * -a1
+    const e2 = (a0 - a2) * -u2 - (u0 - u2) * -a2
+    if (!((e0 < 0 || e1 < 0 || e2 < 0) && (e0 > 0 || e1 > 0 || e2 > 0))) continue
+    const distance = Math.min(
+      originSegmentDistance(a0, u0, a1, u1),
+      originSegmentDistance(a1, u1, a2, u2),
+      originSegmentDistance(a2, u2, a0, u0),
+    )
+    if (!(distance > 0) || !Number.isFinite(distance)) continue
+    const rounded = Math.fround(distance * (1 - 1e-6))
+    distances[t] = rounded > distance ? 0 : rounded
+  }
+  geometry.axisDistance = distances
+  return distances
+}
+
+/** What the fused raster accepts beyond the general kernel's options. */
+export interface RotaryHeightMapBuildOptions extends HeightMapBuildOptions {
+  /**
+   * The position in `triangles` where the **far-only** triangles begin (#1185
+   * F1): triangles that reach this turn's strip only on the far side of the bar,
+   * below the axis. The caller lists them last. From there on a triangle is
+   * skipped when it provably cannot change the map; see `buildRotaryHeightMap`.
+   * Omitted, every triangle is rasterised, which is the old behaviour.
+   */
+  readonly farOnlyStart?: number
 }
 
 /** The frozen rotary frame, in the form the sampler already has it. */
@@ -98,6 +179,14 @@ export function buildRotaryRasterGeometry(
  * then rejects; a missing cell would change the map.
  */
 export const CENTRE_SLACK = 1e-7
+
+/**
+ * Relative slack added to a far-side triangle's height bound before it is
+ * compared with the samples already in the map (#1185 F1). The bound is exact in
+ * real arithmetic; the heights it is compared with are Float32. `1e-5` is over a
+ * hundred Float32 steps, so rounding cannot be what lets a triangle be skipped.
+ */
+const FAR_SIDE_SLACK = 1e-5
 
 /**
  * Per-triangle range of cell **centres** on the bar's axis at `cellSize`.
@@ -229,7 +318,7 @@ export function buildRotaryHeightMap(
   frame: RotaryRasterFrame,
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
   cellSize: number,
-  options?: HeightMapBuildOptions,
+  options?: RotaryHeightMapBuildOptions,
 ): HeightMap {
   const width = Math.max(1, Math.ceil((bbox.maxX - bbox.minX) / cellSize))
   const height = Math.max(1, Math.ceil((bbox.maxY - bbox.minY) / cellSize))
@@ -319,12 +408,84 @@ export function buildRotaryHeightMap(
   // cell centre cannot cover a centre anywhere (rotation leaves the axial
   // coordinate untouched), so it is a clip candidate and nothing else -- the
   // same cheap split the pre-#1050 raster got from its axial-centre range.
+  // #1185 F1: the far-only triangles, listed last, reach this strip only on the
+  // far side of the bar. Once the near side has been rasterised, such a triangle
+  // is skipped when it cannot change the map:
+  //
+  // - every point of it inside the window stands at or below `farTop`, the bound
+  //   its distance from the axis gives (`rotaryAxisDistances`), and
+  // - every window cell in the bar-axis cells it spans already holds a centre
+  //   sample at or above that bound (`farFloor`, the lowest sample of each
+  //   bar-axis line; an empty cell makes the line `-Infinity`, which skips
+  //   nothing).
+  //
+  // Then it cannot raise a centre sample, and it cannot raise a cell in the clip
+  // pass either: a clipped contribution must beat the cell's peak limit, which is
+  // never below the cell's own centre sample. Two things a skipped triangle would
+  // still have touched decide whether skipping is allowed at all for this map:
+  // the cell rise, which only matters below the cap the sampler applies
+  // (`min(cellRise, cellSize)`), so the near side must already have reached the
+  // cap; and the retained-wall arrays, which record coverage even where a height
+  // does not win, so a map that marks walls skips nothing.
+  const farOnlyStart = triangles !== undefined && options?.farOnlyStart !== undefined
+    && wallStart === undefined
+    ? Math.max(0, Math.min(triangleCount, options.farOnlyStart))
+    : triangleCount
+  let farFloor: Float32Array | undefined
+  let farDistance: Float32Array | undefined
+  let farHalfWidthSq = 0
+  let farDecided = false
   for (let n = 0; n < triangleCount; n++) {
     const t = triangles ? triangles[n] / 3 : n
     const coverageBit: 1 | 2 = wallStart !== undefined && t >= wallStart ? 2 : 1
     const fixedBBoxFirst = axisBBox[t * 2]
     const fixedBBoxLast = axisBBox[t * 2 + 1]
     if (fixedBBoxLast < axisMin || fixedBBoxFirst > axisMax) continue
+    if (n >= farOnlyStart) {
+      // Decided once, on the first far-only triangle that reaches the window:
+      // by then the near side is in the map and its cell rise is known.
+      if (!farDecided) {
+        farDecided = true
+        if (!trackCellRise || cellRise >= cell) {
+          // The lowest centre sample along each bar-axis line of the window.
+          farFloor = new Float32Array(gridAxisSize).fill(Infinity)
+          for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+              const value = data[row * width + col]
+              const line = xAxis ? col : row
+              if (value < farFloor[line]) farFloor[line] = value
+            }
+          }
+          farDistance = rotaryAxisDistances(geometry)
+          // The window's reach either side of the centreline, to its cells' edges.
+          const crossMin = xAxis ? minY : minX
+          const low = centre - (crossMin + windowCrossStart * cell)
+          const high = crossMin + (windowCrossEnd + 1) * cell - centre
+          const halfWidth = Math.max(low, high, 0)
+          farHalfWidthSq = halfWidth * halfWidth
+        }
+      }
+      if (farFloor !== undefined && farDistance !== undefined) {
+        const distance = farDistance[t]
+        const depthSq = distance * distance - farHalfWidthSq
+        if (depthSq > 0) {
+          // The slack is far above a Float32's rounding of a turned height and
+          // far below any difference between two samples that matters.
+          const farTop = pivot - Math.sqrt(depthSq)
+          const bound = farTop + FAR_SIDE_SLACK * (1 + Math.abs(farTop))
+          let hidden = true
+          const from = fixedBBoxFirst < axisMin ? axisMin : fixedBBoxFirst
+          const to = fixedBBoxLast > axisMax ? axisMax : fixedBBoxLast
+          for (let line = from; line <= to; line++) {
+            if (!(bound <= farFloor[line])) {
+              hidden = false
+              break
+            }
+          }
+          if (hidden) continue
+        }
+      }
+    }
     const fixedFirst = axisFirst[t * 2]
     const fixedLast = axisFirst[t * 2 + 1]
     if (fixedFirst > fixedLast) {
