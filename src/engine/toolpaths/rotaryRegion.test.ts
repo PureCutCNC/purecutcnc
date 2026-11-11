@@ -1123,7 +1123,13 @@ const NO_REGION_HASHES: Record<string, string> = {
   // helix. Every along row is unchanged.
   // #1185 slice R2 re-recorded this row for the same reason as the round
   // rough's above: 2275 moves became 1925.
-  'square/rotary_rough/around': 'moves=44025141ba4dc80f warnings= gcode=4ca7891c271bc569',
+  // #1185 slice R3 re-recorded it again, and this row alone: the refinement now
+  // inserts a midpoint with its sampled height only on the rings that failed
+  // there, and every other ring keeps the chord it passed on. Eight of this
+  // rough's 1925 moves sit on such a chord and are 0.008 to 0.023 mm lower
+  // than the sampled midpoint they used to take -- inside the 0.1 mm this
+  // rough's chords may dip. The other seven rows are byte-identical.
+  'square/rotary_rough/around': 'moves=755a3af8bd650821 warnings= gcode=97a0f415cd9bb6eb',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
   'square/rotary_finish/around': 'moves=567f8fcd6012bb1a warnings=rotaryFinishWithoutRough gcode=95a606809357ecfd',
   // #1173 re-recorded the three remaining around rows for the **approved

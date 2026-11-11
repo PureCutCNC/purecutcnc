@@ -65,8 +65,12 @@ import type { RotaryAngleJob, RotaryAngleSample, RotarySamplingPrep } from './ro
  * Version 2 (#1103 slice ca-i) adds `emitAngleMaps` to the setup and a `map` to
  * a result sample: a worker told to emit hands each map it builds back, and the
  * pool caches it in the parent workspace.
+ *
+ * Version 4 (#1185 slice R3) adds `columns` to a job: the ring positions the
+ * row is wanted at. A worker that did not know the field would sample the whole
+ * row with the strip's own lift, which is not the row the caller asked for.
  */
-export const ROTARY_ANGLE_PROTOCOL_VERSION = 3
+export const ROTARY_ANGLE_PROTOCOL_VERSION = 4
 
 /** Which sampling mode an installed worker is configured for. */
 export type RotaryAngleMode = 'around' | 'along'
@@ -490,7 +494,10 @@ export function isRotaryAngleWorkerRequest(value: unknown): value is RotaryAngle
         && Array.isArray(value.jobs)
         && value.jobs.every((job: unknown) => isObject(job)
           && typeof job.index === 'number'
-          && typeof job.angle === 'number')
+          && typeof job.angle === 'number'
+          // #1185 R3: the ring positions a row is wanted at, when not all of them.
+          && (job.columns === undefined || (Array.isArray(job.columns)
+            && job.columns.every((column: unknown) => Number.isInteger(column) && (column as number) >= 0))))
     case 'dispose':
       return true
     default:

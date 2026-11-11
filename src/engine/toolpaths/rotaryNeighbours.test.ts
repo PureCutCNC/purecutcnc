@@ -579,7 +579,10 @@ check('the shank band helices while the head band falls back to rings', () => {
   // own columns still refine to 0.005 mm, and every check below -- the helix
   // split, the tip never under the Hex's surface plus the leave, no gouge --
   // holds unchanged.
-  assert.equal(headRings.length, 1645, `the head band is cut by rings, found ${headRings.length}`)
+  // 1645 -> 1309 for #1185 slice R3: a midpoint the refinement inserts for one
+  // ring leaves every other ring on its chord, and the emitter merges those
+  // collinear points away, so the head band's rings carry fewer moves.
+  assert.equal(headRings.length, 1309, `the head band is cut by rings, found ${headRings.length}`)
   const pivot = barPivotZ(stock)
   const headFloor = HEX_ACROSS_FLATS / 2 + STOCK_TO_LEAVE - 1e-6
   for (const ring of headRings) {
@@ -687,7 +690,10 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // surface there, so the wall-foot ring the neighbour end already had also
   // runs at this one (four moves: the band's end column read exactly, cut as its
   // own ring, instead of the conservative cell row).
-  assert.equal(withNeighbour.length, 1344, 'the overlapping neighbour moves the output: the measured bolt run')
+  // 1344 -> 1231 for #1185 slice R3: rings keep their own chords where another
+  // ring needed a midpoint, so fewer collinear cuts are emitted. The control
+  // below -- the Hex moved clear is byte-identical to no Hex at all -- holds.
+  assert.equal(withNeighbour.length, 1231, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

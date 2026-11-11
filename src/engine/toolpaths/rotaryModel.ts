@@ -2821,7 +2821,7 @@ function mergeNeighbourColumns(
   let columnRows: readonly Float32Array[] = sampled.tipRadius
   if (angles.length > 1) {
     const refined = refineAroundSampling({
-      prep: columns.prep, stock, tool, warnings, angles, tips: sampled.tipRadius, ...hooks,
+      prep: columns.prep, stock, tool, warnings, angles, tips: sampled.tipRadius, lifts: sampled.lifts, ...hooks,
     })
     if (refined === null) return null
     if (refined.stopped) return { angles, tips: tipRows, stopped: true }
@@ -3671,6 +3671,7 @@ function rotaryTargets(
       warnings,
       angles,
       tips: sampling.tipRadius,
+      lifts: sampling.lifts,
       toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     })
@@ -3726,6 +3727,7 @@ async function rotaryTargetsAsync(
       warnings,
       angles,
       tips: sampling.tipRadius,
+      lifts: sampling.lifts,
       toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     }, batches)

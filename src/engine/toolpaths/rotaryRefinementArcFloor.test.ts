@@ -49,6 +49,8 @@
  *  - dropping the per-ring test inside a segment that is not settled as a
  *    whole: the small ring's step segment is halved once more than it asks for;
  *  - sampling the midpoint of a settled segment anyway: the row count;
+ *  - (#1185 R3) counting a settled ring's arc when deciding whether a segment
+ *    is settled: block 1's small-ring row count;
  *  - (#1185 R2) the arc floor staying at the surface bound when the caller's
  *    tolerance floor is larger: block 3.
  */
@@ -342,7 +344,8 @@ for (const tool of [toolOf('flat_endmill', 1), toolOf('ball_endmill', 1)]) {
   // its flank, so its tip does not step there.
   if (tool.type === 'flat_endmill') {
     const step = stepAngle(prep, SMALL, label)
-    const refined = refine(prep, tool, gridBefore(step, SMALL_STEP))
+    const smallGrid = gridBefore(step, SMALL_STEP)
+    const refined = refine(prep, tool, smallGrid)
     const k = segmentAt(refined, step)
     const small = arcOf(refined, k, SMALL)
     const large = arcOf(refined, k, LARGE)
@@ -352,6 +355,12 @@ for (const tool of [toolOf('flat_endmill', 1), toolOf('ball_endmill', 1)]) {
       `${label}: the small ring's step segment sweeps ${small.toFixed(6)} mm on that ring; a ring within the floor asks for no further halving`)
     assert.ok(large > TOLERANCE,
       `${label}: the same segment sweeps ${large.toFixed(6)} mm on the large ring, above the floor -- so this is the per-ring case`)
+    // #1185 R3: the halves of that segment are being refined for the small ring
+    // alone, and it is within the floor on both, so neither midpoint is sampled
+    // -- whatever arc the settled large ring sweeps there.
+    const insertedSmall = refined.angles.length - smallGrid.length
+    assert.ok(refined.sampledRows < smallGrid.length - 1 + 2 * insertedSmall,
+      `${label}: ${refined.sampledRows} rows sampled for ${insertedSmall} inserted angles; a segment settled on every ring still being refined costs no row`)
     const worst = sweep(refined, k, SMALL, 'small ring step')
     console.log(`  ${label}, step on the small ring: ${refined.angles.length} angles, step segment arc ${small.toFixed(5)} mm there`
       + ` and ${large.toFixed(5)} mm on the large ring, body at most ${worst.toFixed(5)} mm into the model`)
