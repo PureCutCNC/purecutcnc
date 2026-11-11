@@ -1534,6 +1534,22 @@ export function runRotaryAngleJob(
 }
 
 /**
+ * The most bins one exact row files its candidates into along the bar (#1185
+ * X1). The bins are a quarter of the footprint radius wide unless the model is
+ * long enough to need more than this many; then they widen, which only makes a
+ * position read a few more facets.
+ */
+const EXACT_ROW_MAX_BINS = 4096
+
+/**
+ * The relative slack on a facet's top when it is compared with the best tip so
+ * far (#1185 X1): a facet is skipped only when its highest point is below the
+ * tip by more than this, so rounding in a contact that would have tied can
+ * never be what decides it.
+ */
+const EXACT_ROW_TOP_MARGIN = 1e-9
+
+/**
  * The **exact** maximum of the turned surface over one cutter footprint (#1155
  * rn-d correction 3).
  *
@@ -1624,19 +1640,27 @@ function exactFootprintTips(
   // the statement it was.
   const acrossMin = new Float64Array(count)
   const acrossMax = new Float64Array(count)
+  // #1185 X1: each facet's highest turned point. No point of a facet is above
+  // it, and a cutter resting on a facet has its tip at or below the point it
+  // touches, so a facet whose top is below the best tip found so far cannot
+  // raise it.
+  const top = new Float64Array(count)
   for (let s = 0; s < count; s++) {
     const offset = subset[s]
     let lo = Number.POSITIVE_INFINITY
     let hi = Number.NEGATIVE_INFINITY
     let low = Number.POSITIVE_INFINITY
     let high = Number.NEGATIVE_INFINITY
+    let peak = Number.NEGATIVE_INFINITY
     for (let j = 0; j < 3; j++) {
       const v = index[offset + j]
       const a = positions[v * 3 + alongAxis]
       const y = across[v] * cos - up[v] * sin
       turned[s * 9 + j * 3] = a
       turned[s * 9 + j * 3 + 1] = y
-      turned[s * 9 + j * 3 + 2] = pivot + across[v] * sin + up[v] * cos
+      const z = pivot + across[v] * sin + up[v] * cos
+      turned[s * 9 + j * 3 + 2] = z
+      if (z > peak) peak = z
       if (a < lo) lo = a
       if (a > hi) hi = a
       if (y < low) low = y
@@ -1646,25 +1670,93 @@ function exactFootprintTips(
     spanMax[s] = hi
     acrossMin[s] = low
     acrossMax[s] = high
+    top[s] = peak
+  }
+  // #1185 X1: sort the row's candidates along the bar once, so each ring position
+  // reads the facets its footprint can reach instead of testing every candidate.
+  //
+  // A facet whose across span misses the footprint is skipped at every position
+  // (that test does not depend on the position), so it is dropped here. The rest
+  // are filed by where they **start** along the bar, in bins a quarter of the
+  // footprint radius wide. A facet no longer than a bin that reaches a position's
+  // footprint starts no more than one bin before the footprint does, so the bins
+  // from two before the footprint's low edge to one after its high edge hold every
+  // such facet -- the extra bin on each side absorbs the rounding in the bin
+  // arithmetic. A facet longer than a bin (a long strip, a retained wall) is kept
+  // on a list every position reads. The bins only choose what is visited: each
+  // visited facet still passes the same span tests as before, and a row's value is
+  // a maximum, which the visiting order cannot change.
+  const slots = new Int32Array(count)
+  let longCount = 0
+  let shortCount = 0
+  let startLow = Number.POSITIVE_INFINITY
+  let startHigh = Number.NEGATIVE_INFINITY
+  for (let s = 0; s < count; s++) {
+    if (acrossMin[s] > radius || acrossMax[s] < -radius) continue
+    shortCount++
+    if (spanMin[s] < startLow) startLow = spanMin[s]
+    if (spanMin[s] > startHigh) startHigh = spanMin[s]
+  }
+  const startRange = shortCount > 0 && Number.isFinite(startLow) && Number.isFinite(startHigh) ? startHigh - startLow : 0
+  const binWidth = Math.max(radius / 4, startRange / EXACT_ROW_MAX_BINS)
+  const binCount = binWidth > 0 && Number.isFinite(binWidth) ? Math.floor(startRange / binWidth) + 1 : 1
+  const binOf = new Int32Array(count)
+  const binStart = new Int32Array(binCount + 1)
+  for (let s = 0; s < count; s++) {
+    if (acrossMin[s] > radius || acrossMax[s] < -radius) {
+      binOf[s] = -2
+      continue
+    }
+    // A facet longer than a bin, or one whose span is not a number at all, is
+    // read at every position, exactly as it was before.
+    if (!(spanMax[s] - spanMin[s] <= binWidth)) {
+      binOf[s] = -1
+      longCount++
+      continue
+    }
+    const bin = Math.min(binCount - 1, Math.max(0, Math.floor((spanMin[s] - startLow) / binWidth)))
+    binOf[s] = bin
+    binStart[bin + 1]++
+  }
+  for (let b = 0; b < binCount; b++) binStart[b + 1] += binStart[b]
+  // `slots` holds the long facets first, then each bin's facets in turn.
+  const binFill = new Int32Array(binCount)
+  let longFill = 0
+  for (let s = 0; s < count; s++) {
+    const bin = binOf[s]
+    if (bin === -2) continue
+    if (bin === -1) slots[longFill++] = s
+    else slots[longCount + binStart[bin] + binFill[bin]++] = s
+  }
+  // Barycentric sign test against the projected triangle, in the disc's local
+  // frame. Defined once per row (it reads the triangle scratch above), not per
+  // ring position or candidate (#1185 X1: a function made per position is paid
+  // for once per position).
+  const contains = (px: number, py: number): boolean => {
+    const c0 = (vx[1] - px) * (vy[2] - py) - (vx[2] - px) * (vy[1] - py)
+    const c1 = (vx[2] - px) * (vy[0] - py) - (vx[0] - px) * (vy[2] - py)
+    const c2 = (vx[0] - px) * (vy[1] - py) - (vx[1] - px) * (vy[0] - py)
+    return (c0 >= -1e-12 && c1 >= -1e-12 && c2 >= -1e-12)
+      || (c0 <= 1e-12 && c1 <= 1e-12 && c2 <= 1e-12)
   }
   for (let i = 0; i < along.length; i++) {
     const origin = along[i]
-    // Barycentric sign test against the projected triangle, in the disc's local
-    // frame. Defined once per ring (it reads the triangle scratch above), not per
-    // candidate.
-    const contains = (px: number, py: number): boolean => {
-      const c0 = (vx[1] - px) * (vy[2] - py) - (vx[2] - px) * (vy[1] - py)
-      const c1 = (vx[2] - px) * (vy[0] - py) - (vx[0] - px) * (vy[2] - py)
-      const c2 = (vx[0] - px) * (vy[1] - py) - (vx[1] - px) * (vy[0] - py)
-      return (c0 >= -1e-12 && c1 >= -1e-12 && c2 >= -1e-12)
-        || (c0 <= 1e-12 && c1 <= 1e-12 && c2 <= 1e-12)
-    }
     let best = Number.NEGATIVE_INFINITY
-    for (let s = 0; s < count; s++) {
+    // The long facets, then the bins this position's footprint can reach.
+    const firstBin = Math.max(0, Math.floor((origin - radius - startLow) / binWidth) - 2)
+    const lastBin = Math.min(binCount - 1, Math.floor((origin + radius - startLow) / binWidth) + 1)
+    const binnedFrom = longCount + (firstBin <= lastBin ? binStart[firstBin] : 0)
+    const binnedTo = longCount + (firstBin <= lastBin ? binStart[lastBin + 1] : 0)
+    for (let n = 0; n < binnedTo; n++) {
+      if (n === longCount) n = binnedFrom
+      if (n >= binnedTo) break
+      const s = slots[n]
       if (spanMin[s] - origin > radius || spanMax[s] - origin < -radius) continue
-      // A triangle whose turned `across` misses the disc cannot contribute, and
-      // neither bound depends on the ring.
-      if (acrossMin[s] > radius || acrossMax[s] < -radius) continue
+      // A facet wholly below the best tip so far cannot raise it. The margin is
+      // far above the rounding of the contact arithmetic (about 1e-13 at these
+      // coordinates) and far below anything a tip is compared by, so a skipped
+      // facet's own contact would have failed the `> best` test below.
+      if (top[s] + EXACT_ROW_TOP_MARGIN * (1 + Math.abs(top[s])) < best) continue
       // Inlined projection (the same three statements the scratch closure wrote).
       const base = s * 9
       vx[0] = turned[base] - origin
@@ -1732,7 +1824,8 @@ function exactFootprintTips(
           discriminant = 0
         }
         const root = Math.sqrt(discriminant)
-        for (const crossing of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
+        for (let side = 0; side < 2; side++) {
+          const crossing = side === 0 ? (-b - root) / (2 * a) : (-b + root) / (2 * a)
           if (!(crossing >= 0) || crossing > 1) continue
           const value = vz[j] + (vz[k] - vz[j]) * crossing
           if (value > best) best = value
@@ -1764,6 +1857,27 @@ function exactFootprintTips(
   }
 }
 
+
+/**
+ * The centre height for a sphere of squared radius `radiusSq` to touch the edge
+ * from `(x0, y0, z0)` along `(dx, dy, dz)` at parameter `t` (#1177), or
+ * `-Infinity` when that point lies outside the sphere's footprint.
+ *
+ * A module function rather than one made inside {@link ballFootprintTip} (#1185
+ * X1): that function runs once per facet under the cutter, and a function made
+ * on every call was a measurable share of the exact read.
+ */
+function ballEdgeContact(
+  x0: number, y0: number, dx: number, dy: number, z0: number, dz: number, t: number, radiusSq: number,
+): number {
+  const x = x0 + dx * t
+  const y = y0 + dy * t
+  const offset = x * x + y * y
+  // A rim point sits exactly on the circle; its `sqrt` is zero, so the
+  // tolerance only decides whether roundoff rejects it.
+  if (offset > radiusSq * (1 + 1e-9)) return Number.NEGATIVE_INFINITY
+  return z0 + dz * t + Math.sqrt(Math.max(0, radiusSq - offset))
+}
 /**
  * The **exact** ball-nose tip over one projected triangle (#1177).
  *
@@ -1812,16 +1926,6 @@ function ballFootprintTip(
     const value = vz[j] + Math.sqrt(Math.max(0, radiusSq - offset))
     if (value > best) best = value
   }
-  /** The centre height for the sphere to touch the edge at parameter `t`. */
-  const at = (x0: number, y0: number, dx: number, dy: number, z0: number, dz: number, t: number): number => {
-    const x = x0 + dx * t
-    const y = y0 + dy * t
-    const offset = x * x + y * y
-    // A rim point sits exactly on the circle; its `sqrt` is zero, so the
-    // tolerance only decides whether roundoff rejects it.
-    if (offset > radiusSq * (1 + 1e-9)) return Number.NEGATIVE_INFINITY
-    return z0 + dz * t + Math.sqrt(Math.max(0, radiusSq - offset))
-  }
   for (let j = 0; j < 3; j++) {
     const k = j === 2 ? 0 : j + 1
     const x0 = vx[j]
@@ -1832,9 +1936,9 @@ function ballFootprintTip(
     const dz = vz[k] - z0
     const spanSq = dx * dx + dy * dy
     const q0 = x0 * x0 + y0 * y0
-    let value = at(x0, y0, dx, dy, z0, dz, 0)
+    let value = ballEdgeContact(x0, y0, dx, dy, z0, dz, 0, radiusSq)
     if (value > best) best = value
-    value = at(x0, y0, dx, dy, z0, dz, 1)
+    value = ballEdgeContact(x0, y0, dx, dy, z0, dz, 1, radiusSq)
     if (value > best) best = value
     if (!(spanSq > 0)) continue
     const a = x0 * dx + y0 * dy
@@ -1853,18 +1957,20 @@ function ballFootprintTip(
     const rim = Math.sqrt(gap)
     // The points where the edge crosses the footprint's circle, where the
     // `sqrt` vanishes and the eased function can peak.
-    for (const t of [(-a - rim) / spanSq, (-a + rim) / spanSq]) {
+    for (let side = 0; side < 2; side++) {
+      const t = side === 0 ? (-a - rim) / spanSq : (-a + rim) / spanSq
       if (!(t >= 0) || t > 1) continue
-      value = at(x0, y0, dx, dy, z0, dz, t)
+      value = ballEdgeContact(x0, y0, dx, dy, z0, dz, t, radiusSq)
       if (value > best) best = value
     }
     // The critical points of `z(t) + sqrt(r^2 - |xy(t)|^2)`.
     const quadratic = -spanSq * (dz * dz + spanSq)
     const linear = -2 * a * (dz * dz + spanSq)
     const root = 2 * Math.abs(dz) * Math.sqrt((dz * dz + spanSq) * gap)
-    for (const t of [(-linear - root) / (2 * quadratic), (-linear + root) / (2 * quadratic)]) {
+    for (let side = 0; side < 2; side++) {
+      const t = side === 0 ? (-linear - root) / (2 * quadratic) : (-linear + root) / (2 * quadratic)
       if (!(t >= 0) || t > 1) continue
-      value = at(x0, y0, dx, dy, z0, dz, t)
+      value = ballEdgeContact(x0, y0, dx, dy, z0, dz, t, radiusSq)
       if (value > best) best = value
     }
   }
