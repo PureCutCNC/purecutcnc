@@ -25,9 +25,12 @@ import type {
   FeatureFolder,
   Operation,
   OperationTarget,
+  Project,
   SketchFeature,
   Tool,
 } from '../../types/project'
+import { activeSetup } from '../helpers/activeFace'
+import { setupForOperation } from '../../engine/setupOrientation'
 import { isMachinable } from '../helpers/featureRoles'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
@@ -45,6 +48,7 @@ export type OperationsSlice = Pick<
   | 'createRestOperation'
   | 'applyCamPlan'
   | 'setAllOperationToolpathVisibility'
+  | 'setSetupOperationToolpathVisibility'
   | 'deleteOperation'
   | 'duplicateOperation'
   | 'reorderOperations'
@@ -61,6 +65,28 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
     index += 1
   }
   return `${baseName} ${index}`
+}
+
+/**
+ * The operations one setup's CAM-panel card lists (issue #1186), so its eye
+ * hides exactly the rows beneath it. Membership is the panel's, the export's
+ * and the simulation's (`app/simulationSetup` `setupOperations`): an operation
+ * that names no setup reads as the project's first setup. Written here rather
+ * than imported because the store does not depend on the app layer.
+ */
+function setupOperationIds(project: Project, setupId: string): Set<string> {
+  const saved = project.setups ?? []
+  const active = activeSetup(project)
+  const listed = saved.some((setup) => setup.id === active.id) ? saved : [...saved, active]
+  const firstSetup = listed[0]
+  const ids = new Set<string>()
+  for (const operation of project.operations) {
+    // Throws for an operation naming a setup the project does not define, as
+    // the panel's own grouping does.
+    const owner = setupForOperation(project, operation) ?? firstSetup
+    if (owner?.id === setupId) ids.add(operation.id)
+  }
+  return ids
 }
 
 /** Whether two targets name the same set, so a repeated patch is not a change. */
@@ -450,6 +476,34 @@ export function createOperationsSlice(
             ...operation,
             showToolpath: visible,
           })),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    setSetupOperationToolpathVisibility: (setupId, visible) =>
+      set((s) => {
+        // Only this setup's rows change, and all of them in one step, so one
+        // undo puts the card back the way it was (issue #1186).
+        const ids = setupOperationIds(s.project, setupId)
+        if (ids.size === 0) {
+          return {}
+        }
+        const nextProject = {
+          ...s.project,
+          operations: s.project.operations.map((operation) => (
+            ids.has(operation.id) ? { ...operation, showToolpath: visible } : operation
+          )),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {

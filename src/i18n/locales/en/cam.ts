@@ -681,6 +681,8 @@ export const camEn = {
   'cam.setup.propertiesFor': 'Setup properties: {name}',
   'cam.setup.properties': 'Setup properties',
   'cam.setup.export': 'Export setup: {name}',
+  'cam.setup.showToolpaths': "Show this setup's toolpaths",
+  'cam.setup.hideToolpaths': "Hide this setup's toolpaths",
   'cam.setup.aroundKeptNotCut': 'Around operations are kept but not cut in a {type} project',
   'cam.setup.noRegistration': 'No registration references. Check how the stock will be located after the flip.',
   'cam.setup.empty': 'No operations',

@@ -530,6 +530,12 @@ export interface ProjectStore {
   createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: ToolpathWarning[] }
   applyCamPlan: (plan: CamPlanDraft) => ApplyCamPlanResult
   setAllOperationToolpathVisibility: (visible: boolean) => void
+  /**
+   * Show or hide the toolpaths of one setup's operations (issue #1186), as one
+   * undo step. Membership is the CAM panel's: the operations the setup owns,
+   * with one that names no setup reading as the project's first setup.
+   */
+  setSetupOperationToolpathVisibility: (setupId: string, visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void

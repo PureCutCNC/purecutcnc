@@ -484,6 +484,51 @@ test('provisional Bottom Add reaches a through feature as a normal row', async (
   expect(bottom.id).not.toBe('provisional-bottom')
 })
 
+test("a setup card's eye hides only that setup's toolpaths", async ({ app, ui }) => {
+  const { page } = app
+  await seed(page,false)
+  // Two cards with toolpaths of their own: Bottom gets a setup and an
+  // operation by adding one there (issue #1186).
+  await ui.face.switchTo(page, 'Bottom')
+  await rowByName(page,'Through hole').click()
+  await ui.setupCam.add(page).click()
+  await ui.setupCam.addMenu(page).getByRole('button',{ name:'Rough',exact:true }).first().click()
+  await expect(ui.setupCam.section(page,'bottom')).toContainText('Pocket')
+  await ui.face.switchTo(page, 'Top')
+
+  // What each card's eye acts on, read from the store the canvas draws from.
+  const drawn = async (): Promise<{ top: boolean[]; bottom: boolean[] }> => {
+    const project = await getProject(page) as unknown as Project
+    const side = (angleDeg: number) => {
+      const setup = project.setups.find((entry) => entry.orientation.angleDeg === angleDeg)!
+      return project.operations.filter((operation) => operation.setupId === setup.id).map((operation) => operation.showToolpath)
+    }
+    return { top: side(0), bottom: side(180) }
+  }
+  expect(await drawn()).toEqual({ top:[true],bottom:[true] })
+
+  const topEye = () => ui.setupCam.section(page,'top')
+  // Both cards say the same thing while both are drawn; the click is scoped to
+  // the card it sits in.
+  await expect(topEye().getByRole('button',{ name:"Hide this setup's toolpaths",exact:true })).toHaveCount(1)
+  await topEye().getByRole('button',{ name:"Hide this setup's toolpaths",exact:true }).click()
+
+  expect(await drawn()).toEqual({ top:[false],bottom:[true] })
+  const show = topEye().getByRole('button',{ name:"Show this setup's toolpaths",exact:true })
+  await expect(show).toHaveAttribute('aria-pressed','false')
+  await expect(show.locator('use')).toHaveAttribute('href',/#eye-off$/)
+  await expect(topEye().locator('.cam-setup-group__header .tree-action-btn--visibility')).toHaveClass(/tree-action-btn--muted/)
+  // The change reaches the row itself: its own eye now offers to show it.
+  await expect(topEye().getByRole('button',{ name:'Show toolpath for Top pass',exact:true })).toHaveCount(1)
+  // The other card is untouched: it still offers to hide, because its own
+  // toolpath is still drawn.
+  await expect(ui.setupCam.section(page,'bottom').getByRole('button',{ name:"Hide this setup's toolpaths",exact:true })).toHaveCount(1)
+
+  await show.click()
+  expect(await drawn()).toEqual({ top:[true],bottom:[true] })
+  await expect(topEye().getByRole('button',{ name:'Hide toolpath for Top pass',exact:true })).toHaveCount(1)
+})
+
 test('Move lists removed targets and setup deletion lists its operations', async ({ app, ui }) => {
   const { page } = app
   await seed(page,false)
