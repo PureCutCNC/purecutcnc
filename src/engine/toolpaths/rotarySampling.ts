@@ -2384,14 +2384,76 @@ interface AroundRefinementArgs {
   readonly tips: readonly Float32Array[]
 }
 
+/**
+ * The arc length below which a segment is not bisected (#1185 R1), in the
+ * operation's units: the stated 0.005 mm surface bound.
+ *
+ * Bisection exists to keep the straight move between two samples from falling
+ * below the model by more than the tolerance. Where the tip is a **step** in
+ * angle -- the cutter drops off a wall -- no halving can do that: the midpoint
+ * lands on one side of the step or the other, and the test fails by half the
+ * step at every depth. The refinement used to spend all eight rounds there, and
+ * the benchmark bust still had failing segments at a 0.005-degree step.
+ *
+ * It does not need to. Take the lower of a segment's two samples: the cutter is
+ * safe there, and it is still safe raised to the chord, which is never below
+ * that sample. Anywhere on the segment the bar has turned by at most the
+ * segment's angle from that pose, so no point of the model near the cutter has
+ * moved by more than that angle times its distance from the axis -- and the
+ * cutter cannot be further into the model than the model has moved. A segment
+ * whose arc is within the tolerance is therefore within the tolerance whatever
+ * its midpoint reads, and bisecting it buys nothing.
+ */
+function aroundArcFloor(tool: NormalizedTool): number {
+  return convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', tool.units)
+}
+
+/**
+ * The arc a segment sweeps at one ring position (#1185 R1): its angle times the
+ * largest distance from the axis at which the cutter can touch the model there
+ * -- the higher of the two tips plus the cutter radius, since a ball or a flat's
+ * edge touches the model up to one radius above its tip.
+ */
+function aroundSegmentArc(tipA: number, tipB: number, radians: number, tool: NormalizedTool): number {
+  return (Math.max(tipA, tipB, 0) + tool.radius) * radians
+}
+
+/**
+ * Whether segment `k` is too short to be worth bisecting at **every** ring
+ * position that samples the model at both ends (#1185 R1). Such a segment's
+ * midpoint is never sampled and never tested.
+ */
+function segmentSettledByArc(state: AroundRefinementState, k: number, args: AroundRefinementArgs): boolean {
+  const { angles, tips } = state
+  const radians = Math.abs(angles[k + 1] - angles[k]) * Math.PI / 180
+  const floor = aroundArcFloor(args.tool)
+  const rowA = tips[k]
+  const rowB = tips[k + 1]
+  for (let i = 0; i < rowA.length; i++) {
+    const a = rowA[i]
+    const b = rowB[i]
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+    if (!(aroundSegmentArc(a, b, radians, args.tool) <= floor)) return false
+  }
+  return true
+}
+
 /** The midpoint of every current segment, in segment order. */
 function refinementMidpoints(angles: readonly number[]): number[] {
   return angles.slice(0, -1).map((angle, k) => (angle + angles[k + 1]) / 2)
 }
 
-/** The midpoints with no row yet: exactly the jobs one round dispatches. */
-function unsampledMidpoints(state: AroundRefinementState, mids: readonly number[]): number[] {
-  return mids.filter((angle) => !state.midpointRows.has(angle))
+/**
+ * The midpoints with no row yet: exactly the jobs one round dispatches. A
+ * segment settled by its arc (#1185 R1) is not tested, so its midpoint is not
+ * sampled either.
+ */
+function unsampledMidpoints(
+  state: AroundRefinementState,
+  mids: readonly number[],
+  args: AroundRefinementArgs,
+): number[] {
+  return mids.filter((angle, k) => !state.midpointRows.has(angle) && !segmentSettledByArc(state, k, args))
 }
 
 /** Cache a round's freshly sampled rows, in the order they were asked for. */
@@ -2421,7 +2483,10 @@ function failingSegments(
   const { angles, tips, midpointRows } = state
   const midRow = (k: number): Float32Array => midpointRows.get(mids[k])!
   const fails = new Set<number>()
+  const arcFloor = aroundArcFloor(tool)
   for (let k = 0; k + 1 < angles.length && fails.size < mids.length; k++) {
+    // #1185 R1: a segment too short to bisect has no midpoint row and cannot fail.
+    if (segmentSettledByArc(state, k, args)) continue
     const delta = angles[k + 1] - angles[k]
     const rowA = tips[k]
     const rowB = tips[k + 1]
@@ -2433,6 +2498,9 @@ function failingSegments(
       const b = rowB[i]
       const mid = rowMid[i]
       if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+      // #1185 R1: this ring position's arc is within the tolerance, so its
+      // chord is too, whatever its midpoint reads.
+      if (aroundSegmentArc(a, b, Math.abs(delta) * Math.PI / 180, tool) <= arcFloor) continue
       // #1177: an exact-tip grid holds a ball to the plain floor; see
       // `aroundSegmentationTolerance` and the helix's own refinement.
       const tolerance = args.prep.exactTipRows === true
@@ -2549,7 +2617,7 @@ export function refineAroundSampling(
   for (let round = 0; round < MAX_AROUND_REFINEMENT_ROUNDS; round++) {
     const mids = refinementMidpoints(state.angles)
     if (mids.length === 0) break
-    const missing = unsampledMidpoints(state, mids)
+    const missing = unsampledMidpoints(state, mids, args)
     if (missing.length > 0) {
       const sampled = sampleAnglesWithPrep(args.prep, missing, args.warnings,
         args.shouldStop ? { shouldStop: args.shouldStop } : {})
@@ -2583,7 +2651,7 @@ export async function refineAroundSamplingAsync(
   for (let round = 0; round < MAX_AROUND_REFINEMENT_ROUNDS; round++) {
     const mids = refinementMidpoints(state.angles)
     if (mids.length === 0) break
-    const missing = unsampledMidpoints(state, mids)
+    const missing = unsampledMidpoints(state, mids, args)
     if (missing.length > 0) {
       const sampled = await sampleAnglesWithPrepAsync(args.prep, missing, args.warnings,
         args.shouldStop ? { shouldStop: args.shouldStop } : {}, batches)
