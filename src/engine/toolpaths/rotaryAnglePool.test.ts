@@ -112,6 +112,8 @@ import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
 import {
   buildRotaryRasterGeometry,
   rotaryAxisDistanceBytes,
+  rotaryClipBlockBytes,
+  rotaryClipBlocks,
   rotaryAxisDistances,
   rotaryCandidateScratchBytes,
 } from './rotaryRaster'
@@ -429,7 +431,7 @@ function prepFor(
   assert.equal(
     estimateRotaryAngleWorkerBytes(setup),
     charge.setup + charge.subset + charge.turned + charge.candidates + charge.axialCells
-      + charge.axisDistance + charge.maps,
+      + charge.axisDistance + charge.clipBlocks + charge.maps,
     'the per-worker charge is the sum of the parts the budget is tested against',
   )
   // #1185 F1: the far-side skip keeps one Float32 per triangle on the raster
@@ -440,6 +442,18 @@ function prepFor(
     prep.mesh.positions, prep.mesh.index, prep.stock.axis, prep.centre, prep.pivot))
   assert.equal(distances.byteLength, charge.axisDistance,
     'the charge covers exactly the bytes the distances allocate')
+  // #1185 C1: the clip pass keeps a circle, a cell range and a verdict per block
+  // of triangles on the raster geometry. The charge is those arrays.
+  assert.equal(charge.clipBlocks, rotaryClipBlockBytes(triangles),
+    'the clip-block charge is the raster\'s own per-block bound')
+  const blocks = rotaryClipBlocks(buildRotaryRasterGeometry(
+    prep.mesh.positions, prep.mesh.index, prep.stock.axis, prep.centre, prep.pivot))
+  // Per block: the circle, two Int32 of cell range and one Uint32 verdict.
+  assert.equal(
+    blocks.centre.byteLength + blocks.radius.byteLength + blocks.radius.length * (2 * 4 + 4),
+    charge.clipBlocks,
+    'the charge covers exactly the bytes the clip blocks allocate',
+  )
   console.log(`worker budget: ${triangles} triangles submit ${submitted} candidates`
     + ` (${(charge.candidates / 1024).toFixed(1)} KB charged; one per triangle would be`
     + ` ${(triangles * 4 / 1024).toFixed(1)} KB)`)
