@@ -17,12 +17,13 @@
 import { useState, type ReactNode } from 'react'
 import type { CamSetupSection } from './setupSections'
 import { setupCardHeader } from './setupSections'
+import { allToolpathsToggle, allToolpathsToggleEnabled } from './toolpathToggle'
 import { projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
 import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import type { ProjectType } from '../../types/project'
 
-export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, openForWarning = false, generating = false, generationPaused = false, onExport, onProperties, children }: {
+export function CamSetupSectionView({ section, grouped, projectType, selectedOperationId, openForWarning = false, generating = false, generationPaused = false, onExport, onProperties, onToggleToolpaths, children }: {
   section: CamSetupSection; grouped: boolean; projectType: ProjectType; selectedOperationId: string | null
   /**
    * The section holds work that is kept but can no longer cut (issue #1112 K).
@@ -36,7 +37,10 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
    */
   generating?: boolean
   generationPaused?: boolean
-  onExport: (ids: string[]) => void; onProperties: () => void; children: ReactNode
+  onExport: (ids: string[]) => void; onProperties: () => void
+  /** Show or hide every toolpath on this card (issue #1186), in one undo step. */
+  onToggleToolpaths: (visible: boolean) => void
+  children: ReactNode
 }) {
   const { t } = useI18n()
   // `null` until the user asks for something else: the default is that an
@@ -46,6 +50,11 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
   const open = section.active
     || (expanded ?? (openForWarning || section.operations.some((operation) => operation.id === selectedOperationId)))
   const header = setupCardHeader(section, t)
+  // The card's own eye follows the panel-level one's rule over this card's
+  // operations: it hides while anything here is drawn, and shows once every
+  // one is hidden (issue #1186).
+  const toolpaths = allToolpathsToggle(section.operations)
+  const toolpathLabel = t(toolpaths.anyVisible ? 'cam.setup.hideToolpaths' : 'cam.setup.showToolpaths')
   // An empty setup is one slim row: there is nothing to expand or export, and
   // no status block was left to show. It still opens the properties dialog.
   if (!grouped) return <>{children}</>
@@ -82,6 +91,20 @@ export function CamSetupSectionView({ section, grouped, projectType, selectedOpe
             aria-label={t('cam.setup.noRegistration')}
           >⚠</span>
         ) : null}
+      </button>
+      {/* The card's own eye (issue #1186), in the header's actions: same look
+          and the same rule as the panel-level toggle, over this card's
+          operations. The tooltip names the setup when the header shows one. */}
+      <button
+        className={`tree-action-btn tree-action-btn--visibility${toolpaths.anyVisible ? '' : ' tree-action-btn--muted'}`}
+        type="button"
+        title={header.label ? `${toolpathLabel} — ${header.label}` : toolpathLabel}
+        aria-label={toolpathLabel}
+        aria-pressed={toolpaths.anyVisible}
+        disabled={!allToolpathsToggleEnabled(section.operations)}
+        onClick={() => onToggleToolpaths(toolpaths.next)}
+      >
+        <Icon id={toolpaths.anyVisible ? 'eye' : 'eye-off'} />
       </button>
       <button className="tree-action-btn" type="button" aria-label={t('cam.setup.propertiesFor', { name: section.setup.name })} onClick={onProperties}><Icon id="gear" /></button>
       {header.empty ? null : (

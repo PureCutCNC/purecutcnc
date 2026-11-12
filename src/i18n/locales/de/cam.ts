@@ -678,6 +678,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.setup.propertiesFor': 'Aufspannung bearbeiten: {name}',
   'cam.setup.properties': 'Aufspannung',
   'cam.setup.export': 'Aufspannung exportieren: {name}',
+  'cam.setup.showToolpaths': 'Werkzeugwege dieser Aufspannung anzeigen',
+  'cam.setup.hideToolpaths': 'Werkzeugwege dieser Aufspannung ausblenden',
   'cam.setup.aroundKeptNotCut': 'Around-Operationen bleiben erhalten, werden aber in einem {type}-Projekt nicht geschnitten',
   'cam.setup.noRegistration': 'Keine Registrierreferenzen. Werkstückposition nach dem Wenden prüfen.',
   'cam.setup.empty': 'Keine Operationen',

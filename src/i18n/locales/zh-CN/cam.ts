@@ -661,6 +661,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.setup.propertiesFor': '设置属性：{name}',
   'cam.setup.properties': '设置属性',
   'cam.setup.export': '导出设置：{name}',
+  'cam.setup.showToolpaths': '显示此设置的刀路',
+  'cam.setup.hideToolpaths': '隐藏此设置的刀路',
   'cam.setup.aroundKeptNotCut': 'Around 工序会保留，但在 {type} 项目中不加工',
   'cam.setup.noRegistration': '未指定定位参考。请检查翻转后工件的定位方式。',
   'cam.setup.empty': '无操作',

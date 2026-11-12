@@ -593,6 +593,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.setup.propertiesFor': 'Setup properties: {name}',
   'cam.setup.properties': 'Setup properties',
   'cam.setup.export': 'Export setup: {name}',
+  'cam.setup.showToolpaths': 'Mostrar las trayectorias de herramienta de este setup',
+  'cam.setup.hideToolpaths': 'Ocultar las trayectorias de herramienta de este setup',
   'cam.setup.aroundKeptNotCut': 'Las operaciones Around se conservan pero no se mecanizan en un proyecto {type}',
   'cam.setup.noRegistration': 'No registration references. Check how the stock will be located after the flip.',
   'cam.setup.empty': 'Sin operaciones',
