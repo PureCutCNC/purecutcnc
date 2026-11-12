@@ -51,7 +51,7 @@
  */
 
 import { MAX_HEIGHT_MAP_CELLS } from './finishSurfaceParallel'
-import { rotaryCandidateScratchBytes } from './rotaryRaster'
+import { rotaryAxisDistanceBytes, rotaryCandidateScratchBytes, rotaryClipBlockBytes } from './rotaryRaster'
 import type { RotaryAngleJob, RotaryAngleSample, RotaryBatchFactory, RotarySamplingPrep } from './rotarySampling'
 import {
   cachedAngleKey,
@@ -232,6 +232,10 @@ export interface RotaryAngleWorkerCharge {
   readonly candidates: number
   /** Around mode's cached axial centre/bbox cell ranges, per triangle. */
   readonly axialCells: number
+  /** Around mode's per-triangle distance from the axis (#1185 F1, `rotaryAxisDistanceBytes`). */
+  readonly axisDistance: number
+  /** Around mode's clip blocks, their cell ranges and verdicts (#1185 C1, `rotaryClipBlockBytes`). */
+  readonly clipBlocks: number
   /** The height-map set, capped at `MAX_HEIGHT_MAP_CELLS` per array. */
   readonly maps: number
 }
@@ -296,6 +300,10 @@ export function rotaryAngleWorkerCharge(setup: RotaryAngleSetupPayload): RotaryA
     candidates: setup.mode === 'along' ? triangles * 32 : rotaryCandidateScratchBytes(triangles),
     // Around mode also caches the axial centre/bbox cell ranges per triangle.
     axialCells: setup.mode === 'around' ? triangles * 16 : 0,
+    // The far-side skip's per-triangle distance, built on a map's first skip.
+    axisDistance: setup.mode === 'around' ? rotaryAxisDistanceBytes(triangles) : 0,
+    // The clip pass's block circles, built on a map's first clip pass.
+    clipBlocks: setup.mode === 'around' ? rotaryClipBlockBytes(triangles) : 0,
     maps: MAX_HEIGHT_MAP_CELLS * (4 + 4) + wallMaps,
   }
 }
@@ -303,7 +311,8 @@ export function rotaryAngleWorkerCharge(setup: RotaryAngleSetupPayload): RotaryA
 /** The per-worker charge: the sum of {@link rotaryAngleWorkerCharge}. */
 export function estimateRotaryAngleWorkerBytes(setup: RotaryAngleSetupPayload): number {
   const charge = rotaryAngleWorkerCharge(setup)
-  return charge.setup + charge.subset + charge.turned + charge.candidates + charge.axialCells + charge.maps
+  return charge.setup + charge.subset + charge.turned + charge.candidates + charge.axialCells + charge.axisDistance
+    + charge.clipBlocks + charge.maps
 }
 
 /** One batch in flight. */
@@ -350,6 +359,8 @@ function errorMessage(error: unknown): string {
 function isRotaryAngleMapEntry(entry: NonNullable<RotaryAngleSample['map']>): boolean {
   const map: unknown = entry.map
   if (!Number.isInteger(entry.key) || !Number.isFinite(entry.bytes) || entry.bytes < 0) return false
+  // #1185 L1: the exact angle is what lets a later row prove the map is its own.
+  if (typeof entry.angle !== 'number' || !Number.isFinite(entry.angle)) return false
   if (typeof map !== 'object' || map === null) return false
   const fields = map as Record<string, unknown>
   const data = fields.data

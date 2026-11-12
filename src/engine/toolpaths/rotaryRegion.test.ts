@@ -1094,7 +1094,12 @@ const NO_REGION_HASHES: Record<string, string> = {
   // merge switched off this row still differs (fix C alone); with the gap feed
   // switched off and the merge on it differs too. The other three around rows
   // below change for the merge alone.
-  'round/rotary_rough/around': 'moves=3f216a2f3e5fd0c2 warnings= gcode=8164c29d897a567d',
+  // #1185 slice R2 re-recorded this row and the square rough's below, and no
+  // other: an around **rough** that leaves stock refines to a quarter of that
+  // stock instead of 0.005 mm (this fixture leaves 0.4 mm, so 0.1 mm), which is
+  // fewer refined angles and so fewer cut moves -- 2291 moves became 1742 here.
+  // Both along roughs and all four finishes are byte-identical to before.
+  'round/rotary_rough/around': 'moves=c96f19ef3dc206c3 warnings= gcode=47659e566765db0c',
   'round/rotary_finish/along': 'moves=e09be094ed17079a warnings=rotaryFinishWithoutRough gcode=0276b51663ba5a86',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
@@ -1116,7 +1121,15 @@ const NO_REGION_HASHES: Record<string, string> = {
   // and the finish alike** (review P1: the finish was admitted in correction
   // round 1), so the rings and their at-layer links there are replaced by the
   // helix. Every along row is unchanged.
-  'square/rotary_rough/around': 'moves=cfdc12df9188c018 warnings= gcode=fe24c049898a783c',
+  // #1185 slice R2 re-recorded this row for the same reason as the round
+  // rough's above: 2275 moves became 1925.
+  // #1185 slice R3 re-recorded it again, and this row alone: the refinement now
+  // inserts a midpoint with its sampled height only on the rings that failed
+  // there, and every other ring keeps the chord it passed on. Eight of this
+  // rough's 1925 moves sit on such a chord and are 0.008 to 0.023 mm lower
+  // than the sampled midpoint they used to take -- inside the 0.1 mm this
+  // rough's chords may dip. The other seven rows are byte-identical.
+  'square/rotary_rough/around': 'moves=755a3af8bd650821 warnings= gcode=97a0f415cd9bb6eb',
   'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
   'square/rotary_finish/around': 'moves=567f8fcd6012bb1a warnings=rotaryFinishWithoutRough gcode=95a606809357ecfd',
   // #1173 re-recorded the three remaining around rows for the **approved

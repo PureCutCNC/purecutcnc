@@ -50,6 +50,183 @@ export interface RotaryRasterGeometry {
   axisBBoxCells?: Int32Array
   axisCellSize?: number
   axisCellOrigin?: number
+  /**
+   * The triangles in runs of {@link CLIP_BLOCK_SIZE} consecutive indices, each
+   * with a circle round its cross-section points (#1185 C1). Angle-independent,
+   * built on first use by {@link rotaryClipBlocks}.
+   */
+  clipBlocks?: RotaryClipBlocks
+  /**
+   * Each block's overlap cell range on the bar's axis: two indices per block,
+   * built with `axisBBoxCells` for the same cell size and origin.
+   */
+  blockAxisCells?: Int32Array
+  /** Per block, the map (see `buildRotaryHeightMap`) whose clip pass last judged it, and how. */
+  blockVerdict?: Uint32Array
+  /** Counts the maps this geometry has rasterised, to date `blockVerdict` without clearing it. */
+  blockEpoch?: number
+  /**
+   * Each triangle's least distance from the turning axis in the cross-section,
+   * rounded **down** to a Float32 (#1185 F1); `0` when the axis passes through
+   * it. Angle-independent, built on first use by {@link rotaryAxisDistances}.
+   */
+  axisDistance?: Float32Array
+}
+
+/**
+ * How many consecutive triangles make one clip block (#1185 C1). A power of two,
+ * so a triangle's block is a shift.
+ */
+export const CLIP_BLOCK_SHIFT = 3
+export const CLIP_BLOCK_SIZE = 1 << CLIP_BLOCK_SHIFT
+
+/** A circle round each block's cross-section points: `(across, up)` centre and radius. */
+export interface RotaryClipBlocks {
+  /** 2 values per block: the centre's `across` and `up` from the axis. */
+  readonly centre: Float64Array
+  /** The largest distance from the centre to any corner of any triangle in the block. */
+  readonly radius: Float64Array
+}
+
+/** Bytes the clip blocks cost for a mesh of `meshTriangles`; what a pool worker is charged for them. */
+export function rotaryClipBlockBytes(meshTriangles: number): number {
+  const blocks = Math.ceil(Math.max(0, Math.floor(meshTriangles)) / CLIP_BLOCK_SIZE)
+  // Centre (2 doubles), radius (1 double), axis cell range (2 ints), verdict (1 int).
+  return blocks * (2 * 8 + 8 + 2 * 4 + 4)
+}
+
+/**
+ * The clip blocks of a geometry, built once (#1185 C1).
+ *
+ * The clip pass asks of every triangle that covers no cell centre whether it
+ * stands above the cells it overlaps by more than the peak threshold, and on a
+ * fine mesh the answer is no for all but a few in ten thousand -- after
+ * projecting each one to find out. Consecutive triangles of a mesh are usually
+ * neighbours in space, so a run of them fits in a small circle of the
+ * cross-section; turned, nothing in that circle stands above its centre's height
+ * plus its radius, and nothing in it lies outside the cells the circle spans. If
+ * that height does not beat the lowest limit in those cells, no triangle of the
+ * run can raise a cell, and the run is skipped with one test.
+ *
+ * A block whose triangles are scattered has a large circle and is simply never
+ * skipped; the bound is a bound either way.
+ */
+export function rotaryClipBlocks(geometry: RotaryRasterGeometry): RotaryClipBlocks {
+  const cached = geometry.clipBlocks
+  if (cached !== undefined) return cached
+  const section = geometry.section
+  const triangleCount = Math.floor(section.length / 6)
+  const blockCount = Math.ceil(triangleCount / CLIP_BLOCK_SIZE)
+  const centre = new Float64Array(blockCount * 2)
+  const radius = new Float64Array(blockCount)
+  for (let b = 0; b < blockCount; b++) {
+    const from = b * CLIP_BLOCK_SIZE * 6
+    const to = Math.min(triangleCount, (b + 1) * CLIP_BLOCK_SIZE) * 6
+    let minA = Infinity
+    let maxA = -Infinity
+    let minU = Infinity
+    let maxU = -Infinity
+    for (let p = from; p < to; p += 2) {
+      const a = section[p]
+      const u = section[p + 1]
+      if (a < minA) minA = a
+      if (a > maxA) maxA = a
+      if (u < minU) minU = u
+      if (u > maxU) maxU = u
+    }
+    const ca = (minA + maxA) / 2
+    const cu = (minU + maxU) / 2
+    let reach = 0
+    for (let p = from; p < to; p += 2) {
+      const d = Math.hypot(section[p] - ca, section[p + 1] - cu)
+      // A corner that is not a number compares false with everything and would
+      // pass unseen; it makes the reach infinite, and it stays so.
+      if (!(d <= reach)) reach = d === d ? d : Infinity
+    }
+    centre[b * 2] = ca
+    centre[b * 2 + 1] = cu
+    // Rounded up: a larger circle is a weaker, safer bound. A block with a
+    // corner that is not a number bounds nothing.
+    radius[b] = Number.isFinite(reach) ? reach * (1 + 1e-9) + 1e-12 : Infinity
+  }
+  const blocks = { centre, radius }
+  geometry.clipBlocks = blocks
+  return blocks
+}
+
+/** The least distance from the origin to the segment `a`-`b`. */
+function originSegmentDistance(ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSq = dx * dx + dy * dy
+  let t = lengthSq > 0 ? -(ax * dx + ay * dy) / lengthSq : 0
+  if (t < 0) t = 0
+  else if (t > 1) t = 1
+  const px = ax + dx * t
+  const py = ay + dy * t
+  return Math.sqrt(px * px + py * py)
+}
+
+/** Bytes the per-triangle axis distances cost; what a pool worker is charged for them. */
+export function rotaryAxisDistanceBytes(meshTriangles: number): number {
+  return Math.max(0, Math.floor(meshTriangles)) * Float32Array.BYTES_PER_ELEMENT
+}
+
+/**
+ * Every triangle's least distance from the turning axis, built once per
+ * geometry (#1185 F1).
+ *
+ * A point of the cross-section at distance `rho` from the axis, turned so that
+ * it lies `across` from the centreline on the far side of the bar, stands at
+ * `-sqrt(rho^2 - across^2)` from the pivot. So a triangle that is nowhere nearer
+ * the axis than `d` cannot stand higher than `-sqrt(d^2 - h^2)` anywhere inside
+ * a strip of half-width `h` on the far side: this distance is what bounds a
+ * far-side triangle's height without projecting it.
+ *
+ * The value is rounded down (a smaller distance is a higher, safer bound), and a
+ * triangle the axis passes through, or one whose distance is not a number, gets
+ * `0`, which bounds nothing.
+ */
+export function rotaryAxisDistances(geometry: RotaryRasterGeometry): Float32Array {
+  const cached = geometry.axisDistance
+  if (cached !== undefined) return cached
+  const section = geometry.section
+  const triangleCount = Math.floor(section.length / 6)
+  const distances = new Float32Array(triangleCount)
+  for (let t = 0; t < triangleCount; t++) {
+    const s = t * 6
+    const a0 = section[s], u0 = section[s + 1]
+    const a1 = section[s + 2], u1 = section[s + 3]
+    const a2 = section[s + 4], u2 = section[s + 5]
+    // Edge functions of the origin: unless all three agree in sign it is inside
+    // (or on) the triangle, and the distance is zero.
+    const e0 = (a1 - a0) * -u0 - (u1 - u0) * -a0
+    const e1 = (a2 - a1) * -u1 - (u2 - u1) * -a1
+    const e2 = (a0 - a2) * -u2 - (u0 - u2) * -a2
+    if (!((e0 < 0 || e1 < 0 || e2 < 0) && (e0 > 0 || e1 > 0 || e2 > 0))) continue
+    const distance = Math.min(
+      originSegmentDistance(a0, u0, a1, u1),
+      originSegmentDistance(a1, u1, a2, u2),
+      originSegmentDistance(a2, u2, a0, u0),
+    )
+    if (!(distance > 0) || !Number.isFinite(distance)) continue
+    const rounded = Math.fround(distance * (1 - 1e-6))
+    distances[t] = rounded > distance ? 0 : rounded
+  }
+  geometry.axisDistance = distances
+  return distances
+}
+
+/** What the fused raster accepts beyond the general kernel's options. */
+export interface RotaryHeightMapBuildOptions extends HeightMapBuildOptions {
+  /**
+   * The position in `triangles` where the **far-only** triangles begin (#1185
+   * F1): triangles that reach this turn's strip only on the far side of the bar,
+   * below the axis. The caller lists them last. From there on a triangle is
+   * skipped when it provably cannot change the map; see `buildRotaryHeightMap`.
+   * Omitted, every triangle is rasterised, which is the old behaviour.
+   */
+  readonly farOnlyStart?: number
 }
 
 /** The frozen rotary frame, in the form the sampler already has it. */
@@ -100,6 +277,14 @@ export function buildRotaryRasterGeometry(
 export const CENTRE_SLACK = 1e-7
 
 /**
+ * Relative slack added to a far-side triangle's height bound before it is
+ * compared with the samples already in the map (#1185 F1). The bound is exact in
+ * real arithmetic; the heights it is compared with are Float32. `1e-5` is over a
+ * hundred Float32 steps, so rounding cannot be what lets a triangle be skipped.
+ */
+const FAR_SIDE_SLACK = 1e-5
+
+/**
  * Per-triangle range of cell **centres** on the bar's axis at `cellSize`.
  *
  * This is the centre-sampling range: it is the exact axial band the raster must
@@ -142,8 +327,23 @@ function axisCellRange(
     bbox[t * 2] = Math.floor((lo - fixedMin) / cellSize)
     bbox[t * 2 + 1] = Math.floor((hi - fixedMin) / cellSize)
   }
+  // #1185 C1: each clip block's overlap range is the union of its triangles'.
+  const blockCount = Math.ceil(triangleCount / CLIP_BLOCK_SIZE)
+  const blockRange = new Int32Array(blockCount * 2)
+  for (let b = 0; b < blockCount; b++) {
+    let first = 2147483647
+    let last = -2147483648
+    const end = Math.min(triangleCount, (b + 1) * CLIP_BLOCK_SIZE)
+    for (let t = b * CLIP_BLOCK_SIZE; t < end; t++) {
+      if (bbox[t * 2] < first) first = bbox[t * 2]
+      if (bbox[t * 2 + 1] > last) last = bbox[t * 2 + 1]
+    }
+    blockRange[b * 2] = first
+    blockRange[b * 2 + 1] = last
+  }
   geometry.axisCells = range
   geometry.axisBBoxCells = bbox
+  geometry.blockAxisCells = blockRange
   geometry.axisCellSize = cellSize
   geometry.axisCellOrigin = fixedMin
   return range
@@ -229,7 +429,7 @@ export function buildRotaryHeightMap(
   frame: RotaryRasterFrame,
   bbox: { minX: number; maxX: number; minY: number; maxY: number },
   cellSize: number,
-  options?: HeightMapBuildOptions,
+  options?: RotaryHeightMapBuildOptions,
 ): HeightMap {
   const width = Math.max(1, Math.ceil((bbox.maxX - bbox.minX) / cellSize))
   const height = Math.max(1, Math.ceil((bbox.maxY - bbox.minY) / cellSize))
@@ -319,12 +519,84 @@ export function buildRotaryHeightMap(
   // cell centre cannot cover a centre anywhere (rotation leaves the axial
   // coordinate untouched), so it is a clip candidate and nothing else -- the
   // same cheap split the pre-#1050 raster got from its axial-centre range.
+  // #1185 F1: the far-only triangles, listed last, reach this strip only on the
+  // far side of the bar. Once the near side has been rasterised, such a triangle
+  // is skipped when it cannot change the map:
+  //
+  // - every point of it inside the window stands at or below `farTop`, the bound
+  //   its distance from the axis gives (`rotaryAxisDistances`), and
+  // - every window cell in the bar-axis cells it spans already holds a centre
+  //   sample at or above that bound (`farFloor`, the lowest sample of each
+  //   bar-axis line; an empty cell makes the line `-Infinity`, which skips
+  //   nothing).
+  //
+  // Then it cannot raise a centre sample, and it cannot raise a cell in the clip
+  // pass either: a clipped contribution must beat the cell's peak limit, which is
+  // never below the cell's own centre sample. Two things a skipped triangle would
+  // still have touched decide whether skipping is allowed at all for this map:
+  // the cell rise, which only matters below the cap the sampler applies
+  // (`min(cellRise, cellSize)`), so the near side must already have reached the
+  // cap; and the retained-wall arrays, which record coverage even where a height
+  // does not win, so a map that marks walls skips nothing.
+  const farOnlyStart = triangles !== undefined && options?.farOnlyStart !== undefined
+    && wallStart === undefined
+    ? Math.max(0, Math.min(triangleCount, options.farOnlyStart))
+    : triangleCount
+  let farFloor: Float32Array | undefined
+  let farDistance: Float32Array | undefined
+  let farHalfWidthSq = 0
+  let farDecided = false
   for (let n = 0; n < triangleCount; n++) {
     const t = triangles ? triangles[n] / 3 : n
     const coverageBit: 1 | 2 = wallStart !== undefined && t >= wallStart ? 2 : 1
     const fixedBBoxFirst = axisBBox[t * 2]
     const fixedBBoxLast = axisBBox[t * 2 + 1]
     if (fixedBBoxLast < axisMin || fixedBBoxFirst > axisMax) continue
+    if (n >= farOnlyStart) {
+      // Decided once, on the first far-only triangle that reaches the window:
+      // by then the near side is in the map and its cell rise is known.
+      if (!farDecided) {
+        farDecided = true
+        if (!trackCellRise || cellRise >= cell) {
+          // The lowest centre sample along each bar-axis line of the window.
+          farFloor = new Float32Array(gridAxisSize).fill(Infinity)
+          for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+              const value = data[row * width + col]
+              const line = xAxis ? col : row
+              if (value < farFloor[line]) farFloor[line] = value
+            }
+          }
+          farDistance = rotaryAxisDistances(geometry)
+          // The window's reach either side of the centreline, to its cells' edges.
+          const crossMin = xAxis ? minY : minX
+          const low = centre - (crossMin + windowCrossStart * cell)
+          const high = crossMin + (windowCrossEnd + 1) * cell - centre
+          const halfWidth = Math.max(low, high, 0)
+          farHalfWidthSq = halfWidth * halfWidth
+        }
+      }
+      if (farFloor !== undefined && farDistance !== undefined) {
+        const distance = farDistance[t]
+        const depthSq = distance * distance - farHalfWidthSq
+        if (depthSq > 0) {
+          // The slack is far above a Float32's rounding of a turned height and
+          // far below any difference between two samples that matters.
+          const farTop = pivot - Math.sqrt(depthSq)
+          const bound = farTop + FAR_SIDE_SLACK * (1 + Math.abs(farTop))
+          let hidden = true
+          const from = fixedBBoxFirst < axisMin ? axisMin : fixedBBoxFirst
+          const to = fixedBBoxLast > axisMax ? axisMax : fixedBBoxLast
+          for (let line = from; line <= to; line++) {
+            if (!(bound <= farFloor[line])) {
+              hidden = false
+              break
+            }
+          }
+          if (hidden) continue
+        }
+      }
+    }
     const fixedFirst = axisFirst[t * 2]
     const fixedLast = axisFirst[t * 2 + 1]
     if (fixedFirst > fixedLast) {
@@ -517,11 +789,83 @@ export function buildRotaryHeightMap(
       }
       if (z > data[idx]) data[idx] = z
     }
+    // #1185 C1: judge each block of consecutive triangles once per map, on the
+    // first of its candidates, and skip the rest of a block that cannot raise a
+    // cell (`rotaryClipBlocks`). The verdict is dated with the map's own number,
+    // so the scratch is never cleared.
+    const blocks = rotaryClipBlocks(geometry)
+    const blockAxis = geometry.blockAxisCells
+    const blockCount = blocks.radius.length
+    let verdicts = geometry.blockVerdict
+    if (verdicts === undefined || verdicts.length !== blockCount) {
+      verdicts = new Uint32Array(blockCount)
+      geometry.blockVerdict = verdicts
+      geometry.blockEpoch = 0
+    }
+    // Two values per map: `epoch` = judged and kept, `epoch + 1` = judged and skipped.
+    let epoch = (geometry.blockEpoch ?? 0) + 2
+    if (epoch > 0xfffffff0) {
+      verdicts.fill(0)
+      epoch = 2
+    }
+    geometry.blockEpoch = epoch
+    const crossOrigin = xAxis ? minY : minX
+    const crossCells = xAxis ? height : width
     for (let k = 0; k < candidateCount; k++) {
       const t = candidates[k]
       const coverageBit: 1 | 2 = wallStart !== undefined && t >= wallStart ? 2 : 1
       const limit = coverageBit === 1 && modelPeakLimit !== undefined ? modelPeakLimit : peakLimit
       if (limit === undefined) continue
+      if (blockAxis !== undefined) {
+        const b = t >> CLIP_BLOCK_SHIFT
+        let verdict = verdicts[b]
+        if (verdict !== epoch && verdict !== epoch + 1) {
+          verdict = epoch
+          const rb = blocks.radius[b]
+          if (rb !== Infinity) {
+            const ca = blocks.centre[b * 2]
+            const cu = blocks.centre[b * 2 + 1]
+            // Nothing in the block stands above this, and nothing in it lies
+            // outside these cells. The slack covers the Float32 rounding of a
+            // turned corner, as in the far-side skip.
+            const top = pivot + ca * sin + cu * cos + rb
+            const bound = top + FAR_SIDE_SLACK * (1 + Math.abs(top))
+            const across = centre + ca * cos - cu * sin
+            const crossSlack = FAR_SIDE_SLACK * (1 + Math.abs(across)) + rb
+            let crossFirst = Math.floor((across - crossSlack - crossOrigin) * invCell)
+            let crossLast = Math.floor((across + crossSlack - crossOrigin) * invCell)
+            if (crossFirst < 0) crossFirst = 0
+            if (crossLast > crossCells - 1) crossLast = crossCells - 1
+            if (crossFirst < windowCrossStart) crossFirst = windowCrossStart
+            if (crossLast > windowCrossEnd) crossLast = windowCrossEnd
+            let axisFrom = blockAxis[b * 2]
+            let axisTo = blockAxis[b * 2 + 1]
+            if (axisFrom < 0) axisFrom = 0
+            if (axisTo > gridAxisSize - 1) axisTo = gridAxisSize - 1
+            if (axisFrom < windowAxisStart) axisFrom = windowAxisStart
+            if (axisTo > windowAxisEnd) axisTo = windowAxisEnd
+            let hidden = true
+            for (let cross = crossFirst; cross <= crossLast && hidden; cross++) {
+              for (let fixed = axisFrom; fixed <= axisTo; fixed++) {
+                const idx = xAxis ? cross * width + fixed : fixed * width + cross
+                // With retained walls a model triangle is judged against the
+                // model's own limit and a wall triangle against the other; the
+                // lower of the two bounds both.
+                const cellLimit = modelPeakLimit !== undefined && modelPeakLimit[idx] < peakLimit[idx]
+                  ? modelPeakLimit[idx]
+                  : peakLimit[idx]
+                if (!(bound <= cellLimit + peakThreshold)) {
+                  hidden = false
+                  break
+                }
+              }
+            }
+            if (hidden) verdict = epoch + 1
+          }
+          verdicts[b] = verdict
+        }
+        if (verdict === epoch + 1) continue
+      }
       const s = t * 6
       const l = t * 3
       const fixedBBoxFirst = axisBBox[t * 2]

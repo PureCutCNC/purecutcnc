@@ -188,6 +188,10 @@ function assertCachesEqual(
   for (const [key, expectedMap] of expected.angleMaps?.maps ?? []) {
     const actualMap = actual.angleMaps?.maps.get(key)
     assert.ok(actualMap !== undefined, `${label}: key ${key} is cached`)
+    // #1185 L1: the exact angle a map was rasterised at travels with it, so a
+    // link row can prove a pooled map is its own exactly as it proves a serial one.
+    assert.ok(Object.is(actual.angleMaps?.angles.get(key), expected.angleMaps?.angles.get(key))
+      && expected.angleMaps?.angles.get(key) !== undefined, `${label}: key ${key} exact angle`)
     assert.equal(actualMap.width, expectedMap.width, `${label}: key ${key} width`)
     assert.equal(actualMap.height, expectedMap.height, `${label}: key ${key} height`)
     assert.equal(actualMap.originX, expectedMap.originX, `${label}: key ${key} origin X`)
@@ -403,7 +407,7 @@ function scriptedSource(
   const perMap = probeCache.bytes / probeCache.maps.size
   const budget = Math.ceil(perMap * 3)
   const tinyCache = (): RotarySamplingWorkspace => ({
-    angleMaps: { maps: new Map(), bytes: 0, budgetBytes: budget, full: false },
+    angleMaps: { maps: new Map(), angles: new Map(), bytes: 0, budgetBytes: budget, full: false },
   })
 
   const serialWorkspace = tinyCache()
@@ -565,7 +569,7 @@ function scriptedSource(
   {
     const angles = [0, 45, 360, 405]
     const zeroBudget = (): RotarySamplingWorkspace => ({
-      angleMaps: { maps: new Map(), bytes: 0, budgetBytes: 0, full: false },
+      angleMaps: { maps: new Map(), angles: new Map(), bytes: 0, budgetBytes: 0, full: false },
     })
     const workspace = zeroBudget()
     const prep = prepFor(workspace, 'read-write')
@@ -611,6 +615,7 @@ function scriptedSource(
     warnings: [],
     map: {
       key: 0,
+      angle: 0,
       bytes: 4,
       map: { data: new Float32Array(1), width: 1, height: 1, originX: 0, originY: 0, cellSize: 1 },
     },

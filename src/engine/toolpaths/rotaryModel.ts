@@ -2821,7 +2821,7 @@ function mergeNeighbourColumns(
   let columnRows: readonly Float32Array[] = sampled.tipRadius
   if (angles.length > 1) {
     const refined = refineAroundSampling({
-      prep: columns.prep, stock, tool, warnings, angles, tips: sampled.tipRadius, ...hooks,
+      prep: columns.prep, stock, tool, warnings, angles, tips: sampled.tipRadius, lifts: sampled.lifts, ...hooks,
     })
     if (refined === null) return null
     if (refined.stopped) return { angles, tips: tipRows, stopped: true }
@@ -3330,6 +3330,24 @@ function completeRotaryTargets(
     || (linkIntervals + 1) * along.length > MAX_LINK_WORK
     ? null
     : linkIntervals + 1
+  // #1185 L1: a link row's angle is usually one the ring grid has rasterised
+  // already, and the map depends only on the turn, so the row restores that map
+  // instead of building it a second time. It may only do so when the grid's
+  // maps are the maps this row would build: the same workspace (which means the
+  // same sampled mesh -- `linkWorkspace` is a fresh one when the grid left the
+  // neighbours out), the conservative raster, and the same wall marking. The
+  // tool, cell size and grid envelope are the same arguments on both calls. A
+  // grid that reads exact tips builds no map, so there is nothing to restore
+  // and the row is rasterised as before; the reader checks the turn, the grid
+  // and the arrays of every map it takes (`restoreRotaryAngleMap`).
+  const linkRowsReadGridMaps = linkWorkspace === plan.workspace
+    && plan.prep.conservativeCellBounds
+    && plan.prep.angleMaps !== 'off'
+    && plan.prep.mesh === samplingMesh
+    && plan.prep.tool === samplingTool
+    && plan.prep.requestedCellSize === params.requestedCellSize
+    && plan.prep.gridExtra === gridExtra
+    && plan.prep.wallTriangleStart === samplingMesh.retainedTriangleStart
   const linkRowAt = linkRowBudget(linkRowSamples, (key) => {
     const linkAlong = Array.from({ length: linkIntervals + 1 }, (_, i) => along[0] + linkSpan * i / linkIntervals)
     const sampled = sampleRotaryModelWithWorkspace(
@@ -3345,6 +3363,7 @@ function completeRotaryTargets(
         ...(samplingMesh.retainedTriangleStart !== undefined
           ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
           : {}),
+        ...(linkRowsReadGridMaps ? { angleMaps: 'read' as const } : {}),
       },
       warnings,
       linkWorkspace,
@@ -3576,6 +3595,40 @@ export function linkRowBudget(
   }
 }
 
+/** The share of a rough's stock to leave its chords may dip between samples (#1185 R2). */
+export const ROUGH_REFINEMENT_LEAVE_SHARE = 0.25
+
+/**
+ * The least between-sample tolerance of an around refinement, in the
+ * operation's units (#1185 R2, decided by Frank on 2026-11-09).
+ *
+ * A **finish** keeps the stated 0.005 mm surface bound, whatever stock it
+ * leaves: its surface is the product.
+ *
+ * A **rough** takes the larger of that bound and a quarter of its radial stock
+ * to leave. Every sample of a rough already stands the whole leave above the
+ * model (the sampler's cutter is enlarged by it), so a chord that dips a
+ * quarter of the leave below its samples still leaves three quarters of it on
+ * the part -- stock the finish is there to remove. Holding a rough that leaves
+ * 0.5 mm to 0.005 mm between samples cost most of its generation time and half
+ * of its moves, for a surface nobody keeps. A rough with no leave has no stock
+ * to spend and keeps the surface bound.
+ *
+ * Only the target's own grid takes it. The columns a neighbour model can reach
+ * (`mergeNeighbourColumns`) keep the surface bound: a neighbour is not this
+ * operation's material to be approximate about.
+ */
+export function rotaryRefinementToleranceFloor(
+  params: Pick<RotaryFinishParams, 'stockToLeave'> & { readonly stepdown?: number },
+  units: Units,
+): number {
+  const surface = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
+  if (!('stepdown' in params)) return surface
+  const leave = params.stockToLeave
+  if (!Number.isFinite(leave) || !(leave > 0)) return surface
+  return Math.max(surface, leave * ROUGH_REFINEMENT_LEAVE_SHARE)
+}
+
 /**
  * Sampling and normal stock offset shared by finishing and every rough layer,
  * synchronously.
@@ -3618,6 +3671,8 @@ function rotaryTargets(
       warnings,
       angles,
       tips: sampling.tipRadius,
+      lifts: sampling.lifts,
+      toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     })
     if (refined === null) return targetRefusal('operationStepoverRatioRange')
@@ -3672,6 +3727,8 @@ async function rotaryTargetsAsync(
       warnings,
       angles,
       tips: sampling.tipRadius,
+      lifts: sampling.lifts,
+      toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
       ...(hooks.shouldStop ? { shouldStop: hooks.shouldStop } : {}),
     }, batches)
     if (refined === null) return targetRefusal('operationStepoverRatioRange')
@@ -3887,6 +3944,8 @@ function continuousRoughInput(
     stepover: continuousHelixStepover(prep.stock, tool, params.stepover),
     sampleSpacing: params.sampleSpacing,
     stockToLeave: sampling.stockToLeave,
+    // #1185 R2: the helix is held to the bound the rough's rings are.
+    toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
     // #1173/#1177: the same exact read as the finish's, for the same reasons --
     // including the ball's, and including the pad being the flat's alone.
     ...(isSquareStock(prep.stock)
