@@ -39,7 +39,7 @@ import { newProject, rectProfile } from '../../types/project'
 import type { FeatureFolder, Operation, OperationKind, Project, SketchFeature } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
-import { CUTS_FOLDER_GROUP_THRESHOLD, cutRemovalTarget, operationCutGroups, operationCutRows } from './operationCuts'
+import { CUTS_FOLDER_GROUP_THRESHOLD, cutRemovalTarget, operationCutGroups, operationCutRows } from './operationCutsModel'
 
 function hole(id: string, folderId: string | null = null, operation: SketchFeature['operation'] = 'subtract'): SketchFeature {
   return {

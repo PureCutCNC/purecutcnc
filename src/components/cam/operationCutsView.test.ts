@@ -157,7 +157,7 @@ assert(lastRemove.getAttribute('title') === 'An operation must cut at least one 
 // A long list folds into folders, and a folder's chips still wrap: a chip drawn
 // straight into the folder's <details> would take a line each, which is the bug
 // the change removes (issue #1112 rt6-b, item 40).
-const { CUTS_FOLDER_GROUP_THRESHOLD } = await import('./operationCuts')
+const { CUTS_FOLDER_GROUP_THRESHOLD } = await import('./operationCutsModel')
 const folderDrafts = Array.from({ length: CUTS_FOLDER_GROUP_THRESHOLD + 1 }, (_, index) => ({
   id: `h${index}`,
   name: `Hole ${index}`,
