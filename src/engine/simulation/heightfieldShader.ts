@@ -377,6 +377,147 @@ export const OUTLINE_TURN_GLSL = /* glsl */ `
     }
     return turn;
   }
+
+  // Which of the four edges leaving a corner are walls, as bits: 1 east (+X),
+  // 2 west, 4 south (+Z), 8 north. The outline walk follows these.
+  int outlineCornerWallMask(int cornerX, int cornerZ, float stockBottomZ, float cellSize) {
+    int mask = 0;
+    if (wallFrom(cornerX, cornerZ, 1, 0, stockBottomZ, cellSize)) {
+      mask += 1;
+    }
+    if (wallFrom(cornerX, cornerZ, -1, 0, stockBottomZ, cellSize)) {
+      mask += 2;
+    }
+    if (wallFrom(cornerX, cornerZ, 0, 1, stockBottomZ, cellSize)) {
+      mask += 4;
+    }
+    if (wallFrom(cornerX, cornerZ, 0, -1, stockBottomZ, cellSize)) {
+      mask += 8;
+    }
+    return mask;
+  }
+`
+
+/**
+ * How many corners the wall-lighting walk follows the outline each way
+ * (issue #973). Long enough to span the runs between jogs on a gently curved
+ * wall, so its lighting turns gradually instead of in bands.
+ */
+export const OUTLINE_SMOOTH_STEPS = 8
+
+/**
+ * The direction a wall runs at a corner, smoothed along the outline, for
+ * lighting only (issue #973). Moving jog corners puts a short 45° face between
+ * long axis-aligned runs on a gently curved wall; lit by its own face normal
+ * each one shows as a band. Instead the corner pass walks the outline up to
+ * `OUTLINE_SMOOTH_STEPS` corners each way from a wall corner and takes the
+ * chord between the two ends, through the moved corner positions.
+ *
+ * Real corners keep crisp lighting: a corner with no walls, with more than two
+ * (a junction), or with two at a right angle that the rule did not move (a
+ * corner of the part) returns -1, and the walls there use their own face
+ * normal. A walk ends where it reaches such a corner, or a wall's end.
+ *
+ * Returns the chord's angle in [0, π) — a line direction; each wall orients it
+ * away from its taller side — or -1 for none. Written in the scalar subset,
+ * against four lookups the shader supplies: `cornerWallMask`, `cornerTurn`,
+ * and the moved corner's position `cornerPositionX` / `cornerPositionZ` in
+ * cells.
+ */
+export const OUTLINE_TANGENT_GLSL = /* glsl */ `
+  int wallBitCount(int mask) {
+    return ((mask & 1) != 0 ? 1 : 0) + ((mask & 2) != 0 ? 1 : 0) + ((mask & 4) != 0 ? 1 : 0) + ((mask & 8) != 0 ? 1 : 0);
+  }
+
+  int lowestWallBit(int mask) {
+    return (mask & 1) != 0 ? 1 : ((mask & 2) != 0 ? 2 : ((mask & 4) != 0 ? 4 : ((mask & 8) != 0 ? 8 : 0)));
+  }
+
+  int wallBitX(int bit) {
+    return bit == 1 ? 1 : (bit == 2 ? -1 : 0);
+  }
+
+  int wallBitZ(int bit) {
+    return bit == 4 ? 1 : (bit == 8 ? -1 : 0);
+  }
+
+  // Two walls at a right angle that the jog rule left in place: a corner of the part.
+  bool outlineRealCorner(int mask, int turn) {
+    return wallBitCount(mask) == 2 && (mask & 3) != 0 && (mask & 12) != 0 && turn == 0;
+  }
+
+  float outlineTangentAngle(int cornerX, int cornerZ) {
+    int mask = cornerWallMask(cornerX, cornerZ);
+    int count = wallBitCount(mask);
+    if (count == 0 || count > 2 || outlineRealCorner(mask, cornerTurn(cornerX, cornerZ))) {
+      return -1.0;
+    }
+    float endX[2];
+    float endZ[2];
+    for (int side = 0; side < 2; side += 1) {
+      int bit = lowestWallBit(mask);
+      if (side == 1) {
+        bit = lowestWallBit(mask - bit);
+      }
+      int x = cornerX;
+      int z = cornerZ;
+      int dirX = wallBitX(bit);
+      int dirZ = wallBitZ(bit);
+      int steps = bit == 0 ? 0 : ${OUTLINE_SMOOTH_STEPS};
+      for (int step = 0; step < steps; step += 1) {
+        x += dirX;
+        z += dirZ;
+        int here = cornerWallMask(x, z);
+        int back = dirX == 1 ? 2 : (dirX == -1 ? 1 : (dirZ == 1 ? 8 : 4));
+        int onward = here - (here & back);
+        if (wallBitCount(onward) != 1 || outlineRealCorner(here, cornerTurn(x, z))) {
+          break;
+        }
+        dirX = wallBitX(onward);
+        dirZ = wallBitZ(onward);
+      }
+      endX[side] = cornerPositionX(x, z);
+      endZ[side] = cornerPositionZ(x, z);
+    }
+    float tangentX = endX[0] - endX[1];
+    float tangentZ = endZ[0] - endZ[1];
+    if (tangentX == 0.0 && tangentZ == 0.0) {
+      return -1.0;
+    }
+    float angle = atan(tangentZ, tangentX);
+    if (angle < 0.0) {
+      angle += 3.141592653589793;
+    }
+    if (angle >= 3.141592653589793) {
+      angle -= 3.141592653589793;
+    }
+    return angle;
+  }
+`
+
+/**
+ * The smoothed wall direction as `outlineCorners.ts` stores it: an R8 texel,
+ * the angle over π in 0..254, and 255 where the wall keeps its own face
+ * normal.
+ */
+export const OUTLINE_NORMAL_NONE = 255
+
+/**
+ * A wall's lighting normal at one of its corners: the outline's smoothed
+ * direction where the corner has one, turned to face the same way as the
+ * wall's own face normal; otherwise that face normal. Needs `uOutlineNormals`.
+ */
+export const OUTLINE_NORMAL_GLSL = /* glsl */ `
+  vec3 outlineWallNormal(ivec2 corner, vec3 faceNormal) {
+    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineNormals, 0) - ivec2(1));
+    int code = int(texelFetch(uOutlineNormals, inside, 0).r * 255.0 + 0.5);
+    if (code >= ${OUTLINE_NORMAL_NONE} || inside != corner) {
+      return faceNormal;
+    }
+    float angle = float(code) * (3.141592653589793 / 254.0);
+    vec3 smoothed = vec3(-sin(angle), 0.0, cos(angle));
+    return dot(smoothed, faceNormal) < 0.0 ? -smoothed : smoothed;
+  }
 `
 
 /** The lookup `OUTLINE_TURN_GLSL` reads cells through. Needs `CELL_HEIGHT_GLSL`. */

@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: GPU heightfield simulation rendering and playback update design
-last-verified: 2026-10-17
+last-verified: 2026-11-13
 ---
 
 # Simulation GPU Heightfield Design
@@ -61,7 +61,25 @@ The shipped implementation plan and playback experiments are preserved in
 - The wall mesh draws the small risers inside a slope as well, lit with the
   surface's own normal code. Collapsing them leaves a slit between two flat
   tops that shows the stock underside; lighting them as walls draws the cell
-  grid. Silhouettes and angled walls stay stair-stepped.
+  grid.
+- Walls follow the cut outline, not only cell edges (issue #973). A grid
+  corner where exactly two walls meet at a right angle, and the outline turns
+  back at the next corner, is a jog of a slanted edge: it moves a quarter cell
+  on both axes into the turn, so a 45° staircase is drawn as one straight wall
+  through the edge midpoints. Real corners, junctions and one-cell islands or
+  holes stay where they are (one-cell tab bridges keep their walls and tops,
+  #829). The surface tops, both wall strips and the underside read the same
+  per-corner offset, so tops meet walls with no gap or overlap. A sharp corner
+  rounds only where a jog lies right next to it, by up to 0.25·√2 ≈ 0.35 cell.
+- The rule is not run per vertex. GPU passes evaluate it once per grid corner
+  into a `(cols+1) × (rows+1)` texture whenever heights change (the whole grid
+  on build, the dirty rectangle plus the rule's reach during playback), and a
+  second pass walks the outline up to 8 corners each way to store a smoothed
+  wall direction. Wall strips light with that direction, so a gently curved
+  wall shades evenly across its jogs; real corners and junctions keep their
+  faces' own normals. Lighting only: no geometry reads it. Wrapped (Around)
+  grids keep cell-edge walls; their periodic seam would need its own corner
+  lookup.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and

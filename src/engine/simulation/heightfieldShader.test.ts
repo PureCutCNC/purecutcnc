@@ -29,6 +29,7 @@
 import { compileScalarGlsl } from './glslScalar.testSupport'
 import {
   OUTLINE_CORNER_SHIFT_CELLS,
+  OUTLINE_TANGENT_GLSL,
   OUTLINE_TURN_GLSL,
   SHALLOW_SLOPE_CELLS,
   SLOPE_GRADIENT_GLSL,
@@ -628,6 +629,126 @@ function testSingleJogMovesBothItsCorners(): void {
   console.log('single jog: PASSED')
 }
 
+
+// ── Issue #973: wall lighting smoothed along the outline ────────────────
+
+/**
+ * The smoothed wall direction at every wall corner, run from the shipped
+ * `OUTLINE_TANGENT_GLSL` against the shipped corner rule: the mask and turn
+ * come from `OUTLINE_TURN_GLSL`, the moved positions from the same turn code
+ * to offset mapping the shader uses.
+ */
+function tangentsOf(height: HeightField, min: number, max: number): {
+  angle: (x: number, z: number) => number
+  wallCorners: Array<{ grid: Point; drawn: Point }>
+  corner: (x: number, z: number) => Point
+  wallFrom: (x: number, z: number, dirX: number, dirZ: number) => boolean
+} {
+  const outline = outlineOf(height)
+  const rule = compileScalarGlsl(`${STEP_GLSL}\n${OUTLINE_TURN_GLSL}`, { cellHeightAt: height })
+  const masks = new Map<string, number>()
+  const mask = (x: number, z: number): number => {
+    const key = `${x},${z}`
+    let value = masks.get(key)
+    if (value === undefined) {
+      value = rule.outlineCornerWallMask(x, z, 0, 1) as number
+      masks.set(key, value)
+    }
+    return value
+  }
+  const walk = compileScalarGlsl(OUTLINE_TANGENT_GLSL, {
+    cornerWallMask: mask,
+    cornerTurn: (x: number, z: number) => rule.outlineCornerTurn(x, z, 0, 1) as number,
+    cornerPositionX: (x: number, z: number) => outline.corner(x, z).x,
+    cornerPositionZ: (x: number, z: number) => outline.corner(x, z).z,
+  })
+  return {
+    angle: (x, z) => walk.outlineTangentAngle(x, z) as number,
+    wallCorners: outline.wallCorners(min, max),
+    corner: outline.corner,
+    wallFrom: outline.wallFrom,
+  }
+}
+
+/** Angle between two line directions, in degrees, ignoring which way they point. */
+function lineAngleDegrees(a: number, b: number): number {
+  let d = Math.abs(a - b) % Math.PI
+  if (d > Math.PI / 2) d = Math.PI - d
+  return (d * 180) / Math.PI
+}
+
+function testWallLightingFollowsACurve(): void {
+  console.log('Testing a curved wall is lit by the outline\'s own direction, not its jogs...')
+  const centre = { x: 0.37, z: -0.21 }
+  for (const radius of [6.2, 20.3, 60.7]) {
+    for (const island of [true, false]) {
+      const field = sampled((x, z) => (Math.hypot(x - centre.x, z - centre.z) < radius) === island, 20, 0)
+      const reach = Math.ceil(radius) + 3
+      const tangents = tangentsOf(field, -reach, reach)
+      const smoothedErrors: number[] = []
+      let none = 0
+      for (const { grid, drawn } of tangents.wallCorners) {
+        const angle = tangents.angle(grid.x, grid.z)
+        if (angle < 0) {
+          none += 1
+          continue
+        }
+        // The true wall direction is perpendicular to the radius.
+        const truth = Math.atan2(drawn.z - centre.z, drawn.x - centre.x) + Math.PI / 2
+        smoothedErrors.push(lineAngleDegrees(angle, truth))
+      }
+      // Each moved wall edge's own face direction, as lit before smoothing.
+      const faceErrors: number[] = []
+      for (const { grid } of tangents.wallCorners) {
+        for (const [dirX, dirZ] of [[1, 0], [0, 1]] as const) {
+          if (!tangents.wallFrom(grid.x, grid.z, dirX, dirZ)) continue
+          const a = tangents.corner(grid.x, grid.z)
+          const b = tangents.corner(grid.x + dirX, grid.z + dirZ)
+          const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }
+          const truth = Math.atan2(mid.z - centre.z, mid.x - centre.x) + Math.PI / 2
+          faceErrors.push(lineAngleDegrees(Math.atan2(b.z - a.z, b.x - a.x), truth))
+        }
+      }
+      const rms = (values: number[]): number => Math.sqrt(values.reduce((sum, v) => sum + v * v, 0) / values.length)
+      const smoothRms = rms(smoothedErrors)
+      const faceRms = rms(faceErrors)
+      assert(smoothedErrors.length > 0.8 * tangents.wallCorners.length, `radius ${radius}: most wall corners are smoothed (${none} of ${tangents.wallCorners.length} keep their face normal)`)
+      assert(smoothRms < 0.35 * faceRms, `radius ${radius}: smoothing must cut the lighting direction error (rms ${smoothRms.toFixed(1)}° vs ${faceRms.toFixed(1)}° per face)`)
+      assert(smoothRms < 8, `radius ${radius}: smoothed direction within a few degrees of the circle (rms ${smoothRms.toFixed(1)}°)`)
+      console.log(`  radius ${radius} ${island ? 'island' : 'hole'}: rms ${faceRms.toFixed(1)}° per face → ${smoothRms.toFixed(1)}° smoothed, ${none} of ${tangents.wallCorners.length} corners keep a face normal`)
+    }
+  }
+  console.log('curved wall lighting: PASSED')
+}
+
+function testStraightWallsAndRealCornersKeepTheirLighting(): void {
+  console.log('Testing straight walls, rectangles, tabs and diagonals keep exact lighting...')
+  const exact = (name: string, field: HeightField, expected: (angle: number) => boolean): void => {
+    const tangents = tangentsOf(field, -8, 14)
+    for (const { grid } of tangents.wallCorners) {
+      const angle = tangents.angle(grid.x, grid.z)
+      assert(angle < 0 || expected(angle), `${name}: corner ${grid.x},${grid.z} lit at ${(angle * 180 / Math.PI).toFixed(2)}°`)
+    }
+  }
+  const axis = (angle: number): boolean => Math.abs(angle) < 1e-9 || Math.abs(angle - Math.PI / 2) < 1e-9
+  exact('rectangular pocket', (col, row) => (col >= 0 && col < 7 && row >= 1 && row < 5 ? 4 : 20), axis)
+  exact('rectangular part', (col, row) => (col >= 0 && col < 7 && row >= 1 && row < 5 ? 20 : 0), axis)
+  exact('L-shaped part', (col, row) => (col >= 0 && row >= 0 && (col < 3 || row < 3) && col < 8 && row < 8 ? 20 : 0), axis)
+  exact('tab bridge', (col, row) => (row < 0 || row >= 6 ? 20 : col === 0 ? 3 : 0), axis)
+  exact('one-cell tab', (col, row) => (col === 2 && row === 2 ? 3 : 0), axis)
+  // A real corner and its neighbours: the corner itself keeps the face normal.
+  const rectangle = tangentsOf((col, row) => (col >= 0 && col < 7 && row >= 1 && row < 5 ? 20 : 0), -2, 9)
+  for (const [x, z] of [[0, 1], [7, 1], [0, 5], [7, 5]]) {
+    assert(rectangle.angle(x, z) < 0, `rectangle corner ${x},${z} keeps its faces' own normals`)
+  }
+  // A 45° staircase is lit as the straight 45° wall it is drawn as.
+  for (const sign of [1, -1]) {
+    exact(`45° wall (${sign})`, sampled((x, z) => z - sign * x > 0.3, 20, 0), (angle) =>
+      lineAngleDegrees(angle, sign > 0 ? Math.PI / 4 : (3 * Math.PI) / 4) < 1e-6)
+  }
+  console.log('straight walls and real corners: PASSED')
+}
+
 try {
   testShallowScallopIsSlope()
   testTabBridgeAndCutThroughStaySteps()
@@ -639,6 +760,8 @@ try {
   testCircleWallFollowsTheOutline()
   testThinFeaturesAndRealCornersStayPut()
   testSingleJogMovesBothItsCorners()
+  testWallLightingFollowsACurve()
+  testStraightWallsAndRealCornersKeepTheirLighting()
   console.log('\nAll heightfield shader tests PASSED.')
 } catch (e) {
   console.error(e)

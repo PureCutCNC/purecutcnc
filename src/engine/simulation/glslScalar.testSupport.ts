@@ -52,6 +52,8 @@ const BUILTINS = {
   mix: (a: number, b: number, t: number): number => a * (1 - t) + b * t,
   clamp: (x: number, low: number, high: number): number => Math.min(Math.max(x, low), high),
   ceil: Math.ceil,
+  // GLSL's two-argument atan(y, x) is atan2.
+  atan: (y: number, x?: number): number => (x === undefined ? Math.atan(y) : Math.atan2(y, x)),
   // GLSL int() truncates toward zero, exactly as Math.trunc does.
   int: Math.trunc,
 }

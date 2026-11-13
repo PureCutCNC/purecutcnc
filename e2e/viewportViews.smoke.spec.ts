@@ -784,3 +784,100 @@ test('simulation draws a slanted wall straight, with tops, walls and underside s
   expect(outline.underside.darkestInside).toBeGreaterThan(0.97 * outline.underside.middle)
   expect(outline.underside.brightestOutside).toBeLessThan(10)
 })
+
+test('simulation lights a gently sloped wall evenly across its jogs', async ({ app }) => {
+  // Issue #973: a wall at a small angle to the grid is long axis-aligned runs
+  // joined by one-cell jogs. Moving the jog corners turns each jog into a short
+  // slanted face; lit by its own face normal every one is a band. The wall
+  // strips light with the outline's direction smoothed along it instead. The
+  // same scene lit by face normals (every corner's smoothed code set to
+  // "none") is the comparison.
+  await app.page.addScriptTag({ type: 'module', content: `
+    import * as THREE from '/node_modules/.vite/deps/three.js';
+    import { buildSimulationStockScene } from '/src/engine/simulation/simulationScene.ts';
+    import { createInstancedBoundaryGroup } from '/src/engine/simulation/instancedBoundary.ts';
+
+    // Material past the line z = x / 6 + 0.3, cut through before it.
+    const cols = 48;
+    const rows = 24;
+    const heights = new Float32Array(cols * rows);
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        heights[row * cols + col] = row + 0.5 - (col + 0.5) / 6 > 0.3 ? 20 : 0;
+      }
+    }
+    const grid = { originX: 0, originY: 0, cellSize: 1, cols, rows, stockBottomZ: 0, stockTopZ: 20, topZ: heights };
+    const color = new THREE.Color('#c8c8c8');
+    const built = buildSimulationStockScene(grid, color);
+    const faceLit = new THREE.DataTexture(new Uint8Array((cols + 1) * (rows + 1)).fill(255), cols + 1, rows + 1, THREE.RedFormat);
+    faceLit.needsUpdate = true;
+    const faceBoundary = createInstancedBoundaryGroup(
+      built.heightfieldTexture, grid, color, undefined, undefined, undefined, undefined,
+      { texture: built.outline.texture, normals: faceLit },
+    );
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.add(built.group);
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(600, 400, false);
+    const gl = renderer.getContext();
+    const camera = new THREE.OrthographicCamera(-21, 21, 14, -14, 0.1, 300);
+    camera.position.set(24 + 25, 10 + 20, 4.5 - 45);
+    camera.lookAt(24, 10, 4.5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const brightnessAt = (x, y, z) => {
+      const point = new THREE.Vector3(x, y, z).project(camera);
+      const pixel = new Uint8Array(4);
+      gl.readPixels(Math.floor((point.x + 1) * 300), Math.floor((point.y + 1) * 200), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return pixel[0] + pixel[1] + pixel[2];
+    };
+    const wallRange = () => {
+      built.outline.update(renderer);
+      renderer.render(scene, camera);
+      gl.finish();
+      let darkest = 1000;
+      let brightest = 0;
+      for (let x = 10; x < 38; x += 0.29) {
+        const value = brightnessAt(x, 10, x / 6 + 0.5);
+        darkest = Math.min(darkest, value);
+        brightest = Math.max(brightest, value);
+      }
+      return { darkest, brightest };
+    };
+    const smoothed = wallRange();
+    scene.remove(built.group);
+    scene.add(built.surface);
+    scene.add(faceBoundary);
+    const faces = wallRange();
+
+    for (const object of [built.group, faceBoundary]) {
+      object.traverse((child) => {
+        if (child.isMesh) {
+          child.geometry.dispose();
+          child.material.dispose();
+        }
+      });
+    }
+    faceLit.dispose();
+    built.outline.dispose();
+    built.heightfieldTexture.dispose();
+    renderer.dispose();
+    document.body.dataset.wallLight973 = JSON.stringify({ smoothed, faces });
+  ` })
+  await expect(app.page.locator('body')).toHaveAttribute('data-wall-light973', /smoothed/)
+  const result = JSON.parse(await app.page.locator('body').getAttribute('data-wall-light973') ?? '{}') as {
+    smoothed: { darkest: number; brightest: number }
+    faces: { darkest: number; brightest: number }
+  }
+  // Every sample lands on the lit wall, in both renders.
+  expect(result.smoothed.darkest).toBeGreaterThan(200)
+  expect(result.faces.darkest).toBeGreaterThan(200)
+  // Smoothed, the wall shades evenly along its whole length (measured: 12 of
+  // 450). Lit face by face, the jogs band it (measured: 141).
+  const smoothedRange = result.smoothed.brightest - result.smoothed.darkest
+  const faceRange = result.faces.brightest - result.faces.darkest
+  expect(smoothedRange).toBeLessThanOrEqual(0.05 * result.smoothed.brightest)
+  expect(faceRange).toBeGreaterThan(4 * Math.max(smoothedRange, 1))
+})

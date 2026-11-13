@@ -26,8 +26,22 @@ import { aroundFrame, unrolledProject } from '../aroundFrame'
 import { newProject, roundStock } from '../../types/project'
 import { compileScalarGlsl } from './glslScalar.testSupport'
 import { createSimulationGrid } from './grid'
-import { OUTLINE_CELL_GLSL, OUTLINE_CORNER_GLSL, OUTLINE_TURN_GLSL, STEP_GLSL } from './heightfieldShader'
-import { OUTLINE_PASS_FRAGMENT_GLSL, OUTLINE_REACH_CELLS, outlineCornerRect } from './outlineCorners'
+import {
+  OUTLINE_CELL_GLSL,
+  OUTLINE_CORNER_GLSL,
+  OUTLINE_CORNER_SHIFT_CELLS,
+  OUTLINE_NORMAL_GLSL,
+  OUTLINE_TANGENT_GLSL,
+  OUTLINE_TURN_GLSL,
+  STEP_GLSL,
+} from './heightfieldShader'
+import {
+  OUTLINE_NORMAL_PASS_FRAGMENT_GLSL,
+  OUTLINE_PASS_FRAGMENT_GLSL,
+  OUTLINE_REACH_CELLS,
+  outlineCornerRect,
+  outlineNormalRect,
+} from './outlineCorners'
 import { buildSimulationStockScene } from './simulationScene'
 import type { SimulationGrid } from './types'
 
@@ -85,6 +99,21 @@ function testEveryCornerReaderSharesOneTexture(): void {
   }
   assert(boundary[2].fragmentShader.includes(OUTLINE_CELL_GLSL), 'the underside must find its cell with the shared outline lookup')
 
+  // Wall lighting follows the smoothed outline; nothing else reads it, so it
+  // can change no geometry.
+  for (const wall of boundary.slice(0, 2)) {
+    assert(wall.uniforms.uOutlineNormals?.value === outline.normals, 'both wall strips must bind the scene\'s smoothed normals')
+    assert(wall.vertexShader.includes(OUTLINE_NORMAL_GLSL), 'both wall strips must decode the normals with the shared reader')
+    assert((wall.vertexShader.split(OUTLINE_NORMAL_GLSL)[1] ?? '').includes('outlineWallNormal('), 'both wall strips must light with the smoothed normal')
+  }
+  for (const material of [surface, boundary[2]]) {
+    assert(!('uOutlineNormals' in material.uniforms), 'the tops and the underside must not read the lighting normals')
+  }
+  assert(
+    OUTLINE_NORMAL_PASS_FRAGMENT_GLSL.includes(OUTLINE_TANGENT_GLSL) && OUTLINE_NORMAL_PASS_FRAGMENT_GLSL.includes(OUTLINE_CORNER_GLSL),
+    'the normal pass must walk the shared outline through the moved corners',
+  )
+
   // The pass computes the codes from the meshes' own predicate.
   assert(
     OUTLINE_PASS_FRAGMENT_GLSL.includes(STEP_GLSL) && OUTLINE_PASS_FRAGMENT_GLSL.includes(OUTLINE_TURN_GLSL),
@@ -125,10 +154,27 @@ function testRefreshRectangleCoversTheRulesReach(): void {
   const lookup = (x: number, z: number): number =>
     x < 0 || z < 0 || x >= cols || z >= rows ? 0 : heights[z * cols + x]
   const rule = compileScalarGlsl(`${STEP_GLSL}\n${OUTLINE_TURN_GLSL}`, { cellHeightAt: lookup })
+  const inGrid = (x: number, z: number): boolean => x >= 0 && z >= 0 && x <= cols && z <= rows
+  const turnAt = (x: number, z: number): number => (inGrid(x, z) ? rule.outlineCornerTurn(x, z, 0, 1) as number : 0)
+  const shift = (turn: number, positive: boolean): number => (turn === 0 ? 0 : positive ? OUTLINE_CORNER_SHIFT_CELLS : -OUTLINE_CORNER_SHIFT_CELLS)
+  const walk = compileScalarGlsl(OUTLINE_TANGENT_GLSL, {
+    cornerWallMask: (x: number, z: number) => (inGrid(x, z) ? rule.outlineCornerWallMask(x, z, 0, 1) as number : 0),
+    cornerTurn: turnAt,
+    cornerPositionX: (x: number, z: number) => { const t = turnAt(x, z); return x + shift(t, t === 1 || t === 3) },
+    cornerPositionZ: (x: number, z: number) => { const t = turnAt(x, z); return z + shift(t, t === 1 || t === 2) },
+  })
+  // Each corner's turn code and smoothed direction, the two textures' contents.
   const codes = (): number[] => {
     const out: number[] = []
     for (let z = 0; z <= rows; z += 1) {
-      for (let x = 0; x <= cols; x += 1) out.push(rule.outlineCornerTurn(x, z, 0, 1) as number)
+      for (let x = 0; x <= cols; x += 1) out.push(turnAt(x, z))
+    }
+    return out
+  }
+  const angles = (): number[] => {
+    const out: number[] = []
+    for (let z = 0; z <= rows; z += 1) {
+      for (let x = 0; x <= cols; x += 1) out.push(walk.outlineTangentAngle(x, z) as number)
     }
     return out
   }
@@ -140,6 +186,7 @@ function testRefreshRectangleCoversTheRulesReach(): void {
     return seed / 0x7fffffff
   }
   let moved = 0
+  let relit = 0
   for (let trial = 0; trial < 40; trial += 1) {
     const cx = 4 + random() * 14
     const cz = 4 + random() * 14
@@ -153,6 +200,7 @@ function testRefreshRectangleCoversTheRulesReach(): void {
       }
     }
     const before = codes()
+    const beforeAngles = angles()
     for (let probe = 0; probe < 12; probe += 1) {
       const col = Math.floor(random() * cols)
       const row = Math.floor(random() * rows)
@@ -160,10 +208,19 @@ function testRefreshRectangleCoversTheRulesReach(): void {
       const saved = heights[index]
       heights[index] = [0, 5, 12, 20][Math.floor(random() * 4)]
       const after = codes()
+      const afterAngles = angles()
       const rect = outlineCornerRect({ cols, rows }, { colMin: col, colMax: col, rowMin: row, rowMax: row })
+      const normalRect = outlineNormalRect({ cols, rows }, rect)
       for (let z = 0; z <= rows; z += 1) {
         for (let x = 0; x <= cols; x += 1) {
           const i = z * (cols + 1) + x
+          if (afterAngles[i] !== beforeAngles[i]) {
+            relit += 1
+            assert(
+              x >= normalRect.xMin && x <= normalRect.xMax && z >= normalRect.yMin && z <= normalRect.yMax,
+              `changing cell ${col},${row} relit corner ${x},${z} outside the refreshed normal rectangle`,
+            )
+          }
           if (after[i] === before[i]) continue
           moved += 1
           assert(
@@ -176,10 +233,11 @@ function testRefreshRectangleCoversTheRulesReach(): void {
     }
   }
   assert(moved > 50, `the probes must actually change corners (${moved})`)
+  assert(relit > moved, `the probes must actually change lighting further out than corners (${relit})`)
   // Clamped to the texture at the stock border.
   const edge = outlineCornerRect({ cols, rows }, { colMin: 0, colMax: cols - 1, rowMin: 0, rowMax: rows - 1 })
   assert(edge.xMin === 0 && edge.yMin === 0 && edge.xMax === cols && edge.yMax === rows, 'the rectangle stays inside the corner texture')
-  console.log(`refresh rectangle: PASSED (${moved} corner changes, all inside)`)
+  console.log(`refresh rectangles: PASSED (${moved} corner and ${relit} lighting changes, all inside)`)
 }
 
 try {

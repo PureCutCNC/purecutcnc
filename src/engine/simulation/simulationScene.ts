@@ -106,7 +106,7 @@ export function buildSimulationStockScene(
     flatRoundBar?.pivot,
     flatRoundBar,
     squareBlankSide,
-    outline?.texture,
+    outline ?? undefined,
   )
   const lowerHalf = createFlatRoundBarLowerHalf(grid, flatRoundBar, stockColor)
 
