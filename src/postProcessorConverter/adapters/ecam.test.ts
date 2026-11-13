@@ -65,6 +65,16 @@ function loadFixture(name: string): string {
   assert(definition.program.header.includes('%'), `header should include "%": ${JSON.stringify(definition.program.header)}`)
   assert(definition.program.header.some((line) => line.includes('{programName}')), `header: ${JSON.stringify(definition.program.header)}`)
   assert(definition.program.footer.some((line) => line.includes('M30')), `footer: ${JSON.stringify(definition.program.footer)}`)
+  // #1057 slice F: a program header may only set up modals, so the source's
+  // startup reference move is dropped with a finding rather than folded into a
+  // definition the schema would refuse.
+  assert(
+    result.findings.some((finding) => finding.status === 'unsupported'
+      && finding.message.includes('move the machine')
+      && finding.message.includes('G0 G53')),
+    `a startup move is dropped with a finding: ${JSON.stringify(result.findings.map((f) => f.message))}`,
+  )
+  assert(!definition.program.header.some((line) => /G0 G53/.test(line)), 'the startup move is not in the header')
 
   assert(
     result.findings.every((f) => f.sourceField !== 'MachineType'),

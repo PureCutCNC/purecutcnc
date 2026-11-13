@@ -117,6 +117,13 @@ corrupt.setItem(CUSTOM_MACHINES_STORAGE_KEY, '{ not json')
 resetMachineLibraryForTests()
 initMachineLibrary(corrupt)
 assert(getMachineLibrarySnapshot().customMachines.length === 0, 'corrupt storage does not break startup')
+assert(getMachineLibrarySnapshot().writeBlocked, 'an unreadable envelope blocks library writes')
+assert(getMachineLibrarySnapshot().diagnostics.some((entry) => entry.kind === 'machine-library-unreadable'), 'the unreadable envelope is reported')
+assert(
+  saveCustomMachine(custom('after-corrupt', 'After Corrupt')).error !== undefined,
+  'a write is refused while the stored envelope is unreadable',
+)
+assert(corrupt.raw(CUSTOM_MACHINES_STORAGE_KEY) === '{ not json', 'the unreadable stored bytes are preserved unchanged')
 
 const partial = new FakeStorage()
 partial.setItem(
@@ -133,22 +140,49 @@ assert(
   'invalid stored entries are skipped without dropping the valid ones',
 )
 
-assert(
-  sanitizeStoredCustomMachines({ schemaVersion: 99, machines: [custom('shop-router', 'Shop Router')] }).length === 0,
-  'a future schema version yields an empty library',
-)
-assert(
-  sanitizeStoredCustomMachines({
-    schemaVersion: 1,
-    machines: [custom('shop-router', 'A'), custom('shop-router', 'B')],
-  }).length === 1,
-  'duplicate stored ids are dropped',
-)
-assert(
-  sanitizeStoredCustomMachines({ schemaVersion: 1, machines: [structuredClone(bundledMachines()[0])] }).length === 0,
-  'a stored entry claiming a bundled id is dropped',
-)
-assert(readStoredCustomMachines(null).length === 0, 'a missing storage reads as empty')
+const future = sanitizeStoredCustomMachines({ schemaVersion: 99, machines: [custom('shop-router', 'Shop Router')] })
+assert(future.machines.length === 0 && future.unreadable, 'a future schema version yields an empty, write-blocked library')
+
+const duplicates = sanitizeStoredCustomMachines({
+  schemaVersion: 1,
+  machines: [custom('shop-router', 'A'), custom('shop-router', 'B')],
+})
+assert(duplicates.machines.length === 2, 'distinct stored ids are both kept')
+assert(duplicates.machines[1].id !== 'shop-router', 'the colliding id is re-keyed')
+assert(duplicates.diagnostics.some((entry) => entry.kind === 'machine-rekeyed'), 'the re-keying is reported')
+
+const identical = sanitizeStoredCustomMachines({
+  schemaVersion: 1,
+  machines: [custom('shop-router', 'Shop Router'), custom('shop-router', 'Shop Router')],
+})
+assert(identical.machines.length === 1, 'identical stored duplicates are consolidated')
+assert(identical.diagnostics.some((entry) => entry.kind === 'machine-consolidated'), 'the consolidation is reported')
+
+const reservedStored = sanitizeStoredCustomMachines({
+  schemaVersion: 1,
+  machines: [structuredClone(bundledMachines()[0])],
+})
+assert(reservedStored.machines.length === 1, 'a stored entry claiming a bundled id is kept, not dropped')
+assert(reservedStored.machines[0].id !== bundledMachines()[0].id, 'the bundled id is re-keyed for a custom machine')
+assert(reservedStored.diagnostics.some((entry) => entry.kind === 'machine-rekeyed'), 'the bundled-id rescue is reported')
+assert(readStoredCustomMachines(null).machines.length === 0, 'a missing storage reads as empty')
+
+// A machine that still breaks a #1057 template rule is structurally valid and
+// must survive storage instead of being dropped (#1119).
+const templateInvalid = {
+  ...structuredClone(bundledMachines()[0]),
+  id: 'avid-mach4',
+  name: 'Avid Mach4',
+  program: {
+    ...structuredClone(bundledMachines()[0].program),
+    header: [...bundledMachines()[0].program.header, 'G90.1'],
+  },
+}
+const invalidValidated = validateCustomMachine(templateInvalid)
+assert(invalidValidated.error === undefined, 'a template-invalid machine is accepted structurally')
+const persistedInvalid = sanitizeStoredCustomMachines({ schemaVersion: 1, machines: [templateInvalid] })
+assert(persistedInvalid.machines.length === 1, 'a template-invalid stored machine is kept')
+assert(persistedInvalid.machines[0].program.header.at(-1) === 'G90.1', 'its template is kept unchanged')
 
 // --- delete --------------------------------------------------------------
 
@@ -157,34 +191,70 @@ const deleteStorage = new FakeStorage()
 initMachineLibrary(deleteStorage)
 saveCustomMachine(custom('shop-router', 'Shop Router'))
 saveCustomMachine(custom('big-red', 'Big Red'))
-deleteCustomMachine('shop-router')
+const deleted = deleteCustomMachine('shop-router')
+assert(deleted.ok && deleted.removed, 'delete reports the removal')
 assert(
   getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).join() === 'big-red',
   'delete removes only the named machine',
 )
-deleteCustomMachine('does-not-exist')
-assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deleting an unknown id is a no-op')
+const missing = deleteCustomMachine('does-not-exist')
+assert(missing.ok && !missing.removed, 'deleting an unknown id is a successful no-op')
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deleting an unknown id changes nothing')
 resetMachineLibraryForTests()
 initMachineLibrary(deleteStorage)
 assert(getMachineLibrarySnapshot().customMachines.length === 1, 'deletion is persisted')
+
+// A blocked library must not report a delete it did not perform (#1119).
+const blockedStorage = new FakeStorage()
+blockedStorage.setItem(CUSTOM_MACHINES_STORAGE_KEY, '{ not json')
+resetMachineLibraryForTests()
+initMachineLibrary(blockedStorage)
+assert(getMachineLibrarySnapshot().writeBlocked, 'the delete fixture library is write-blocked')
+const blockedDelete = deleteCustomMachine('big-red')
+assert(!blockedDelete.ok && !blockedDelete.removed, 'a write-blocked library refuses the delete')
+assert(blockedDelete.error !== undefined, 'the refusal carries a displayable reason')
+assert(getMachineLibrarySnapshot().customMachines.length === 0, 'the blocked delete left the library alone')
+
+// A storage write failure is also a refused delete, not a silent success.
+const seeded = new FakeStorage()
+seeded.setItem(CUSTOM_MACHINES_STORAGE_KEY, JSON.stringify({
+  schemaVersion: 1,
+  machines: [custom('shop-router', 'Shop Router')],
+}))
+const failing = {
+  getItem: (key: string): string | null => seeded.getItem(key),
+  setItem: (): void => { throw new Error('QuotaExceededError') },
+}
+resetMachineLibraryForTests()
+initMachineLibrary(failing)
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'the write-failing storage reads its one machine')
+const failedDelete = deleteCustomMachine('shop-router')
+assert(!failedDelete.ok && !failedDelete.removed, 'a failed storage write refuses the delete')
+assert(failedDelete.error !== undefined, 'the failed delete carries a reason')
+assert(getMachineLibrarySnapshot().customMachines.length === 1, 'the failed delete left the in-memory library alone')
 
 // --- legacy merge --------------------------------------------------------
 
 resetMachineLibraryForTests()
 initMachineLibrary(new FakeStorage())
 const legacy = custom('shop-router', 'Shop Router')
-assert(mergeCustomMachines([legacy]).length === 1, 'a legacy custom machine is merged in')
-assert(mergeCustomMachines([structuredClone(legacy)]).length === 0, 'merging the same project twice adds nothing')
+assert(mergeCustomMachines([legacy]).added.length === 1, 'a legacy custom machine is merged in')
+assert(mergeCustomMachines([structuredClone(legacy)]).added.length === 0, 'merging the same project twice adds nothing')
 assert(
-  mergeCustomMachines([{ ...structuredClone(legacy), fileExtension: 'tap' }]).length === 1,
+  mergeCustomMachines([{ ...structuredClone(legacy), fileExtension: 'tap' }]).added.length === 1,
   'a differing legacy machine with a colliding id is still kept',
 )
 assert(getMachineLibrarySnapshot().customMachines.length === 2, 'the re-keyed machine joins the library')
-assert(mergeCustomMachines([]).length === 0, 'merging nothing is a no-op')
+assert(mergeCustomMachines([]).added.length === 0, 'merging nothing is a no-op')
 assert(
-  mergeCustomMachines([structuredClone(bundledMachines()[0])]).length === 0,
+  mergeCustomMachines([structuredClone(bundledMachines()[0])]).added.length === 0,
   'a bundled definition from a legacy project library is never merged',
 )
+
+// A structurally unreadable candidate is reported by the merge, not skipped.
+const badMerge = mergeCustomMachines([{ id: 'broken' } as unknown as MachineDefinition])
+assert(badMerge.added.length === 0, 'an unreadable candidate is not merged')
+assert(badMerge.diagnostics.some((entry) => entry.kind === 'machine-structural-error'), 'the merge reports the candidate it refused')
 
 unsubscribe()
 resetMachineLibraryForTests()

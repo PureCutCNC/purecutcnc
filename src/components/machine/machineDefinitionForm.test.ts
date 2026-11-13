@@ -15,6 +15,7 @@
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
+import { rotaryWord } from '../../engine/gcode/types'
 import {
   joinLines,
   splitLines,
@@ -22,6 +23,7 @@ import {
   mergeFormData,
   validateDef,
 } from './machineDefinitionForm'
+import { pinRotaryAxis } from '../../engine/gcode/types'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -175,6 +177,24 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
 }
 
 {
+  // The output dialect has no form field (issue #953): editing a ShopBot
+  // machine in the focused form must not turn it into a G-code machine. An
+  // `opensbp` definition must also use the dialect's comment syntax (#1057
+  // slice H).
+  const def = makeTestDef({
+    outputDialect: 'opensbp',
+    fileExtension: 'sbp',
+    program: { ...makeTestDef().program, commentPrefix: "'", commentSuffix: '' },
+  })
+  const form = toFormData(def)
+  form.name = 'Shop ShopBot'
+  const merged = mergeFormData(def, form)
+  assert(merged.outputDialect === 'opensbp', 'mergeFormData: output dialect preserved')
+  const validated = validateDef(merged)
+  assert(validated.ok?.outputDialect === 'opensbp', 'validateDef: output dialect survives validation')
+}
+
+{
   // operationHeader round-trip
   const def = makeTestDef({ program: { ...makeTestDef().program, operationHeader: ['G00 Z10', 'G01 Z-5'] } })
   const form = toFormData(def)
@@ -253,6 +273,192 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
   const result = validateDef(null)
   assert(result.ok === undefined, 'validateDef: null rejected')
   assert(result.error !== undefined, 'validateDef: null produces error')
+}
+
+// ── rotary axis (issue #393) ────────────────────────────────────
+
+/** A valid rotary block, so only the field under test varies. */
+function makeRotary(
+  overrides: Partial<NonNullable<MachineDefinition['rotary']>> = {},
+): NonNullable<MachineDefinition['rotary']> {
+  return { about: 'x', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' }, ...overrides }
+}
+
+{
+  // A machine without a rotary axis round-trips with no key at all.
+  const def = makeTestDef()
+  const form = toFormData(def)
+  assert(form.rotaryAbout === 'none', 'toFormData: no rotary block reads as none')
+  assert(form.rotaryDrive === 'own', 'toFormData: drive defaults to own in the form')
+  assert(form.rotaryReversed === false, 'toFormData: reversed defaults to false in the form')
+  const merged = mergeFormData(def, form)
+  assert(!('rotary' in merged), 'mergeFormData: no rotary key when the form has none')
+  assertDeepEqual(merged, def, 'mergeFormData: a definition without a rotary block round-trips unchanged')
+}
+
+for (const about of ['x', 'y'] as const) {
+  for (const drive of ['own', 'borrowed'] as const) {
+    const def = makeTestDef({ rotary: makeRotary({ about, drive }) })
+    const form = toFormData(def)
+    assert(form.rotaryAbout === about, `toFormData: rotary about ${about}`)
+    assert(form.rotaryDrive === drive, `toFormData: rotary drive ${drive}`)
+    const merged = mergeFormData(def, form)
+    assertDeepEqual(merged.rotary, def.rotary, `mergeFormData: rotary ${about}/${drive} round-trips`)
+  }
+}
+
+{
+  const def = makeTestDef({ rotary: makeRotary({ reversed: true }) })
+  const form = toFormData(def)
+  assert(form.rotaryReversed === true, 'toFormData: reversed rotary')
+  assert(mergeFormData(def, form).rotary?.reversed === true, 'mergeFormData: reversed kept')
+}
+
+{
+  // Choosing a rotary axis for the first time supplies every default.
+  const def = makeTestDef()
+  const form = toFormData(def)
+  form.rotaryAbout = 'y'
+  const merged = mergeFormData(def, form)
+  assertDeepEqual(
+    merged.rotary,
+    { about: 'y', drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+    'mergeFormData: first rotary axis gets drive own, not reversed, default inverse-time commands',
+  )
+}
+
+{
+  // None removes the block entirely, and the result validates without a key.
+  const def = makeTestDef({ rotary: makeRotary() })
+  const form = toFormData(def)
+  form.rotaryAbout = 'none'
+  const merged = mergeFormData(def, form)
+  assert(!('rotary' in merged), 'mergeFormData: None removes the rotary key')
+  const validated = validateDef(merged)
+  assert(validated.ok !== undefined, `validateDef: definition without a rotary block validates (${validated.error ?? ''})`)
+  assert(!('rotary' in validated.ok!), 'validateDef: parsed definition carries no rotary key')
+}
+
+{
+  // An explicit null inverse-time feed survives every one of the three controls.
+  const def = makeTestDef({ rotary: makeRotary({ inverseTimeFeed: null }) })
+  const form = toFormData(def)
+  form.rotaryAbout = 'y'
+  form.rotaryDrive = 'borrowed'
+  form.rotaryReversed = true
+  const merged = mergeFormData(def, form)
+  assert(merged.rotary?.inverseTimeFeed === null, 'mergeFormData: explicit null inverseTimeFeed is kept')
+}
+
+{
+  // Custom inverse-time commands are kept too.
+  const custom = { on: 'G93.1', off: 'G94.1' }
+  const def = makeTestDef({ rotary: makeRotary({ inverseTimeFeed: custom }) })
+  const form = toFormData(def)
+  form.rotaryDrive = 'borrowed'
+  const merged = mergeFormData(def, form)
+  assertDeepEqual(merged.rotary?.inverseTimeFeed, custom, 'mergeFormData: custom inverse-time commands kept')
+}
+
+{
+  // #1103 slice ca-h: the Zero A line is a focused field (finding 5 of the
+  // review — it used to be preserved without a control, so configuration
+  // needed raw JSON). The form reads it, writes a typed line, and leaves a
+  // definition that never had one without the key.
+  const zeroA = 'G10 L20 P1 A0'
+  const def = makeTestDef({ rotary: makeRotary({ zeroA }) })
+  const form = toFormData(def)
+  assert(form.rotaryZeroA === zeroA, 'toFormData: the Zero A line is in the form')
+  form.rotaryAbout = 'y'
+  form.rotaryDrive = 'borrowed'
+  form.rotaryReversed = true
+  const merged = mergeFormData(def, form)
+  assert(merged.rotary?.zeroA === zeroA, 'mergeFormData: editing other rotary fields keeps the Zero A line')
+
+  // Typing a line into a machine that had none writes it, and the strict
+  // schema accepts the result (P1 matches the test machine's G54).
+  const fresh = makeTestDef({ rotary: makeRotary() })
+  const typed = { ...toFormData(fresh), rotaryZeroA: 'G92 A0' }
+  const withLine = mergeFormData(fresh, typed)
+  assert(withLine.rotary?.zeroA === 'G92 A0', 'mergeFormData: a typed Zero A line reaches the definition')
+  assert(validateDef(withLine).ok !== undefined, 'and the definition still validates')
+  // Clearing it drops the key instead of saving an empty default.
+  const cleared = mergeFormData(withLine, { ...toFormData(withLine), rotaryZeroA: '' })
+  assert(!('zeroA' in (cleared.rotary ?? {})), 'clearing the field removes the key')
+  assert(validateDef(cleared).ok !== undefined, 'and the cleared definition validates')
+  // An untouched machine that never had one gains nothing.
+  const untouched = mergeFormData(fresh, toFormData(fresh))
+  assert(!('zeroA' in (untouched.rotary ?? {})),
+    'an unset Zero A line stays absent, with no format change')
+}
+
+{
+  // A plasma machine cannot carry the block, so converting drops it.
+  const def = makeTestDef({ rotary: makeRotary() })
+  const form = toFormData(def)
+  form.machineKind = 'plasma'
+  form.torchOnCommand = 'M3'
+  form.torchOffCommand = 'M5'
+  form.materialSelectCommand = 'M190 P{materialNumber}'
+  form.materialWaitCommand = 'M66 P3 L3 Q1'
+  form.materialFeedCommand = 'F#<_hal[plasmac.cut-feed-rate]>'
+  const merged = mergeFormData(def, form)
+  assert(!('rotary' in merged), 'mergeFormData: switching to plasma drops the rotary block')
+  const validated = validateDef(merged)
+  assert(validated.ok !== undefined, `validateDef: plasma conversion without rotary validates (${validated.error ?? ''})`)
+  assert(validated.ok!.machineKind === 'plasma', 'validateDef: plasma kind kept')
+  assert(validated.ok!.plasma !== undefined, 'validateDef: plasma block created')
+}
+
+{
+  // Nor can a ShopBot, so the dialect conversion drops it.
+  const def = makeTestDef({
+    outputDialect: 'opensbp',
+    fileExtension: 'sbp',
+    program: { ...makeTestDef().program, commentPrefix: "'", commentSuffix: '' },
+    rotary: makeRotary(),
+  })
+  const merged = mergeFormData(def, toFormData(def))
+  assert(!('rotary' in merged), 'mergeFormData: a ShopBot dialect drops the rotary block')
+  const validated = validateDef(merged)
+  assert(validated.ok !== undefined, `validateDef: ShopBot conversion without rotary validates (${validated.error ?? ''})`)
+  assert(validated.ok!.outputDialect === 'opensbp', 'validateDef: output dialect kept')
+}
+
+{
+  // The program word is read from the definition's coordinate system, not
+  // hard-coded: project Y mapped to machine X is still the Y motor.
+  const identity = makeTestDef({ rotary: makeRotary({ drive: 'borrowed' }) })
+  assert(rotaryWord(pinRotaryAxis(identity, null)) === 'Y', 'rotaryWord: identity mapping borrows the Y motor')
+  const mapped = makeTestDef({
+    coordinateSystem: { xAxis: 'X', yAxis: 'X', zAxis: 'Z' },
+    rotary: makeRotary({ drive: 'borrowed' }),
+  })
+  const form = toFormData(mapped)
+  assert(rotaryWord(pinRotaryAxis(mergeFormData(mapped, form), null)) === 'X', 'mergeFormData: mapped coordinate system shows the machine letter X')
+  form.rotaryDrive = 'own'
+  assert(rotaryWord(pinRotaryAxis(mergeFormData(mapped, form), null)) === 'A', 'mergeFormData: its own axis always shows A')
+}
+
+{
+  // A borrowed Z motor is refused, and the message names the Drive field so
+  // the dialog can show it there.
+  const def = makeTestDef({
+    coordinateSystem: { xAxis: 'X', yAxis: 'Z', zAxis: 'Y' },
+    rotary: makeRotary(),
+  })
+  const form = toFormData(def)
+  form.rotaryDrive = 'borrowed'
+  const result = validateDef(mergeFormData(def, form))
+  assert(result.ok === undefined, 'validateDef: borrowing the Z motor is refused')
+  assert(
+    result.error!.includes('cannot borrow the Z motor'),
+    `validateDef: borrowed-Z message, got: ${result.error}`,
+  )
+  assert(
+    result.error!.includes('(at rotary.drive)'),
+    `validateDef: borrowed-Z error points at the Driven by field, got: ${result.error}`,
+  )
 }
 
 console.log('machineDefinitionForm.test.ts — all assertions passed')

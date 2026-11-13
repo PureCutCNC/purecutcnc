@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { CornerReliefStyle, Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+import type { CornerReliefStyle, Operation, OperationKind, OperationPass, Project } from '../../types/project'
 // Presentation exception: the booklet report is a user-facing document, so
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
@@ -29,16 +29,24 @@ import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPattern
 import { clearingControlApplies } from '../toolpaths/clearingControls'
 import { resolvedEntryStrategy, supportsEntryStrategy } from '../toolpaths/entry'
 import { supportsXyLead } from '../toolpaths/xyLead'
+import { formatProgramNumber, projectExportsPerSetup, setupProgramNumber, setupStatesManualIndexing } from '../gcode/setupPrograms'
+import { manualIndexingApplies } from '../../store/helpers/projectType'
+import { toolpathInSetupFrame } from '../setupFrameProject'
+import { setupFace, setupForOperation, setupFrameForOperation } from '../setupOrientation'
+import { crossFaceTargetIds } from '../setupTargets'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile': return translate('cam.plasma.title')
     case 'pocket': return translate('booklet.operation.pocket')
     case 'v_carve': return translate('booklet.operation.vCarve')
     case 'v_carve_medial': return translate('booklet.operation.vCarveMedial')
     case 'edge_route_inside': return translate('booklet.operation.insideEdgeRoute')
     case 'edge_route_outside': return translate('booklet.operation.outsideEdgeRoute')
     case 'surface_clean': return translate('booklet.operation.surfaceClean')
+    case 'rotary_rough': return translate('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return translate('cam.opLabel.rotaryFinish')
     case 'rough_surface': return translate('booklet.operation.roughSurface')
     case 'finish_surface': return translate('booklet.operation.finishSurface')
     case 'finish_surface_cleanup': return translate('booklet.operation.finishSurfaceCleanup')
@@ -123,22 +131,87 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
   )
 }
 
-function targetSummary(project: Project, target: OperationTarget): string {
-  if (target.source === 'stock') {
+function targetSummary(project: Project, operation: Operation): string {
+  if (operation.target.source === 'stock') {
     return translate('booklet.target.stock')
   }
 
-  return targetFeatureNames(project, target).join(', ')
+  return targetFeatureNames(project, operation).join(', ')
 }
 
-function targetFeatureNames(project: Project, target: OperationTarget): string[] {
+function targetFeatureNames(project: Project, operation: Operation): string[] {
+  const { target } = operation
   if (target.source === 'stock') {
     return [translate('booklet.target.stock')]
   }
 
-  return target.featureIds.map((id) => (
-    project.features.find((feature) => feature.id === id)?.name ?? translate('booklet.target.missingFeature', { id })
-  ))
+  // A through cut or a model reached from the other face is said to be, not
+  // listed as if it were drawn on this one (issue #946).
+  const crossFace = new Set(crossFaceTargetIds(project, operation))
+  return target.featureIds.map((id) => {
+    const name = project.features.find((feature) => feature.id === id)?.name
+    if (name === undefined) return translate('booklet.target.missingFeature', { id })
+    return crossFace.has(id) ? translate('booklet.target.crossFace', { name }) : name
+  })
+}
+
+/**
+ * The setup an operation is cut in, for a project that has more than one
+ * (issue #946), or for a Top/Bottom face of a rotary bar project, whose
+ * operator sets A by hand (#1054 slice 2). A booklet is read at the machine,
+ * so it says which program this is, how the stock must be turned and which A
+ * to set before any setting.
+ */
+function setupRows(project: Project, operation: Operation): OperationBookletRow[] {
+  if (!projectExportsPerSetup(project) && !manualIndexingApplies(project)) return []
+  // An operation without a setup reads as the first one, exactly as export
+  // places it.
+  const setup = setupForOperation(project, operation) ?? project.setups?.[0] ?? null
+  if (!setup) return []
+
+  const turned = setupFace(setup)
+  const rows: OperationBookletRow[] = [
+    {
+      label: translate('booklet.label.setup'),
+      value: `${formatProgramNumber(setupProgramNumber(project, setup.id))} · ${setup.name}`,
+    },
+    {
+      label: translate('booklet.label.setupTurn'),
+      value: turned === 'top'
+        ? translate('booklet.value.setupTop')
+        : turned === 'around'
+          // The bar is not turned for an Around setup — it sits in the chuck
+          // and the program wraps around it — so it is never a flip (#395).
+          ? translate('booklet.value.setupAround', { axis: setup.orientation.axis.toUpperCase() })
+          : translate('booklet.value.setupBottom', { axis: setup.orientation.axis.toUpperCase() }),
+    },
+    // The manual A angle, on the faces of a rotary bar whose operator does
+    // the indexing (#1054 slice 2). Around has its own zeroing instruction in
+    // the program, so it is not given this one.
+    ...(setupStatesManualIndexing(project, setup)
+      ? [{
+        label: translate('booklet.label.indexing'),
+        value: turned === 'bottom'
+          ? translate('booklet.value.indexingBottom')
+          : translate('booklet.value.indexingTop'),
+      }]
+      : []),
+    {
+      label: translate('booklet.label.registration'),
+      value: setup.registration.length === 0
+        ? translate('booklet.value.registrationNone')
+        : setup.registration.map((reference) => {
+          const kind = translate(`booklet.registration.${reference.kind}`)
+          if (reference.target.type !== 'feature') return kind
+          const featureId = reference.target.featureId
+          const name = project.features.find((feature) => feature.id === featureId)?.name
+          return name === undefined ? kind : `${kind} ${name}`
+        }).join(', '),
+    },
+  ]
+  const notes = setup.notes.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0).join(' ')
+  if (notes.length > 0) rows.push({ label: translate('booklet.label.setupNotes'), value: notes })
+  return rows
 }
 
 function lengthWithUnits(value: number, units: Units): string {
@@ -276,13 +349,16 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   const rows: OperationBookletRow[] = [
     { label: translate('booklet.label.kind'), value: operationKindLabel(operation.kind) },
     { label: translate('booklet.label.pass'), value: operationPassLabel(operation.pass) },
-    { label: translate('booklet.label.target'), value: targetSummary(project, operation.target) },
+    { label: translate('booklet.label.target'), value: targetSummary(project, operation) },
     { label: translate('booklet.label.feed'), value: feedWithUnits(operation.feed, units) },
     { label: translate('booklet.label.plungeFeed'), value: feedWithUnits(operation.plungeFeed, units) },
     { label: translate('booklet.label.rpm'), value: `${Math.round(operation.rpm)} rpm` },
   ]
 
-  if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
+  if (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish') {
+    if (operation.kind === 'rotary_rough') rows.push({ label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) })
+    rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
+  } else if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push({ label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) })
     if (!isTrochoidalEdgeRoughing(operation)) {
       rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
@@ -423,7 +499,19 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.carveDepth'), value: lengthWithUnits(operation.carveDepth, units) })
   }
 
-  if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
+  if (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish') {
+    rows.push(
+      { label: translate('cam.operation.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
+      // Which way the passes travel round the bar (#1045 slice B). Missing reads
+      // as 'along', the motion every saved rotary operation was cut with.
+      {
+        label: translate('cam.rotary.passes'),
+        value: translate(operation.rotaryPassDirection === 'around' ? 'cam.rotary.passAround' : 'cam.rotary.passAlong'),
+      },
+      { label: translate('cam.rotary.chuckSupport'), value: lengthWithUnits(operation.rotaryChuckSupport ?? 0, units) },
+      { label: translate('cam.rotary.tailSupport'), value: lengthWithUnits(operation.rotaryTailSupport ?? 0, units) },
+    )
+  } else if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
     rows.push(
       { label: translate('booklet.label.stockToLeaveRadial'), value: lengthWithUnits(operation.stockToLeaveRadial, units) },
       { label: translate('booklet.label.stockToLeaveAxial'), value: lengthWithUnits(operation.stockToLeaveAxial, units) },
@@ -486,6 +574,13 @@ function reportWarnings(tool: NormalizedTool | null, toolpath: ToolpathResult | 
 
 export function buildOperationBookletReport(input: OperationBookletInput): OperationBookletReport {
   const generatedAt = input.generatedAt ?? new Date()
+  const tool = input.tool?.type === 'plasma' ? null : input.tool
+  // Heights are reported as the machine runs them in the operation's setup —
+  // up from the bed, cutter coming down — not in stock space, where a Bottom
+  // operation's clearance is below zero. Top passes through untouched.
+  const toolpath = input.toolpath
+    ? toolpathInSetupFrame(input.toolpath, setupFrameForOperation(input.project, input.operation))
+    : input.toolpath
   return {
     projectName: input.project.meta.name,
     operationName: input.operation.name,
@@ -494,11 +589,12 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     units: input.project.meta.units === 'inch' ? translate('booklet.units.inch') : translate('booklet.units.millimeter'),
     originZSummary: originZSummary(input.project),
     stockSizeSummary: stockSizeSummary(input.project),
-    targetSummary: targetSummary(input.project, input.operation.target),
-    targetFeatureNames: targetFeatureNames(input.project, input.operation.target),
-    toolRows: toolRows(input.tool, input.project.meta.units),
-    settingRows: settingRows(input.operation, input.project, input.tool),
-    warnings: reportWarnings(input.tool, input.toolpath),
-    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, input.tool),
+    targetSummary: targetSummary(input.project, input.operation),
+    targetFeatureNames: targetFeatureNames(input.project, input.operation),
+    setupRows: setupRows(input.project, input.operation),
+    toolRows: toolRows(tool, input.project.meta.units),
+    settingRows: settingRows(input.operation, input.project, tool),
+    warnings: reportWarnings(tool, toolpath),
+    toolpathStats: statsRows(toolpath, input.operation, input.project.meta.units, tool),
   }
 }

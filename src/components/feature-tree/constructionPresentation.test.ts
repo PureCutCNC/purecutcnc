@@ -96,7 +96,7 @@ assert(
 // ── Creation toolbars: Line and Construction targets ─────────────
 
 assert(
-  creationActions.includes("renderCreationTargetButton('line', 'snap-line', t(CREATION_TARGET_LABEL_KEYS.line))"),
+  creationActions.includes("renderCreationTargetButton('line', 'line-target', t(CREATION_TARGET_LABEL_KEYS.line))"),
   'CreationActions must render the line creation target',
 )
 
@@ -166,13 +166,14 @@ assert(
 )
 // The base-solid lock tracks the first SOLID feature, not row 0, and both
 // operation controls ask the same question before offering Subtract (#827).
+// Both pass the project, because a rotary bar needs no base add (#1054).
 assert(
-  propertiesPanel.includes('canChooseSubtract(features, selectedFeature.id)'),
-  'PropertiesPanel Subtract availability must use canChooseSubtract',
+  propertiesPanel.includes('canChooseSubtract(features, selectedFeature.id, project)'),
+  'PropertiesPanel Subtract availability must use canChooseSubtract with the project',
 )
 assert(
-  featureTree.includes('canChooseSubtract(features, feature.id)'),
-  'FeatureTree Subtract availability must use canChooseSubtract',
+  featureTree.includes('canChooseSubtract(features, feature.id, project)'),
+  'FeatureTree Subtract availability must use canChooseSubtract with the project',
 )
 assert(
   featureTree.includes('feature.id === firstSolidFeature?.id'),

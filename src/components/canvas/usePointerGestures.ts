@@ -34,12 +34,20 @@ import type {
 import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
+import { isCannedFeature } from '../../cannedShapes'
+import { useNoticeStore } from '../../store/noticeStore'
+import { aroundSheet } from './aroundSheet'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import type { ReferencePickIntent } from './referencePickIntent'
 import {
   canvasToWorld,
-  computeBaseViewTransform,
   computeFitViewStateForBounds,
+  computeSketchLocalTransform,
+  computeSketchViewTransform,
   computeViewTransform,
+  sketchViewStock,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, projectPointOntoLine } from './draftGeometry'
@@ -65,6 +73,7 @@ import {
 } from './manualEntry'
 import { profileVertices } from '../../types/project'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
+import type { UseCannedRadiusDrag } from './useCannedRadiusDrag'
 import type { UseSnapPreviewReturn } from './useSnapPreview'
 import type { UseCanvasContextMenuReturn } from './useCanvasContextMenu'
 
@@ -113,6 +122,8 @@ export interface PointerGesturesCtx {
   suppressClickRef: MutableRefObject<boolean>
 
   // Other refs
+  getReferencePickIntent: () => ReferencePickIntent
+  showOtherSide: () => boolean
   projectRef: MutableRefObject<Project>
   selectionRef: MutableRefObject<SelectionState>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -144,6 +155,8 @@ export interface PointerGesturesCtx {
   snap: UseSnapPreviewReturn
   contextMenu: UseCanvasContextMenuReturn
   dimEdit: DimensionEditWorkflow
+  /** A selected canned ellipse's radius handles (issue #1112 slice w3e-a). */
+  cannedRadius: UseCannedRadiusDrag
   isGestureActiveRef: MutableRefObject<boolean>
 
   // Shell-local helpers (stay in shell, passed via ctx)
@@ -266,6 +279,8 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     zoomWindowCurrentRef,
     suppressClickRef,
     projectRef,
+    getReferencePickIntent,
+    showOtherSide,
     selectionRef,
     viewStateRef,
     canvasRef,
@@ -294,6 +309,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     snap,
     contextMenu,
     dimEdit,
+    cannedRadius,
     isGestureActiveRef,
     hitEditableControl,
     editableFeature,
@@ -398,7 +414,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
 
     // ── Begin dragging a dimension annotation to reposition it ──
@@ -447,10 +463,39 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       }
     }
 
+    // A canned ellipse whose Edit panel is open draws two radius handles in
+    // feature mode. They are the only handles there, so a press on one starts a
+    // radius drag before the feature body or a marquee can take the pointer
+    // (issue #1112). The `canned-edit` session is the one pending-create state
+    // that places nothing on the canvas, so it must not swallow the press.
+    const pendingEditSession = pendingAddRef.current?.shape === 'canned-edit'
+    const canGrabRadiusHandle = selection.mode === 'feature'
+      && (!pendingAddRef.current || pendingEditSession)
+      && !pendingMoveRef.current && !pendingTransformRef.current
+      && !pendingShapeAction && !pendingConstraintRef.current
+      && !pendingTextLayoutRef.current && !pendingFeatureDistributionRef.current
+      && !pendingClipboardPlacementRef.current
+      // A reference pick (a trim subject, a guide, a clipboard placement) owns
+      // the pointer; a handle must not take the click it is waiting for.
+      && !getReferencePickIntent()
+    if (canGrabRadiusHandle) {
+      const radiusHandle = cannedRadius.hitHandle(point)
+      if (radiusHandle !== null && cannedRadius.begin(radiusHandle)) {
+        suppressClickRef.current = true
+        isDraggingNodeRef.current = true
+        dragStartWorldRef.current = world
+        setHoveredEditControl(null)
+        return
+      }
+    }
+
     const control = hitEditableControl(point)
-    const hitClampId = findHitClampId(world, project.clamps)
-    const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    // A bar's clamp bands are reference on the sheet and a tab has no place
+    // there, so neither occupies the pointer (issue #395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
+    const hitFeatureId = findHitFeatureId(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -525,7 +570,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const pendingOffset = pendingOffsetRef.current
     const pendingClipboardPlacement = pendingClipboardPlacementRef.current
     const viewState = viewStateRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
@@ -635,6 +680,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || constraintPicking
         || radialCenterPicking
         || textCenterPicking
+        || getReferencePickIntent() === 'distribution-guide' || getReferencePickIntent() === 'text-guide'
       )
     const resolvedSnap = shouldPreviewSnap
       ? snap.resolveCurrentSketchSnap(world, vt, {
@@ -669,6 +715,17 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       pendingSketchFilletRef.current = null
       setHoveredEditControl(null)
       hoverFeature(null)
+      // A canned-shape edit borrows `pendingAdd` only to open its side panel: it
+      // places nothing, and its one canvas gesture is dragging the ellipse's
+      // radius handles, which writes that panel's fields (issue #1112 rt7-g).
+      if (pendingAdd.shape === 'canned-edit') {
+        if (isDraggingNodeRef.current && cannedRadius.dragRef.current) {
+          cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
+        } else {
+          cannedRadius.hover(point)
+        }
+        return
+      }
       if (pendingAdd.shape === 'origin') {
         originPreviewPointRef.current = { point: snapped, session: pendingAdd.session }
         scheduleDraw()
@@ -719,7 +776,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         return
       }
       const lockedSnapped = pendingMove.fromPoint ? applyLock(snapped, pendingMove.fromPoint) : snapped
-      setPendingMovePreviewPointRef({ point: lockedSnapped, session: pendingMove.session })
+      // A canned rotary band only moves along the bar (issue #1112 rt6-d): the
+      // pointer preview is the committed target, so the outline never leaves
+      // the axis and then jumps back at release.
+      setPendingMovePreviewPointRef({
+        point: pendingMove.fromPoint
+          ? projectedMoveTarget(project, pendingMove, pendingMove.fromPoint, lockedSnapped)
+          : lockedSnapped,
+        session: pendingMove.session,
+      })
       return
     }
 
@@ -745,6 +810,18 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       hoverFeature(null)
       setPendingOffsetRawPreviewPointRef({ point: world, session: pendingOffset.session })
       setPendingOffsetPreviewPointRef({ point: snapped, session: pendingOffset.session })
+      return
+    }
+
+    if (isDraggingNodeRef.current && cannedRadius.dragRef.current) {
+      sketchEditPreviewRef.current = null
+      pendingSketchExtensionRef.current = null
+      pendingSketchFilletRef.current = null
+      setHoveredEditControl(null)
+      // The handle follows the same snap-gated point a dragged circle control
+      // does: a required snap that did not resolve leaves it where it is rather
+      // than falling back to the raw pointer (issue #1112 review).
+      cannedRadius.update(constrainedPoint, dragStartWorldRef.current, applyLock)
       return
     }
 
@@ -891,14 +968,16 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingSketchExtensionRef.current = null
     pendingSketchFilletRef.current = null
     setHoveredEditControl(null)
+    cannedRadius.hover(point)
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const sheet = aroundSheet(project)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       hoverFeature(null)
       return
     }
 
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
     hoverFeature(hitId)
   }
 
@@ -925,7 +1004,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return false
     }
 
-    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
     const targetEndpoint = findOpenEndpointHit(rawPoint, vt, {
       exclude: {
         featureId: selection.selectedFeatureId,
@@ -978,12 +1057,15 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       const dy = zoomWindowCurrentRef.current.cy - zoomWindowStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        // The zoom window is measured in the frame the view draws: the sheet on
+        // Around, the stock's own rectangle otherwise (issue #395).
+        const frameStock = sketchViewStock(project)
+        const vt = computeViewTransform(frameStock, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(zoomWindowStartRef.current.cx, zoomWindowStartRef.current.cy, vt)
         const endWorld = canvasToWorld(zoomWindowCurrentRef.current.cx, zoomWindowCurrentRef.current.cy, vt)
         setViewState(
           computeFitViewStateForBounds(
-            project.stock,
+            frameStock,
             {
               minX: Math.min(startWorld.x, endWorld.x),
               maxX: Math.max(startWorld.x, endWorld.x),
@@ -1007,16 +1089,17 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
         const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
         const minX = Math.min(startWorld.x, endWorld.x)
         const minY = Math.min(startWorld.y, endWorld.y)
         const maxX = Math.max(startWorld.x, endWorld.x)
         const maxY = Math.max(startWorld.y, endWorld.y)
-        const enclosedIds = resolvedProjectFeatures(project)
+        const sheet = aroundSheet(project)
+        const enclosedIds = editableProjectFeatures(project)
           .filter((feature) => feature.visible)
-          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
+          .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY, sheet))
           .map((feature) => feature.id)
         const nextIds = [...selection.selectedFeatureIds, ...enclosedIds]
           .filter((id, index, array) => array.indexOf(id) === index)
@@ -1068,6 +1151,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       sketchEditPreviewRef.current = null
     }
     setHoveredEditControl(null)
+    cannedRadius.clearHover()
     setPendingOffsetPreviewPointRef(null)
     setPendingOffsetRawPreviewPointRef(null)
     setClipboardPlacementPreviewPoint(null)
@@ -1122,8 +1206,9 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const point = canvasCoordinates(event)
     const project = projectRef.current
     const currentViewState = viewStateRef.current
-    const base = computeBaseViewTransform(project.stock, canvas.width, canvas.height)
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, currentViewState)
+    // The frame the view draws: the sheet on Around, the stock otherwise.
+    const base = computeSketchLocalTransform(project, canvas.width, canvas.height, { zoom: 1, panX: 0, panY: 0 })
+    const vt = computeSketchLocalTransform(project, canvas.width, canvas.height, currentViewState)
     const worldBefore = canvasToWorld(point.cx, point.cy, vt)
     const zoomFactor = Math.exp(-event.deltaY * 0.0015)
     const nextZoom = Math.max(MIN_SKETCH_ZOOM, currentViewState.zoom * zoomFactor)
@@ -1166,20 +1251,32 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
+    // A bar's clamps are reference bands on the sheet and a tab is a flat-stock
+    // device with no place there, so neither opens an edit on Around (#395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       enterClampEdit(hitClampId)
       return
     }
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
-    if (hitId) enterSketchEdit(hitId)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt, sheet)
+    if (!hitId) return
+    // A generated shape has no editable sketch. Select it and say why, since a
+    // double-click has no disabled button to hover (#1112 A2).
+    const hitFeature = editableProjectFeatures(project).find((feature) => feature.id === hitId)
+    if (hitFeature && isCannedFeature(hitFeature)) {
+      selectFeatures([hitId])
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+      return
+    }
+    enterSketchEdit(hitId)
   }
 
   const onCanvasPointerMove = useStableEvent((event: PointerEvent) => {

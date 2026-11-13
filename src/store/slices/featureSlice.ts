@@ -23,6 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
+import { activeFace, aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -45,10 +46,17 @@ import {
   IDENTITY_MATRIX,
 } from '../../types/project'
 import { roundedRectProfile, chamferedRectProfile } from '../helpers/cannedRectProfiles'
+import { multiplyMatrix, rotateMatrix, translateMatrix } from '../helpers/instanceTransforms'
+import { addCannedShapeFeature } from '../helpers/cannedShapeCreation'
+import { CHAMFER_RECT_CANNED_KIND, ELLIPSE_CANNED_KIND, NGON_CANNED_KIND, ROUND_RECT_CANNED_KIND, SLOT_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { toBlockStock } from '../helpers/stockShape'
 import { uniqueName } from '../../import'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createAddGearFeatureAction } from '../helpers/gearFeature'
+import { createAddRotaryPatternAction } from '../helpers/rotaryPatterns'
+import { createAddRotarySolidAction } from '../helpers/rotarySolids'
 import { commonSectionOfIds, isMachinable, isSolid, sectionForOperation } from '../helpers/featureRoles'
+import { barSeedsModel } from '../helpers/projectType'
 import {
   normalizeDerivedFeatureNameStem,
   insertDerivedFeaturesAfterSources,
@@ -61,6 +69,9 @@ import {
 import { createDefinitionForFeature, createFeatureInstance, gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import { resolveFeatureInstance, resolveFeatureInstances, resolvedFeatureMap, resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { expandTextFeature } from '../helpers/textExpansion'
+import { expandCannedFeature } from '../helpers/cannedExpansion'
+import { cannedShapeIsExpandable, isCannedFeature } from '../../cannedShapes'
+import { cannedModelZTop, rebuildCannedShapeModelDefinitions } from '../../cannedShapes/model'
 import {
   buildSegmentAnnotations,
   clipperContourToProfile,
@@ -97,6 +108,8 @@ export type FeatureSlice = Pick<
   | 'addSlotFeature'
   | 'addNgonFeature'
   | 'addGearFeature'
+  | 'addRotaryPattern'
+  | 'addRotarySolid'
   | 'addRoundRectFeature'
   | 'addChamferRectFeature'
   | 'alignFeatures'
@@ -105,7 +118,24 @@ export type FeatureSlice = Pick<
   | 'cutSelectedFeatures'
   | 'offsetSelectedFeatures'
   | 'expandTextFeature'
+  | 'expandCannedFeature'
 >
+
+/**
+ * Whether a derived-creation result would author new geometry on a round-only
+ * Around sheet (issue #1016 C2-U1F). A derived feature keeps its source's
+ * {@link SketchFeature.authoringFace} (`derivedFeatures.ts`), and these paths
+ * insert it directly rather than through `addFeature`, so the resulting faces
+ * — not the current workspace face — are what the square blank's policy must
+ * judge. An unset face means Top, so it is never refused here. A derived region
+ * or construction row never cuts the sheet, so it is admitted on a square
+ * blank's Around sheet (issue #1112 decision 17).
+ *
+ * Returns true before any project, selection, history or pending mutation.
+ */
+function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
+}
 
 function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature | null {
   const raw = feature as unknown as Record<string, unknown>
@@ -122,11 +152,74 @@ function referencedFeatureDraft(feature: SketchFeature): ReferencedSketchFeature
   return feature as ReferencedSketchFeature
 }
 
+interface GeneratedFeatureExpansion {
+  folders: FeatureFolder[]
+  features: FeatureInstance[]
+  definitions: Record<string, FeatureDefinition>
+}
+
+/**
+ * Insert a generated expansion (Text's glyph rows or a canned shape's outline
+ * rows) directly after its source row. Both expansion kinds keep the source row
+ * and add one grouped folder each, so the two actions share this state write.
+ */
+function insertGeneratedExpansion(
+  state: ProjectStore,
+  sourceFeatureId: string,
+  result: GeneratedFeatureExpansion,
+): Partial<ProjectStore> {
+  const nextFeatureFolders = [...state.project.featureFolders, ...result.folders]
+  const nextFeatureDefinitions = {
+    ...state.project.featureDefinitions,
+    ...result.definitions,
+  }
+
+  const sourceTreeIndex = state.project.featureTree.findIndex(
+    (entry) => entry.type === 'feature' && entry.featureId === sourceFeatureId,
+  )
+  const newTreeEntries: FeatureTreeEntry[] = result.folders.map((folder) => ({
+    type: 'folder' as const,
+    folderId: folder.id,
+  }))
+  const nextFeatureTree = sourceTreeIndex >= 0
+    ? [
+        ...state.project.featureTree.slice(0, sourceTreeIndex + 1),
+        ...newTreeEntries,
+        ...state.project.featureTree.slice(sourceTreeIndex + 1),
+      ]
+    : [...state.project.featureTree, ...newTreeEntries]
+
+  const nextProject = syncFeatureTreeProject({
+    ...state.project,
+    featureFolders: nextFeatureFolders,
+    featureDefinitions: nextFeatureDefinitions,
+    features: [...state.project.features, ...result.features],
+    featureTree: nextFeatureTree,
+    meta: { ...state.project.meta, modified: new Date().toISOString() },
+  })
+
+  return {
+    project: nextProject,
+    selection: {
+      ...state.selection,
+      selectedFeatureId: null,
+      selectedFeatureIds: [],
+      selectedNode: null,
+      mode: 'feature',
+      activeControl: null,
+    },
+    history: {
+      past: [...state.history.past, cloneProject(state.project)].slice(-100),
+      future: [],
+      transactionStart: null,
+    },
+  }
+}
+
 export function createFeatureSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
 ): FeatureSlice {
-
   return {
     // ── Feature folders ──────────────────────────────────────
 
@@ -477,7 +570,24 @@ export function createFeatureSlice(
         const safeId = s.project.features.some((existing) => existing.id === featureForInsert.id)
           ? nextUniqueGeneratedId(s.project, 'f')
           : featureForInsert.id
-        const isFirstSolidFeature = isSolid(featureForInsert)
+        // A new feature belongs to the face the workspace is on (issue #945);
+        // one that names its face — a copy of derived geometry — keeps it. The
+        // face is known before the base-solid rule runs: an Around feature is
+        // never the base solid, so it must not be forced to Add (#395).
+        const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
+        // The Around face is workflow-available on a real square blank, but its
+        // unrolled sheet is round-only (issue #1016 C2-U1): a feature that would
+        // be authored there is refused before any id, asset, tree, history or
+        // selection work. A generated solid (C2-B) lands as an ordinary Top
+        // model through its own action and never comes through here. A region or
+        // a construction row is not a cut, so the sheet takes it (issue #1112
+        // decision 17).
+        if (aroundSheetAuthoringRefused(s.project, authoringFace, featureOperation(s.project, featureForInsert))) return {}
+        // A rotary project's bar is already the material (#1054), so a first
+        // subtract is a cut into the bar, not a base solid waiting to be made
+        // into Add. Block projects keep the base-add rule unchanged.
+        const needsBaseAdd = !barSeedsModel(s.project)
+        const isFirstSolidFeature = needsBaseAdd && isSolid({ ...featureForInsert, authoringFace })
           && !resolvedProjectFeatures(s.project).some(isSolid)
         const preserveImportedModelOperation = isFirstSolidFeature && isImportedModelFeature(featureForInsert)
         const selectedNode = s.selection.selectedNode
@@ -497,10 +607,12 @@ export function createFeatureSlice(
         if (effectiveFolderSection !== sectionForOperation(featureForInsert.operation)) {
           effectiveFolderId = null
         }
+        if ((activeFace(s.project) === 'around' || authoringFace === 'around')
+          && (featureForInsert.kind === 'stl' || featureForInsert.operation === 'model')) return {}
         const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation
-          ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, operation: 'add' })
-          : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId })
-        const nextModelAssets = { ...s.project.modelAssets }
+          ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace, operation: 'add' })
+          : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace })
+        let nextModelAssets = { ...s.project.modelAssets }
         const safeFeature: SketchFeature = {
           ...safeFeatureBase,
           stl: normalizeImportedModelStorage(safeFeatureBase.id, safeFeatureBase.stl, nextModelAssets),
@@ -524,8 +636,24 @@ export function createFeatureSlice(
             nextDefinitions = { ...nextDefinitions, [clonedDefinition.id]: clonedDefinition }
           }
         }
+        // A canned model is a definition until its mesh exists, so the same
+        // write that mints/uses the definition builds the mesh imported-model
+        // consumers read (#1112 A2). A sketch kind is a no-op.
+        const rebuiltCannedModel = rebuildCannedShapeModelDefinitions(
+          { ...s.project, modelAssets: nextModelAssets, featureDefinitions: nextDefinitions },
+          new Set([definitionId]),
+        )
+        nextDefinitions = rebuiltCannedModel.featureDefinitions
+        nextModelAssets = rebuiltCannedModel.modelAssets
+        // A new model's height comes from its regenerated mesh, not from the
+        // draft's placeholder span, so the first consumer already sees it.
+        const rebuiltModel = rebuiltCannedModel.models.get(definitionId)
+        const instanceDraft = rebuiltModel
+          ? { ...safeFeature, z_top: cannedModelZTop(s.project, safeFeature.z_bottom, rebuiltModel) }
+          : safeFeature
+
         const safeInstance = createFeatureInstance(
-          safeFeature,
+          instanceDraft,
           definitionId,
           referenceFields?.transform ?? IDENTITY_MATRIX,
         )
@@ -595,6 +723,7 @@ export function createFeatureSlice(
           ...s.project,
           features: updated.features,
           featureDefinitions: updated.featureDefinitions,
+          modelAssets: updated.modelAssets,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncFeatureTreeProject(nextProject)
@@ -626,6 +755,7 @@ export function createFeatureSlice(
           ...s.project,
           features: updated.features,
           featureDefinitions: updated.featureDefinitions,
+          modelAssets: updated.modelAssets,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         nextProject = syncFeatureTreeProject(nextProject)
@@ -675,7 +805,7 @@ export function createFeatureSlice(
           const width = Math.max(stockBounds.maxX - stockBounds.minX, 1)
           const height = Math.max(stockBounds.maxY - stockBounds.minY, 1)
           stock = {
-            ...stock,
+            ...toBlockStock(stock),
             profile: rectProfile(stockBounds.minX, stockBounds.minY, width, height),
             sourceFeatureId: null as string | null | undefined,
             sourceFeature: null,
@@ -724,7 +854,13 @@ export function createFeatureSlice(
 
     mergeSelectedFeatures: (keepOriginals = false) => {
       const state = get()
-      const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+      const allSelected = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
+      // A union would freeze generated outlines into a plain shape and lose the
+      // parameters. Expand to features first (issue #1112).
+      if (allSelected.some(isCannedFeature)) {
+        return []
+      }
+      const selectedFeatures = allSelected
         .filter((feature) => feature.sketch.profile.closed)
 
       if (selectedFeatures.length < 2) {
@@ -755,6 +891,12 @@ export function createFeatureSlice(
         })
         .filter((result): result is NonNullable<typeof result> => result !== null)
       const createdFeatures = createdResults.map((result) => result.feature)
+      // A join preserves the anchor's authoring face, so a union of Around
+      // features would land as new Around rows even though the workspace may
+      // have moved Top (issue #1016 C2-U1F). Refuse before any state write.
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const newDefinitions = createdResults.map((result) => result.definition)
       const createdInstances = createdResults.map((result) =>
         createFeatureInstance(result.feature, result.definition.id),
@@ -812,6 +954,12 @@ export function createFeatureSlice(
       const state = get()
       const selectedFeatures = resolveFeatureInstances(state.project, state.selection.selectedFeatureIds)
 
+      // Cutting a canned shape would replace its generated outlines with a
+      // frozen boolean result. Expand to features first (issue #1112).
+      if (selectedFeatures.some(isCannedFeature)) {
+        return []
+      }
+
       if (selectedFeatures.length < 2) {
         return []
       }
@@ -825,6 +973,11 @@ export function createFeatureSlice(
       const cutResult = cutFeaturesByCutterGrouped(state.project, [cutter], targets, createDerivedFeature)
       const createdGroups = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
+      // A cut preserves each target's authoring face; direct insertion would
+      // bypass `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       let definitionIndex = 0
       const createdInstanceGroups: Array<DerivedFeatureGroup<FeatureInstance>> = createdGroups.map((group) => ({
         sourceId: group.sourceId,
@@ -885,8 +1038,18 @@ export function createFeatureSlice(
 
     offsetSelectedFeatures: (distance) => {
       const state = get()
+      // An offset would freeze generated outlines into a plain shape.
+      // Expand to features first (issue #1112).
+      if (resolveFeatureInstances(state.project, state.selection.selectedFeatureIds).some(isCannedFeature)) {
+        return []
+      }
       const offsetResult = previewOffsetFeatures(state.project, state.selection.selectedFeatureIds, distance)
       const createdFeatures = offsetResult.features
+      // An offset preserves its base feature's authoring face and is inserted
+      // directly, bypassing `addFeature` (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const createdInstances = createdFeatures.map((feature, index) => {
         const definition = offsetResult.definitions[index]
         if (!definition) {
@@ -941,7 +1104,8 @@ export function createFeatureSlice(
         const reordered = ids.map((id) => map.get(id)!).filter(Boolean)
         const reorderedProject = { ...s.project, features: reordered }
         const firstSolid = resolvedProjectFeatures(reorderedProject).find(isSolid)
-        const normalized = firstSolid && firstSolid.operation !== 'add' && !isImportedModelFeature(firstSolid)
+        const normalized = firstSolid && !barSeedsModel(s.project)
+          && firstSolid.operation !== 'add' && !isImportedModelFeature(firstSolid)
           ? applyFeaturePatch(reorderedProject, new Set([firstSolid.id]), { operation: 'add' })
           : { features: reordered, featureDefinitions: s.project.featureDefinitions }
         return {
@@ -1127,9 +1291,9 @@ export function createFeatureSlice(
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'circle', circleProfile(cx, cy, r), name, depth))
     },
 
-    addEllipseFeature: (name, cx, cy, rx, ry, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'ellipse', ellipseProfile(cx, cy, rx, ry), name, depth))
-    },
+    addEllipseFeature: (name, cx, cy, rx, ry, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ELLIPSE_CANNED_KIND, params: { rx, ry } },
+        ellipseProfile(cx, cy, rx, ry), translateMatrix(cx, cy), depth),
 
     addPolygonFeature: (name, points, depth) => {
       get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', polygonProfile(points), name, depth))
@@ -1140,21 +1304,32 @@ export function createFeatureSlice(
     },
 
     addSlotFeature: (name, p1, p2, width, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', slotProfile(p1, p2, width), name, depth))
+      const length = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+      const centre = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+      addCannedShapeFeature(get(), name, { kind: SLOT_CANNED_KIND, params: { length, width } },
+        slotProfile(p1, p2, width),
+        multiplyMatrix(translateMatrix(centre.x, centre.y), rotateMatrix(angle)), depth)
     },
 
     addNgonFeature: (name, cx, cy, sides, circumradius, firstVertexAngle, depth) =>
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'polygon', ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), name, depth)),
+      addCannedShapeFeature(get(), name,
+        { kind: NGON_CANNED_KIND, params: { sides, size: circumradius, rotation: (firstVertexAngle * 180) / Math.PI } },
+        ngonProfile(cx, cy, sides, circumradius, firstVertexAngle), translateMatrix(cx, cy), depth),
 
     addGearFeature: createAddGearFeatureAction(set, get),
 
-    addRoundRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addRotaryPattern: createAddRotaryPatternAction(set, get),
 
-    addChamferRectFeature: (name, x, y, w, h, corner, depth) => {
-      get().addFeature(buildShapeFeature(get().project, get().creationTarget, 'composite', chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), name, depth))
-    },
+    addRotarySolid: createAddRotarySolidAction(set, get),
+
+    addRoundRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: ROUND_RECT_CANNED_KIND, params: { width: w, height: h, radius: corner } },
+        roundedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
+
+    addChamferRectFeature: (name, x, y, w, h, corner, depth) =>
+      addCannedShapeFeature(get(), name, { kind: CHAMFER_RECT_CANNED_KIND, params: { width: w, height: h, chamfer: corner } },
+        chamferedRectProfile({ x, y }, { x: x + w, y: y + h }, corner), translateMatrix(x, y), depth),
 
     expandTextFeature: (textFeatureId) => {
       const state = get()
@@ -1170,69 +1345,48 @@ export function createFeatureSlice(
         return
       }
 
-      set((s) => {
-        // Add new folders
-        const nextFeatureFolders = [...s.project.featureFolders, ...folders]
+      // Every generated glyph instance copies the text feature's authoring
+      // face (`textExpansion.ts`) and is inserted directly, so a Square blank's
+      // round-only Around sheet must refuse the expansion atomically — before
+      // the folders, definitions, rows, selection and history are written, and
+      // judged by the rows about to be created rather than the workspace face.
+      // Ordinary Top and round-bar Around text expansion is unaffected
+      // (issue #1016 C2-U1G). Glyphs are lines, so the square blank still
+      // refuses them (issue #1112 decision 17).
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
+        return
+      }
 
-        // Add feature definitions to the project
-        const nextFeatureDefinitions = {
-          ...s.project.featureDefinitions,
-          ...definitions,
-        }
+      set((s) => insertGeneratedExpansion(s, textFeatureId, { folders, features, definitions }))
+    },
 
-        // Find the position of the original text feature in the feature tree
-        const textFeatureTreeIndex = s.project.featureTree.findIndex(
-          (entry) => entry.type === 'feature' && entry.featureId === textFeatureId,
-        )
+    expandCannedFeature: (cannedFeatureId) => {
+      const state = get()
+      const cannedFeature = resolveFeatureInstance(state.project, cannedFeatureId)
 
-        // Build new feature tree entries: insert folder entries right after the original text feature
-        const newTreeEntries: FeatureTreeEntry[] = folders.map((folder) => ({
-          type: 'folder' as const,
-          folderId: folder.id,
-        }))
+      if (!cannedFeature || !cannedFeature.canned) {
+        return
+      }
 
-        let nextFeatureTree: FeatureTreeEntry[]
-        if (textFeatureTreeIndex >= 0) {
-          // Always keep the original text feature; insert new folders after it
-          nextFeatureTree = [
-            ...s.project.featureTree.slice(0, textFeatureTreeIndex + 1),
-            ...newTreeEntries,
-            ...s.project.featureTree.slice(textFeatureTreeIndex + 1),
-          ]
-        } else {
-          // Feature not in tree (shouldn't happen), just append
-          nextFeatureTree = [...s.project.featureTree, ...newTreeEntries]
-        }
+      // A model kind is not expandable: expansion would freeze the mesh and
+      // discard the parameters that regenerate it (#1112 A2).
+      if (!cannedShapeIsExpandable(cannedFeature.canned)) {
+        return
+      }
 
-        // Add new features
-        const nextFeatures = [...s.project.features, ...features]
+      const { folders, features, definitions } = expandCannedFeature(state.project, cannedFeature)
 
-        const nextProject = syncFeatureTreeProject({
-          ...s.project,
-          featureFolders: nextFeatureFolders,
-          featureDefinitions: nextFeatureDefinitions,
-          features: nextFeatures,
-          featureTree: nextFeatureTree,
-          meta: { ...s.project.meta, modified: new Date().toISOString() },
-        })
+      if (features.length === 0) {
+        return
+      }
 
-        return {
-          project: nextProject,
-          selection: {
-            ...s.selection,
-            selectedFeatureId: null,
-            selectedFeatureIds: [],
-            selectedNode: null,
-            mode: 'feature',
-            activeControl: null,
-          },
-          history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
-            future: [],
-            transactionStart: null,
-          },
-        }
-      })
+      // Same atomic face check as Text: the plain outlines copy the canned
+      // feature's face and are inserted directly, bypassing `addFeature`.
+      if (features.some((feature) => aroundSheetAuthoringRefused(state.project, feature.authoringFace, featureOperation(state.project, feature)))) {
+        return
+      }
+
+      set((s) => insertGeneratedExpansion(s, cannedFeatureId, { folders, features, definitions }))
     },
   }
 }

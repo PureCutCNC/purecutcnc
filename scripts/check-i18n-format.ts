@@ -303,16 +303,19 @@ const SENTENCE_CASE_TERMS = new Set([
   // Acronyms, file formats, and dimensionality.
   'CNC', 'CAD', 'CAM', 'CAMJ', 'DXF', 'STL', 'OBJ', 'STEP', 'SVG', 'PDF', 'PNG', 'JPEG', 'MB',
   'JSON', 'RPM', 'WCAG', 'BCP', 'UI', 'OS', 'WebGL', 'GPU', 'Canvas', 'ID', '2D', '3D', '2.5D',
-  // Axes, G-code words, and machine addresses. `V` is the bit profile, as in
-  // "V flanks" and "V groove", not an axis.
-  'X', 'Y', 'Z', 'V', 'XY', 'XZ', 'YZ', 'XYZ', 'X0', 'Y0', 'Z0',
-  'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6',
+  // Axes, G-code words, and machine addresses. `A` is the rotary axis word
+  // (issue #393); `V` is the bit profile, as in "V flanks" and "V groove",
+  // not an axis.
+  'A', 'X', 'Y', 'Z', 'V', 'XY', 'XZ', 'YZ', 'XYZ', 'X0', 'Y0', 'Z0',
+  'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6', 'F0',
+  // ShopBot part-file commands (issue #953): `C9` is the tool-change macro.
+  'C9',
   // Compound tool, fixture, and geometry terms whose capital is part of the name.
   'G-code', 'V-bit', 'V-carve', 'V-groove', 'T-bone', 'T-track', 'Dogbone', 'Voronoi',
   'S-curve', 'S-link',
   'Z-up', 'Y-up',
   // Product, vendor, platform, and language names.
-  'PureCutCNC', 'Tauri', 'GRBL', 'FluidNC', 'LinuxCNC', 'Marlin',
+  'PureCutCNC', 'Tauri', 'GRBL', 'FluidNC', 'LinuxCNC', 'Marlin', 'ShopBot',
   'Windows', 'Linux', 'macOS', 'Chrome', 'Firefox', 'Safari',
   'WebGL2', 'BCP-47', 'Apache-2.0',
   'English', 'German', 'French', 'Spanish', 'Chinese', 'Simplified', 'Traditional',
@@ -322,6 +325,20 @@ const SENTENCE_CASE_TERMS = new Set([
   // ("cuts it as Rectangular" means the Rectangular setting, not the adjective).
   'Smooth', 'Rectangular', 'Climb', 'Conventional', 'Helix', 'Plunge', 'Direct',
   'Trochoidal', 'Contour', 'Ramp', 'Spiral', 'Parallel', 'Waterline',
+  // The workholding type named as the value to reset to in a refusal
+  // ("reset its type to Chuck" is the clamp-type option, not a style choice,
+  // #1016 C2 F3).
+  'Chuck',
+  // The rotary operation family named in prose: "machined by Rotary rough and
+  // Rotary finish" names the two operations, not a style choice (issue #1015).
+  'Rotary',
+  // The workspace face names are the face chip's own labels, so prose that
+  // points at one keeps its capital ("draw it on the Top face", #1112 rt2-b).
+  'Top', 'Bottom',
+  // The Properties action named in prose: "set in Edit thread…" points at the
+  // panel's own "Edit {shape}…" button, so the capital is the button's
+  // (issue #1112 rt6-a).
+  'Edit',
 ])
 
 /** Locale whose values carry the sentence-case rule. */

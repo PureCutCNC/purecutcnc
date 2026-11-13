@@ -29,17 +29,31 @@ import { bundledMachines, validateCustomMachine } from '../machine/registry'
 import {
   getMachineLibrarySnapshot,
   initMachineLibrary,
+  rescueMachinesToLibrary,
   resetMachineLibraryForTests,
   saveCustomMachine,
 } from '../machine/store'
+import { CUSTOM_MACHINES_STORAGE_KEY } from '../machine/storage'
 import { LATEST_PROJECT_VERSION, defaultTool, newProject, type Operation, type Project } from '../types/project'
 import { decodeProjectFormat } from './helpers/projectFormat'
+import { MachineLoadError } from '../machine/diagnostics'
+import { inspectCamjString } from '../import/camj'
+import { setupOnlyTemplate } from '../components/project/newProjectTemplate'
 import { instantiateProjectTemplate } from './helpers/normalize'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+function assertThrows(fn: () => void, message: string): void {
+  try {
+    fn()
+  } catch {
+    return
+  }
+  throw new Error(`Assertion failed: ${message}`)
 }
 
 function customMachine(id: string, name: string, overrides: Partial<MachineDefinition> = {}): MachineDefinition {
@@ -65,28 +79,54 @@ function legacyLibraryFile(
   }))
 }
 
+/** A healthy in-memory library: null storage is deliberately not durable (#1119). */
 function freshLibrary(): void {
   resetMachineLibraryForTests()
-  initMachineLibrary(null)
+  initMachineLibrary(new FakeSnapshotStorage())
 }
 
-// ── a stored library compacts to the selected definition ───────────────────
+/** A storage that can be made to fail writes, like a full localStorage. */
+class FakeSnapshotStorage {
+  private readonly map = new Map<string, string>()
+  failWrites = false
+  getItem(key: string): string | null {
+    return this.map.get(key) ?? null
+  }
+  setItem(key: string, value: string): void {
+    if (this.failWrites) throw new Error('QuotaExceededError')
+    this.map.set(key, value)
+  }
+}
+
+// ── decode compacts only when a durable rescue seam is supplied ───────────
 
 {
   freshLibrary()
   const custom = customMachine('shop-router', 'Shop Router')
   const file = legacyLibraryFile([...bundledMachines(), custom], 'mach3')
-  const decoded = decodeProjectFormat(file)
 
-  assert(decoded.project.meta.machineDefinitions.length === 1, 'only one definition survives decode')
-  assert(decoded.project.meta.selectedMachineId === 'mach3', 'the selection is preserved')
-  assert(decoded.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot is the selected one')
+  // Inspection passes no seam: nothing may be compacted, so the custom machine
+  // stays in the decoded project and is offered to the library as well.
+  const inspected = decodeProjectFormat(file)
+  assert(inspected.project.meta.machineDefinitions.length === 2, 'decode without a rescue keeps every user definition')
+  assert(inspected.project.meta.selectedMachineId === 'mach3', 'the selection is preserved')
+  assert(inspected.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot is the selected one')
+  assert(!inspected.machineMigration.compacted, 'decode without a rescue reports no compaction')
+  assert(
+    inspected.machineMigration.customDefinitions.map((definition) => definition.id).join() === 'shop-router',
+    'only the custom definition is offered to the library — bundled copies are not',
+  )
+  assert(inspected.machineMigration.unresolvedSelectionId === null, 'a resolvable selection reports no problem')
+
+  // With the real seam the same file compacts once the custom machine is stored.
+  const decoded = decodeProjectFormat(file, rescueMachinesToLibrary)
+  assert(decoded.project.meta.machineDefinitions.length === 1, 'a durable rescue compacts to the selected definition')
+  assert(decoded.project.meta.machineDefinitions[0].id === 'mach3', 'the embedded snapshot stays selected')
   assert(decoded.machineMigration.compacted, 'the compaction is reported')
   assert(
-    decoded.machineMigration.customDefinitions.map((definition) => definition.id).join() === 'shop-router',
-    'only the custom definition is offered to the library — bundled copies are dropped',
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'the compacted machine reached My Machines',
   )
-  assert(decoded.machineMigration.unresolvedSelectionId === null, 'a resolvable selection reports no problem')
 }
 
 // ── the selected definition is preserved verbatim ─────────────────────────
@@ -105,7 +145,7 @@ function freshLibrary(): void {
   )
 }
 
-// ── legacy custom machines migrate into My Machines ───────────────────────
+// ── legacy unselected machines migrate; the selected one stays project-only ─
 
 {
   freshLibrary()
@@ -119,17 +159,50 @@ function freshLibrary(): void {
   assert(state.project.meta.selectedMachineId === 'shop-router', 'the selected custom machine stays selected')
   assert(state.project.meta.machineDefinitions.length === 1, 'the project keeps a single embedded snapshot')
   assert(
-    getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).sort().join() === 'big-red,shop-router',
-    'both custom machines migrate into My Machines',
+    state.project.meta.machineDefinitions[0].id === 'shop-router',
+    'the selected machine is retained in the project, so it cannot be lost',
+  )
+  assert(
+    getMachineLibrarySnapshot().customMachines.map((definition) => definition.id).join() === 'big-red',
+    'only the unselected custom machine compaction would drop migrates into My Machines',
+  )
+  assert(
+    !getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'the retained selected machine is not copied into My Machines just because it is absent there',
   )
   assert(state.dirty, 'a compacted project is marked dirty so the change is saved deliberately')
   assert(state.loadWarning !== null, 'the compaction is reported to the user')
 
-  // Re-opening the same file must not duplicate the library entries.
+  // Re-opening the same file must not duplicate the library entry.
   useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
   assert(
-    getMachineLibrarySnapshot().customMachines.length === 2,
+    getMachineLibrarySnapshot().customMachines.length === 1,
     're-opening the same project adds nothing to My Machines',
+  )
+}
+
+// ── compacting build-supplied copies is not a library move ─────────────────
+
+{
+  freshLibrary()
+  const selected = customMachine('project-only', 'Project Only')
+  const file = legacyLibraryFile([selected, ...bundledMachines()], selected.id)
+
+  useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
+  const state = useProjectStore.getState()
+
+  assert(
+    state.project.meta.machineDefinitions.length === 1
+      && state.project.meta.machineDefinitions[0].id === 'project-only',
+    'the retained selected machine is the only embedded definition',
+  )
+  assert(
+    getMachineLibrarySnapshot().customMachines.length === 0,
+    'compacting build-supplied copies does not copy the retained machine into My Machines',
+  )
+  assert(
+    state.loadWarning === null,
+    'no library-move warning is shown when nothing moved into My Machines',
   )
 }
 
@@ -190,8 +263,16 @@ function freshLibrary(): void {
     'a legacy inline custom definition wins over machineId',
   )
   assert(
-    decodedCustom.machineMigration.customDefinitions.length === 1,
-    'the legacy inline custom definition is offered to My Machines',
+    decodedCustom.project.meta.machineDefinitions[0]?.id === 'shop-router',
+    'the legacy inline custom definition is retained as the project snapshot',
+  )
+  assert(
+    decodedCustom.machineMigration.customDefinitions.length === 0,
+    'the retained inline definition is not offered to My Machines',
+  )
+  assert(
+    !getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'opening the legacy file does not copy its retained machine into My Machines',
   )
 
   const unknownId = JSON.parse(JSON.stringify({
@@ -326,6 +407,426 @@ function freshLibrary(): void {
   )
   assert(getActiveMachineDefinition(received.project)?.id === 'shop-router', 'the embedded snapshot still resolves')
   assert(gcodeFor(received.project) === authorGcode, 'the recipient generates byte-identical G-code')
+}
+
+// ── a template-invalid snapshot is kept, selected and diagnosed ─────────────
+
+function invalidMachine(id: string, name: string): MachineDefinition {
+  const base = customMachine(id, name)
+  return {
+    ...base,
+    program: { ...base.program, header: [...base.program.header, 'G90.1'] },
+  }
+}
+
+{
+  freshLibrary()
+  const invalid = invalidMachine('avid-mach4', 'Avid Mach4')
+  const file = legacyLibraryFile([invalid], invalid.id)
+  const decoded = decodeProjectFormat(file)
+
+  assert(decoded.project.meta.selectedMachineId === 'avid-mach4', 'a template-invalid machine stays selected')
+  assert(
+    decoded.project.meta.machineDefinitions[0]?.program.header.at(-1) === 'G90.1',
+    'its template line is kept unchanged',
+  )
+  const retained = decoded.machineMigration.diagnostics.find((entry) => entry.kind === 'machine-retained-invalid')
+  assert(retained !== undefined, 'the retained-invalid machine is reported')
+  assert(
+    retained !== undefined && (retained.templateDiagnostics ?? []).some((entry) => entry.word === 'G90.1'),
+    'the report carries the line-level template diagnostics',
+  )
+
+  useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
+  const state = useProjectStore.getState()
+  assert(state.project.meta.selectedMachineId === 'avid-mach4', 'the open project keeps the machine selected')
+  assert(
+    (state.loadWarning ?? '').includes('Avid Mach4') && (state.loadWarning ?? '').includes('export is blocked'),
+    `the load warning names the machine and the export block: ${state.loadWarning}`,
+  )
+  assert(
+    state.machineLoadDiagnostics.some((entry) => entry.kind === 'machine-retained-invalid'),
+    'the structured diagnostics are exposed for the UI',
+  )
+}
+
+// ── unselected machines are rescued, re-keyed and reported ─────────────────
+
+{
+  freshLibrary()
+  const selected = bundledMachines()[2]
+  const invalidCustom = invalidMachine('avid-mach4', 'Avid Mach4')
+  const editedBundled = { ...structuredClone(bundledMachines()[0]), fileExtension: 'tap' }
+  const file = legacyLibraryFile([selected, invalidCustom, editedBundled], selected.id)
+  const decoded = decodeProjectFormat(file)
+  const rescued = decoded.machineMigration.customDefinitions
+
+  assert(
+    rescued.some((definition) => definition.id === 'avid-mach4'),
+    'an unselected template-invalid custom machine is rescued unchanged',
+  )
+  const edited = rescued.find((definition) => definition.fileExtension === 'tap')
+  assert(edited !== undefined, 'an unselected edited bundled copy is rescued')
+  assert(edited?.id !== editedBundled.id, 'the rescued bundled copy is re-keyed away from the built-in id')
+  assert(
+    decoded.machineMigration.diagnostics.some((entry) => entry.kind === 'machine-rekeyed'),
+    'the re-keying is reported',
+  )
+
+  useProjectStore.getState().openProjectFromText(JSON.stringify(file), null)
+  const libraryIds = getMachineLibrarySnapshot().customMachines.map((definition) => definition.id)
+  assert(libraryIds.includes('avid-mach4'), 'the invalid custom machine reaches My Machines')
+  assert(libraryIds.includes(edited!.id), 'the re-keyed bundled copy reaches My Machines')
+}
+
+{
+  freshLibrary()
+  const selected = bundledMachines()[2]
+  const first = customMachine('duplicate-id', 'First')
+  const second = { ...customMachine('duplicate-id', 'Second') }
+  const file = legacyLibraryFile([selected, first, second], selected.id)
+  const decoded = decodeProjectFormat(file)
+  const ids = decoded.machineMigration.customDefinitions.map((definition) => definition.id)
+
+  assert(ids.includes('duplicate-id'), 'the first distinct definition keeps its id')
+  assert(ids.filter((id) => id !== 'duplicate-id').length === 1, 'the colliding distinct definition is kept under a new id')
+  assert(
+    decoded.machineMigration.diagnostics.some((entry) => entry.kind === 'machine-rekeyed'),
+    'the collision is reported',
+  )
+}
+
+// ── structural corruption and ambiguity refuse the load atomically ─────────
+
+{
+  freshLibrary()
+  const broken = legacyLibraryFile(
+    [bundledMachines()[0], { id: 'broken' } as unknown as MachineDefinition],
+    bundledMachines()[0].id,
+  )
+  let thrown: unknown
+  try {
+    decodeProjectFormat(broken)
+  } catch (error) {
+    thrown = error
+  }
+  assert(thrown instanceof MachineLoadError, 'a structurally unreadable entry refuses the load')
+  assert((thrown as MachineLoadError).diagnostics[0].index === 1, 'the diagnostic carries the entry index')
+
+  const before = useProjectStore.getState().project
+  assertThrows(
+    () => useProjectStore.getState().openProjectFromText(JSON.stringify(broken), null),
+    'opening the broken file throws before replacing state',
+  )
+  assert(useProjectStore.getState().project === before, 'the current project is untouched by the refused load')
+}
+
+{
+  freshLibrary()
+  const first = customMachine('ambiguous', 'Ambiguous A')
+  const second = { ...customMachine('ambiguous', 'Ambiguous B'), fileExtension: 'tap' }
+  const file = legacyLibraryFile([first, second], 'ambiguous')
+  let thrown: unknown
+  try {
+    decodeProjectFormat(file)
+  } catch (error) {
+    thrown = error
+  }
+  assert(thrown instanceof MachineLoadError, 'two different definitions under the selected id refuse the load')
+  assert((thrown as MachineLoadError).diagnostics[0].index === 1, 'the ambiguous duplicate is indexed')
+}
+
+// ── save normalization, direct load and history keep the rescue ────────────
+
+{
+  freshLibrary()
+  const selected = customMachine('selected', 'Selected')
+  const other = customMachine('other', 'Other')
+  const base = newProject('Save rescue', 'mm')
+  useProjectStore.setState({
+    project: {
+      ...base,
+      meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+    },
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 1, 'save normalization keeps one snapshot')
+  assert(saved.meta.selectedMachineId === 'selected', 'save normalization keeps the selection')
+  assert(
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'other'),
+    'save normalization rescues the unselected machine before compacting',
+  )
+}
+
+{
+  freshLibrary()
+  const selected = customMachine('load-selected', 'Load Selected')
+  const other = customMachine('load-other', 'Load Other')
+  const base = newProject('Load rescue', 'mm')
+  useProjectStore.getState().loadProject({
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  })
+
+  const state = useProjectStore.getState()
+  assert(state.project.meta.selectedMachineId === 'load-selected', 'a direct load keeps its selected snapshot')
+  assert(
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'load-other'),
+    'a direct load rescues the unselected machine instead of dropping it',
+  )
+  assert(
+    state.machineLoadDiagnostics.some((entry) => entry.kind === 'machine-moved-to-library'),
+    'a direct load exposes the move diagnostics',
+  )
+}
+
+{
+  freshLibrary()
+  const invalid = invalidMachine('history-invalid', 'History Invalid')
+  useProjectStore.setState({
+    project: newProject('History', 'mm'),
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+  useProjectStore.getState().setProjectMachine(invalid)
+  useProjectStore.getState().setProjectName('Changed')
+  useProjectStore.getState().undo()
+  assert(
+    useProjectStore.getState().project.meta.selectedMachineId === invalid.id,
+    'history restore keeps a template-invalid snapshot instead of dropping it',
+  )
+  useProjectStore.getState().redo()
+  assert(
+    useProjectStore.getState().project.meta.selectedMachineId === invalid.id,
+    'redo keeps the snapshot too',
+  )
+}
+
+// ── .camj inspection reports what the decode rescued ───────────────────────
+
+{
+  freshLibrary()
+  const selected = bundledMachines()[2]
+  const custom = customMachine('imported-custom', 'Imported Custom')
+  const invalid = invalidMachine('imported-invalid', 'Imported Invalid')
+  const inspection = inspectCamjString(JSON.stringify(legacyLibraryFile([selected, custom, invalid], invalid.id)))
+
+  assert(
+    inspection.machineCustomDefinitions.some((definition) => definition.id === 'imported-custom'),
+    'inspection exposes the custom machines the source carried',
+  )
+  assert(
+    inspection.machineDiagnostics.some((entry) => entry.kind === 'machine-retained-invalid'),
+    'inspection exposes the retained-invalid report',
+  )
+  assert(
+    inspection.warnings.some((warning) => warning.includes('Imported Invalid')),
+    'inspection warnings name the retained machine',
+  )
+}
+
+// ── template extraction rescues, never drops ───────────────────────────────
+
+{
+  freshLibrary()
+  const selected = customMachine('template-selected', 'Template Selected')
+  const other = customMachine('template-other', 'Template Other')
+  const base = newProject('Template source', 'mm')
+  const template = setupOnlyTemplate({
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  })
+
+  assert(template.project.meta.machineDefinitions.length === 1, 'a template carries one machine snapshot')
+  assert(template.project.meta.selectedMachineId === 'template-selected', 'the template keeps its selected machine')
+  assert(
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'template-other'),
+    'template extraction moves the other machine to My Machines instead of dropping it',
+  )
+}
+
+
+// ── malformed machine envelopes are refused, not read as legacy ─────────────
+
+{
+  // The real pre-3.0 shape has no `machineDefinitions` key at all. Every other
+  // non-array value is corruption and must not load as "this project has no
+  // machines", which would clear the selection without a word.
+  const malformed: Array<[string, unknown]> = [
+    ['object', { id: 'not-a-list' }],
+    ['string', 'not-a-list'],
+    ['null', null],
+    ['boolean', false],
+  ]
+  for (const [label, value] of malformed) {
+    freshLibrary()
+    const base = newProject(`Malformed ${label}`, 'mm')
+    const file = JSON.parse(JSON.stringify({
+      ...base,
+      meta: { ...base.meta, machineDefinitions: value, selectedMachineId: null },
+    })) as unknown
+    let thrown: unknown
+    try {
+      decodeProjectFormat(file)
+    } catch (error) {
+      thrown = error
+    }
+    assert(thrown instanceof MachineLoadError, `a non-array machine list (${label}) refuses the load`)
+    const diagnostic = (thrown as MachineLoadError).diagnostics[0]
+    assert(diagnostic.index === 0, `the malformed list diagnostic is indexed (${label})`)
+    assert(diagnostic.kind === 'machine-structural-error', `the malformed list diagnostic is structural (${label})`)
+
+    const before = useProjectStore.getState().project
+    assertThrows(
+      () => useProjectStore.getState().openProjectFromText(JSON.stringify(file), null),
+      `opening a malformed machine list (${label}) throws before replacing state`,
+    )
+    assert(useProjectStore.getState().project === before, `the current project survives a malformed ${label} load`)
+  }
+}
+
+// ── compaction happens only after a durable rescue ─────────────────────────
+
+{
+  // Write-blocked library: the saved file, the loaded project, an undone
+  // snapshot and a template all keep the unselected machine.
+  const blocked = new FakeSnapshotStorage()
+  blocked.setItem(CUSTOM_MACHINES_STORAGE_KEY, '{ not json')
+  resetMachineLibraryForTests()
+  initMachineLibrary(blocked)
+  assert(getMachineLibrarySnapshot().writeBlocked, 'the test storage is write-blocked')
+
+  const selected = customMachine('blocked-selected', 'Blocked Selected')
+  const other = customMachine('blocked-other', 'Blocked Other')
+  const base = newProject('Blocked rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  }
+  useProjectStore.setState({
+    project: twoMachines,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'a blocked rescue does not compact the saved project')
+  assert(
+    saved.meta.machineDefinitions.some((definition) => definition.id === 'blocked-other'),
+    'the unselected machine is in the saved file',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'saving reports why the machine stayed in the project',
+  )
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a blocked rescue does not compact a directly loaded project',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'a direct load reports the kept machine',
+  )
+
+  useProjectStore.setState({
+    project: base,
+    history: { past: [twoMachines], future: [], transactionStart: null },
+    machineLoadDiagnostics: [],
+  } as unknown as Partial<ProjectStore>)
+  useProjectStore.getState().undo()
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a history restore does not compact before a durable rescue',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'a history restore surfaces the kept machine',
+  )
+
+  const template = setupOnlyTemplate(twoMachines)
+  assert(
+    template.project.meta.machineDefinitions.length === 2,
+    'template extraction does not compact before a durable rescue',
+  )
+  assert(
+    template.diagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'template extraction reports the kept machine',
+  )
+}
+
+{
+  // A name the library rejects (61 characters) is a rescue failure even with a
+  // healthy storage: the machine stays in the project and the reason is shown.
+  freshLibrary()
+  const selected = customMachine('long-selected', 'Long Selected')
+  const longName: MachineDefinition = {
+    ...structuredClone(bundledMachines()[0]),
+    id: 'long-name',
+    name: 'x'.repeat(61),
+    builtin: false,
+  }
+  const base = newProject('Long name rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, longName], selectedMachineId: selected.id },
+  }
+  useProjectStore.setState({
+    project: twoMachines,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
+
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'a library-rejected machine is not compacted away on save')
+  assert(
+    saved.meta.machineDefinitions.some((definition) => definition.name.length === 61),
+    'the rejected machine is still in the saved file',
+  )
+  assert(
+    useProjectStore.getState().machineLoadDiagnostics.some((entry) => entry.kind === 'machine-kept-in-project'),
+    'saving reports the rejected rescue',
+  )
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a library-rejected machine is not compacted away on load',
+  )
+}
+
+{
+  // A storage write failure must not look like a successful rescue. The first
+  // save keeps the machine; after storage recovers, reloading that file moves
+  // it to My Machines instead of losing it.
+  const storage = new FakeSnapshotStorage()
+  storage.failWrites = true
+  resetMachineLibraryForTests()
+  initMachineLibrary(storage)
+  const selected = customMachine('write-selected', 'Write Selected')
+  const other = customMachine('write-other', 'Write Other')
+  const base = newProject('Write failure rescue', 'mm')
+  const twoMachines: Project = {
+    ...base,
+    meta: { ...base.meta, machineDefinitions: [selected, other], selectedMachineId: selected.id },
+  }
+
+  useProjectStore.getState().loadProject(twoMachines)
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions.length === 2,
+    'a failed storage write does not compact the loaded project',
+  )
+  const saved = JSON.parse(useProjectStore.getState().saveProject()) as Project
+  assert(saved.meta.machineDefinitions.length === 2, 'the machine is still in the saved file after a failed write')
+
+  storage.failWrites = false
+  resetMachineLibraryForTests()
+  initMachineLibrary(storage)
+  useProjectStore.getState().loadProject(saved)
+  assert(
+    getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'write-other'),
+    'reloading the saved project rescues the machine once storage works again',
+  )
 }
 
 resetMachineLibraryForTests()

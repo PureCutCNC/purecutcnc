@@ -1,9 +1,9 @@
 {
-  "version": "3.2",
+  "version": "3.3",
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
-    "modified": "2026-08-26T13:01:14.377Z",
+    "modified": "2026-11-13T01:56:36.518Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -13,7 +13,8 @@
     "machineDefinitions": [],
     "selectedMachineId": null,
     "showDimensions": true,
-    "copyMode": "reference"
+    "copyMode": "reference",
+    "projectType": "milling"
   },
   "grid": {
     "extent": 8,
@@ -92,9 +93,11 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -111,9 +114,11 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0.6,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -130,9 +135,11 @@
         "e": 0,
         "f": 0.125
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -149,9 +156,11 @@
         "e": 0,
         "f": 0.125
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0.5,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -168,9 +177,11 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.6,
       "z_bottom": 0.3,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -287,13 +298,15 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
       "arcFittingEnabled": true,
-      "cleanWallCorners": false
+      "cleanWallCorners": false,
+      "setupId": "setup-top"
     },
     {
       "id": "op0017",
@@ -331,13 +344,15 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
       "arcFittingEnabled": true,
-      "cleanWallCorners": true
+      "cleanWallCorners": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0018",
@@ -375,12 +390,14 @@
       "maxCarveDepth": 0.5,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0019",
@@ -418,12 +435,14 @@
       "maxCarveDepth": 0.5,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0020",
@@ -464,12 +483,14 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0021",
@@ -510,12 +531,14 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "level_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     }
   ],
   "tabs": [
@@ -879,5 +902,27 @@
       "stl": null,
       "operation": "subtract"
     }
-  }
+  },
+  "setups": [
+    {
+      "id": "setup-top",
+      "name": "Top",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op0016",
+        "op0017",
+        "op0018",
+        "op0019",
+        "op0020",
+        "op0021"
+      ]
+    }
+  ],
+  "activeSetupId": "setup-top"
 }

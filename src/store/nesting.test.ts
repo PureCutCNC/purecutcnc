@@ -31,6 +31,7 @@ import {
   defaultStock,
   defaultTool,
   getStockBounds,
+  getProfileBounds,
   newProject,
   rectProfile,
   type LocalConstraint,
@@ -39,7 +40,7 @@ import {
   type Project,
   type SketchFeature,
 } from '../types/project'
-import { projectWithFeatures } from '../test/projectFixtures'
+import { withBottomSetup, projectWithFeatures } from '../test/projectFixtures'
 import { defaultOperationForTarget } from './helpers/operationDefaults'
 import { normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
 import { discardNestFromProject } from './helpers/nestApply'
@@ -601,3 +602,38 @@ testSearchFlagClearsWithThePanel()
 testAnotherProjectClosesThePanel()
 testGenerationWaitsForTheNestPanel()
 console.log('All nesting store tests passed')
+
+// #994 preserves children from both faces in the same nesting part.
+{
+  const before = withBottomSetup(makeProject(), { axis: 'y' })
+  before.features.find(f => f.id === 'plate')!.authoringFace = 'top'
+  before.features.find(f => f.id === 'hole')!.authoringFace = 'bottom'
+  before.features.find(f => f.id === 'slot')!.authoringFace = 'bottom'
+  const part = onePart(before, ['plate'])
+  assert(['plate', 'hole', 'slot'].every(id => part.featureIds.includes(id)), 'mixed-face nested children stay included under their outer plate')
+  const definitions = JSON.stringify(before.featureDefinitions)
+  resetStore(before)
+  const { nestId, placed } = nestIntoStore(['plate'], settings({ quantity: 2, rotations: [0] }))
+  const nested = useProjectStore.getState().project
+  assert(placed === 2, 'mixed-face part nests twice')
+  const plates = nested.features.filter(f => f.definitionId === before.features.find(f => f.id === 'plate')!.definitionId)
+  for (const plate of plates) {
+    const outer = getProfileBounds(resolveFeatureInstance(nested, plate.id)!.sketch.profile)
+    for (const [sourceId, dx, dy] of [['hole', 5, 10], ['slot', 22, 8]] as const) {
+      const source = before.features.find(f => f.id === sourceId)!
+      const matches = nested.features.filter(f => f.definitionId === source.definitionId)
+      assert(matches.length === 2 && matches.every(f => f.authoringFace === 'bottom'), `${sourceId}: copies keep the child's face and shared definition`)
+      assert(matches.some(f => {
+        const bounds = getProfileBounds(resolveFeatureInstance(nested, f.id)!.sketch.profile)
+        return Math.abs(bounds.minX - outer.minX - dx) < 1e-6 && Math.abs(bounds.minY - outer.minY - dy) < 1e-6
+      }), `${sourceId}: each child keeps its relative placement inside its plate`)
+    }
+  }
+  assert(JSON.stringify(nested.featureDefinitions) === definitions, 'nesting preserves linked shape definitions')
+  useProjectStore.getState().discardNest(nestId)
+  assert(JSON.stringify(useProjectStore.getState().project.features) === JSON.stringify(before.features), 'discard restores every mixed-face row and placement')
+  useProjectStore.getState().undo()
+  assert(JSON.stringify(useProjectStore.getState().project) === JSON.stringify(nested), 'undo restores the whole mixed-face nest')
+  useProjectStore.getState().undo()
+  assert(JSON.stringify(useProjectStore.getState().project.features) === JSON.stringify(before.features), 'undo apply restores the original mixed-face design')
+}

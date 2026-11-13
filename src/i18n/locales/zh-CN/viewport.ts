@@ -46,6 +46,7 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.modeVisible': '可见',
   'viewport.sim.detailLabel': '细节',
   'viewport.sim.detailTitle': '仿真细节',
+  'viewport.sim.freshStockNote': '{setup} 在全新毛坯上仿真：不显示其他装夹已去除的材料。',
   'viewport.sim.playTool': '播放刀具',
   'viewport.sim.playToolDisabledMode': '切换到"已选中"模式以使用刀具播放',
   'viewport.sim.playToolDisabledNoOp': '选择一个有有效刀路的操作来播放',

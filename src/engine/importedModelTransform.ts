@@ -50,6 +50,34 @@ export function importedModelMatrix4(transform: Matrix2D): ImportedModelMatrix4 
   ]
 }
 
+// ============================================================================
+// A model seen from below (issue #946)
+// ============================================================================
+
+/**
+ * Marks imported-model data as belonging to a project that has been turned
+ * over into a Bottom setup's frame. A symbol key on purpose: it is not part
+ * of the saved format, `JSON.stringify` and `structuredClone` both drop it, so
+ * the mark can only ever exist on the transient read model generation builds
+ * (`projectInSetupFrame`) and can never reach a `.camj` file.
+ */
+const MODEL_TURNED_OVER = Symbol('modelTurnedOver')
+
+/**
+ * A copy of imported-model data marked as turned over. The plan mirror and
+ * the flipped Z span of a turned setup come from the feature's transform and
+ * span, as for any feature; what they cannot say is that the mesh itself is
+ * upside down inside that span. This does.
+ */
+export function modelDataTurnedOver<T extends object>(stl: T): T {
+  return { ...stl, [MODEL_TURNED_OVER]: true }
+}
+
+/** True for model data marked by {@link modelDataTurnedOver}. */
+export function isModelTurnedOver(stl: object | null | undefined): boolean {
+  return stl !== null && stl !== undefined && (stl as Record<symbol, unknown>)[MODEL_TURNED_OVER] === true
+}
+
 /** Stable cache-key fragment containing every affine matrix component. */
 export function importedModelTransformKey(transform: Matrix2D): string {
   return [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f].join(',')

@@ -17,9 +17,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
-import { createHeightfieldTexture, createStockPlaneGeometries, updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
-import { createHeightfieldMaterial } from '../../engine/simulation/heightfieldShader'
-import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedBoundary'
+import { updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
+import { buildSimulationStockScene } from '../../engine/simulation/simulationScene'
+import type { SimulationBar } from '../../app/simulationSetup'
+import type { AroundFrame } from '../../engine/aroundFrame'
+import { barReadout, createBarTurnGroup, aroundFrameKey, simulationBarAngle, simulationToolPoint, turnSimulationBar } from './aroundView'
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
@@ -29,13 +31,15 @@ import { createOrbitControls, type OrbitControls } from '../viewport3d/orbitCont
 import type { ViewPreset } from '../viewport3d/viewPresets'
 import { ViewPresetMenu } from '../viewport3d/ViewPresetMenu'
 import type { PlaybackPose } from '../../engine/simulation/playback'
-import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
+import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
-import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
+import { isSquareStock } from '../../types/barStock'
+import type { Clamp, MachineOrigin, Operation, Stock, ToolType } from '../../types/project'
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
+import { SimulationSetupInfo } from './SimulationSetupInfo'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -71,6 +75,22 @@ export interface SimulationPlaybackInput {
   plungeFeedPerSecond?: number
 }
 
+/**
+ * The setup the simulation is showing (issue #1112 F3): always the one the
+ * workspace face is on, because the header face control is the one place a
+ * face is chosen. Each setup runs alone, in its own frame, on fresh stock —
+ * the panel explains that whenever the project has another setup, because the
+ * operator turns the same part over and the other setup's cuts are really
+ * there.
+ */
+export interface SimulationSetupView {
+  /** The setup the heightfield runs in. */
+  id: string
+  name: string
+  /** True when the project has more than one setup: the fresh-stock note applies. */
+  freshStockNote: boolean
+}
+
 interface SimulationViewportProps {
   operation: Operation | null
   simulation: SimulationResult | null
@@ -87,11 +107,31 @@ interface SimulationViewportProps {
    *  Deliberately not derived from `playbackInput`, which is absent until an
    *  operation is simulated and would fall back to mm for an inch project. */
   units: Units
+  /**
+   * The stock a flat setup draws. A round bar draws its chuck and tailstock
+   * round too; a block draws those same bands as flat boxes. An Around setup
+   * draws the real bar instead, through `bar.stock` (issue #395).
+   */
+  stock: Stock
+  bar?: SimulationBar
+  /**
+   * The flat (Top/Bottom) setup's round-bar profile (issue #1049). The
+   * heightfield carries the machinable upper half only; this descriptor builds
+   * the static lower half the cutter cannot reach, so the bar is not read as a
+   * block with vertical sides. Absent for a block, a square blank and an
+   * Around setup.
+   */
+  flatRoundBar?: FlatRoundBarDescriptor
   stockColor?: string
   stockHasProfile?: boolean
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
   playbackInput: SimulationPlaybackInput | null
+  /**
+   * The setup being simulated and, when the project has another one, that its
+   * fresh stock is explained behind the toolbar's info button (issue #1112 F3).
+   */
+  setup?: SimulationSetupView
   /** True while a new simulation result is being computed (e.g. detail slider change). */
   isComputing?: boolean
   /** True while the simulation tab is the active centre tab. When false the
@@ -181,20 +221,29 @@ function disposeSceneObject(object: THREE.Object3D): void {
   materials.forEach((material) => material.dispose())
 }
 
-function buildHeightfieldSurfaceObject(
-  grid: SimulationGrid,
-  material: THREE.Material,
-): THREE.Object3D {
-  const geometries = createStockPlaneGeometries(grid)
-  if (geometries.length === 1) {
-    return new THREE.Mesh(geometries[0], material)
-  }
+/**
+ * The removal evidence of a live heightfield grid. A round or flat grid starts
+ * uniformly at `stockTopZ`; a square blank carries the per-cell `initialTopZ`
+ * baseline. These are the shared statistics the playback evidence attributes
+ * read, so a square playback reports removal against its true cross section
+ * exactly as the static result does.
+ */
+interface PlaybackGridStats {
+  removedCells: number
+  minTopZ: number
+}
 
-  const group = new THREE.Group()
-  for (const geometry of geometries) {
-    group.add(new THREE.Mesh(geometry, material))
+function playbackGridStats(grid: SimulationGrid): PlaybackGridStats {
+  const baseline = grid.initialTopZ
+  let removedCells = 0
+  let minTopZ = grid.stockTopZ
+  for (let index = 0; index < grid.topZ.length; index += 1) {
+    const z = grid.topZ[index]
+    const start = baseline ? baseline[index] : grid.stockTopZ
+    if (z < start - 1e-9) removedCells += 1
+    if (z < minTopZ) minTopZ = z
   }
-  return group
+  return { removedCells, minTopZ }
 }
 
 function formatCoord(value: number, units: 'mm' | 'in'): string {
@@ -245,10 +294,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   collidingClampIds,
   origin,
   units,
+  stock,
+  bar,
+  flatRoundBar,
   stockColor,
   zoomWindowActive = false,
   onZoomWindowComplete,
   playbackInput,
+  setup,
   isComputing = false,
   isActive = true,
   projectKey,
@@ -257,6 +310,44 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const { t } = useI18n()
   const threePalette = palette.three
   const initialThreePaletteRef = useRef(threePalette)
+  // An Around setup draws the bar, and only the bar (issue #395 G3): there is
+  // no second flat view, so `bar` being present always means the bar view.
+  const wrappedFrame = bar?.frame
+  // The frame's values, not its identity, key the viewport's Around effects.
+  // `bar` and its `frame` are new objects on every recompute of the setup
+  // input (selecting another operation, any project edit), which must not
+  // tear the turn group down or re-frame the camera. The bar's shape and
+  // thickness are part of the key (#1016 C2-R2V): a square blank and the round
+  // bar of the same box share the nominal frame numbers but not their starting
+  // cross section or radial envelope, and a side change must replace the
+  // preview.
+  const frameKey = aroundFrameKey(wrappedFrame, bar?.stock)
+  const simulationView = bar ? 'bar' : 'flat'
+  const viewOrigin = bar ? bar.origin : origin
+  // Latest values for callbacks and effects that must not re-run on identity.
+  const wrappedFrameRef = useRef<AroundFrame | undefined>(undefined)
+  wrappedFrameRef.current = wrappedFrame
+  const barRef = useRef<SimulationBar | undefined>(undefined)
+  barRef.current = bar
+  // The flat round-bar descriptor is rebuilt with the setup input too, so its
+  // values — not its identity — key the renderer effects, exactly as
+  // `frameKey` does for the Around frame. A block, a square blank and an Around
+  // setup have none: the key stays empty and their scenes are unchanged.
+  const flatRoundBarKey = flatRoundBar
+    ? `${flatRoundBar.axis}:${flatRoundBar.pivot}:${flatRoundBar.radius}:${flatRoundBar.centre}:${flatRoundBar.length}`
+    : ''
+  const flatRoundBarRef = useRef<FlatRoundBarDescriptor | undefined>(undefined)
+  flatRoundBarRef.current = flatRoundBar
+  // A square blank's side, so the wrapped bar view can clamp its own surface
+  // onto the blank and never draw outside it (issue #1112 rt3-b). The blank's
+  // side is the stock's thickness, the same number that seeds the grid, and it
+  // is read from the real bar rather than from a grid value because the bar is
+  // what the view draws. A block, a round bar and a flat setup have none.
+  const squareBlankSide = bar && isSquareStock(bar.stock) ? bar.stock.thickness : undefined
+  const squareBlankSideRef = useRef<number | undefined>(undefined)
+  squareBlankSideRef.current = squareBlankSide
+  const barTurnRef = useRef<ReturnType<typeof createBarTurnGroup> | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
   const playbackUnits = playbackInput?.units ?? 'mm'
   const fallbackFeed = playbackUnits === 'in' ? PLAYBACK_FALLBACK_FEED_IN : PLAYBACK_FALLBACK_FEED_MM
@@ -276,6 +367,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // heavy heightfield + shader-driven boundary mesh is allocated.
   const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
   const [isPlaybackReady, setIsPlaybackReady] = useState(false)
+  // What is actually mounted in the scene, as a shared evidence seam for the
+  // browser smoke tests: every bar shape draws the same heightfield surface and
+  // instanced boundary, so a shape that skipped them would leave this unset.
+  const [staticSurfaceMounted, setStaticSurfaceMounted] = useState(false)
+  const [playbackSurfaceMounted, setPlaybackSurfaceMounted] = useState(false)
+  // The lower half is evidence too: it is mounted only when the shared scene
+  // builder returned one, not from the descriptor prop alone (issue #1049).
+  const [staticLowerHalfMounted, setStaticLowerHalfMounted] = useState(false)
+  const [playbackLowerHalfMounted, setPlaybackLowerHalfMounted] = useState(false)
+  // The playback controller's own removal statistics, measured against the base
+  // grid's baseline. At progress 0 this is the prior operation's material, not
+  // virgin stock, which is what the square playback smoke test pins.
+  const [playbackStats, setPlaybackStats] = useState<PlaybackGridStats | null>(null)
   // Shared with the 3D preview (see WebglStatus). On context loss this view
   // also pauses playback until the browser restores the context.
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
@@ -316,12 +420,21 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const [displayPose, setDisplayPose] = useState<PlaybackPose>(EMPTY_PLAYBACK_POSE)
   const playbackControllerRef = useRef<PlaybackController | null>(null)
   const toolMeshRef = useRef<THREE.Group | null>(null)
+  // The complete stock scenes both views mount. Holding the group (not just
+  // its pieces) is what lets one disposal remove surface, walls and lower half
+  // together (issue #1049).
+  const staticSceneGroupRef = useRef<THREE.Group | null>(null)
+  const playbackSceneGroupRef = useRef<THREE.Group | null>(null)
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackHeightfieldTextureRef = useRef<THREE.DataTexture | null>(null)
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
+  // The static lower half of a flat round bar (issue #1049). Fixed geometry:
+  // built with the grid, disposed with it, never touched while cutting.
+  const flatRoundBarLowerHalfRef = useRef<THREE.Object3D | null>(null)
+  const playbackFlatRoundBarLowerHalfRef = useRef<THREE.Object3D | null>(null)
   const playbackFrameRef = useRef<number>(0)
   const playbackLastTimeRef = useRef<number>(0)
   // Scrub coalescing: latest requested slider fraction + the RAF that applies it.
@@ -368,23 +481,37 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowActiveRef.current = zoomWindowActive
   zoomWindowBoxRef.current = zoomWindowBox
 
-  const disposeCurrentMesh = useCallback((scene: THREE.Scene) => {
-    if (objectRef.current) {
-      scene.remove(objectRef.current)
-      disposeSceneObject(objectRef.current)
-      objectRef.current = null
+  const disposeCurrentMesh = useCallback(() => {
+    if (staticSceneGroupRef.current) {
+      staticSceneGroupRef.current.removeFromParent()
+      disposeSceneObject(staticSceneGroupRef.current)
+      staticSceneGroupRef.current = null
     }
-    if (boundaryMeshRef.current) {
-      scene.remove(boundaryMeshRef.current)
-      disposeSceneObject(boundaryMeshRef.current)
-      boundaryMeshRef.current = null
-    }
+    objectRef.current = null
+    boundaryMeshRef.current = null
+    flatRoundBarLowerHalfRef.current = null
+    setStaticSurfaceMounted(false)
+    setStaticLowerHalfMounted(false)
     needsRenderRef.current = true
   }, [])
 
-  const disposeClampMeshes = useCallback((scene: THREE.Scene) => {
+  const disposePlaybackScene = useCallback(() => {
+    if (playbackSceneGroupRef.current) {
+      playbackSceneGroupRef.current.removeFromParent()
+      disposeSceneObject(playbackSceneGroupRef.current)
+      playbackSceneGroupRef.current = null
+    }
+    playbackMaterialMeshRef.current = null
+    playbackBoundaryMeshRef.current = null
+    playbackFlatRoundBarLowerHalfRef.current = null
+    setPlaybackSurfaceMounted(false)
+    setPlaybackLowerHalfMounted(false)
+    needsRenderRef.current = true
+  }, [])
+
+  const disposeClampMeshes = useCallback(() => {
     for (const mesh of clampObjectsRef.current) {
-      scene.remove(mesh)
+      mesh.removeFromParent()
       mesh.geometry.dispose()
       if (Array.isArray(mesh.material)) {
         mesh.material.forEach((entry) => entry.dispose())
@@ -417,12 +544,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
   const zoomToModel = useCallback(() => {
     const controls = controlsRef.current
+    const isBar = barRef.current !== undefined
     const object = objectRef.current
+      ?? (isBar ? playbackMaterialMeshRef.current : null)
     if (!controls || !object) {
       return
     }
 
+    // The heightfield surface's geometry box already follows the grid's radial
+    // envelope (`aroundBounds` defaults to `grid.stockTopZ`), so the same framing
+    // holds a round bar and a square blank's taller corners.
+    if (isBar) object.updateWorldMatrix(true, false)
     const bounds = new THREE.Box3().setFromObject(object)
+    // A flat round bar's static lower half is a separate mesh; the surface box
+    // alone would frame only the upper half (issue #1049).
+    if (!isBar && flatRoundBarLowerHalfRef.current) {
+      bounds.expandByObject(flatRoundBarLowerHalfRef.current)
+    }
     for (const clamp of clampObjectsRef.current) {
       if (clamp.visible) {
         bounds.expandByObject(clamp)
@@ -537,8 +675,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       cancelAnimationFrame(frameRef.current)
       detachContextGuard()
-      disposeCurrentMesh(scene)
-      disposeClampMeshes(scene)
+      disposeCurrentMesh()
+      disposeClampMeshes()
       controls.dispose()
       resizeObserver.disconnect()
       renderer.dispose()
@@ -550,6 +688,24 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     rendererRef.current?.setClearColor(threePalette.background, 1)
     needsRenderRef.current = true
   }, [threePalette])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    const frame = wrappedFrameRef.current
+    if (!scene) return
+    // `frameKey` is the whole dependency: a rebuilt `frame` with the same
+    // values must not tear the group down and rebuild it. Nothing here resets
+    // `hasAutoFramedRef` — only a `projectKey` change does, exactly as for a
+    // flat setup, so an unrelated edit cannot re-frame the camera.
+    if (!frame) return
+    const turn = createBarTurnGroup(frame)
+    barTurnRef.current = turn
+    scene.add(turn.pivot)
+    return () => {
+      turn.pivot.removeFromParent()
+      barTurnRef.current = null
+    }
+  }, [frameKey])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -575,56 +731,71 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     if (playbackEnabled) {
-      disposeCurrentMesh(scene)
+      disposeCurrentMesh()
       return
     }
 
-    disposeCurrentMesh(scene)
+    disposeCurrentMesh()
 
     if (!simulation) {
       return
     }
 
     const grid = simulation.grid
-    const heightfieldTexture = createHeightfieldTexture(grid)
     const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-    const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
-    const surface = buildHeightfieldSurfaceObject(grid, material)
-    scene.add(surface)
-    objectRef.current = surface
+    const frame = wrappedFrameRef.current
+    const parent = barTurnRef.current?.content ?? scene
 
-    // Walls at every height step + underside, all shader-driven: nothing to
-    // rebuild on the CPU when the simulation result changes, and interior
-    // pocket walls render as true verticals instead of one-cell-wide slants.
-    const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-    scene.add(boundary)
-    boundaryMeshRef.current = boundary
+    // One builder mounts the heightfield surface, the shader-driven walls and
+    // — for a flat round bar — the static lower half the top-down heightfield
+    // cannot represent. The static and playback views share it, so neither can
+    // mount a bar without the half below its equator (issue #1049).
+    const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current)
+    parent.add(built.group)
+    // The viewport attributes report what is actually in the scene, not only
+    // what the builder returned, so a dropped mount cannot read as mounted.
+    const sceneMounted = built.group.parent === parent
+    staticSceneGroupRef.current = built.group
+    objectRef.current = built.surface
+    boundaryMeshRef.current = built.boundary
+    flatRoundBarLowerHalfRef.current = built.lowerHalf
+    setStaticSurfaceMounted(sceneMounted)
+    setStaticLowerHalfMounted(sceneMounted && built.lowerHalf !== null)
     needsRenderRef.current = true
 
     if (!hasAutoFramedRef.current) {
-      const bounds = new THREE.Box3().setFromObject(surface)
+      built.surface.updateWorldMatrix(true, false)
+      const bounds = new THREE.Box3().setFromObject(built.surface)
+      // The upper half alone would frame the camera above the equator and crop
+      // the lower half; the bar is framed whole.
+      if (built.lowerHalf) bounds.expandByObject(built.lowerHalf)
       if (!bounds.isEmpty()) {
         controls.fitToBounds(bounds, true)
         hasAutoFramedRef.current = true
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor])
+    return () => built.heightfieldTexture.dispose()
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs (`squareBlankSideRef` is the bar's own side, so it can only change with `frameKey`), so a rebuilt identical input does not rebuild the mesh.
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey, flatRoundBarKey])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
   // the cutter actually touched this frame (the controller's dirty region)
   // into the texture. Falls back to a full re-upload until the texture has
   // been rendered once (no GL handle yet) or when partial upload is
-  // unavailable. No-ops when nothing changed since the last flush.
+  // unavailable. No-ops when nothing changed since the last flush. Every bar
+  // shape follows this one path, round or square.
   const flushPlaybackGridToGpu = useCallback(() => {
-    const texture = playbackHeightfieldTextureRef.current
     const controller = playbackControllerRef.current
-    if (!texture || !controller) {
+    if (!controller) {
       return
     }
     const region = controller.getDirtyRegion()
     if (!region) {
+      return
+    }
+    const texture = playbackHeightfieldTextureRef.current
+    if (!texture) {
       return
     }
     const renderer = rendererRef.current
@@ -646,11 +817,30 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
     const pose = controller.getPose()
+    const frame = wrappedFrameRef.current
     // Store latest pose for UI readout — read by throttled state updater
     latestPoseRef.current = pose
     // Toolpath (x, y, z) → world (x, z, y): the viewport treats world Y as vertical.
-    tool.position.set(pose.x, pose.z, pose.y)
+    if (frame) tool.position.copy(simulationToolPoint(pose, frame))
+    else tool.position.set(pose.x, pose.z, pose.y)
+    if (frame && barTurnRef.current) {
+      const angle = simulationBarAngle(pose, frame)
+      turnSimulationBar(barTurnRef.current.pivot, angle, frame)
+      viewportRef.current?.setAttribute('data-simulation-bar-angle', angle.toFixed(3))
+    }
     needsRenderRef.current = true
+  }, [])
+
+  /**
+   * Refresh the playback's removed-cell evidence from its live grid. Progress 0
+   * of a playback opened on an operation is the prior operation's material, so
+   * this is what tells the browser smoke test "prior rough", not virgin stock.
+   * Called on the same ~10 Hz cadence as the readout, and immediately on a
+   * reset/seek so the evidence never lags the visible state.
+   */
+  const syncPlaybackStats = useCallback(() => {
+    const controller = playbackControllerRef.current
+    setPlaybackStats(controller ? playbackGridStats(controller.liveGrid) : null)
   }, [])
 
   const resetPlaybackRuntime = useCallback((building: boolean) => {
@@ -666,8 +856,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     setIsPlaybackBuilding(building)
     latestProgressRef.current = 0
     latestPoseRef.current = EMPTY_PLAYBACK_POSE
+    const frame = wrappedFrameRef.current
+    if (barTurnRef.current && frame) turnSimulationBar(barTurnRef.current.pivot, 0, frame)
+    viewportRef.current?.setAttribute('data-simulation-bar-angle', '0.000')
     setPlaybackProgress(0)
     setDisplayPose(EMPTY_PLAYBACK_POSE)
+    setPlaybackSurfaceMounted(false)
+    setPlaybackStats(null)
   }, [])
 
   useEffect(() => {
@@ -677,16 +872,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     if (!playbackEnabled || !playbackInput) {
-      if (playbackMaterialMeshRef.current) {
-        scene.remove(playbackMaterialMeshRef.current)
-        disposeSceneObject(playbackMaterialMeshRef.current)
-        playbackMaterialMeshRef.current = null
-      }
-      if (playbackBoundaryMeshRef.current) {
-        scene.remove(playbackBoundaryMeshRef.current)
-        disposeSceneObject(playbackBoundaryMeshRef.current)
-        playbackBoundaryMeshRef.current = null
-      }
+      disposePlaybackScene()
       if (playbackHeightfieldTextureRef.current) {
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
@@ -732,19 +918,27 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = controller
 
       const grid = controller.liveGrid
-      const heightfieldTexture = createHeightfieldTexture(grid)
-      playbackHeightfieldTextureRef.current = heightfieldTexture
       const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
-      const material = createHeightfieldMaterial(heightfieldTexture, grid, color)
-      const surface = buildHeightfieldSurfaceObject(grid, material)
-      scene.add(surface)
-      playbackMaterialMeshRef.current = surface
+      const frame = wrappedFrameRef.current
+      const parent = barTurnRef.current?.content ?? scene
 
-      // Instanced walls: no per-cell attributes, so any detail level builds
-      // instantly and stays within memory — no cell cap needed.
-      const boundary = createInstancedBoundaryGroup(heightfieldTexture, grid, color)
-      scene.add(boundary)
-      playbackBoundaryMeshRef.current = boundary
+      // The same complete scene the static view mounts, including the fixed
+      // lower half of a flat round bar; only the upper heightfield changes
+      // during playback (issue #1049).
+      const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current)
+      parent.add(built.group)
+      // Same mounted-scene truth as the static view (issue #1049): the
+      // playback attributes follow the group's real parent.
+      const sceneMounted = built.group.parent === parent
+      playbackSceneGroupRef.current = built.group
+      playbackHeightfieldTextureRef.current = built.heightfieldTexture
+      playbackMaterialMeshRef.current = built.surface
+      playbackBoundaryMeshRef.current = built.boundary
+      playbackFlatRoundBarLowerHalfRef.current = built.lowerHalf
+      built.surface.updateWorldMatrix(true, false)
+      const fitBounds = new THREE.Box3().setFromObject(built.surface)
+      setPlaybackSurfaceMounted(sceneMounted)
+      setPlaybackLowerHalfMounted(sceneMounted && built.lowerHalf !== null)
 
       const tool = buildToolMesh({
         toolType: playbackInput.toolType,
@@ -757,9 +951,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       scene.add(tool)
       toolMeshRef.current = tool
 
-      latestProgressRef.current = 0
-      setPlaybackProgress(0)
+      latestProgressRef.current = controller.totalPathLength > 0 ? controller.getDistanceTraveled() / controller.totalPathLength : 0
+      setPlaybackProgress(latestProgressRef.current)
+      setPlaybackStats(playbackGridStats(grid))
       updateToolMeshPose()
+      if (barRef.current && !hasAutoFramedRef.current && fitBounds && !fitBounds.isEmpty()) {
+        controlsRef.current?.fitToBounds(fitBounds, true)
+        hasAutoFramedRef.current = true
+      }
       setIsPlaybackReady(true)
       setIsPlaybackBuilding(false)
     })
@@ -767,16 +966,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     return () => {
       cancelled = true
       cancelAnimationFrame(buildHandle)
-      if (playbackMaterialMeshRef.current) {
-        scene.remove(playbackMaterialMeshRef.current)
-        disposeSceneObject(playbackMaterialMeshRef.current)
-        playbackMaterialMeshRef.current = null
-      }
-      if (playbackBoundaryMeshRef.current) {
-        scene.remove(playbackBoundaryMeshRef.current)
-        disposeSceneObject(playbackBoundaryMeshRef.current)
-        playbackBoundaryMeshRef.current = null
-      }
+      disposePlaybackScene()
       if (playbackHeightfieldTextureRef.current) {
         playbackHeightfieldTextureRef.current.dispose()
         playbackHeightfieldTextureRef.current = null
@@ -789,8 +979,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackControllerRef.current = null
       setIsPlaybackReady(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs; `barRef` and `squareBlankSideRef` are read at build time. `disposePlaybackScene` is stable.
+  }, [playbackEnabled, playbackInput, resetPlaybackRuntime, stockColor, updateToolMeshPose, frameKey, flatRoundBarKey])
 
   useEffect(() => {
     if (!playbackEnabled || !isPlaying) {
@@ -836,6 +1026,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         flushPlaybackGridToGpu()
 
         setPlaybackProgress(latestProgressRef.current)
+        syncPlaybackStats()
         setIsPlaying(false)
         playbackFrameRef.current = 0
         return
@@ -850,7 +1041,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       cancelAnimationFrame(playbackFrameRef.current)
       playbackFrameRef.current = 0
     }
-  }, [isPlaying, playbackEnabled, flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [isPlaying, playbackEnabled, flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   // Convert a toolpath pose to machine-relative coordinates.
   // X and Z follow the usual origin-relative subtraction.
@@ -865,6 +1056,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     feedScale: pose.feedScale,
   }), [origin.x, origin.y, origin.z])
 
+  // The readout pose. A flat setup shows the origin-relative tool position it
+  // always did. The bar view shows the tool as the program has it — the wrapped
+  // point in the real project origin, plus the program's own angle — so Y reads
+  // the bar's centreline and Z the real height (issue #395).
+  const toReadoutPose = useCallback((pose: PlaybackPose): PlaybackPose => {
+    const currentBar = barRef.current
+    const frame = wrappedFrameRef.current
+    if (currentBar && frame) {
+      return { ...barReadout(pose, frame, currentBar.origin), moveKind: pose.moveKind, feedScale: pose.feedScale }
+    }
+    return toOriginRelative(pose)
+  }, [toOriginRelative])
+
   // Throttled state update: pose + progress are written to refs every RAF frame,
   // flushed to React state at ~10 Hz so the UI readout stays responsive without
   // triggering a React re-render on every animation frame. Coupling setState to
@@ -875,15 +1079,16 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     // Immediately reflect the initial pose (handles seek while paused).
-    setDisplayPose(toOriginRelative(latestPoseRef.current))
+    setDisplayPose(toReadoutPose(latestPoseRef.current))
 
     const interval = setInterval(() => {
-      setDisplayPose(toOriginRelative(latestPoseRef.current))
+      setDisplayPose(toReadoutPose(latestPoseRef.current))
       setPlaybackProgress(latestProgressRef.current)
+      syncPlaybackStats()
     }, 100)
 
     return () => clearInterval(interval)
-  }, [playbackEnabled, toOriginRelative])
+  }, [playbackEnabled, toReadoutPose, syncPlaybackStats])
 
   useEffect(() => {
     if (playbackEnabled && (mode !== 'selected' || !playbackInput)) {
@@ -913,10 +1118,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       flushPlaybackGridToGpu()
       latestProgressRef.current = 0
       setPlaybackProgress(0)
+      syncPlaybackStats()
       updateToolMeshPose()
     }
     setIsPlaying((current) => !current)
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   const handleStop = useCallback(() => {
     const controller = playbackControllerRef.current
@@ -929,7 +1135,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     updateToolMeshPose()
     latestProgressRef.current = 0
     setPlaybackProgress(0)
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+    syncPlaybackStats()
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   // Scrubbing fires a change event per mousemove; each engine seek can replay a
   // large slice of the toolpath. Coalesce to one seek per animation frame: the
@@ -954,8 +1161,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       controller.seekToFraction(pending)
       flushPlaybackGridToGpu()
       updateToolMeshPose()
+      syncPlaybackStats()
     })
-  }, [flushPlaybackGridToGpu, updateToolMeshPose])
+  }, [flushPlaybackGridToGpu, updateToolMeshPose, syncPlaybackStats])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -963,27 +1171,34 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    disposeClampMeshes(scene)
+    disposeClampMeshes()
 
-    if (clamps.length === 0) {
+    // `wrappedFrame` present means the bar view (issue #395 G3), so the bar's
+    // own visible fixtures and real round stock are what is drawn; otherwise
+    // the flat setup's clamp list and stock are.
+    const frame = wrappedFrameRef.current
+    const currentBar = barRef.current
+    const visibleClamps = frame && currentBar ? currentBar.clamps : clamps
+    if (visibleClamps.length === 0) {
       return
     }
 
     const collidingClampIdSet = new Set(collidingClampIds)
-    const nextClampMeshes = clamps.map((clamp) =>
-      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette),
+    const nextClampMeshes = visibleClamps.map((clamp) =>
+      buildClampMesh(clamp, clamp.id === selectedClampId, collidingClampIdSet.has(clamp.id), units, threePalette, frame && currentBar ? currentBar.stock : stock),
     )
+    const parent = barTurnRef.current?.content ?? scene
     for (const mesh of nextClampMeshes) {
-      scene.add(mesh)
+      parent.add(mesh)
     }
     clampObjectsRef.current = nextClampMeshes
     needsRenderRef.current = true
 
     return () => {
-      disposeClampMeshes(scene)
+      disposeClampMeshes()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle. `frameKey` stands in for the frame object (read through its ref) so a rebuilt identical frame does not rebuild the fixtures.
+  }, [clamps, collidingClampIds, disposeClampMeshes, selectedClampId, units, stock, frameKey])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -992,7 +1207,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
 
     disposeOriginMesh(scene)
-    if (!origin.visible || !simulation) {
+    if (!viewOrigin.visible || !simulation) {
       return
     }
 
@@ -1006,7 +1221,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       ) * 0.05,
       0.05,
     )
-    const triad = buildOriginTriad(origin, axisSize, threePalette)
+    const triad = buildOriginTriad(viewOrigin, axisSize, threePalette)
     scene.add(triad)
     originObjectRef.current = triad
     needsRenderRef.current = true
@@ -1015,7 +1230,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeOriginMesh(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is from stable theme; adding rebuilds on toggle
-  }, [disposeOriginMesh, origin, simulation])
+  }, [disposeOriginMesh, viewOrigin, simulation])
 
   // Reset camera on project change so the viewport doesn't keep the previous
   // project's camera position/orientation when a new project is created.
@@ -1028,9 +1243,14 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // Wait for any pending simulation build (debounced 150ms) to complete,
     // then auto-frame if a mesh exists.
     const timer = setTimeout(() => {
-      const object = objectRef.current
+      const object = objectRef.current ?? null
       if (object) {
+        object.updateWorldMatrix(true, false)
         const bounds = new THREE.Box3().setFromObject(object)
+        // The flat round bar's lower half is its own mesh (#1049); frame it too.
+        if (!barRef.current && flatRoundBarLowerHalfRef.current) {
+          bounds.expandByObject(flatRoundBarLowerHalfRef.current)
+        }
         if (!bounds.isEmpty()) {
           controls.fitToBounds(bounds, true)
           hasAutoFramedRef.current = true
@@ -1060,8 +1280,42 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     : null
 
+  // The fresh-stock explanation is an info button at the end of the toolbar
+  // (issue #1112 F3), not a full-width line under it.
+  const setupNote = setup?.freshStockNote
+    ? t('viewport.sim.freshStockNote', { setup: setup.name })
+    : null
+
   return (
-    <div className="simulation-viewport">
+    <div
+      ref={viewportRef}
+      className="simulation-viewport"
+      data-simulation-view={simulationView}
+      data-simulation-bar-angle="0.000"
+      // Read by the setup simulation e2e (issue #947): which setup is shown
+      // and what the heightfield removed, without sampling WebGL pixels.
+      data-simulation-setup={setup?.id}
+      data-simulation-removed-cells={simulation?.stats.removedCellCount}
+      data-simulation-min-z={simulation?.stats.minTopZ}
+      // The mounted surface, shared by every bar shape (#1016 C2). A shape that
+      // skipped the heightfield would leave these unset.
+      data-simulation-surface={staticSurfaceMounted ? 'heightfield' : undefined}
+      data-simulation-playback-surface={playbackSurfaceMounted ? 'heightfield' : undefined}
+      // A flat round bar's static lower half (issue #1049). A block, square
+      // blank or Around setup leaves this unset.
+      data-simulation-lower-half={staticLowerHalfMounted ? 'round-bar' : undefined}
+      data-simulation-playback-lower-half={playbackLowerHalfMounted ? 'round-bar' : undefined}
+      // Playback evidence read by the square playback smoke test: progress 0 on
+      // an operation is its prior operation's material, not virgin stock, and
+      // the end of the path has removed more.
+      data-simulation-playback-progress={playbackEnabled ? playbackProgress.toFixed(6) : undefined}
+      data-simulation-playback-removed-cells={
+        playbackEnabled && playbackStats !== null ? playbackStats.removedCells : undefined
+      }
+      data-simulation-playback-min-z={
+        playbackEnabled && playbackStats !== null ? playbackStats.minTopZ : undefined
+      }
+    >
       <div ref={mountRef} className="simulation-viewport__canvas" />
       {(isComputing || isPlaybackBuilding) && (
         <div className="simulation-viewport__computing-overlay">
@@ -1174,6 +1428,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             }}
           />
         </div>
+        <SimulationSetupInfo note={setupNote} />
       </div>
       {playbackEnabled && playbackInput && (
         <div
@@ -1304,6 +1559,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               <span className="simulation-playback-bar__coord-label">Z</span>
               <span className="simulation-playback-bar__coord-value">{formatCoord(displayPose.z, playbackUnits)}</span>
             </div>
+            {bar && (
+              // The bar view's A axis (issue #395). The program's angle in
+              // degrees, never reduced to one turn, so a 1.5-turn pass reads up
+              // to 540°. A flat setup has no A axis and shows no cell.
+              <div className="simulation-playback-bar__coord simulation-playback-bar__coord--a">
+                <span className="simulation-playback-bar__coord-label">A</span>
+                <span className="simulation-playback-bar__coord-value">
+                  {displayPose.a !== undefined ? `${displayPose.a.toFixed(3)}°` : '—'}
+                </span>
+              </div>
+            )}
           </div>
           <div
             className="simulation-playback-bar__feed"

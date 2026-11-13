@@ -68,3 +68,23 @@ if command -v rs274 >/dev/null 2>&1; then
 else
   echo "rs274 not found; install linuxcnc-uspace to add the LinuxCNC interpreter."
 fi
+
+# FabMo's grammar is an external tool, never vendored into the repository.
+# Build only its parser: installing FabMo itself runs dashboard/native builds.
+FABMO_COMMIT=147325ca628e5b5148880b5fc3542605076935c5
+FABMO_DIR="$OUT_DIR/fabmo-opensbp"
+rm -rf "$FABMO_DIR"
+mkdir -p "$FABMO_DIR/engine" "$FABMO_DIR/toolchain"
+git -C "$FABMO_DIR/engine" init --quiet
+git -C "$FABMO_DIR/engine" fetch --quiet --depth 1 \
+  https://github.com/FabMo/FabMo-Engine.git "$FABMO_COMMIT"
+git -C "$FABMO_DIR/engine" checkout --quiet --detach FETCH_HEAD
+test "$(git -C "$FABMO_DIR/engine" rev-parse HEAD)" = "$FABMO_COMMIT"
+# Version from FabMo's parser.js build instructions. No lifecycle scripts.
+npm install --prefix "$FABMO_DIR/toolchain" --ignore-scripts --no-audit --no-fund \
+  --save-exact peggy@4.0.3
+"$FABMO_DIR/toolchain/node_modules/.bin/peggy" \
+  -o "$FABMO_DIR/engine/runtime/opensbp/sbp_parser.js" \
+  "$FABMO_DIR/engine/runtime/opensbp/sbp_parser.pegjs"
+printf '{"commit":"%s","peggy":"4.0.3"}\n' "$FABMO_COMMIT" > "$FABMO_DIR/pin.json"
+echo "Installed fabmo-opensbp at $FABMO_COMMIT (syntax only)"

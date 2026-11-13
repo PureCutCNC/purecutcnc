@@ -31,7 +31,9 @@ import {
   OPERATION_FIELD_GROUP_IDS,
   OPERATION_FIELD_IDS,
   operationFieldsForGroup,
+  operationNoteShowsTextarea,
   resolvedEntryStrategy,
+  stockRadialRefVariant,
   type OperationFieldId,
 } from './operationFields'
 import {
@@ -56,6 +58,8 @@ const ALL_KINDS: OperationKind[] = [
   'edge_route_inside',
   'edge_route_outside',
   'surface_clean',
+  'rotary_rough',
+  'rotary_finish',
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',
@@ -424,6 +428,21 @@ function testStockToLeaveFollowsTheSurfacePattern() {
   }
 }
 
+/**
+ * #1112 decision 8.16: the radial-wall note belongs to an Around pocket. It
+ * must not leak onto a Top or Bottom pocket, whose walls are ordinary upright
+ * walls, and a rotary operation keeps its own cross-section picture.
+ */
+function testStockRadialReferenceFollowsTheFace() {
+  const pocket = makeOperation({ kind: 'pocket' })
+  assert(stockRadialRefVariant(pocket, 'around') === 'around', 'an Around pocket gets the radial-wall note')
+  assert(stockRadialRefVariant(pocket, 'top') === undefined, 'a Top pocket gets the plain wall picture')
+  assert(stockRadialRefVariant(pocket, 'bottom') === undefined, 'a Bottom pocket gets the plain wall picture')
+
+  const rotaryRough = makeOperation({ kind: 'rotary_rough' })
+  assert(stockRadialRefVariant(rotaryRough, 'around') === 'rotary', 'a rotary operation keeps the cross-section picture')
+}
+
 function testRoundLinkCornersFollowsTheGeneratorsOwnLinking() {
   const field = OPERATION_FIELDS.find((candidate) => candidate.id === 'roundLinkCorners')
   assert(field, 'roundLinkCorners must be declared')
@@ -517,6 +536,48 @@ function testDrillingHidesTheTwoDimensionalStrategyFields() {
   }
 }
 
+/**
+ * Passes — along or around the bar — is a rotary strategy choice (#1045 slice
+ * B). It belongs to Strategy because it decides how the cutter covers the
+ * material, and it is offered by exactly the two rotary kinds the generator
+ * reads it for; a non-rotary operation that showed the row would offer a
+ * setting nothing consumes.
+ */
+function testRotaryPassesIsARotaryStrategyField() {
+  const field = OPERATION_FIELDS.find((candidate) => candidate.id === 'rotaryPassDirection')
+  assert(field, 'rotaryPassDirection must be declared')
+  assert(field.group === 'strategy', 'the Passes row belongs to the Strategy group')
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    assert(field.appliesTo(makeOperation({ kind })), `${kind} offers the Passes choice`)
+    assert(
+      operationFieldsForGroup('strategy', makeOperation({ kind })).some((entry) => entry.id === 'rotaryPassDirection'),
+      `${kind} renders Passes inside Strategy`,
+    )
+  }
+  for (const kind of ALL_KINDS) {
+    if (kind === 'rotary_rough' || kind === 'rotary_finish') continue
+    assert(!field.appliesTo(makeOperation({ kind })), `${kind} must not offer the rotary Passes choice`)
+    assert(
+      !operationFieldsForGroup('strategy', makeOperation({ kind })).some((entry) => entry.id === 'rotaryPassDirection'),
+      `${kind} must not render Passes inside Strategy`,
+    )
+  }
+}
+
+/**
+ * The description field (issue #1102, proposal 10): an empty note is a compact
+ * link until it is clicked, while a stored note always renders the textarea —
+ * someone who wrote one is editing it, not adding it.
+ */
+function testEmptyNoteStartsAsALink() {
+  assert(!operationNoteShowsTextarea(false, ''), 'an empty note starts collapsed')
+  assert(operationNoteShowsTextarea(true, ''), 'revealing an empty note shows the textarea')
+  assert(operationNoteShowsTextarea(false, 'cast finish'), 'a stored note always shows the textarea')
+  assert(operationNoteShowsTextarea(true, 'cast finish'), 'and stays shown while editing')
+  assert(!operationNoteShowsTextarea(false, '   '), 'a whitespace-only note is still empty')
+}
+
 testEveryDeclaredIdHasExactlyOneRow()
 testEveryFieldNamesADeclaredGroup()
 testEveryFieldIsReachable()
@@ -529,9 +590,12 @@ testXyLeadIsOfferedOnEdgeRoutesButNotTrochoidalOnes()
 testTrochoidalPredicatesMatchTheEnginesOwn()
 testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()
+testStockRadialReferenceFollowsTheFace()
 testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
+testRotaryPassesIsARotaryStrategyField()
 testClearingControlsMatchTheDeclaration()
 testScallopHeightHidesTheOverridesItReplaces()
+testEmptyNoteStartsAsALink()
 
 console.log('operationFields tests passed')

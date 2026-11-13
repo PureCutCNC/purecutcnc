@@ -23,9 +23,10 @@ import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 import type { MoveWorkflow } from './useMoveWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
 import { formatLength } from '../../utils/units'
-import { computeViewTransform } from './viewTransform'
+import { computeSketchViewTransform } from './viewTransform'
 import { resolveOffsetPreview } from './draftGeometry'
-import { computeScaleFactorFromPreview, computeRotateDegreesFromPreview, type OperationDimEdit } from './manualEntry'
+import { computeScaleFactorFromPreview, computeRotateDegreesFromPreview, formatDirectionAngle, type OperationDimEdit } from './manualEntry'
+import { faceAngles } from '../../store/helpers/activeFace'
 import { filletRadiusFromPoint, chamferDistanceFromPoint } from '../../store/helpers/referenceTransforms'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
@@ -82,6 +83,8 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
     setOperationDimEdit,
     fillet,
   } = deps
+  // Typed and displayed angles read as they do on the face being drawn on (#945).
+  const face = faceAngles(project)
 
   if (pendingAdd) {
     if (
@@ -105,7 +108,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const previewPoint = pendingPreviewPoint?.point ?? fromPoint
       const dx = previewPoint.x - fromPoint.x
       const dy = previewPoint.y - fromPoint.y
-      dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') })
+      dimEdit.setDimensionEdit({ shape: pendingAdd.shape, anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: '', length: formatLength(Math.hypot(dx, dy), units), angle: formatDirectionAngle(dx, dy, face) })
       return
     }
     if (pendingAdd.shape === 'composite' && pendingAdd.start && !pendingAdd.closed) {
@@ -143,7 +146,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const dx = previewPoint.x - fromPoint.x
       const dy = previewPoint.y - fromPoint.y
       const len = Math.hypot(dx, dy)
-      const angleDeg = (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+      const angleDeg = formatDirectionAngle(dx, dy, face)
       const defaultRadius = pendingAdd.currentMode === 'arc' ? formatLength(len > 1e-9 ? len : 0.5, units) : ''
       dimEdit.setDimensionEdit({ shape: 'composite', anchor: fromPoint, signX: 1, signY: 1, activeField: 'length', width: '', height: '', radius: defaultRadius, length: formatLength(len, units), angle: angleDeg })
       return
@@ -155,7 +158,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const dy = previewPoint ? previewPoint.y - p1.y : 0
       const len = Math.hypot(dx, dy)
       const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
-      const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+      const angleDeg = len > 1e-10 ? formatDirectionAngle(dx, dy, face) : '0'
       dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
       return
     }
@@ -175,7 +178,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
     if (pendingAdd.shape === 'ngon' && pendingAdd.anchor) {
       const previewPoint = pendingPreviewPoint?.point ?? pendingAdd.anchor
       const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-      const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+      const angleDeg = formatDirectionAngle(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y, face)
       dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
       return
     }
@@ -185,7 +188,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
         : pendingAdd.anchor
       const previewPoint = pendingPreviewPoint?.point ?? fallbackPoint
       const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-      const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+      const angleDeg = formatDirectionAngle(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y, face)
       dimEdit.setDimensionEdit({ shape: 'gear', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
       return
     }
@@ -208,7 +211,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
   if (pendingTransform?.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd) {
     let angle = '0'
     const previewPoint = pendingTransformPreviewPoint?.point
-    if (previewPoint) angle = computeRotateDegreesFromPreview(pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint)
+    if (previewPoint) angle = computeRotateDegreesFromPreview(pendingTransform.referenceStart, pendingTransform.referenceEnd, previewPoint, face)
     setOperationDimEdit({ kind: 'rotate', angle })
     return
   }
@@ -221,7 +224,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const canvasWidth_ = canvasWidth
       const canvasHeight_ = canvasHeight
       if (canvasWidth_ > 0 && canvasHeight_ > 0) {
-        const vt = computeViewTransform(project.stock, canvasWidth_, canvasHeight_, viewState)
+        const vt = computeSketchViewTransform(project, canvasWidth_, canvasHeight_, viewState)
         const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
           .filter((f) => f.sketch.profile.closed)
         const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, deps.activeSnapMode ?? null, vt)

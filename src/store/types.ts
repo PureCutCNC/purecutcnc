@@ -18,6 +18,7 @@ import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
 import type { ApplyCamPlanResult, CamPlanDraft } from '../engine/operations/camPlan/types'
 import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
+import type { MachineLoadDiagnostic } from '../machine/diagnostics'
 import type { SnapMode } from '../sketch/snapping'
 import type {
   BackdropImage,
@@ -36,6 +37,9 @@ import type {
   Point,
   Project,
   Segment,
+  SetupFace,
+  SetupOrientation,
+  MachiningSetup,
   SketchFeature,
   Stock,
   Tab,
@@ -48,6 +52,8 @@ import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
 import type { ApplyNestInput } from './helpers/nestApply'
+import type { RotaryPatternInput, RotaryPatternResult } from './helpers/rotaryPatterns'
+import type { RotarySolidInput, RotarySolidResult } from './helpers/rotarySolids'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -143,6 +149,27 @@ export type PendingAddTool =
     }
   | { shape: 'roundrect'; anchor: Point | null; corner: number; session: number }
   | { shape: 'chamferrect'; anchor: Point | null; corner: number; session: number }
+  /**
+   * A canned shape's parameters are being edited in the canvas side panel, the
+   * same panel creation uses. The row exists already; Apply is one
+   * `updateFeature` write. Transient, never persisted.
+   */
+  | { shape: 'canned-edit'; featureId: string; session: number }
+  /**
+   * A canned rotary model (Turn/Polygon) or pattern (Thread/Flutes) being
+   * created in the canvas creation panel (issue #1112 rt2-b). The panel owns
+   * the fields and calls the same store action the old dialog did, so the
+   * pending session only says which shape's panel is open. Transient, never
+   * persisted.
+   */
+  | { shape: 'rotary-solid'; kind: RotarySolidCannedKind; session: number }
+  | { shape: 'rotary-pattern'; kind: RotaryPatternCannedKind; session: number }
+
+/** The canned rotary models the canvas creation panel creates (Turn/Polygon). */
+export type RotarySolidCannedKind = 'turn' | 'polygon'
+
+/** The canned rotary patterns the canvas creation panel creates (Thread/Flutes). */
+export type RotaryPatternCannedKind = 'thread' | 'flutes'
 
 export type CompositeSegmentMode = 'line' | 'arc' | 'spline'
 export type CreationTarget = 'feature' | 'line' | 'region' | 'construction'
@@ -338,6 +365,14 @@ export interface ProjectStore {
   projectLoading: boolean
   /** Set when a loaded file's schema version is newer than this build supports; surfaced once to the user. */
   loadWarning: string | null
+  /**
+   * Structured machine diagnostics from the most recent load (#1119):
+   * a machine kept because its templates still break a rule, machines moved
+   * to My Machines, duplicate consolidations and re-keyed ids. The load
+   * warning carries the same information as one string; this list is what the
+   * machine manager and the export dialog show line by line.
+   */
+  machineLoadDiagnostics: MachineLoadDiagnostic[]
   /** Clear the pending {@link loadWarning} after it has been shown. */
   clearLoadWarning: () => void
   /** Incremented each time a new project is created or loaded. Used by viewports to reset their view state. */
@@ -407,6 +442,14 @@ export interface ProjectStore {
   setDimensionDeleteArmed: (armed: boolean) => void
 
   setStock: (stock: Stock) => void
+  /** Set the stock and the machine origin in one undo step (a block↔bar switch moves both). */
+  setStockAndOrigin: (stock: Stock, origin: Project['origin']) => void
+  /**
+   * Switch the stock between a block, a round bar and a square blank in one
+   * undo step: the origin follows, a bar gains a chuck, a block loses every
+   * chuck and tailstock (#392 slice C, square blank #1016 C2-S2).
+   */
+  setStockShape: (shape: 'block' | 'round' | 'square') => void
   setStockSourceFeature: (featureId: string | null) => void
   enterStockSketchEdit: (featureId: string) => void
   /** Resize rectangular stock by changing width or height while holding one side fixed. */
@@ -442,6 +485,8 @@ export interface ProjectStore {
   cutSelectedFeatures: (keepOriginals?: boolean) => string[]
   offsetSelectedFeatures: (distance: number) => string[]
   expandTextFeature: (textFeatureId: string) => void
+  /** Explode a canned shape into plain outline rows (issue #1112). */
+  expandCannedFeature: (cannedFeatureId: string) => void
   reorderFeatures: (ids: string[]) => void
   alignFeatures: (ids: string[], alignment: FeatureAlignment) => void
   distributeFeatures: (ids: string[], distribution: FeatureDistribution) => void
@@ -485,9 +530,43 @@ export interface ProjectStore {
   createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: ToolpathWarning[] }
   applyCamPlan: (plan: CamPlanDraft) => ApplyCamPlanResult
   setAllOperationToolpathVisibility: (visible: boolean) => void
+  /**
+   * Show or hide the toolpaths of one setup's operations (issue #1186), as one
+   * undo step. Membership is the CAM panel's: the operations the setup owns,
+   * with one that names no setup reading as the project's first setup.
+   */
+  setSetupOperationToolpathVisibility: (setupId: string, visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void
+
+  // ---- Machining setups (issue #944) ----
+  /** Add a setup. Returns its id, or null when the orientation is not one this build can machine. */
+  createSetup: (input: { name?: string; orientation: SetupOrientation; kind?: 'around' }) => string | null
+  renameSetup: (id: string, name: string) => void
+  /** Atomic setup property edit; realizes a provisional setup in the same undo step. */
+  updateSetup: (id: string, patch: { name?: string; flipAxis?: 'x' | 'y'; registration?: MachiningSetup['registration']; notes?: string }) => boolean
+  /**
+   * Remove a setup together with its operations, as one undo step. False for
+   * the last setup or an unknown id. Destructive: a UI that calls this must
+   * first confirm with the user, listing the operations that will go.
+   */
+  deleteSetup: (id: string) => boolean
+  /**
+   * Switch the workspace to a setup. New operations join it. A view choice,
+   * not an edit: it is never an undo step, does not mark the project changed,
+   * and undo/redo leave the workspace on the setup it is on.
+   */
+  setActiveSetup: (id: string) => void
+  /**
+   * Move an operation to another setup (issue #946). Its targets are judged
+   * from the new face: those it cannot reach are dropped, and the move is
+   * refused when no valid target would be left. Plan it with
+   * `planOperationMove` first to show the user what will go.
+   */
+  assignOperationToSetup: (operationId: string, setupId: string) => void
+  /** Change the face features are drawn on. Their stock-space Z span is not touched. */
+  setFeatureAuthoringFace: (featureIds: string[], face: SetupFace) => void
 
   selectFeature: (id: string | null, additive?: boolean, expandGroup?: boolean) => void
   selectFeatures: (ids: string[]) => void
@@ -562,6 +641,16 @@ export interface ProjectStore {
   startAddGearPlacement: () => void
   startAddRoundRectPlacement: () => void
   startAddChamferRectPlacement: () => void
+  /** Reopen a canned shape's parameters in the canvas creation side panel. */
+  beginCannedShapeEdit: (featureId: string) => void
+  /**
+   * Open the Turn/Polygon creation panel (issue #1112 rt2-b). Offered on every
+   * face of a bar-stock rotary project, so the model can be made from Top or
+   * Bottom as well as Around.
+   */
+  startAddRotarySolidPlacement: (kind: RotarySolidCannedKind) => void
+  /** Open the Thread/Flutes creation panel; Around on a round bar only. */
+  startAddRotaryPatternPlacement: (kind: RotaryPatternCannedKind) => void
   cancelPendingAdd: () => void
   setPendingAddAnchor: (point: Point) => void
   placePendingAddAt: (point: Point) => void
@@ -633,6 +722,21 @@ export interface ProjectStore {
   addSlotFeature: (name: string, p1: Point, p2: Point, width: number, depth: number) => void
   addNgonFeature: (name: string, cx: number, cy: number, sides: number, circumradius: number, firstVertexAngle: number, depth: number) => void
   addGearFeature: (name: string, center: Point, outsideRadius: number, params: GearCreationParams, depth: number) => string[]
+  /**
+   * Canned Thread/Flutes on the Around face (issue #1112 F): one canned feature
+   * drawing all its open `line` outlines, in one undo step. Creation adds no
+   * operation and takes no tool. Returns the feature id, or a typed refusal
+   * that changed nothing.
+   */
+  addRotaryPattern: (input: RotaryPatternInput) => RotaryPatternResult
+  /**
+   * Canned Turn and Polygon models on the Around face (issue #1112 G): one
+   * generated `model` feature with its mesh asset, in one undo step. Creation
+   * adds no folder and no operation, and takes no tool; rotary operations are
+   * added to the model the ordinary way. Changing the parameters later rebuilds
+   * the mesh. A typed refusal changes nothing.
+   */
+  addRotarySolid: (input: RotarySolidInput) => RotarySolidResult
   addRoundRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
   addChamferRectFeature: (name: string, x: number, y: number, w: number, h: number, corner: number, depth: number) => void
 

@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
+import { isToolCompatibleWithOperation, withCompatibleOperationTool } from '../../toolPolicy'
 import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
-import { selectToolForOperation } from '../../engine/operations/toolSelection'
+import { selectToolForOperation, toolInUnits } from '../../engine/operations/toolSelection'
 import { materializeCamPlan } from '../helpers/camPlanApply'
 import { uniqueName } from '../../import'
 import { defaultTool, inferFeatureKind } from '../../types/project'
@@ -24,14 +25,18 @@ import type {
   FeatureFolder,
   Operation,
   OperationTarget,
+  Project,
   SketchFeature,
   Tool,
 } from '../../types/project'
+import { activeSetup } from '../helpers/activeFace'
+import { setupForOperation } from '../../engine/setupOrientation'
 import { isMachinable } from '../helpers/featureRoles'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
-import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate } from '../helpers/operationDefaults'
+import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate, withCannedPatternTargetDepth } from '../helpers/operationDefaults'
+import { rejectedOperationTargets, targetAllowedInSetup } from '../../engine/setupTargets'
 import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
@@ -43,6 +48,7 @@ export type OperationsSlice = Pick<
   | 'createRestOperation'
   | 'applyCamPlan'
   | 'setAllOperationToolpathVisibility'
+  | 'setSetupOperationToolpathVisibility'
   | 'deleteOperation'
   | 'duplicateOperation'
   | 'reorderOperations'
@@ -59,6 +65,35 @@ function duplicateOperationName(name: string, operations: Operation[]): string {
     index += 1
   }
   return `${baseName} ${index}`
+}
+
+/**
+ * The operations one setup's CAM-panel card lists (issue #1186), so its eye
+ * hides exactly the rows beneath it. Membership is the panel's, the export's
+ * and the simulation's (`app/simulationSetup` `setupOperations`): an operation
+ * that names no setup reads as the project's first setup. Written here rather
+ * than imported because the store does not depend on the app layer.
+ */
+function setupOperationIds(project: Project, setupId: string): Set<string> {
+  const saved = project.setups ?? []
+  const active = activeSetup(project)
+  const listed = saved.some((setup) => setup.id === active.id) ? saved : [...saved, active]
+  const firstSetup = listed[0]
+  const ids = new Set<string>()
+  for (const operation of project.operations) {
+    // Throws for an operation naming a setup the project does not define, as
+    // the panel's own grouping does.
+    const owner = setupForOperation(project, operation) ?? firstSetup
+    if (owner?.id === setupId) ids.add(operation.id)
+  }
+  return ids
+}
+
+/** Whether two targets name the same set, so a repeated patch is not a change. */
+function sameOperationTarget(a: OperationTarget, b: OperationTarget): boolean {
+  if (a.source === 'stock' || b.source === 'stock') return a.source === b.source
+  return a.featureIds.length === b.featureIds.length
+    && a.featureIds.every((featureId) => b.featureIds.includes(featureId))
 }
 
 export function createOperationsSlice(
@@ -87,6 +122,11 @@ export function createOperationsSlice(
       if (!isOperationTargetValid(state.project, kind, target)) {
         return null
       }
+      // A new operation joins the active setup, so its targets are judged
+      // from that setup's face (issue #946).
+      if (!targetAllowedInSetup(state.project, target, state.project.activeSetupId, kind)) {
+        return null
+      }
 
       const nextId = nextUniqueGeneratedId(state.project, 'op')
 
@@ -112,8 +152,15 @@ export function createOperationsSlice(
           resolvedToolRef = toolToAdd.id
         }
       } else {
-        resolvedTool = state.project.tools[0] ?? defaultTool(state.project.meta.units, 1)
-        resolvedToolRef = state.project.tools[0]?.id ?? null
+        // The fallback is held to the same units rule as the selector (issue
+        // #1132): a project whose only compatible cutters are in the other unit
+        // system gets the project-units default tool with no reference, never
+        // one of them.
+        const fallback = state.project.tools.find((tool) =>
+          toolInUnits(tool, state.project.meta.units) && isToolCompatibleWithOperation(tool, kind),
+        )
+        resolvedTool = fallback ?? defaultTool(state.project.meta.units, 1)
+        resolvedToolRef = fallback?.id ?? null
       }
 
       const template = defaultOperationForTarget(
@@ -150,6 +197,13 @@ export function createOperationsSlice(
 
     updateOperation: (id, patch) =>
       set((s) => {
+        const current = s.project.operations.find((operation) => operation.id === id)
+        if (current) {
+          const next = { ...current, ...patch }
+          const tool = s.project.tools.find((candidate) => candidate.id === next.toolRef)
+          if (tool && !isToolCompatibleWithOperation(tool, next.kind)
+            && (patch.toolRef !== undefined || patch.kind !== undefined)) return {}
+        }
         const nextProject = {
           ...s.project,
           operations: s.project.operations.map((operation) => {
@@ -157,10 +211,28 @@ export function createOperationsSlice(
               return operation
             }
 
-            const nextOperation = { ...operation, ...patch }
-            return isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)
-              ? nextOperation
-              : operation
+            const nextOperation = withCompatibleOperationTool(s.project, { ...operation, ...patch })
+            if (!isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)) {
+              return operation
+            }
+            // A Follow line cuts a canned Thread/Flutes at the feature's own
+            // stored depth, whichever path changed the target (decision 3,
+            // #1112): "Add to operation" merges the target here too, so the
+            // rule belongs in the store rather than in each UI handler.
+            const targetChanged = patch.target !== undefined
+              && !sameOperationTarget(operation.target, nextOperation.target)
+            // A target or setup edit may not hand the operation a feature its
+            // setup cannot reach (issue #946). Judged on what the edit adds: a
+            // target that became unreachable some other way — its feature was
+            // made shallower — must not lock every later edit out, including
+            // the one that removes it.
+            if (patch.target !== undefined || patch.setupId !== undefined || patch.kind !== undefined) {
+              const before = new Set(rejectedOperationTargets(s.project, operation).map((verdict) => verdict.featureId))
+              const introduced = rejectedOperationTargets(s.project, nextOperation)
+                .some((verdict) => !before.has(verdict.featureId))
+              if (introduced) return operation
+            }
+            return targetChanged ? withCannedPatternTargetDepth(s.project, nextOperation) : nextOperation
           }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
@@ -419,6 +491,34 @@ export function createOperationsSlice(
         }
       }),
 
+    setSetupOperationToolpathVisibility: (setupId, visible) =>
+      set((s) => {
+        // Only this setup's rows change, and all of them in one step, so one
+        // undo puts the card back the way it was (issue #1186).
+        const ids = setupOperationIds(s.project, setupId)
+        if (ids.size === 0) {
+          return {}
+        }
+        const nextProject = {
+          ...s.project,
+          operations: s.project.operations.map((operation) => (
+            ids.has(operation.id) ? { ...operation, showToolpath: visible } : operation
+          )),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
     deleteOperation: (id) =>
       set((s) => {
         const nextProject = {
@@ -448,7 +548,7 @@ export function createOperationsSlice(
 
       const nextId = nextUniqueGeneratedId(state.project, 'op')
       const duplicate: Operation = {
-        ...sourceOperation,
+        ...withCompatibleOperationTool(state.project, sourceOperation),
         id: nextId,
         name: duplicateOperationName(sourceOperation.name, state.project.operations),
         showToolpath: true,

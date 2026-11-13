@@ -20,7 +20,7 @@
  * Run with: npx tsx src/engine/designPrint/designPrint.test.ts
  */
 
-import { newProject, rectProfile, circleProfile } from '../../types/project'
+import { newProject, rectProfile, circleProfile, roundStock } from '../../types/project'
 import type { DimensionAnnotation, Project, SketchFeature } from '../../types/project'
 import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
@@ -690,6 +690,48 @@ function buildTestExportSvg(
   // The print SVG keeps crisp native <text>; only the geometry export skeletonizes.
   const print = buildTestSvg()
   assert(print.svg.includes('<text'), 'print SVG still uses native <text>')
+}
+
+// ── Around features are left out of the flat outputs (#395) ──
+
+{
+  // A round bar with one Top feature and one Around feature: Print and the
+  // design SVG export draw the Top one only. An Around feature's coordinates
+  // are the unrolled sheet's — here far outside the bar — so they must not
+  // reach the drawing or widen the bounds the page is scaled to.
+  const aroundFeature = makeFeature('around-rect', {
+    authoringFace: 'around',
+    sketch: {
+      profile: rectProfile(200, 5, 20, 8),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  })
+  const flatProfile = rectProfile(10, 10, 30, 20)
+  const onBar = (project: Project) => {
+    project.stock = roundStock(40, 120, 'x')
+    project.origin.visible = false
+    appendFeature(project, aroundFeature)
+  }
+
+  const print = buildTestSvg(onBar)
+  assert(count(print.svg, 'class="pc-feature"') === 1, 'Print draws the flat feature only')
+  assert(print.svg.includes(profileToPathD(flatProfile)), 'the Top feature prints')
+  assert(!print.svg.includes(profileToPathD(aroundFeature.sketch.profile)), 'the Around feature does not print')
+  assertClose(print.layout.bounds.maxX, 120, 'the printed bounds stop at the bar, not the sheet')
+
+  const design = buildTestExportSvg('mm', onBar)
+  assert(count(design.svg, 'class="pc-feature"') === 1, 'the design export draws the flat feature only')
+  assert(design.svg.includes('<g id="feature-visible-rect"'), 'the flat feature keeps its exported group')
+  assert(!design.svg.includes('feature-around-rect'), 'the Around feature is left out of the export')
+  assertClose(design.bounds.maxX, 120, 'the exported bounds stop at the bar too')
+
+  // Feature labels follow the same list.
+  const labelled = buildTestExportSvg('mm', onBar, { content: { featureLabels: true } })
+  assert(labelled.svg.includes('class="pc-feature-labels"'), 'flat feature labels still export')
+  assert(!labelled.svg.includes('around-rect'), 'the Around feature is named nowhere in the export')
 }
 
 // ── Path data ────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import type { CanvasThemePalette } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { drawToolpathAnnotations } from './previewPrimitives'
 import { compositeVertexShader } from './gpuToolpathShaders'
-import type { ViewTransform } from './viewTransform'
+import { reflectContextForView, type ViewTransform } from './viewTransform'
 
 /**
  * One reusable annotation raster, not another set of arrow/debug shape rules.
@@ -60,7 +60,7 @@ export class GpuToolpathAnnotations {
       this.geometry = new PlaneGeometry(2, 2)
       this.scene.add(new Mesh(this.geometry, this.material))
     }
-    const key = JSON.stringify([vt.scale, vt.offsetX, vt.offsetY, width, height, visibility, palette, deferArrows, selectedLevel])
+    const key = JSON.stringify([vt.scale, vt.offsetX, vt.offsetY, vt.mirrorX, vt.mirrorY, width, height, visibility, palette, deferArrows, selectedLevel])
     if (this.toolpath !== toolpath || this.key !== key) {
       if (this.canvas.width !== width || this.canvas.height !== height) {
         // Texture storage dimensions are immutable after the first upload.
@@ -76,7 +76,11 @@ export class GpuToolpathAnnotations {
       this.canvas.height = height
       const ctx = this.canvas.getContext('2d')
       if (!ctx) throw new Error('Toolpath annotation canvas is unavailable')
+      // Same reflection as the Canvas path, so a Bottom view's arrows match.
+      ctx.save()
+      reflectContextForView(ctx, vt)
       drawToolpathAnnotations(ctx, toolpath, vt, true, visibility, { deferArrows, selectedLevel })
+      ctx.restore()
       this.texture!.needsUpdate = true
       this.toolpath = toolpath
       this.key = key

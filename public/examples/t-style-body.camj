@@ -1,9 +1,9 @@
 {
-  "version": "3.2",
+  "version": "3.3",
   "meta": {
     "name": "t-style-body",
     "created": "2026-05-27T23:07:37.953Z",
-    "modified": "2026-09-13T01:17:40.099Z",
+    "modified": "2026-11-13T01:56:38.504Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -13,7 +13,8 @@
     "machineDefinitions": [],
     "selectedMachineId": null,
     "showDimensions": true,
-    "copyMode": "reference"
+    "copyMode": "reference",
+    "projectType": "milling"
   },
   "grid": {
     "extent": 22,
@@ -97,6 +98,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": "fd0157",
       "visible": true,
       "locked": false
@@ -117,6 +119,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0.25,
+      "authoringFace": "top",
       "folderId": "fd0157",
       "visible": true,
       "locked": false
@@ -137,6 +140,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.5,
+      "authoringFace": "top",
       "folderId": "fd0157",
       "visible": true,
       "locked": false
@@ -157,6 +161,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1,
+      "authoringFace": "top",
       "folderId": "fd0154",
       "visible": true,
       "locked": false
@@ -177,6 +182,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -197,6 +203,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -217,6 +224,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -237,6 +245,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -257,6 +266,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -277,6 +287,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -297,6 +308,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -317,6 +329,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -337,6 +350,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -357,6 +371,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
+      "authoringFace": "top",
       "folderId": "fd0155",
       "visible": true,
       "locked": false
@@ -377,6 +392,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0.9,
+      "authoringFace": "top",
       "folderId": "fd0156",
       "visible": true,
       "locked": false
@@ -397,6 +413,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.125,
+      "authoringFace": "top",
       "folderId": "fd0158",
       "visible": true,
       "locked": false
@@ -417,6 +434,7 @@
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": "fd0158",
       "visible": true,
       "locked": false
@@ -437,6 +455,7 @@
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": "fd0158",
       "visible": true,
       "locked": false
@@ -457,6 +476,7 @@
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": "fd0158",
       "visible": true,
       "locked": false
@@ -477,6 +497,7 @@
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": "fd0158",
       "visible": true,
       "locked": false
@@ -497,6 +518,7 @@
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0,
+      "authoringFace": "top",
       "folderId": null,
       "visible": true,
       "locked": false
@@ -647,7 +669,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0161",
@@ -695,7 +718,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0162",
@@ -747,7 +771,8 @@
       "peckDepth": 0.07874015748031496,
       "dwellTime": 0.5,
       "countersinkDiameter": 0.2362204724409449,
-      "retractHeight": 0
+      "retractHeight": 0,
+      "setupId": "setup-top"
     },
     {
       "id": "op0164",
@@ -805,7 +830,8 @@
       "peckDepth": 0.07874015748031496,
       "dwellTime": 0.5,
       "countersinkDiameter": 0.2362204724409449,
-      "retractHeight": 0
+      "retractHeight": 0,
+      "setupId": "setup-top"
     },
     {
       "id": "op0165",
@@ -852,7 +878,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     },
     {
       "id": "op0166",
@@ -899,7 +926,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
     }
   ],
   "tabs": [
@@ -2576,5 +2604,27 @@
       "operation": "subtract"
     }
   },
-  "annotations": []
+  "annotations": [],
+  "setups": [
+    {
+      "id": "setup-top",
+      "name": "Top",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op0160",
+        "op0161",
+        "op0162",
+        "op0164",
+        "op0165",
+        "op0166"
+      ]
+    }
+  ],
+  "activeSetupId": "setup-top"
 }

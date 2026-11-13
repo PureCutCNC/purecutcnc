@@ -61,6 +61,10 @@ export const featureTreeEn = {
   // ── Tree warning ──
   'featureTree.tree.warning.firstFeaturePrefix': '⚠ First 2.5D feature must be ',
   'featureTree.tree.warning.firstFeatureSuffix': '. The 3D model will not build until this is fixed.',
+  'featureTree.treeRow.warning.noEffect': 'No effect on the final shape: later features cover it.',
+  'featureTree.surfaceStart.fix': 'Start at turn surface',
+  'featureTree.surfaceStart.crossing': 'Crosses a diameter change on {turn}: part of it starts above the surface, and there is no single surface to start from.',
+  'featureTree.surfaceStart.above': 'Starts {distance} above the surface of {turn}: the first pass cuts air.',
 
   // ── TreeRow: folder chevron ──
   'featureTree.treeRow.folder.expand': 'Expand folder',
@@ -101,6 +105,7 @@ export const featureTreeEn = {
 
   // ── TreeRow: add entry (tab / clamp) ──
   'featureTree.treeRow.addEntry.tab': 'Add tab',
+  'featureTree.treeRow.addEntry.tabAround': 'Tabs are not used on the around face',
   'featureTree.treeRow.addEntry.clamp': 'Add clamp',
 
   // ── TreeRow: operation button tooltips ──
@@ -167,6 +172,10 @@ export const featureTreeEn = {
   'featureTree.properties.selection': 'Selection',
   'featureTree.properties.editSketch': 'Edit sketch',
   'featureTree.properties.text': 'Text',
+  'featureTree.properties.text.summary': 'Text · “{text}” · {size}',
+  'featureTree.properties.text.edit': 'Edit text…',
+  'featureTree.properties.text.path.refresh': 'Refresh path',
+  'featureTree.properties.text.path.refreshUnavailable': 'The source path no longer exists. Pick a new guide to refresh this run.',
   'featureTree.properties.style': 'Style',
   'featureTree.properties.font': 'Font',
   'featureTree.properties.sourceFeature': 'Source feature',
@@ -188,6 +197,12 @@ export const featureTreeEn = {
   'featureTree.properties.units.mm': 'Millimeters',
   'featureTree.properties.units.inch': 'Inches',
 
+  // ── Properties: project type (issue #1028) ──
+  'featureTree.properties.projectType': 'Project type',
+  'featureTree.properties.projectType.milling': 'Milling / routing',
+  'featureTree.properties.projectType.plasma': 'Plasma',
+  'featureTree.properties.projectType.rotary': 'Rotary',
+
   // ── Properties: machine ──
   'featureTree.properties.machine.none': 'None',
   'featureTree.properties.machine.updateAvailable': 'Update available',
@@ -196,6 +211,9 @@ export const featureTreeEn = {
   'featureTree.properties.machine.builtin': 'Built-in',
   'featureTree.properties.machine.custom': 'Custom',
   'featureTree.properties.machine.duplicateHint': 'duplicate to edit',
+  'featureTree.properties.machine.groupOther': 'Other machines',
+  'featureTree.properties.machine.mismatch': 'This is not a {type} machine. Export is disabled until you pick one.',
+  'featureTree.properties.machine.rotaryMmRequired': '{machine} turns the rotary in millimetres only. Change the project units to mm to export rotary operations.',
 
   // ── Properties: origin ──
   'featureTree.properties.origin.placeOrigin': 'Place origin',
@@ -208,6 +226,15 @@ export const featureTreeEn = {
   'featureTree.properties.stock.editSketch': 'Edit sketch',
   'featureTree.properties.stock.resetToRect': 'Reset to rectangle',
   'featureTree.properties.stock.nameDisabled': 'Stock',
+  'featureTree.properties.stock.block': 'Block',
+  'featureTree.properties.stock.roundBar': 'Round bar',
+  'featureTree.properties.stock.squareBlank': 'Square blank',
+  'featureTree.properties.side': 'Side',
+  'featureTree.properties.diameter': 'Diameter',
+  'featureTree.properties.length': 'Length',
+  'featureTree.properties.axis': 'Axis',
+  'featureTree.properties.axis.x': 'X',
+  'featureTree.properties.axis.y': 'Y',
 
   // ── Properties: backdrop ──
   'featureTree.properties.backdrop.noImage': 'No image loaded',
@@ -229,6 +256,54 @@ export const featureTreeEn = {
   'featureTree.properties.shapeShared.other': 'Shape (shared with {count} instances)',
   'featureTree.properties.instance': 'Instance',
   'featureTree.properties.expandText': 'Expand text to features',
+  'featureTree.properties.canned.edit': 'Edit {shape}…',
+  'featureTree.properties.canned.editUnavailable': 'This shape’s editor is not available yet',
+  'featureTree.properties.canned.expand': 'Expand to features',
+  'featureTree.properties.canned.label': 'Canned feature',
+  'featureTree.properties.canned.note': 'The sketch is generated from this shape’s parameters. Expand to features to edit it, cut, join, trim or offset it.',
+  'featureTree.properties.canned.noteBadge': 'Generated',
+  'featureTree.properties.canned.modelNote': 'This model is generated from its parameters. Changing them rebuilds its mesh; it cannot be expanded to plain features.',
+  'featureTree.properties.canned.sketchDisabled': 'Expand to features before editing the sketch',
+  'featureTree.properties.canned.unknown': 'Shape parameters from a newer version',
+  // A Thread and Flutes own their Z span, so Properties offers no Z control and
+  // names the Depth the Edit panel writes on the shape's own summary line — one
+  // line, with the Edit button right under it, instead of a second read-only
+  // line under Instance (issue #1112 rt6-a, rt7-d). A Turn and a Polygon own
+  // theirs too but report no Depth: their summary already shows the
+  // diameter/across flats and its surface Z (rt7-b).
+  'featureTree.properties.canned.depth': 'depth {value}',
+  // A Thread/Flutes Depth is measured from a surface, so the same clause names it
+  // with its diameter and Z, and repeats the warning for a surface that is not
+  // one diameter (issue #1112 rt6-c).
+  'featureTree.properties.canned.depth.surface': 'depth {value} {surface}',
+  'featureTree.properties.canned.surface.onTurn': 'below {name} (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.bar': 'below the bar (Ø {diameter}, surface at Z {value})',
+  'featureTree.properties.canned.surface.warned': 'below the bar (Ø {diameter}, surface at Z {value}) · {warning}',
+  // The Z a Turn's diameter or a Polygon's across-flats reaches: the bar axis
+  // plus the radius, appended to the summary line (issue #1112 rt6-c).
+  'featureTree.properties.canned.surface.turn': 'surface at Z {value}',
+  'featureTree.properties.canned.surface.flats': 'flats at Z {value}',
+  // ── Canned shape names and one-line summaries (issue #1112) ──
+  'canned.ellipse.name': 'ellipse',
+  'canned.ellipse.summary': 'Ellipse · {rx} × {ry}',
+  'canned.slot.name': 'slot',
+  'canned.slot.summary': 'Slot · length {length} · width {width}',
+  'canned.ngon.name': 'regular polygon',
+  'canned.ngon.summary': 'Regular polygon · {sides} sides · size {size} · rotation {rotation}°',
+  'canned.roundrect.name': 'rounded rectangle',
+  'canned.roundrect.summary': 'Rounded rectangle · {width} × {height} · corner radius {radius}',
+  'canned.chamferrect.name': 'chamfered rectangle',
+  'canned.chamferrect.summary': 'Chamfered rectangle · {width} × {height} · chamfer {chamfer}',
+  'canned.gear.name': 'Gear',
+  'canned.gear.summary': 'Gear · {teeth} teeth · module {module}',
+  'canned.thread.name': 'thread',
+  'canned.thread.summary': 'Thread · {starts}-start · pitch {pitch} · length {length}',
+  'canned.flutes.name': 'flutes',
+  'canned.flutes.summary': 'Flutes · {count} · twist {twist} turns · length {length}',
+  'canned.turn.name': 'turn',
+  'canned.turn.summary': 'Turn · start {start} · length {length} · Ø{diameter}',
+  'canned.polygon.name': 'polygon',
+  'canned.polygon.summary': 'Polygon · start {start} · length {length} · {sides} sides · across flats {acrossFlats} · rotation {rotation}°',
   'featureTree.properties.makeUnique': 'Make unique',
   'featureTree.properties.deleteFeature': 'Delete feature',
   'featureTree.properties.deleteSelected': 'Delete selected',
@@ -376,6 +451,7 @@ export const featureTreeEn = {
   'featureTree.contextMenu.addToOperationEmptyTooltip': 'No compatible operations',
   'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Not used in any operation',
   'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Removing this would make the operation invalid',
+  'featureTree.contextMenu.resizeCannedTooltip': 'Change the size in {edit}',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Shape',
@@ -383,9 +459,72 @@ export const featureTreeEn = {
   'featureTree.properties.tabShape.smooth': 'Smooth',
   'featureTree.properties.tabShape.hint': 'Smooth reduces abrupt Z motion but leaves less material than Rectangular at the same size.',
 
+  // ── Properties: clamp type (#392) ──
+  'featureTree.properties.clampType': 'Type',
+  'featureTree.properties.clampType.clamp': 'Clamp',
+  'featureTree.properties.chuckSize': 'Chuck size',
+  'featureTree.properties.chuckExisting': 'Existing size',
+  'featureTree.properties.chuckMin': 'Minimum grip diameter',
+  'featureTree.properties.chuckMax': 'Maximum grip diameter',
+  'featureTree.properties.chuckJaws': 'Jaws',
+  'featureTree.properties.chuckUnknownRange': 'Capacity unknown. Enter limits or pick a size.',
+  'featureTree.properties.chuckSquareRange': 'Square blank: across flats with 4 jaws; corner circle with 3 or 6.',
+  'featureTree.properties.chuckOutOfRange': 'Bar is outside the chuck’s clamping range.',
+  'featureTree.properties.clampType.chuck': 'Chuck',
+  'featureTree.properties.clampType.tailstock': 'Tailstock',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z top',
   'featureTree.zRange.zBottom': 'Z bottom',
   'featureTree.zRange.handleTopAria': 'Z top handle',
   'featureTree.zRange.handleBottomAria': 'Z bottom handle',
+
+  // ── Stock faces: tree layers, face-local depth, changing a face (issue #945) ──
+  'featureTree.face.topFace': 'Top face',
+  'featureTree.face.bottomFace': 'Bottom face',
+  'featureTree.face.aroundLayer': 'Around',
+  'featureTree.face.empty': 'Nothing here yet',
+  'featureTree.face.chipTop': 'TOP',
+  'featureTree.face.chipBottom': 'BOTTOM',
+  'featureTree.face.chipAround': 'AROUND',
+  'featureTree.face.chipThrough': 'THRU',
+  'featureTree.face.throughTooltip': 'Reaches both faces, so either side can cut it',
+  'featureTree.face.ghostRowTop': 'On the top face. Switch to the top face to edit it.',
+  'featureTree.face.ghostRowBottom': 'On the bottom face. Switch to the bottom face to edit it.',
+  'featureTree.face.ghostRowAround': 'On the around face. Switch to it to edit.',
+  'featureTree.face.switchToTopToEdit': 'Switch to top face to edit',
+  'featureTree.face.switchToBottomToEdit': 'Switch to bottom face to edit',
+  'featureTree.face.switchToAroundToEdit': 'Switch to around face to edit',
+  'featureTree.face.changeAuthoringFace': 'Change authoring face…',
+  'featureTree.face.authoringFace': 'Authoring face',
+  'featureTree.face.change': 'Change…',
+  'featureTree.face.stockSpan': 'Stock Z span',
+  'featureTree.face.zHintBottom': 'Z is shown as the stock sits flipped, bottom face up, so it reads like a top feature. The stored stock span is shown for reference and is never swapped.',
+  'featureTree.face.dialog.titleOneToTop': 'Move “{name}” to the top face?',
+  'featureTree.face.dialog.titleOneToBottom': 'Move “{name}” to the bottom face?',
+  'featureTree.face.dialog.titleManyToTop': 'Move {count} features to the top face?',
+  'featureTree.face.dialog.titleManyToBottom': 'Move {count} features to the bottom face?',
+  'featureTree.face.dialog.intro': 'The feature stays where it is in the stock. Only the face it is drawn and measured from changes.',
+  'featureTree.face.dialog.feature': 'Feature',
+  'featureTree.face.dialog.now': 'Now',
+  'featureTree.face.dialog.after': 'After',
+  'featureTree.face.dialog.measuredFrom': 'Measured from',
+  'featureTree.face.dialog.more': 'and {count} more',
+  'featureTree.face.dialog.spanUnchanged': 'Every stock Z span stays as it is.',
+  'featureTree.face.dialog.lockedSkipped': 'Locked features are not moved ({count}).',
+  'featureTree.face.dialog.notThrough': '{count} not moved: only features that go through the whole stock can change face.',
+  'featureTree.face.dialog.moveToTop': 'Move to top face',
+  'featureTree.face.dialog.moveToBottom': 'Move to bottom face',
+  'featureTree.face.changeBusy': 'Finish the current edit before changing the face',
+  'featureTree.face.changeNotThrough': 'Only features that go through the whole stock (a through hole or a full-height solid) can change face.',
+  'featureTree.face.linkedOtherFace.top.one': 'This shape is shared with {count} linked copy on the top face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.top.other': 'This shape is shared with {count} linked copies on the top face. Editing the shape changes them too.',
+  'featureTree.face.linkedOtherFace.bottom.one': 'This shape is shared with {count} linked copy on the bottom face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.bottom.other': 'This shape is shared with {count} linked copies on the bottom face. Editing the shape changes them too.',
+  'featureTree.face.linkedOtherFace.around.one': 'This shape is shared with {count} linked copy on another face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.around.other': 'This shape is shared with {count} linked copies on another face. Editing the shape changes them too.',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} linked copy stays on the top face. It keeps sharing this shape, so editing the shape on either face changes both.',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} linked copies stay on the top face. They keep sharing this shape, so editing the shape on either face changes all of them.',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} linked copy stays on the bottom face. It keeps sharing this shape, so editing the shape on either face changes both.',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} linked copies stay on the bottom face. They keep sharing this shape, so editing the shape on either face changes all of them.',
 } as const satisfies Record<string, string>

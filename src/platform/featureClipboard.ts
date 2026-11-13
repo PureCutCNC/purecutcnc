@@ -17,6 +17,9 @@
 import { getProfileBounds } from '../types/project'
 import type { FeatureDefinition, Point, Project } from '../types/project'
 import { buildCopiedFeatures, type ReferencedSketchFeature } from '../store/helpers/copyFeatures'
+import { transformProfile } from '../geometry/profile'
+import { activeFace, aroundSheetAuthoringRefused, crossFaceArtworkMirror, crossFaceArtworkTransform } from '../store/helpers/activeFace'
+import { multiplyMatrix } from '../store/helpers/instanceTransforms'
 import type { ProjectStore } from '../store/types'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../store/helpers/resolveFeatures'
 
@@ -127,7 +130,30 @@ export function buildPlacedClipboardFeatures(
       throw new Error(`Clipboard feature ${feature.id} is missing definition ${feature.definitionId}`)
     }
     return { ...feature, _clonedDefinition: definition }
-  })
+  }).map((feature) => readableOnActiveFace(feature, project))
+}
+
+/**
+ * Text has a reading direction, so a run pasted onto the other face than the
+ * one it was copied from is mirrored once, in place (issue #945): it then
+ * reads correctly there, as a run typed on that face does. A run pasted back
+ * onto its own face, and every other kind of feature, is left as it is — a
+ * shape pasted across is the same shape, seen from behind.
+ */
+function readableOnActiveFace<T extends ReferencedSketchFeature>(feature: T, project: Project): T {
+  if (feature.kind !== 'text' || (feature.authoringFace ?? 'top') === activeFace(project)) return feature
+  const bounds = getProfileBounds(feature.sketch.profile)
+  const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+  const mirror = crossFaceArtworkMirror(project, centre, feature.authoringFace)
+  return {
+    ...feature,
+    transform: multiplyMatrix(crossFaceArtworkTransform(project, centre, feature.authoringFace), feature.transform),
+    sketch: {
+      ...feature.sketch,
+      origin: mirror(feature.sketch.origin),
+      profile: transformProfile(feature.sketch.profile, mirror),
+    },
+  }
 }
 
 export function copySelectedFeatures(store: ProjectStore): FeatureClipboardPayload | null {
@@ -150,14 +176,29 @@ export function pasteClipboardFeatures(
   clipboard: FeatureClipboardPayload,
   placementPoint: Point,
 ): string[] {
+  // Pasting puts the copies on the face the workspace is on (issue #945); the
+  // square blank's Around sheet is round-only (issue #1016 C2-U1), so a paste
+  // there is refused before the history transaction opens. A region or a
+  // construction copy never cuts that sheet, so it is admitted (issue #1112
+  // decision 17).
+  if (clipboard.some((feature) => aroundSheetAuthoringRefused(store.project, activeFace(store.project), feature.operation))) {
+    return []
+  }
   const features = buildPlacedClipboardFeatures(clipboard, store.project, placementPoint)
   if (features.length === 0) {
     return []
   }
 
   store.beginHistoryTransaction()
+  // Pasting puts the copies on the face the workspace is on (issue #945).
+  const authoringFace = activeFace(store.project)
   for (const feature of features) {
-    store.addFeature(feature)
+    const sourceFace = feature.authoringFace ?? 'top'
+    const crossesAround = sourceFace !== authoringFace && (sourceFace === 'around' || authoringFace === 'around')
+    const z = (value: typeof feature.z_top): number => typeof value === 'number' ? value : store.project.dimensions[value]?.value ?? 0
+    const depth = Math.abs(z(feature.z_top) - z(feature.z_bottom))
+    store.addFeature({ ...feature, authoringFace, ...(crossesAround
+      ? { z_top: store.project.stock.thickness, z_bottom: store.project.stock.thickness - depth } : {}) })
   }
   store.selectFeatures(features.map((feature) => feature.id))
   store.commitHistoryTransaction()

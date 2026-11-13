@@ -54,7 +54,7 @@ export function toolpathLevels(
   // Finish operations include waterline and curved CL-surface strategies. They
   // stay disabled even when a particular fixture happens to contain planar
   // segments, because their level semantics are not the 2.5D pass contract.
-  if (operation?.kind === 'surface_clean' || operation?.kind === 'rough_surface' || operation?.kind === 'finish_surface' || operation?.kind === 'finish_surface_cleanup') {
+  if (operation?.kind === 'rotary_rough' || operation?.kind === 'rotary_finish' || operation?.kind === 'surface_clean' || operation?.kind === 'rough_surface' || operation?.kind === 'finish_surface' || operation?.kind === 'finish_surface_cleanup') {
     return []
   }
   const levels: number[] = []

@@ -43,6 +43,9 @@ has no case, so the check does not apply to the other locales.
 | stock | brut | CNC/machining stock |
 | nest / nesting | imbriquer / imbrication | Arranging part copies on the stock (issue #741) |
 | machine | machine | CNC machine |
+| rotary axis | axe rotatif | Round-bar turning (issue #393) |
+| around (face) | autour (face) | The bar's unrolled surface; the segment label is `Autour` (issue #395) |
+| pass (toolpath) | passe | A run of the cutter over the material; the Passes control picks le long or autour de la barre (issue #1045) |
 | pocket | poche | |
 | profile / edge route | contournage | Add `intérieur` / `extérieur` where needed |
 | drill / drilling | foret / perçage | Tool / operation respectively |
@@ -89,6 +92,9 @@ has no case, so the check does not apply to the other locales.
 | stock | 毛坯 | |
 | nest / nesting | 排样 | Arranging part copies on the stock (issue #741) |
 | machine | 机床 | the CNC machine; 机器 only for generic machinery |
+| rotary axis | 旋转轴 | Round-bar turning (issue #393) |
+| around (face) | 环绕面 | The bar's unrolled surface; the segment label is 环绕 (issue #395) |
+| pass (toolpath) | 走刀 | A run of the cutter; the Passes control picks 沿棒料 or 绕棒料 (issue #1045) |
 | profile (operation) | 轮廓 | |
 | pocket (operation) | 挖槽 | |
 | drill (operation) | 钻孔 | |
@@ -145,6 +151,9 @@ second-person regional forms. Use European-CNC vocabulary where it differs
 | stock | material en bruto | |
 | nest / nesting | anidar / anidado | Arranging part copies on the stock (issue #741) |
 | machine | máquina | CNC machine in context |
+| rotary axis | eje rotativo | Round-bar turning (issue #393) |
+| around (face) | alrededor (cara) | The bar's unrolled surface; the segment label is `Alrededor` (issue #395) |
+| pass (toolpath) | pasada | A run of the cutter; the Passes control picks a lo largo or alrededor de la barra (issue #1045) |
 | profile (operation) | perfil | |
 | pocket (operation) | cajera | Common European-CNC term; avoid literal `bolsillo`. |
 | edge route inside / outside | fresado de borde interior / exterior | |
@@ -219,6 +228,9 @@ the requester) settles it; the choice below is the shipped default.
 | stock | Rohteil | the raw blank |
 | nest / nesting | verschachteln / Verschachtelung | Arranging part copies on the stock (issue #741) |
 | machine | Maschine | the CNC machine |
+| rotary axis | Drehachse | Round-bar turning (issue #393) |
+| around (face) | Rundum-Fläche | The bar's unrolled surface; the segment label is `Rundum` (issue #395) |
+| pass (toolpath) | Durchgang | plural Durchgänge; the Passes control picks längs or rund um die Stange (issue #1045) |
 | origin (work zero) | Nullpunkt | Werkstücknullpunkt; machine X0 Y0 |
 | pocket | Tasche | |
 | edge route inside / outside | Kontur innen / Kontur außen | contour routing |

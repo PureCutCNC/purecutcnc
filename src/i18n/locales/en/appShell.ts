@@ -64,6 +64,8 @@ export const appShellEn = {
 
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': 'Stock: {width} × {height} × {thickness} {units}',
+  'appShell.status.stockDimRound': 'Stock: Ø{diameter} × {length} {units}',
+  'appShell.status.stockDimSquare': 'Stock: ▢{side} × {length} {units}',
   'appShell.status.editStockDimensions': 'Edit stock dimensions',
   'appShell.status.changeUnits': 'Change project units from {from} to {to}',
 
@@ -130,16 +132,14 @@ export const appShellEn = {
   'appShell.generation.working': 'Generating ({count})',
   'appShell.generation.paused': 'Generation paused',
   'appShell.generation.failed': 'Generation failed',
+  'appShell.generation.workerFallback': 'Background thread unavailable; using the main thread.',
   'appShell.generation.stop': 'Stop',
   'appShell.generation.stopUnavailable': 'Stop cannot interrupt an operation already running on the main thread.',
   'appShell.generation.resume': 'Resume',
   'appShell.generation.retry': 'Retry',
   'appShell.generation.backend': 'Compute',
   'appShell.generation.menuAria': 'Toolpath generation settings',
-  'appShell.generation.backendInline': 'Main thread',
-  'appShell.generation.backendInlineDetail': 'The window cannot respond while an operation is generating, and stopping has to wait for it to finish.',
-  'appShell.generation.backendWorker': 'Background thread (experimental)',
-  'appShell.generation.backendWorkerDetail': 'Keeps the window responsive while generating, and stopping takes effect immediately.',
+  'appShell.generation.display': 'Display',
   'appShell.status.about': 'About PureCutCNC',
   'appShell.status.shellMode': 'Shell mode (dev only)',
 
@@ -183,4 +183,19 @@ export const appShellEn = {
   'appShell.toolRail.fillet': 'Fillet',
   'appShell.toolRail.trim': 'Trim',
   'appShell.toolRail.extend': 'Extend',
+
+  // ── Workspace face control (issues #945, #1112) ──
+  'appShell.face.label': 'Face',
+  'appShell.face.top': 'Top',
+  'appShell.face.bottom': 'Bottom',
+  'appShell.face.around': 'Around',
+  'appShell.face.switchToTop': 'Work on the top face',
+  'appShell.face.switchToBottom': 'Work on the bottom face',
+  'appShell.face.busy': 'Finish the current edit before switching face',
+  'appShell.face.current': 'Current face: {face}',
+  'appShell.face.flippedShort': 'flipped {axis}',
+  'appShell.face.otherSide': 'Other side',
+  'appShell.face.showOtherSide': 'Show the other side as a ghost',
+  'appShell.face.hideOtherSide': 'Hide the other side',
+  'appShell.face.showOtherSideItem': 'Show other side',
 } as const satisfies Record<string, string>

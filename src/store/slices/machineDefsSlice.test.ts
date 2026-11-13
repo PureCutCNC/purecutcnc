@@ -19,6 +19,7 @@ import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import { bundledMachines, validateCustomMachine } from '../../machine/registry'
 import {
   deleteCustomMachine,
+  getMachineLibrarySnapshot,
   initMachineLibrary,
   resetMachineLibraryForTests,
   saveCustomMachine,
@@ -183,7 +184,13 @@ function resetStore(): void {
 {
   resetStore()
   resetMachineLibraryForTests()
-  initMachineLibrary(null)
+  // Null storage is deliberately not durable (#1119), so a healthy in-memory
+  // store stands in for the browser's localStorage.
+  const stored = new Map<string, string>()
+  initMachineLibrary({
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => { stored.set(key, value) },
+  })
 
   const saved = saveCustomMachine(customMachine('shop-router', 'Shop Router'))
   assert(saved.ok !== undefined, 'the fixture machine saves into the library')
@@ -210,6 +217,22 @@ function resetStore(): void {
   assert(
     getActiveMachineDefinition(useProjectStore.getState().project)?.id === 'shop-router',
     'a project stays exportable after its machine leaves the library',
+  )
+
+  // Saving is where the rescue seam runs. It must not copy the project's
+  // retained machine back into My Machines: that would undo the user's delete
+  // the next time the project is saved (#1119 C2).
+  const savedAfterDelete = JSON.parse(useProjectStore.getState().saveProject()) as {
+    meta: { machineDefinitions: MachineDefinition[], selectedMachineId: string | null }
+  }
+  assert(
+    savedAfterDelete.meta.selectedMachineId === 'shop-router'
+      && savedAfterDelete.meta.machineDefinitions.length === 1,
+    'saving keeps the user-deleted machine selected and embedded in the project',
+  )
+  assert(
+    !getMachineLibrarySnapshot().customMachines.some((definition) => definition.id === 'shop-router'),
+    'saving does not rescue a user-deleted machine back into My Machines',
   )
 
   resetMachineLibraryForTests()

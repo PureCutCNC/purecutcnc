@@ -119,6 +119,7 @@ export function buildToolMesh(info: ToolMeshInfo): THREE.Group {
     }
     case 'drill':
     case 'flat_endmill':
+    case 'plasma':
     default: {
       const cylinderGeom = new THREE.CylinderGeometry(radius, radius, cutLength, 24, 1, false)
       const cylinder = new THREE.Mesh(cylinderGeom, cutterMaterial)

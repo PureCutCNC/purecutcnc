@@ -44,6 +44,7 @@ export const viewportEn = {
   'viewport.sim.modeVisible': 'Visible',
   'viewport.sim.detailLabel': 'Detail',
   'viewport.sim.detailTitle': 'Simulation detail',
+  'viewport.sim.freshStockNote': '{setup} is simulated on fresh stock: material removed by other setups is not shown.',
   'viewport.sim.playTool': 'Play tool',
   'viewport.sim.playToolDisabledMode': 'Switch to selected mode to use tool playback',
   'viewport.sim.playToolDisabledNoOp': 'Select an operation with a valid toolpath to play',

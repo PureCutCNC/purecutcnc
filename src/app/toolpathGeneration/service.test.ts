@@ -31,6 +31,7 @@
 import type { Operation, Project } from '../../types/project'
 import { createToolpathGenerationService, type GenerationContext } from './service'
 import type { GenerationExecutor, ExecutorRequest } from './executor'
+import type { ExecutorKind } from './types'
 import type { GenerationOutcome } from './testSupport'
 import { makeOperation, makeResult, projectWith } from './testSupport'
 
@@ -100,25 +101,31 @@ function createControlledExecutor(epoch: number, hardCancel = true): ControlledE
   }
 }
 
-function harness(initial: Project, hardCancel = true): {
+function harness(initial: Project, hardCancel = true, executorKind: ExecutorKind = 'inline'): {
   service: ReturnType<typeof createToolpathGenerationService>
   executor: () => ControlledExecutor
+  /** The backend each executor was created for, in creation order. */
+  kinds: () => ExecutorKind[]
   context: () => GenerationContext
   setContext: (project: Project, documentKey?: number) => void
 } {
   const executors: ControlledExecutor[] = []
+  const kinds: ExecutorKind[] = []
   let current: GenerationContext = { project: initial, documentKey: 1 }
   const service = createToolpathGenerationService({
     getCurrentContext: () => current,
-    createExecutor: (_kind, epoch) => {
+    executor: executorKind,
+    createExecutor: (kind, epoch) => {
       const made = createControlledExecutor(epoch, hardCancel)
       executors.push(made)
+      kinds.push(kind)
       return made
     },
   })
   return {
     service,
     executor: () => executors[executors.length - 1],
+    kinds: () => kinds,
     context: () => current,
     setContext: (project, documentKey) => {
       current = { project, documentKey: documentKey ?? current.documentKey }
@@ -287,6 +294,34 @@ async function main(): Promise<void> {
     assert(h.service.getSnapshot().executorFailure?.category === 'worker-crash', 'the failure is surfaced')
     assert(h.service.getSnapshot().operations.get('a') === 'failed', 'the operation stays failed')
     assert(h.service.getSnapshot().queuedCount === 0, 'nothing is re-queued automatically')
+  })
+
+  await test('a worker that cannot start falls back to the main thread and re-runs the job', async () => {
+    // Issue #1087: with the worker as the shipped default, a runtime where it
+    // cannot start must still generate. The job is not failed — it moves to a
+    // fresh inline executor with its consumers intact — and the fallback is
+    // reported separately from a failure so the UI can say what happened
+    // without implying the work stopped.
+    const h = harness(base, true, 'worker')
+    const pending = h.service.request(h.context(), 'a', { purpose: 'export' })
+    await flush()
+    h.executor().release({
+      status: 'failed',
+      failure: { category: 'worker-startup', message: 'no worker in this runtime' },
+    })
+    await flush()
+
+    const snapshot = h.service.getSnapshot()
+    assert(snapshot.executorKind === 'inline', 'the session moves to the inline backend')
+    assert(snapshot.executorFailure === null, 'a fallback is not a failure the user must clear')
+    assert(snapshot.executorFallback?.category === 'worker-startup', 'the fallback is visible in the status')
+    assert(h.kinds().join(',') === 'worker,inline', 'a fresh executor is created for the fallback backend')
+    assert(h.executor().inFlight.length === 1, 'the same request is re-queued rather than failed')
+    assert(snapshot.operations.get('a') === 'running', 'the operation is running again, not failed')
+
+    h.executor().release({ status: 'completed', result: makeResult('a', 3), raw: null })
+    assert((await pending).status === 'completed', 'the request completes on the main thread')
+    assert(h.service.peekCurrent(h.context(), 'a') !== null, 'the result is installed')
   })
 
   await test('a computation error is reported without discarding the executor', async () => {

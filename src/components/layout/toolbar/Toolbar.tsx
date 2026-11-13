@@ -62,6 +62,10 @@ export function Toolbar({
           onImport={toolbar.fileCommands.importGeometry.onActivate}
           onExportModel={toolbar.fileCommands.exportModel.onActivate}
           onPrintDesign={toolbar.fileCommands.printDesign.onActivate}
+          exportModelEnabled={toolbar.fileCommands.exportModel.enabled}
+          exportModelLabel={toolbar.fileCommands.exportModel.label}
+          printDesignEnabled={toolbar.fileCommands.printDesign.enabled}
+          printDesignLabel={toolbar.fileCommands.printDesign.label}
           onSave={toolbar.fileCommands.saveProject.onActivate}
           onUndo={toolbar.fileCommands.undo.onActivate}
           onRedo={toolbar.fileCommands.redo.onActivate}
@@ -106,6 +110,7 @@ export function Toolbar({
         />
         <ShapeToolActions
           pendingShapeAction={toolbar.sketchCommands.boolean.join.active ? 'join' : toolbar.sketchCommands.boolean.cut.active ? 'cut' : null}
+          hasCannedSelection={toolbar.sketchCommands.predicates.hasCannedSelectedFeatures}
           onJoin={toolbar.sketchCommands.boolean.join.onActivate}
           onCut={toolbar.sketchCommands.boolean.cut.onActivate}
         />
@@ -113,6 +118,9 @@ export function Toolbar({
           enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
           hasLockedSelection={toolbar.sketchCommands.predicates.hasLockedSelectedFeatures}
           hasClosedSelection={toolbar.sketchCommands.predicates.hasOffsetEligibleSelectedFeatures}
+          hasCannedSelection={toolbar.sketchCommands.predicates.hasCannedSelectedFeatures}
+          hasRotaryCannedSelection={toolbar.sketchCommands.predicates.hasRotaryCannedSelectedFeatures}
+          rotaryCannedShapeLabelKey={toolbar.sketchCommands.predicates.rotaryCannedShapeLabelKey}
           pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
           pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
           pendingOffset={toolbar.sketchCommands.boolean.offset.active}

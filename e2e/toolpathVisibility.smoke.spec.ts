@@ -15,15 +15,90 @@
  */
 
 import { test, expect } from './fixtures'
-import { installSlowCanvasClock, panForGpuSuggestion, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
+import { allowSoftwareToolpathWebgl, reloadWhenIdle } from './helpers'
+import {
+  chooseRenderer, closeRendererMenu, installSlowCanvasClock, openRendererMenu, panForGpuSuggestion, rendererButton,
+  rendererFallbackNotice, rendererGear, rendererMenu, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON,
+} from './toolpathVisibility.helpers'
+import { TOOLPATH_RENDERER_STORAGE_KEY } from '../src/components/canvas/toolpathRendererPreference'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
+import type { Page } from '@playwright/test'
+
+/** GPU preparations, as published by the dev-only stats attribute. */
+async function gpuPreparations(page: Page): Promise<number> {
+  const value = await page.locator('canvas.sketch-toolpath-gpu').getAttribute('data-poc-stats')
+  return value ? (JSON.parse(value) as { preparations: number }).preparations : 0
+}
+
+/**
+ * Wait until preview generation has finished and its result has reached the
+ * renderer.
+ *
+ * The gear's "up to date" comes from the queue, so it is also true in the
+ * moment before the first demand is stated. `prepared` additionally waits for
+ * the GPU to have prepared a toolpath, which only happens once a result has
+ * arrived; the two animation frames then let the scheduled paint run before a
+ * test reads a counter that generation would otherwise change underneath it.
+ */
+async function waitForGenerationSettled(
+  page: Page,
+  ui: typeof import('./selectors'),
+  prepared = false,
+): Promise<void> {
+  if (prepared) await expect.poll(() => gpuPreparations(page), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  await expect(ui.generation.pendingOperationBadges(page)).toHaveCount(0, { timeout: 30_000 })
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
+
+/**
+ * The GPU layer is the shipped default (issue #1087), and this file is the
+ * deliberate Canvas lane: it starts from a stored Canvas choice so the opt-in
+ * toggle, the suggestion, and the Canvas-only instrumentation below keep
+ * testing the fallback rather than accidentally toggling the default off. The
+ * fresh-profile default is covered in its own describe, and the rest of the
+ * suite runs on the default.
+ */
+test.use({ preferences: { [TOOLPATH_RENDERER_STORAGE_KEY]: 'canvas' } })
+
+test.describe('shipped renderer default', () => {
+  test.use({ preferences: {} })
+
+  test('a fresh profile uses the GPU layer and a stored Canvas choice survives', async ({ app }) => {
+    const page = app.page
+    // This test asserts the GPU path itself, so on CI's SwiftShader it asks the
+    // dev-only seam for plain WebGL2 before the app boots (issue #1087).
+    await allowSoftwareToolpathWebgl(page)
+    await page.goto('/')
+    const base = page.locator('canvas.sketch-canvas')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+    expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+
+    // An explicit Canvas choice is a user preference, not an override of the
+    // default, so it is kept as it was — including across a reload.
+    await chooseRenderer(page, 'Canvas')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('canvas')
+    await reloadWhenIdle(page)
+    await seedToolpathVisProject(page)
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
+  })
+})
 
 for (const action of ['enable', 'dismiss'] as const) {
   test.describe(`GPU suggestion ${action}`, () => {
     test.use({ hasTouch: action === 'enable', viewport: { width: 1024, height: 768 } })
     test('offers an explicit choice after slow navigation and remembers it', async ({ app }, testInfo) => {
       const page = app.page
+      await allowSoftwareToolpathWebgl(page)
       await seedToolpathVisProject(page)
       await installSlowCanvasClock(page)
       const snapshot = () => page.evaluate(async () => {
@@ -35,12 +110,13 @@ for (const action of ['enable', 'dismiss'] as const) {
       const before = await snapshot()
       const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
       const panelBox = await panel.boundingBox()
-      const gpu = page.getByRole('button', { name: 'GPU', exact: true })
+      // The suggestion hands focus back to the legend's own toggle: the GPU
+      // switch lives in the generation gear menu now (issue #1102).
+      const legendToggle = panel.locator('.viewport-toolpath-vis__label')
       const base = page.locator('canvas.sketch-canvas')
       const suggestion = page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
       await panForGpuSuggestion(page)
       await expect(suggestion).toBeVisible()
-      await expect(gpu).toHaveAttribute('aria-pressed', 'false')
       await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
       expect(await panel.boundingBox()).toEqual(panelBox)
       expect(await snapshot()).toEqual(before)
@@ -52,10 +128,10 @@ for (const action of ['enable', 'dismiss'] as const) {
       else await suggestion.getByRole('button', { name: 'Not now', exact: true }).click()
       await expect(suggestion).toHaveCount(0)
       await expect(base).toHaveAttribute('data-toolpath-renderer', action === 'enable' ? 'gpu' : 'canvas')
-      await expect(gpu).toBeFocused()
+      await expect(legendToggle).toBeFocused()
       expect(await snapshot()).toEqual(before)
       await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.gpuSuggestionHandled'))).toBe('true')
-      await page.reload()
+      await reloadWhenIdle(page)
       await seedToolpathVisProject(page)
       await installSlowCanvasClock(page)
       await panForGpuSuggestion(page)
@@ -67,6 +143,7 @@ for (const action of ['enable', 'dismiss'] as const) {
 
 test('GPU suggestion resets with new toolpaths and respects manual Canvas selection', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await installSlowCanvasClock(page)
   const suggestion = page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
@@ -76,10 +153,9 @@ test('GPU suggestion resets with new toolpaths and respects manual Canvas select
   await expect(suggestion).toHaveCount(0)
   await panForGpuSuggestion(page)
   await expect(suggestion).toBeVisible()
-  const gpu = page.getByRole('button', { name: 'GPU', exact: true })
-  await gpu.click()
+  await chooseRenderer(page, 'GPU')
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
-  await gpu.click()
+  await chooseRenderer(page, 'Canvas')
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
   await panForGpuSuggestion(page)
   await expect(suggestion).toHaveCount(0)
@@ -87,6 +163,7 @@ test('GPU suggestion resets with new toolpaths and respects manual Canvas select
 
 
 test('GPU renderer coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
   const result = await app.page.evaluate(async () => {
     const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
@@ -177,12 +254,17 @@ test('GPU renderer coverage union, shared styles, transform and retained buffers
 
 test('GPU renderer opts in, retains buffers through navigation and falls back on context loss', async ({ app, ui }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   const base = page.locator('canvas.sketch-canvas')
   const gpu = page.locator('canvas.sketch-toolpath-gpu')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await ui.operations.rowByName(page, 'Route A').click()
+  // Generation now runs in the worker, so its result can land while a test is
+  // reading the GPU counters. Settle first: an extra preparation during the pan
+  // is not a re-preparation of retained buffers, it is the first one.
+  await waitForGenerationSettled(page, ui, true)
   const preparations = () => gpu.getAttribute('data-poc-stats').then(value => JSON.parse(value!).preparations as number)
   const before = await preparations()
   const box = (await base.boundingBox())!
@@ -210,6 +292,55 @@ test('GPU renderer opts in, retains buffers through navigation and falls back on
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
 })
 
+// The review's finding 4 on PR #978 (issue #945): the Top view's GPU
+// foreground stayed on screen over the mirrored Bottom view. Since #947 the
+// GPU renderer draws the Bottom view itself; the Top overlay must still go.
+test('GPU renderer draws a Bottom view and clears its Top overlay', async ({ app, ui }) => {
+  const page = app.page
+  await allowSoftwareToolpathWebgl(page)
+  await page.goto('/?toolpathRenderer=gpu')
+  await seedToolpathVisProject(page)
+  const base = page.locator('canvas.sketch-canvas')
+  const gpu = page.locator('canvas.sketch-toolpath-gpu')
+  // The stand-in overlay is pure magenta; the next frame's own overlay may
+  // paint the foreground, but never with that colour.
+  const magentaPixels = () => page.locator('canvas.sketch-toolpath-foreground').evaluate((canvas) => {
+    const element = canvas as HTMLCanvasElement
+    const { data } = element.getContext('2d')!.getImageData(0, 0, element.width, element.height)
+    let painted = 0
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index] === 255 && data[index + 1] === 0 && data[index + 2] === 255 && data[index + 3] === 255) painted += 1
+    }
+    return painted
+  })
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+
+  // The foreground carries whatever the frame drew above the toolpaths — a
+  // marquee, a snap marker, a preview. Stand in for that with painted pixels,
+  // and turn to Bottom before another Top frame can clear them.
+  //
+  // Open the menu first, then paint and pick the face in one evaluation: a
+  // frame between the paint and the switch could clear the evidence this test
+  // is about, so the two must happen in the same task (issue #1112).
+  await ui.face.current(page).click()
+  await expect(ui.face.item(page, 'Bottom')).toBeVisible()
+  await ui.face.item(page, 'Bottom').evaluate((item) => {
+    const foreground = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-foreground')!
+    const context = foreground.getContext('2d')!
+    context.fillStyle = 'rgb(255, 0, 255)'
+    context.fillRect(0, 0, foreground.width, foreground.height)
+    ;(item as HTMLButtonElement).click()
+  })
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(gpu).toBeVisible()
+  await expect.poll(magentaPixels).toBe(0)
+
+  await ui.face.switchTo(page, 'Top')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(gpu).toBeVisible()
+})
+
 test('GPU renderer initialization failure leaves Canvas toolpaths available', async ({ app, ui }) => {
   const page = app.page
   await page.addInitScript(() => {
@@ -230,12 +361,41 @@ test('GPU renderer initialization failure leaves Canvas toolpaths available', as
 
 
 
-test('renderer preference persists without changing project, history or booklet pixels', async ({ app }) => {
+test('software-only WebGL2 draws toolpaths on Canvas and says why', async ({ app }) => {
   const page = app.page
+  // CI's headless Chromium renders WebGL2 on SwiftShader, where the strict
+  // request is refused. A developer machine has a real GPU, so the premise is
+  // absent there and the test would silently assert the GPU lane instead.
+  const softwareOnly = await page.evaluate(() =>
+    document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true }) === null)
+  test.skip(!softwareOnly, 'hardware WebGL2 is available; the software-only premise cannot be reproduced here')
+
+  // No dev switch: this is the path a user without a GPU actually gets.
+  await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
-  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await expect(selector).toHaveAttribute('aria-pressed', 'false')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
+  // The generation gear says Canvas, with the same notice as a missing WebGL2
+  // (moved from the legend by issue #1102): flagged and named while closed,
+  // spelled out with Retry GPU once opened.
+  await expect(rendererGear(page)).toHaveClass(/cam-generation-gear--flagged/)
+  await expect(rendererGear(page)).toHaveAttribute('aria-label', /GPU unavailable; using Canvas\./)
+  await openRendererMenu(page)
+  await expect(rendererFallbackNotice(page)).toContainText('GPU unavailable; using Canvas.')
+  await expect(rendererFallbackNotice(page).getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
+})
+
+
+test('renderer preference persists without changing project, history or booklet pixels', async ({ app, ui }) => {
+  const page = app.page
+  await allowSoftwareToolpathWebgl(page)
+  await seedToolpathVisProject(page)
+  // Counted later through `generatedResultCount`; let the worker finish so a
+  // late result cannot add a second entry to that set.
+  await waitForGenerationSettled(page, ui)
+  const base = page.locator('canvas.sketch-canvas')
+  expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('canvas')
   const snapshot = () => page.evaluate(async () => {
     const storeUrl = '/src/store/projectStore.ts'
     const snapshotUrl = '/src/components/canvas/operationSnapshot.ts'
@@ -268,13 +428,15 @@ test('renderer preference persists without changing project, history or booklet 
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   expect(await snapshot()).toEqual(before)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+  await openRendererMenu(page)
   for (let i = 0; i < 3; i++) {
-    await selector.click()
+    await rendererButton(page, 'Canvas').click()
     await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
-    await selector.click()
+    await rendererButton(page, 'GPU').click()
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
     await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
   }
+  await closeRendererMenu(page)
   expect(await snapshot()).toEqual(before)
   expect(await page.evaluate(() => (window as unknown as { generatedResultCount: () => number }).generatedResultCount())).toBe(1)
   await page.evaluate(() => {
@@ -287,18 +449,22 @@ test('renderer preference persists without changing project, history or booklet 
   expect(await snapshot()).toEqual(before)
   await page.evaluate(() => (window as unknown as { restoreBookletGpu: () => void }).restoreBookletGpu())
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
-  await page.reload()
+  await reloadWhenIdle(page)
   await seedToolpathVisProject(page)
-  await expect(selector).toHaveAttribute('aria-pressed', 'true')
+  await openRendererMenu(page)
+  await expect(rendererButton(page, 'GPU')).toHaveAttribute('aria-pressed', 'true')
+  await closeRendererMenu(page)
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await page.getByRole('tab', { name: '3D view', exact: true }).click()
-  await expect(selector).toBeHidden()
   await page.getByRole('tab', { name: 'Sketch', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
 })
 
 test('GPU startup failure has a persistent preference, visible fallback and working retry', async ({ app }) => {
   const page = app.page
+  // The retry must be able to succeed after the simulated failure, which needs
+  // the dev-only plain request on CI's SwiftShader (issue #1087).
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(() => {
     const original = HTMLCanvasElement.prototype.getContext
@@ -310,37 +476,39 @@ test('GPU startup failure has a persistent preference, visible fallback and work
     })
     Object.assign(window, { allowGpu: () => { HTMLCanvasElement.prototype.getContext = original } })
   })
-  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await selector.click()
+  await openRendererMenu(page)
+  await rendererButton(page, 'GPU').click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
-  await expect(page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })).toBeVisible()
-  await expect(selector).toHaveAttribute('aria-pressed', 'true')
+  await expect(rendererFallbackNotice(page)).toContainText('GPU unavailable; using Canvas.')
+  await expect(rendererButton(page, 'GPU')).toHaveAttribute('aria-pressed', 'true')
+  await expect(rendererGear(page)).toHaveClass(/cam-generation-gear--flagged/)
   expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
   await page.evaluate(() => (window as unknown as { allowGpu: () => void }).allowGpu())
-  await page.getByRole('button', { name: 'Retry GPU', exact: true }).click()
+  await rendererFallbackNotice(page).getByRole('button', { name: 'Retry GPU', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.getByText('GPU unavailable; using Canvas.')).toHaveCount(0)
+  await expect(rendererGear(page)).not.toHaveClass(/cam-generation-gear--flagged/)
 })
 
 test('switching away cancels a pending lazy GPU load', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   let release: () => void = () => {}
   const pending = new Promise<void>(resolve => { release = resolve })
   await page.route('**/gpuToolpathRenderer.ts', async route => { await pending; await route.continue() })
-  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const request = page.waitForRequest('**/gpuToolpathRenderer.ts')
-  await selector.click()
+  await openRendererMenu(page)
+  await rendererButton(page, 'GPU').click()
   await request
-  await expect(selector).toHaveAttribute('aria-busy', 'true')
-  await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(1)
-  await selector.click()
+  await expect(rendererMenu(page).getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(1)
+  await rendererButton(page, 'Canvas').click()
   release()
   await page.unrouteAll({ behavior: 'wait' })
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
   await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
-  await selector.click()
+  await rendererButton(page, 'GPU').click()
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
 })
@@ -348,31 +516,37 @@ test('switching away cancels a pending lazy GPU load', async ({ app }) => {
 for (const hasTouch of [false, true]) {
   test.describe(`GPU loading layout (${hasTouch ? 'tablet' : 'desktop'})`, () => {
     test.use({ hasTouch, viewport: { width: 1024, height: 768 } })
-    test('pending startup keeps the panel and toggle positions stable', async ({ app }, testInfo) => {
+    test('pending startup keeps the legend and its toggle positions stable', async ({ app }, testInfo) => {
       const page = app.page
+      await allowSoftwareToolpathWebgl(page)
       await seedToolpathVisProject(page)
       let release: () => void = () => {}
       const pending = new Promise<void>(resolve => { release = resolve })
       await page.route('**/gpuToolpathRenderer.ts', async route => { await pending; await route.continue() })
-      const gpu = page.getByRole('button', { name: 'GPU', exact: true })
       const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
       const layout = () => panel.evaluate(element => [element, ...element.querySelectorAll('button')].map(node => {
         const { x, y, width, height } = node.getBoundingClientRect()
         return { x, y, width, height }
       }))
+      // The GPU switch lives in the gear menu (issue #1102): starting the GPU
+      // says so there and must not move anything in the legend. Measured with
+      // the menu closed both times; on a narrow shell opening the operations
+      // drawer can itself collapse the side panel, which is not what this pins.
       try {
-        if (hasTouch) await gpu.tap()
-        else await gpu.click()
-        await expect(gpu).toHaveAttribute('aria-busy', 'true')
-        await expect(gpu).toHaveAttribute('title', /Starting GPU/)
+        await openRendererMenu(page)
+        if (hasTouch) await rendererButton(page, 'GPU').tap()
+        else await rendererButton(page, 'GPU').click()
+        await expect(rendererMenu(page).getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(1)
+        await testInfo.attach('gpu-loading', { body: await page.screenshot(), contentType: 'image/png' })
+        await closeRendererMenu(page)
         const loadingLayout = await layout()
-        await testInfo.attach('gpu-loading', { body: await panel.screenshot(), contentType: 'image/png' })
         release()
         await page.unrouteAll({ behavior: 'wait' })
         await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
-        await expect(gpu).toHaveAttribute('aria-busy', 'false')
-        await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(0)
         expect(await layout()).toEqual(loadingLayout)
+        await openRendererMenu(page)
+        await expect(rendererMenu(page).getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(0)
+        await closeRendererMenu(page)
       } finally {
         release()
         await page.unrouteAll({ behavior: 'wait' })
@@ -383,6 +557,7 @@ for (const hasTouch of [false, true]) {
 
 
 test('GPU annotation painter order matches Canvas across selection, resize and navigation', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
   const results = await app.page.evaluate(async () => {
     const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const previewUrl = '/src/components/canvas/previewPrimitives.ts'
@@ -465,6 +640,7 @@ test('GPU annotation painter order matches Canvas across selection, resize and n
 
 
 test('production renderer suggestion works through normal project Open and persists', async ({ page }, testInfo) => {
+  await allowSoftwareToolpathWebgl(page)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -481,15 +657,13 @@ test('production renderer suggestion works through normal project Open and persi
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('button', { name: 'Open project', exact: true }).click()
   await (await chooser).setFiles({ name: 'renderer.camj', mimeType: 'application/json', buffer: Buffer.from(TOOLPATH_VIS_FIXTURE_JSON) })
-  const selector = page.getByRole('button', { name: 'GPU', exact: true })
-  await expect(selector).toHaveAttribute('aria-pressed', 'false')
   await installSlowCanvasClock(page)
   await panForGpuSuggestion(page)
   await page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
     .getByRole('button', { name: 'Enable GPU', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   if (production) await expect(page.locator('canvas.sketch-toolpath-gpu')).not.toHaveAttribute('data-poc-stats')
-  await page.reload()
+  await reloadWhenIdle(page)
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
   expect(errors).toEqual([])
@@ -498,6 +672,7 @@ test('production renderer suggestion works through normal project Open and persi
 
 test('render failure falls back until explicit retry, without leaving stale overlays', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(async () => {
     const url = '/src/components/canvas/gpuToolpathRenderer.ts'
@@ -506,15 +681,17 @@ test('render failure falls back until explicit retry, without leaving stale over
     GpuToolpathRenderer.prototype.render = () => { throw new Error('injected render failure') }
     Object.assign(window, { repairGpu: () => { GpuToolpathRenderer.prototype.render = render } })
   })
-  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await selector.click()
+  await openRendererMenu(page)
+  await rendererButton(page, 'GPU').click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
   await expect(base).toHaveAttribute('data-toolpath-renderer-error', /injected render failure/)
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeHidden()
-  await expect(page.getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
+  const retry = rendererFallbackNotice(page).getByRole('button', { name: 'Retry GPU', exact: true })
+  await expect(retry).toBeVisible()
   await page.evaluate(() => (window as unknown as { repairGpu: () => void }).repairGpu())
-  await page.getByRole('button', { name: 'Retry GPU', exact: true }).click()
+  await retry.click()
+  await closeRendererMenu(page)
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
   await expect(page.locator('canvas.sketch-toolpath-foreground')).toHaveCount(1)
@@ -523,6 +700,7 @@ test('render failure falls back until explicit retry, without leaving stale over
 
 test('hidden sketch submits no GPU work and releases hidden/replaced results', async ({ app }) => {
   const page = app.page
+  await allowSoftwareToolpathWebgl(page)
   await seedToolpathVisProject(page)
   await page.evaluate(async () => {
     const url = '/src/components/canvas/gpuToolpathRenderer.ts'
@@ -534,7 +712,7 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
     GpuToolpathRenderer.prototype.retain = function (toolpaths) { observation.retained = toolpaths.length; return retain.call(this, toolpaths) }
     Object.assign(window, { gpuObservation: observation })
   })
-  await page.getByRole('button', { name: 'GPU', exact: true }).click()
+  await chooseRenderer(page, 'GPU')
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await page.getByRole('tab', { name: '3D view', exact: true }).click()
   await expect(page.locator('canvas.sketch-canvas')).toBeHidden()
@@ -554,22 +732,29 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
 
 test.describe('GPU tablet emulation', () => {
   test.use({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } })
-  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
+  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app, ui }, testInfo) => {
     const page = app.page
+    await allowSoftwareToolpathWebgl(page)
     await seedToolpathVisProject(page)
-    const selector = page.getByRole('button', { name: 'GPU', exact: true })
-    await expect(selector).toBeVisible()
+    // The GPU switch is in the generation gear menu (issue #1102), reached
+    // through the operations drawer on a tablet; its buttons stay touch-sized.
+    await openRendererMenu(page)
+    const selector = rendererButton(page, 'GPU')
     expect((await selector.boundingBox())!.height).toBeGreaterThanOrEqual(44)
     await selector.tap()
+    await closeRendererMenu(page)
     const base = page.locator('canvas.sketch-canvas')
     const gpu = page.locator('canvas.sketch-toolpath-gpu')
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
     const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
-    const toggleBox = (await selector.boundingBox())!
+    const toggleBox = (await panel.locator('.viewport-toolpath-vis__label').boundingBox())!
     expect((await panel.boundingBox())!.height).toBeLessThanOrEqual(toggleBox.height + 16)
     const box = (await base.boundingBox())!
     const x = box.x + box.width / 2, y = box.y + box.height / 2
     const stats = async () => JSON.parse((await gpu.getAttribute('data-poc-stats'))!) as { submissions: number; preparations: number }
+    // A worker result landing during the pinch would be prepared then, after
+    // `before` was read, and look like the pinch re-prepared retained buffers.
+    await waitForGenerationSettled(page, ui, true)
     const before = await stats()
     const touch = await page.context().newCDPSession(page)
     try {
@@ -593,28 +778,33 @@ test.describe('GPU tablet emulation', () => {
 })
 
 test.describe('Toolpath visibility panel smoke', () => {
-  test('GPU is the first inline toggle and supports keyboard switching', async ({ app, ui }, testInfo) => {
+  test('the legend starts at Cuts and the gear menu switches renderer from the keyboard', async ({ app, ui }, testInfo) => {
     const page = app.page
+    await allowSoftwareToolpathWebgl(page)
     await seedToolpathVisProject(page)
     const panel = ui.toolpathVis.sketchPanel(page)
     const items = ui.toolpathVis.sketchItems(page)
-    await expect(items).toHaveText(['GPU', 'Cuts', 'Lead-ins', 'Rapids', 'Plunges', 'Retractions', 'Directions', 'Feed colours'])
+    await expect(items).toHaveText(['Cuts', 'Lead-ins', 'Rapids', 'Plunges', 'Retractions', 'Directions', 'Feed colours'])
     await expect(panel.getByRole('combobox')).toHaveCount(0)
     const centers = await items.evaluateAll(buttons => buttons.map(button => {
       const box = button.getBoundingClientRect()
       return box.y + box.height / 2
     }))
     expect(new Set(centers).size).toBe(1)
-    const gpu = items.first()
+    await testInfo.attach('legend', { body: await panel.screenshot(), contentType: 'image/png' })
+    await openRendererMenu(page)
+    const gpu = rendererButton(page, 'GPU')
+    const canvas = rendererButton(page, 'Canvas')
     await expect(gpu).toHaveAttribute('aria-pressed', 'false')
     await gpu.focus()
     await page.keyboard.press('Enter')
     await expect(gpu).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await canvas.focus()
     await page.keyboard.press('Space')
-    await expect(gpu).toHaveAttribute('aria-pressed', 'false')
+    await expect(canvas).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
-    await testInfo.attach('inline-gpu-toggle', { body: await panel.screenshot(), contentType: 'image/png' })
+    await testInfo.attach('gear-renderer-switch', { body: await page.screenshot(), contentType: 'image/png' })
   })
 
   test('solid rapid styling renders in Canvas and booklet snapshots', async ({ app, ui }, testInfo) => {
@@ -812,6 +1002,9 @@ test.describe('Toolpath visibility panel smoke', () => {
     await seedToolpathVisProject(page)
     await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible({ timeout: 15000 })
     await page.getByText('Route A', { exact: true }).click()
+    // This test counts canvas draws; a worker result arriving mid-gesture would
+    // add one of its own. Settle before installing the counters.
+    await waitForGenerationSettled(page, ui)
     // Observe actual Canvas arrow fills, not a test-only production flag.
     await page.evaluate(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')

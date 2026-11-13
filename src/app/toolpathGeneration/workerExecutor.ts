@@ -28,6 +28,14 @@
  * thread is what makes Stop real. The cost is that the next request pays for a
  * fresh worker and a fresh snapshot, which is why the service creates one
  * lazily rather than eagerly after a stop.
+ *
+ * **This thread owns the angle workers** (#1115 slice p-d3). Rotary generation
+ * runs on a pool of module workers that the coordinator asks for by sending one
+ * end of a `MessageChannel`; this executor creates the `Worker` around that port
+ * and transfers it in. Nothing about a mesh, an angle or a height map ever
+ * reaches this thread — only the port. Because the workers live here, they are
+ * also terminated here: `terminate()` and `dispose()` stop them with the
+ * generation worker, so a Stop cannot leave a pool sampling a dead request.
  */
 
 import {
@@ -37,8 +45,12 @@ import {
   completedMatchesTraceMode,
   type LoadSnapshotMessage,
   type GenerateMessage,
+  type RotaryWorkerFailedMessage,
 } from './protocol'
 import { unpackResult } from './moveTransport'
+import { createRotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
+import type { RotaryAnglePoolHost } from './rotaryAngleBrowserTransport'
+import { recordRotaryCancelled, recordRotaryPoolReport } from './rotaryPoolTelemetry'
 import type { ExecutorRequest, GenerationExecutor } from './executor'
 import type { GenerationFailure, GenerationOutcome, GenerationStage } from './types'
 
@@ -78,6 +90,12 @@ interface PendingRequest {
   onStage?: (stage: GenerationStage) => void
 }
 
+/** The machine's answer for the angle pool, when this runtime has one. */
+function availableParallelism(): number | undefined {
+  const value = typeof navigator === 'undefined' ? undefined : navigator.hardwareConcurrency
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : undefined
+}
+
 export function createWorkerExecutor(epoch: number, factory: WorkerFactory = createDefaultWorker): GenerationExecutor {
   let worker: WorkerLike | null = null
   let disposed = false
@@ -85,6 +103,22 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
   let installedSnapshotId: number | null = null
   let installedDocumentKey: number | null = null
   let handshake: Promise<GenerationFailure | null> | null = null
+
+  /**
+   * The angle workers this executor created (#1115 p-d3). They talk to the
+   * generation worker directly; this side only creates, relays the port into
+   * them, and stops them.
+   */
+  const angleWorkers: RotaryAnglePoolHost = createRotaryAnglePoolHost({
+    onFailure: (slot, message) => {
+      const failed: RotaryWorkerFailedMessage = { kind: 'rotaryWorkerFailed', slot, message }
+      try {
+        worker?.postMessage(failed)
+      } catch {
+        // The generation worker is gone; its request is gone with it.
+      }
+    },
+  })
 
   /** Settle whatever is in flight and forget it. Called exactly once per request. */
   function settlePending(outcome: GenerationOutcome): void {
@@ -94,6 +128,10 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
   }
 
   function destroyWorker(): void {
+    // The angle workers exist only for the generation worker's requests, so
+    // they go with it. A pool left alive here would sample a request nobody is
+    // waiting for, and keep its geometry for the life of the page.
+    angleWorkers.terminate()
     worker?.terminate()
     worker = null
     handshake = null
@@ -117,6 +155,27 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
 
     if (message.kind === 'ready' || message.kind === 'snapshotReady') return
 
+    // The angle-worker handshake is not tied to a request identity: it happens
+    // while the generation is in flight, before any result exists.
+    if (message.kind === 'rotaryWorker') {
+      angleWorkers.attach(message.slot, message.port)
+      return
+    }
+    if (message.kind === 'rotaryRelease') {
+      angleWorkers.release(message.slot)
+      return
+    }
+    // A superseded rotary generation reporting that it finished stopping (#1115
+    // p-d3 fix 2). It names the request that was cancelled, not the one now in
+    // flight, and it settles neither: the cancelled request was answered as
+    // cancelled when its successor was sent. Recorded so the app — and the
+    // suites that drive a real worker — can tell a settled cancellation from a
+    // batch left pending with the previous operation's data.
+    if (message.kind === 'rotaryCancelled') {
+      recordRotaryCancelled()
+      return
+    }
+
     // Late messages from a worker that has since been replaced carry a stale
     // epoch. Matching on request id alone would accept them, because ids
     // restart with each executor.
@@ -131,6 +190,7 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
       return
     }
     if (message.kind === 'completed') {
+      if (message.rotary) recordRotaryPoolReport(message.rotary)
       if (!completedMatchesTraceMode(message)) {
         settlePending({
           status: 'failed',
@@ -264,7 +324,12 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
             installedSnapshotId = request.identity.snapshotId
             installedDocumentKey = request.identity.documentKey
           }
-          const generate: GenerateMessage = { kind: 'generate', identity: request.identity }
+          const parallelism = availableParallelism()
+          const generate: GenerateMessage = {
+            kind: 'generate',
+            identity: request.identity,
+            ...(parallelism !== undefined ? { rotary: { availableParallelism: parallelism } } : {}),
+          }
           active.postMessage(generate)
         } catch (error: unknown) {
           // The project could not be structured-cloned. That is a hard failure,

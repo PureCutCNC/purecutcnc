@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
+import { usePlasmaStartPointPick } from '../cam/plasmaStartPointPick'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, isRoundStock, roundStockDiameter, roundStockLength } from '../../types/project'
+import { barLength, isSquareStock } from '../../types/barStock'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { platform } from '../../platform'
@@ -26,7 +28,10 @@ import { loadVersion } from '../../utils/version'
 import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
 import { Icon } from '../Icon'
+import { ChangeFaceDialog } from '../feature-tree/ChangeFaceDialog'
+import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
+import { CommandNoticeToast } from './CommandNoticeToast'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import '../../styles/layout.css'
@@ -121,6 +126,9 @@ export function AppShell({
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
+  useEffect(() => usePlasmaStartPointPick.subscribe(({ request }) => {
+    if (request) { setRightDrawerOpen(false); setLeftDrawerOpen(false) }
+  }), [])
   const expandedPanelContextValue = useMemo(
     () => ({ closeExpandedPanel: () => setExpandedPanel(null) }),
     [],
@@ -372,12 +380,24 @@ export function AppShell({
     from: currentUnitLabel,
     to: nextUnitLabel,
   })
-  const stockDimensionsLabel = t('appShell.status.stockDim', {
-    width: formatLength(stockWidth, project.meta.units),
-    height: formatLength(stockHeight, project.meta.units),
-    thickness: formatLength(project.stock.thickness, project.meta.units),
-    units: project.meta.units,
-  })
+  const stockDimensionsLabel = isRoundStock(project.stock)
+    ? t('appShell.status.stockDimRound', {
+        diameter: formatLength(roundStockDiameter(project.stock), project.meta.units),
+        length: formatLength(roundStockLength(project.stock), project.meta.units),
+        units: project.meta.units,
+      })
+    : isSquareStock(project.stock)
+      ? t('appShell.status.stockDimSquare', {
+          side: formatLength(project.stock.thickness, project.meta.units),
+          length: formatLength(barLength(project.stock), project.meta.units),
+          units: project.meta.units,
+        })
+      : t('appShell.status.stockDim', {
+          width: formatLength(stockWidth, project.meta.units),
+          height: formatLength(stockHeight, project.meta.units),
+          thickness: formatLength(project.stock.thickness, project.meta.units),
+          units: project.meta.units,
+        })
 
   return (
     <UnitConversionContext.Provider value={requestUnitConversion}>
@@ -491,8 +511,15 @@ export function AppShell({
 
         <main className="panel-centre" ref={centrePanelRef}>
           <div className="panel centre-workspace">
-            <div className="panel-tabs-header">
-              {!tabletShell && (
+            {/* The desktop shell's tab strip: the project and CAM pull-out
+                handles, the workspace tabs, and the workspace's one face
+                control at the right end of the row (issue #1112 F3, R2 item
+                11). A tablet shell draws no row of its own — its view tabs
+                and the face control both live in the top command bar
+                (issue #1112 rt5-a, item 37), so nothing is left behind here.
+                */}
+            {!tabletShell && (
+              <div className="panel-tabs-header">
                 <button
                   id="panel-handle-left"
                   className={`panel-handle panel-handle--left${showLeft ? '' : ' panel-handle--collapsed'}`}
@@ -505,92 +532,101 @@ export function AppShell({
                 >
                   <Icon id={showLeft ? 'chevrons-left' : 'chevrons-right'} size={18} />
                 </button>
-              )}
-              <div className="panel-tablist" role="tablist" aria-label={t('appShell.workspace.tabList')}>
-                <button
-                  id="workspace-tab-sketch"
-                  className={`panel-tab ${centerTab === 'sketch' ? 'panel-tab--active' : ''}`}
-                  onClick={() => onCenterTabChange('sketch')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowRight') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, 1))
-                    } else if (event.key === 'ArrowLeft') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, -1))
-                    } else if (event.key === 'Home') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[0])
-                    } else if (event.key === 'End') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[centerTabs.length - 1])
-                    }
-                  }}
-                  type="button"
-                  role="tab"
-                  aria-selected={centerTab === 'sketch'}
-                  aria-controls="workspace-panel-sketch"
-                  tabIndex={centerTab === 'sketch' ? 0 : -1}
-                >
-                  {t('appShell.workspace.sketch')}
-                </button>
-                <button
-                  id="workspace-tab-preview3d"
-                  className={`panel-tab ${centerTab === 'preview3d' ? 'panel-tab--active' : ''}`}
-                  onClick={() => onCenterTabChange('preview3d')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowRight') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, 1))
-                    } else if (event.key === 'ArrowLeft') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, -1))
-                    } else if (event.key === 'Home') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[0])
-                    } else if (event.key === 'End') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[centerTabs.length - 1])
-                    }
-                  }}
-                  type="button"
-                  role="tab"
-                  aria-selected={centerTab === 'preview3d'}
-                  aria-controls="workspace-panel-preview3d"
-                  tabIndex={centerTab === 'preview3d' ? 0 : -1}
-                >
-                  {t('appShell.workspace.3d')}
-                </button>
-                <button
-                  id="workspace-tab-simulation"
-                  className={`panel-tab ${centerTab === 'simulation' ? 'panel-tab--active' : ''}`}
-                  onClick={() => onCenterTabChange('simulation')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowRight') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, 1))
-                    } else if (event.key === 'ArrowLeft') {
-                      event.preventDefault()
-                      onCenterTabChange(nextTab(centerTabs, centerTab, -1))
-                    } else if (event.key === 'Home') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[0])
-                    } else if (event.key === 'End') {
-                      event.preventDefault()
-                      onCenterTabChange(centerTabs[centerTabs.length - 1])
-                    }
-                  }}
-                  type="button"
-                  role="tab"
-                  aria-selected={centerTab === 'simulation'}
-                  aria-controls="workspace-panel-simulation"
-                  tabIndex={centerTab === 'simulation' ? 0 : -1}
-                >
-                  {t('appShell.workspace.simulation')}
-                </button>
-              </div>
-              <div className="panel-tabs-spacer" />
-              {!tabletShell && (
+                <div className="panel-tablist" role="tablist" aria-label={t('appShell.workspace.tabList')}>
+                  <button
+                    id="workspace-tab-sketch"
+                    className={`panel-tab ${centerTab === 'sketch' ? 'panel-tab--active' : ''}`}
+                    onClick={() => onCenterTabChange('sketch')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowRight') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, 1))
+                      } else if (event.key === 'ArrowLeft') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, -1))
+                      } else if (event.key === 'Home') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[0])
+                      } else if (event.key === 'End') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[centerTabs.length - 1])
+                      }
+                    }}
+                    type="button"
+                    role="tab"
+                    aria-selected={centerTab === 'sketch'}
+                    aria-controls="workspace-panel-sketch"
+                    tabIndex={centerTab === 'sketch' ? 0 : -1}
+                  >
+                    {t('appShell.workspace.sketch')}
+                  </button>
+                  <button
+                    id="workspace-tab-preview3d"
+                    className={`panel-tab ${centerTab === 'preview3d' ? 'panel-tab--active' : ''}`}
+                    onClick={() => onCenterTabChange('preview3d')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowRight') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, 1))
+                      } else if (event.key === 'ArrowLeft') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, -1))
+                      } else if (event.key === 'Home') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[0])
+                      } else if (event.key === 'End') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[centerTabs.length - 1])
+                      }
+                    }}
+                    type="button"
+                    role="tab"
+                    aria-selected={centerTab === 'preview3d'}
+                    aria-controls="workspace-panel-preview3d"
+                    tabIndex={centerTab === 'preview3d' ? 0 : -1}
+                  >
+                    {t('appShell.workspace.3d')}
+                  </button>
+                  <button
+                    id="workspace-tab-simulation"
+                    className={`panel-tab ${centerTab === 'simulation' ? 'panel-tab--active' : ''}`}
+                    onClick={() => onCenterTabChange('simulation')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowRight') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, 1))
+                      } else if (event.key === 'ArrowLeft') {
+                        event.preventDefault()
+                        onCenterTabChange(nextTab(centerTabs, centerTab, -1))
+                      } else if (event.key === 'Home') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[0])
+                      } else if (event.key === 'End') {
+                        event.preventDefault()
+                        onCenterTabChange(centerTabs[centerTabs.length - 1])
+                      }
+                    }}
+                    type="button"
+                    role="tab"
+                    aria-selected={centerTab === 'simulation'}
+                    aria-controls="workspace-panel-simulation"
+                    tabIndex={centerTab === 'simulation' ? 0 : -1}
+                  >
+                    {t('appShell.workspace.simulation')}
+                  </button>
+                </div>
+                <div className="panel-tabs-spacer" />
+                {/* The desktop shell's face control sits at the right end of the
+                    tab row, just left of the CAM pull-out handle (issue #1112 F3,
+                    R2 item 11): it reads as the face everything in the panel below
+                    belongs to, and the pull-out handle keeps the far edge so the
+                    row still ends where the panel edge is. The row's keyboard order
+                    is the order it is drawn in — tabs, face control, handle. A
+                    tablet shell has no row here: the same control rides in the top
+                    command bar beside the view switch (issue #1112 rt5-a), and the
+                    switch itself decides whether either home shows it
+                    (`showsFaceSwitch`). */}
+                <FaceSwitch />
                 <button
                   id="panel-handle-right"
                   className={`panel-handle panel-handle--right${showRight ? '' : ' panel-handle--collapsed'}`}
@@ -603,8 +639,8 @@ export function AppShell({
                 >
                   <Icon id={showRight ? 'chevrons-right' : 'chevrons-left'} size={18} />
                 </button>
-              )}
-            </div>
+              </div>
+            )}
             <div className="centre-stage">
               <div
                 id="workspace-panel-sketch"
@@ -614,6 +650,7 @@ export function AppShell({
                 aria-hidden={centerTab !== 'sketch'}
               >
                 {sketchCanvas}
+                <ChangeFaceDialog />
               </div>
               <div
                 id="workspace-panel-preview3d"
@@ -877,6 +914,8 @@ export function AppShell({
           <span className="statusbar-shell-mode" title={t('appShell.status.shellMode')}>{shellMode}</span>
         )}
       </footer>
+
+      <CommandNoticeToast />
 
       {/* ── Expanded panel modal ── */}
       {expandedPanel && (

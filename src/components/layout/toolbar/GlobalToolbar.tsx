@@ -59,6 +59,10 @@ export function GlobalToolbar({
           onImport={toolbar.fileCommands.importGeometry.onActivate}
           onExportModel={toolbar.fileCommands.exportModel.onActivate}
           onPrintDesign={toolbar.fileCommands.printDesign.onActivate}
+          exportModelEnabled={toolbar.fileCommands.exportModel.enabled}
+          exportModelLabel={toolbar.fileCommands.exportModel.label}
+          printDesignEnabled={toolbar.fileCommands.printDesign.enabled}
+          printDesignLabel={toolbar.fileCommands.printDesign.label}
           onSave={toolbar.fileCommands.saveProject.onActivate}
           onUndo={toolbar.fileCommands.undo.onActivate}
           onRedo={toolbar.fileCommands.redo.onActivate}

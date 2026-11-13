@@ -1,0 +1,859 @@
+{
+  "version": "3.3",
+  "meta": {
+    "name": "round-stock-top-bottom",
+    "created": "2026-10-21T13:23:16.168Z",
+    "modified": "2026-10-21T13:46:09.700Z",
+    "units": "inch",
+    "projectType": "rotary",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 2,
+    "operationClearanceZ": 0.2,
+    "clampClearanceXY": 0.08,
+    "clampClearanceZ": 0.2,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 8,
+    "majorSpacing": 1,
+    "minorSpacing": 0.25,
+    "snapEnabled": true,
+    "snapIncrement": 0.125,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 8,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 8,
+            "y": 2
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 2
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 2,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    },
+    "shape": "round",
+    "axis": "x"
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 1,
+    "z": 2,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "f-0003": {
+      "id": "f-0003",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 2,
+          "y": 0.375
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3,
+              "y": 0.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3,
+              "y": 1
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2,
+              "y": 1
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2,
+              "y": 0.375
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0005": {
+      "id": "f-0005",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 4,
+          "y": 1
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 5,
+              "y": 1
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 5,
+              "y": 1.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 4,
+              "y": 1.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 4,
+              "y": 1
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0007": {
+      "id": "f-0007",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 5.5,
+          "y": -0.625
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 6.375,
+              "y": -0.625
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 6.375,
+              "y": 0.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 5.5,
+              "y": 0.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 5.5,
+              "y": -0.625
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0011": {
+      "id": "f-0011",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 2.875,
+          "y": 1.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 2.5,
+              "y": 1.5
+            },
+            "to": {
+              "x": 2.875,
+              "y": 1.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0014": {
+      "id": "f-0014",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 5,
+          "y": 1.375
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 4.5,
+              "y": 1.375
+            },
+            "to": {
+              "x": 5,
+              "y": 1.375
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0016": {
+      "id": "f-0016",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 7.75,
+          "y": 0.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 7.375,
+              "y": 0.5
+            },
+            "to": {
+              "x": 7.75,
+              "y": 0.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0018": {
+      "id": "f-0018",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 6.515388203202208,
+          "y": 1.125
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 6,
+              "y": 1.125
+            },
+            "to": {
+              "x": 6.515388203202208,
+              "y": 1.125
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0021": {
+      "id": "f-0021",
+      "kind": "text",
+      "profile": {
+        "start": {
+          "x": 0.75,
+          "y": 1.375
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2.566,
+              "y": 1.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.566,
+              "y": 1.775
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.75,
+              "y": 1.775
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.75,
+              "y": 1.375
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": {
+        "text": "TEXT",
+        "style": "skeleton",
+        "fontId": "simple_stroke",
+        "size": 0.4
+      },
+      "stl": null,
+      "operation": "subtract"
+    }
+  },
+  "features": [
+    {
+      "id": "f0002",
+      "name": "Rect 1",
+      "definitionId": "f-0003",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 2,
+      "z_bottom": 1.5,
+      "authoringFace": "top",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0004",
+      "name": "Rect 2",
+      "definitionId": "f-0005",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 2,
+      "z_bottom": 1.5,
+      "authoringFace": "top",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0006",
+      "name": "Rect 3",
+      "definitionId": "f-0007",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 2,
+      "z_bottom": 1.5,
+      "authoringFace": "top",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0010",
+      "name": "Circle 4",
+      "definitionId": "f-0011",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.2,
+      "z_bottom": 0,
+      "authoringFace": "bottom",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0013",
+      "name": "Circle 5",
+      "definitionId": "f-0014",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.2,
+      "z_bottom": 0,
+      "authoringFace": "bottom",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0015",
+      "name": "Circle 6",
+      "definitionId": "f-0016",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.2,
+      "z_bottom": 0,
+      "authoringFace": "bottom",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0017",
+      "name": "Circle 7",
+      "definitionId": "f-0018",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.36,
+      "z_bottom": 0,
+      "authoringFace": "bottom",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0020",
+      "name": "TEXT",
+      "definitionId": "f-0021",
+      "transform": {
+        "a": 6.123233995736766e-17,
+        "b": -1,
+        "c": 1,
+        "d": 6.123233995736766e-17,
+        "e": -0.625,
+        "f": 2.625
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 2,
+      "z_bottom": 0,
+      "authoringFace": "top",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0104",
+      "name": "TEXT Copy",
+      "definitionId": "f-0021",
+      "transform": {
+        "a": 6.123233995736766e-17,
+        "b": -1,
+        "c": 1,
+        "d": 6.123233995736766e-17,
+        "e": 0,
+        "f": 2.658
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 2,
+      "z_bottom": 1.99,
+      "authoringFace": "around",
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "f0002"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0004"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0006"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0010"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0013"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0015"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0017"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0020"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0104"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t0009",
+      "name": "1/8\" Endmill",
+      "units": "inch",
+      "type": "flat_endmill",
+      "diameter": 0.125,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 18,
+      "defaultPlungeFeed": 8,
+      "defaultStepdown": 0.05,
+      "defaultStepover": 0.32,
+      "maxCutDepth": 0.75
+    },
+    {
+      "id": "t0107",
+      "name": "60° V-Bit",
+      "units": "inch",
+      "type": "v_bit",
+      "diameter": 0.5,
+      "vBitAngle": 60,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 16000,
+      "defaultFeed": 20,
+      "defaultPlungeFeed": 6,
+      "defaultStepdown": 0.03,
+      "defaultStepover": 0.01,
+      "maxCutDepth": 0.5,
+      "alreadyImported": false
+    }
+  ],
+  "operations": [
+    {
+      "id": "op0008",
+      "name": "Pocket Rough",
+      "description": "",
+      "kind": "pocket",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f0002",
+          "f0004",
+          "f0006"
+        ]
+      },
+      "toolRef": "t0009",
+      "stepdown": 0.05,
+      "stepover": 0.32,
+      "feed": 18,
+      "plungeFeed": 8,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.04,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
+      "setupId": "setup-top"
+    },
+    {
+      "id": "op0019",
+      "name": "Pocket Rough 2",
+      "description": "",
+      "kind": "pocket",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f0017",
+          "f0010",
+          "f0015"
+        ]
+      },
+      "toolRef": "t0009",
+      "stepdown": 0.05,
+      "stepover": 0.32,
+      "feed": 18,
+      "plungeFeed": 8,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.04,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
+      "setupId": "su0012"
+    },
+    {
+      "id": "op0106",
+      "name": "Engrave",
+      "description": "",
+      "kind": "follow_line",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f0104"
+        ]
+      },
+      "toolRef": "t0107",
+      "stepdown": 0.03,
+      "stepover": 0.01,
+      "feed": 20,
+      "plungeFeed": 6,
+      "rpm": 16000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "carveStrategy": "direct",
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.04,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
+      "setupId": "su0105"
+    }
+  ],
+  "setups": [
+    {
+      "id": "setup-top",
+      "name": "Top",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op0008"
+      ]
+    },
+    {
+      "id": "su0012",
+      "name": "Bottom",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 180
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op0019"
+      ]
+    },
+    {
+      "kind": "around",
+      "id": "su0105",
+      "name": "Around",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op0106"
+      ]
+    }
+  ],
+  "activeSetupId": "su0012",
+  "tabs": [],
+  "clamps": [
+    {
+      "id": "cl0001",
+      "name": "Chuck",
+      "type": "chuck",
+      "x": -1.5748031496062993,
+      "y": -1,
+      "w": 2.1653543307086616,
+      "h": 4,
+      "height": 3,
+      "visible": true
+    }
+  ],
+  "ai_history": []
+}

@@ -156,9 +156,9 @@ heartbeat_seconds="${CLAUDE_HEARTBEAT_SECONDS:-15}"
 task="$(cat)"
 [[ -n "${task//[[:space:]]/}" ]] || fail 'the piped prompt is empty'
 
-prompt_file="$(mktemp -t run-claude-agent-prompt)"
-json_file="$(mktemp -t run-claude-agent-json)"
-status_file="$(mktemp -t run-claude-agent-status)"
+prompt_file="$(mktemp "${TMPDIR:-/tmp}/run-claude-agent-prompt.XXXXXX")"
+json_file="$(mktemp "${TMPDIR:-/tmp}/run-claude-agent-json.XXXXXX")"
+status_file="$(mktemp "${TMPDIR:-/tmp}/run-claude-agent-status.XXXXXX")"
 worker_pid=""
 cleanup() {
   if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
@@ -183,7 +183,7 @@ trap 'exit 143' TERM
   fi
 } > "$prompt_file"
 
-[[ -n "$progress_log" ]] || progress_log="$(mktemp -t run-claude-agent-progress)"
+[[ -n "$progress_log" ]] || progress_log="$(mktemp "${TMPDIR:-/tmp}/run-claude-agent-progress.XXXXXX")"
 mkdir -p "$(dirname "$progress_log")" || fail "cannot create progress log directory: $progress_log"
 # Resolve before changing cwd, including caller-supplied relative log paths.
 progress_log="$(cd "$(dirname "$progress_log")" && pwd -P)/$(basename "$progress_log")"

@@ -29,6 +29,16 @@ fn set_update_channel(channel: String, items: tauri::State<ChannelMenuItems>) {
   items.apply(&channel);
 }
 
+/// The File > Export menu item. Its label names what the project's machine
+/// exports (G-code, or a ShopBot part file), which only the frontend knows.
+struct ExportMenuItem(tauri::menu::MenuItem<tauri::Wry>);
+
+/// Relabel the export menu item for the machine the open project uses.
+#[tauri::command]
+fn set_export_menu_label(label: String, item: tauri::State<ExportMenuItem>) {
+  let _ = item.0.set_text(label);
+}
+
 #[tauri::command]
 fn request_app_exit(app: tauri::AppHandle, exit_coordinator: tauri::State<ExitCoordinator>) {
   exit_coordinator.exit_request_pending.store(false, Ordering::SeqCst);
@@ -96,6 +106,7 @@ pub fn run() {
         stable: channel_stable_i.clone(),
         snapshot: channel_snapshot_i.clone(),
       });
+      app.manage(ExportMenuItem(export_i.clone()));
 
       // macOS app menu — must be the FIRST submenu; macOS replaces its label
       // with the running app name automatically.
@@ -157,7 +168,7 @@ pub fn run() {
         let _ = window.emit("menu", id.to_string());
       }
     })
-    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request, set_update_channel])
+    .invoke_handler(tauri::generate_handler![request_app_exit, cancel_app_exit_request, set_update_channel, set_export_menu_label])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())

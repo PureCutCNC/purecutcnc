@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useProjectStore } from '../../store/projectStore'
+import { activeSetup } from '../../store/helpers/activeFace'
 import type { CamPlanOperationDraft, CamPlanTool } from '../../engine/operations/camPlan'
 import { offeredPocketPatterns } from '../../engine/toolpaths/pocketPatterns'
 import type { DrillType, EntryStrategy, Operation, OperationKind, PocketPattern, Tool } from '../../types/project'
@@ -26,12 +28,15 @@ import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 
 function operationLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile': return camT('cam.plasma.title')
     case 'pocket': return camT('cam.opLabel.pocket')
     case 'v_carve': return camT('cam.opLabel.vCarve')
     case 'v_carve_medial': return camT('cam.opLabel.vCarveMedial')
     case 'edge_route_inside': return camT('cam.opLabel.edgeRouteInside')
     case 'edge_route_outside': return camT('cam.opLabel.edgeRouteOutside')
     case 'surface_clean': return camT('cam.opLabel.surfaceClean')
+    case 'rotary_rough': return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface': return camT('cam.opLabel.roughSurface')
     case 'finish_surface': return camT('cam.opLabel.finishSurface')
     case 'finish_surface_cleanup': return camT('cam.opLabel.finishSurfaceCleanup')
@@ -115,7 +120,7 @@ function supportsPlanTool(operation: Operation, candidate: CamPlanTool): boolean
   if (operation.kind === 'rough_surface' || operation.kind === 'finish_surface') {
     return candidate.tool.type === 'flat_endmill' || candidate.tool.type === 'ball_endmill'
   }
-  return true
+  return candidate.tool.type !== 'plasma'
 }
 
 function surfaceToolConstraintReason(draft: CamPlanOperationDraft, candidate: CamPlanTool, units: Tool['units']): string | null {
@@ -139,6 +144,7 @@ function surfaceToolConstraintReason(draft: CamPlanOperationDraft, candidate: Ca
 }
 
 export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseRecommendedRestTool }: CAMPlanOperationEditorProps) {
+  const setup = activeSetup(useProjectStore((state) => state.project))
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
   const ballRadius = selectedTool?.type === 'ball_endmill' ? selectedTool.diameter / 2 : null
@@ -163,6 +169,7 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
         <div>
           <span className="cam-plan-eyebrow">{operationLabel(operation.kind)} · {camT(`cam.pass.${operation.pass}`)}</span>
           <h3>{operation.name}</h3>
+      <p>{camT('cam.setup.setup')}: {setup?.name}</p>
         </div>
         <span className="cam-plan-status-chip">{draft.targetLabel}</span>
       </div>
@@ -199,6 +206,12 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
 
       <section className="cam-plan-editor__section">
         <h4>{camT('cam.plan.mainParameters')}</h4>
+        {fieldApplies('carveDepth', operation, selectedTool) ? (
+          <label className="cam-plan-field">
+            <span>{camT('cam.operation.carveDepth')}</span>
+            <PlanLengthInput value={operation.carveDepth} units={units} onCommit={(value) => onPatch({ carveDepth: value })} />
+          </label>
+        ) : null}
         {fieldApplies('stockToLeaveRadial', operation, selectedTool) ? (
           <label className="cam-plan-field">
             <span>{camT('cam.operation.stockToLeaveRadial')}</span>

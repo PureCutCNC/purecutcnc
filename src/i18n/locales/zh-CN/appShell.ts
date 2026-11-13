@@ -65,6 +65,8 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
 
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': '毛坯：{width} × {height} × {thickness} {units}',
+  'appShell.status.stockDimRound': '毛坯：Ø{diameter} × {length} {units}',
+  'appShell.status.stockDimSquare': '毛坯：▢{side} × {length} {units}',
   'appShell.status.editStockDimensions': '编辑毛坯尺寸',
   'appShell.status.changeUnits': '将项目单位从 {from} 更改为 {to}',
 
@@ -131,16 +133,14 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': '正在生成（{count}）',
   'appShell.generation.paused': '生成已暂停',
   'appShell.generation.failed': '生成失败',
+  'appShell.generation.workerFallback': '后台线程不可用，改用主线程。',
   'appShell.generation.stop': '停止',
   'appShell.generation.stopUnavailable': '“停止”无法中断已在主线程上运行的操作。',
   'appShell.generation.resume': '继续',
   'appShell.generation.retry': '重试',
   'appShell.generation.backend': '计算',
   'appShell.generation.menuAria': '刀具路径生成设置',
-  'appShell.generation.backendInline': '主线程',
-  'appShell.generation.backendInlineDetail': '生成期间窗口无法响应，“停止”必须等待该操作结束。',
-  'appShell.generation.backendWorker': '后台线程（实验性）',
-  'appShell.generation.backendWorkerDetail': '生成期间保持窗口可操作，并使“停止”立即生效。',
+  'appShell.generation.display': '显示',
   'appShell.status.about': '关于 PureCutCNC',
   'appShell.status.shellMode': 'Shell 模式（仅开发环境）',
 
@@ -184,4 +184,19 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.fillet': '圆角',
   'appShell.toolRail.trim': '修剪',
   'appShell.toolRail.extend': '延伸',
+
+  // ── Workspace face control (issues #945, #1112) ──
+  'appShell.face.label': '加工面',
+  'appShell.face.top': '顶面',
+  'appShell.face.bottom': '底面',
+  'appShell.face.around': '环绕',
+  'appShell.face.switchToTop': '在顶面上工作',
+  'appShell.face.switchToBottom': '在底面上工作',
+  'appShell.face.busy': '请先完成当前编辑，再切换加工面',
+  'appShell.face.current': '当前加工面：{face}',
+  'appShell.face.flippedShort': '绕 {axis} 翻转',
+  'appShell.face.otherSide': '另一面',
+  'appShell.face.showOtherSide': '以虚影显示另一面',
+  'appShell.face.hideOtherSide': '隐藏另一面',
+  'appShell.face.showOtherSideItem': '显示另一面',
 }

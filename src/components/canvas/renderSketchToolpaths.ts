@@ -18,9 +18,17 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { Project } from '../../types/project'
 import { pocketSlotFeedPercent } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
+import { toolpathForActiveFace } from './aroundToolpaths'
+import { foldToolpathForDisplay } from './aroundDisplayWrap'
+import { aroundFrame } from '../../engine/aroundFrame'
+import { activeFace } from '../../store/helpers/activeFace'
+import { isBarStock } from '../../types/barStock'
 import { canvasColors } from './canvasPalette'
+import { drawPlasmaKerfBands, drawPlasmaPierceMarkers } from './plasmaKerfBand'
 import { drawToolpath } from './previewPrimitives'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
+import { reflectContextForView } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasDrawSample } from './toolpathGpuSuggestion'
 
@@ -31,13 +39,46 @@ export function renderSketchToolpaths(
   observeCanvasDraw?: (sample: CanvasDrawSample) => void,
 ): CanvasRenderingContext2D {
   const visible = visibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
-  const entries = toolpaths.filter(tp => tp.moves.length > 0).map(toolpath => {
+  // Every setup's passes are drawn, in stock space as generated; another
+  // setup's are muted and painted first, so the active setup's read on top
+  // (issue #947). A setup on another face is not drawn at all — the flat faces
+  // and the unrolled sheet share no plane — and an Around operation's wrapped
+  // path comes back on the sheet (issue #395).
+  const muted = mutedToolpathOperationIds(project)
+  // A toolpath is generated continuous and stored wrapped around the bar. On
+  // Around the unwrapped path can still run past the sheet (a multi-turn
+  // thread), so it is folded into the sheet for drawing only (issue #1112 L).
+  // The frame alone is enough here; building the full sheet would resolve every
+  // model band on every frame.
+  const sheet = activeFace(project) === 'around' && isBarStock(project.stock)
+    ? aroundFrame(project.stock)
+    : null
+  const entries = toolpaths
+    .map((toolpath) => toolpathForActiveFace(project, toolpath))
+    .filter((toolpath): toolpath is ToolpathResult => toolpath !== null && toolpath.moves.length > 0)
+    .map(toolpath => {
+    const display = sheet ? foldToolpathForDisplay(toolpath, sheet) : toolpath
     const percent = pocketSlotFeedPercent(project.operations.find(op => op.id === toolpath.operationId))
     const emphasized = toolpath.operationId === selectedId
-    return { toolpath, emphasized, selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100 }
-  })
+    return {
+      toolpath: display, emphasized, muted: muted.has(toolpath.operationId),
+      selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100,
+    }
+  }).sort((a, b) => Number(b.muted) - Number(a.muted))
+  // The plasma kerf band goes on the base canvas, beneath every line renderer:
+  // the GPU canvas and the foreground canvas both sit above it, and the Canvas
+  // path draws its lines here afterwards, so the centre line reads on top
+  // (issue #961). Nothing is drawn for a project with no plasma operation.
+  drawPlasmaKerfBands(ctx, project, entries, vt, visible)
+  // A Bottom view shows the stock turned over (issue #945). Both backends
+  // draw it from the same stock-space caches: the GPU through a mirrored view
+  // map, Canvas through a mirrored context.
+  const mirrored = vt.mirrorX !== undefined || vt.mirrorY !== undefined
   let gpuActive = false
   if (surface) {
+    // The foreground overlay holds what the last GPU frame drew above the
+    // toolpaths. It is cleared every frame, GPU or not: left alone, the Top
+    // view's overlay stays on screen over the Bottom view.
     const foreground = surface.foreground
     if (foreground.canvas.width !== ctx.canvas.width) foreground.canvas.width = ctx.canvas.width
     if (foreground.canvas.height !== ctx.canvas.height) foreground.canvas.height = ctx.canvas.height
@@ -50,17 +91,28 @@ export function renderSketchToolpaths(
     }
     surface.gpu.canvas.hidden = !gpuActive
     if (!surface.failed) surface.report(gpuActive)
-    if (gpuActive) ctx = foreground
+    if (gpuActive) ctx = surface.foreground
   }
   if (!gpuActive) {
     const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
-    for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
-      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
+    if (mirrored) {
+      ctx.save()
+      reflectContextForView(ctx, vt)
     }
+    // `drawToolpath` places geometry by scale and offset alone — the context
+    // carries the mirror — and reads the view's mirror only to cull, so the
+    // mirrored view is what it must be given.
+    for (const { toolpath, emphasized, muted: entryMuted, selectedLevel: entryLevel, slotScale } of entries) {
+      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel, muted: entryMuted })
+    }
+    if (mirrored) ctx.restore()
     if (start !== null) {
       const now = performance.now()
       observeCanvasDraw?.({ durationMs: now - start, now, navigating: deferArrows })
     }
   }
+  // The markers mark places, so they are not part of the band's underlay: they
+  // land on the context the caller keeps drawing on, above every line.
+  drawPlasmaPierceMarkers(ctx, project, entries, vt, visible)
   return ctx
 }

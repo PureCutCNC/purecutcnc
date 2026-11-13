@@ -75,6 +75,17 @@ type FieldClass = 'compare' | 'ignore'
 
 const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   // display / lifecycle only — never read by a resolver
+  rotaryChuckSupport: 'compare',
+  rotaryTailSupport: 'compare',
+  rotaryPassDirection: 'compare',
+  plasmaSide: 'compare',
+  plasmaReverseDirection: 'compare',
+  plasmaLeadIn: 'compare',
+  plasmaLeadInLength: 'compare',
+  plasmaLeadOut: 'compare',
+  plasmaLeadOutLength: 'compare',
+  plasmaStartPoint: 'compare',
+  plasmaStartPoints: 'compare',
   id: 'ignore',
   name: 'ignore',
   description: 'ignore',
@@ -122,6 +133,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   dwellTime: 'compare',
   countersinkDiameter: 'compare',
   retractHeight: 'compare',
+  setupId: 'compare', // the setup decides the frame the operation is cut in (#944)
   debugToolpath: 'compare',
   debugShowRejectedCorners: 'compare',
   finishSlopeMin: 'compare',
@@ -146,6 +158,7 @@ const FEATURE_FIELD_CLASSIFICATION: Record<keyof FeatureInstance, FieldClass> = 
   constraints: 'compare',
   z_top: 'compare',
   z_bottom: 'compare',
+  authoringFace: 'compare', // decides which setups may target the feature (#944)
 }
 
 /** A copy of `base` with exactly one field changed to a different value.

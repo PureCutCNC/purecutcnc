@@ -16,7 +16,7 @@
 
 import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
-import { getProject, seedProject } from './helpers'
+import { getProject, seedProject, reloadWhenIdle } from './helpers'
 
 
 test('surface slope filter edits, validates, switches pattern and survives save/reload', async ({ app, ui }) => {
@@ -44,7 +44,7 @@ test('surface slope filter edits, validates, switches pattern and survives save/
   await expect(toggle).toBeChecked()
   await expect(minimum).toHaveValue('5')
   const saved = await getProject(app.page)
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await seedProject(app.page, JSON.stringify(saved))
   await ui.operations.rowByName(app.page, 'Slope finish').click()
   if (!(await toggle.isVisible())) await ui.cam.operationGroup(app.page, 'Strategy').click()
@@ -120,7 +120,7 @@ test('ball-endmill finish uses scallop height with collapsed spacing overrides',
   expect(stored[0].finishScallopHeight).toBe(0.001)
 
   const saved = await getProject(app.page)
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await seedProject(app.page, JSON.stringify(saved))
   await ui.operations.rowByName(app.page, 'Scallop finish').click()
   if (!(await pattern.isVisible())) await ui.cam.operationGroup(app.page, 'Strategy').click()
@@ -133,7 +133,7 @@ test('parallel scallop height shows the stored value and a click-through keeps i
   // used to show 0.0002 and write that back on blur, a 28 % taller cusp. An
   // older project can hold an unrounded default, which must survive too.
   for (const [index, [height, shown]] of ([[0.00016, '0.00016'], [0.0006265703616725044, '0.00062657036']] as const).entries()) {
-    if (index > 0) await app.page.reload()
+    if (index > 0) await reloadWhenIdle(app.page)
     const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
     project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
     project.operations[0].name = 'Scallop finish'
@@ -280,7 +280,7 @@ test.describe('Constant scallop single quality control on tablet', () => {
         expect(operation.finishScallopHeight).toBe(0.00001234)
         expect(operation.stepover).toBe(0.1)
         await expect(input).toHaveValue('0.00001234')
-        await app.page.reload()
+        await reloadWhenIdle(app.page)
         await seedProject(app.page, JSON.stringify(edited))
         await app.page.getByRole('button', { name: 'Open operations panel' }).click()
         await ui.operations.rowByName(app.page, 'Legacy scallop').click()

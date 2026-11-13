@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
+import { activeFace, activeSetup } from './activeFace'
 import type { CamPlanDraft, CamPlanOperationDraft } from '../../engine/operations/camPlan/types'
 import { camPlanProjectFingerprint } from '../../engine/operations/camPlan/createCamPlan'
 import { uniqueName } from '../../import'
-import { inferFeatureKind, type FeatureFolder, type Operation, type OperationTarget, type Project, type SketchFeature, type Tab, type Tool } from '../../types/project'
+import { inferFeatureKind, type FeatureFolder, type Operation, type OperationTarget, type Project, type SketchFeature, type Tab } from '../../types/project'
 import { createDefinitionForFeature, createFeatureInstance } from './featureDefinitions'
 import { nextUniqueGeneratedId } from './ids'
 import { normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
 import { uniqueFolderName } from './naming'
 import { isOperationTargetValid, toolMatchesTemplate } from './operationDefaults'
+import { setupGenerationBlock, targetAllowedInSetup } from '../../engine/setupTargets'
 
 export type CamPlanMaterializationResult =
   | { ok: true; project: Project; operationIds: string[] }
@@ -37,21 +39,11 @@ function importReferencedTools(project: Project, plan: CamPlanDraft, enabled: Ca
   const referenced = new Set(enabled.map((draft) => draft.operation.toolRef).filter((id): id is string => id !== null))
   for (const candidate of plan.tools) {
     if (!referenced.has(candidate.id) || candidate.source === 'existing') continue
-    const template: Omit<Tool, 'id'> = {
-      name: candidate.tool.name,
-      units: candidate.tool.units,
-      type: candidate.tool.type,
-      diameter: candidate.tool.diameter,
-      vBitAngle: candidate.tool.vBitAngle,
-      flutes: candidate.tool.flutes,
-      material: candidate.tool.material,
-      defaultRpm: candidate.tool.defaultRpm,
-      defaultFeed: candidate.tool.defaultFeed,
-      defaultPlungeFeed: candidate.tool.defaultPlungeFeed,
-      defaultStepdown: candidate.tool.defaultStepdown,
-      defaultStepover: candidate.tool.defaultStepover,
-      maxCutDepth: candidate.tool.maxCutDepth,
-    }
+    // The planned id comes off, nothing else does. A field-by-field copy here
+    // silently drops whatever the list does not name — the plasma consumables
+    // (pierce height, cut height, dwell, material number) were dropped exactly
+    // that way in the same shape as the Add operation import (#983).
+    const { id: _plannedToolId, ...template } = candidate.tool
     const existing = next.tools.find((tool) => toolMatchesTemplate(tool, template))
     if (existing) {
       toolIds.set(candidate.id, existing.id)
@@ -123,7 +115,7 @@ function appendRestRegions(
       locked: false,
     } satisfies SketchFeature)
     const created = createDefinitionForFeature(next, feature)
-    const instance = createFeatureInstance(feature, created.definitionId)
+    const instance = { ...createFeatureInstance(feature, created.definitionId), authoringFace: activeFace(next) }
     next = {
       ...next,
       features: [...next.features, instance],
@@ -167,8 +159,26 @@ export function materializeCamPlan(project: Project, plan: CamPlanDraft): CamPla
       toolRef,
       showToolpath: true,
     }
-    if (!toolRef || !isOperationTargetValid(next, operation.kind, operation.target)) {
+    // The operation joins the active setup, so its targets are judged from
+    // that setup's face (issue #946).
+    if (
+      !toolRef
+      || !isOperationTargetValid(next, operation.kind, operation.target)
+      || !targetAllowedInSetup(next, operation.target, next.activeSetupId, operation.kind)
+    ) {
       return { ok: false, reason: 'invalid', message: `${draft.operation.name} no longer has a valid target or tool.` }
+    }
+    // The same generation gate the plan itself applies (issue #1112 J2): an
+    // Around cut that reaches the bar's centreline must never be created, even
+    // if a plan draft somehow lost its blocking reason on the way here. A
+    // provisional setup is synthesized by the active-setup read, exactly as
+    // the plan's own gate does.
+    const setupId = operation.setupId
+    const gateProject = !setupId || next.setups.some((entry) => entry.id === setupId)
+      ? next
+      : { ...next, setups: [...next.setups, activeSetup(next)] }
+    if (setupGenerationBlock(gateProject, operation)?.reason === 'aroundCentreline') {
+      return { ok: false, reason: 'invalid', message: `${draft.operation.name} reaches the bar's centreline and cannot be created on the Around face.` }
     }
     next = { ...next, operations: [...next.operations, operation] }
     operationIds.push(operation.id)

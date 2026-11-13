@@ -1,0 +1,280 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Setup-aware preview and per-setup simulation (issue #947).
+ *
+ * Every setup's toolpaths stay in canonical stock space and draw together,
+ * the active setup's at full strength and the other's muted; simulation runs
+ * one setup at a time in its own frame, on fresh stock, and says so.
+ */
+
+import type { Page } from '@playwright/test'
+import { test, expect } from './fixtures'
+import { seedGcodeExportProject } from './gcodeExport.helpers'
+import { getProject, seedProject, allowSoftwareToolpathWebgl } from './helpers'
+import { rectProfile, type Project } from '../src/types/project'
+import type { ToolpathResult } from '../src/engine/toolpaths/types'
+
+const THICKNESS = 2
+const BOTTOM_DEPTH = 0.5
+const TOP_FLOOR = 1
+
+/** Top pocket and Bottom pocket on a 6 × 4 × 2 in block, one operation each. */
+async function seedTwoSetups(page: Page, withBottom = true): Promise<Project> {
+  await seedGcodeExportProject(page)
+  const project = await getProject(page) as unknown as Project
+  project.meta.name = 'Two sides'
+  project.stock.profile = rectProfile(0, 0, 6, 4)
+  project.stock.thickness = THICKNESS
+  project.origin = { ...project.origin, x: 0, y: 4, z: THICKNESS }
+  const template = project.features[0]
+  const definition = project.featureDefinitions[template.definitionId]
+  project.featureDefinitions = {
+    body: { ...definition, id: 'body', operation: 'add', profile: rectProfile(0, 0, 6, 4) },
+    blind: { ...definition, id: 'blind', operation: 'subtract', profile: rectProfile(0, 0, 1, 1) },
+    bottom: { ...definition, id: 'bottom', operation: 'subtract', profile: rectProfile(0, 0, 1, 1) },
+  }
+  project.features = [
+    { ...template, id: 'body', name: 'Stock body', definitionId: 'body', authoringFace: 'top', z_top: THICKNESS, z_bottom: 0, transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } },
+    { ...template, id: 'blind', name: 'Top blind', definitionId: 'blind', authoringFace: 'top', z_top: THICKNESS, z_bottom: TOP_FLOOR, transform: { a: 1, b: 0, c: 0, d: 1, e: 0.5, f: 0.5 } },
+    ...(withBottom ? [{ ...template, id: 'bottom', name: 'Bottom pocket', definitionId: 'bottom', authoringFace: 'bottom' as const, z_top: BOTTOM_DEPTH, z_bottom: 0, transform: { a: 1, b: 0, c: 0, d: 1, e: 4, f: 1 } }] : []),
+  ]
+  project.featureTree = []
+  const top = { ...project.setups[0], operationIds: ['op-top'] }
+  const base = { ...project.operations[0], kind: 'pocket' as const, stepdown: 0.5 }
+  project.operations = [
+    { ...base, id: 'op-top', name: 'Top pass', target: { source: 'features', featureIds: ['blind'] }, setupId: top.id },
+    ...(withBottom ? [{ ...base, id: 'op-bottom', name: 'Bottom pass', target: { source: 'features' as const, featureIds: ['bottom'] }, setupId: 'setup-bottom' }] : []),
+  ]
+  project.setups = withBottom
+    ? [top, { ...top, id: 'setup-bottom', name: 'Bottom', orientation: { axis: 'x', angleDeg: 180 }, operationIds: ['op-bottom'] }]
+    : [top]
+  project.activeSetupId = top.id
+  await seedProject(page, JSON.stringify(project))
+  return await getProject(page) as unknown as Project
+}
+
+async function simStats(page: Page) {
+  const viewport = page.locator('#workspace-panel-simulation .simulation-viewport')
+  return {
+    setup: await viewport.getAttribute('data-simulation-setup'),
+    removed: Number(await viewport.getAttribute('data-simulation-removed-cells')),
+    minZ: Number(await viewport.getAttribute('data-simulation-min-z')),
+  }
+}
+
+/**
+ * Open a setup card so its rows are in the DOM: only the active setup's card
+ * starts open (issue #1102). Selecting a row of the other face is a supported
+ * route — that click is what switches the face — so the test opens the card the
+ * way a user does, without switching the face first.
+ */
+async function openSetupCard(page: Page, face: 'top' | 'bottom'): Promise<void> {
+  const toggle = page.locator(`.cam-setup-group[data-setup-face="${face}"] .cam-setup-group__toggle`)
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+}
+
+/**
+ * Select a named operation from whichever face the workspace is on. On the
+ * other face its row is a ghost — dimmed, still a button — and clicking it
+ * turns the workspace over to its face (issue #1112 F3).
+ */
+async function selectOperation(page: Page, name: string, face: 'top' | 'bottom'): Promise<void> {
+  await openSetupCard(page, face)
+  await page.locator('.cam-operation-tree .tree-row--feature').filter({ hasText: name }).click()
+}
+
+test('simulation follows the face in view, cuts Bottom from the top of the flipped stock and explains its fresh stock', async ({ app, ui }, testInfo) => {
+  const { page } = app
+  const project = await seedTwoSetups(page)
+  const topId = project.setups[0].id
+  const viewport = ui.simSetup.viewport(page)
+  const bottomNote = 'Bottom is simulated on fresh stock: material removed by other setups is not shown.'
+
+  // The Bottom operation is selected from Top, without switching faces first:
+  // its row is a clickable ghost row, and that click is what turns the
+  // workspace over to Bottom (issue #1112 F3, review of PR #1126). Selecting
+  // after switching would hide that route behind the face control.
+  await selectOperation(page, 'Bottom pass', 'bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await ui.viewMenu.tabSimulation(page).click()
+  // The workspace face is the simulation's setup (issue #1112 F3): there is no
+  // picker to disagree with it, and the fresh-stock sentence lives behind the
+  // info button at the end of the toolbar — its tooltip and accessible name.
+  await expect(viewport).toHaveAttribute('data-simulation-setup', 'setup-bottom')
+  await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', bottomNote)
+  await expect(ui.simSetup.info(page)).toHaveAttribute('title', bottomNote)
+  // A tap opens it, which is all the touch shell has (there is no hover).
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveText(bottomNote)
+  await ui.simSetup.info(page).click()
+  await expect(ui.simSetup.note(page)).toHaveCount(0)
+
+  // Bottom: the pocket is cut down from the top of the turned stock — in the
+  // canonical frame the cutter would come from under it and remove nothing.
+  await expect.poll(async () => (await simStats(page)).removed).toBeGreaterThan(0)
+  const bottom = await simStats(page)
+  expect(bottom.setup).toBe('setup-bottom')
+  expect(Math.abs(bottom.minZ - (THICKNESS - BOTTOM_DEPTH))).toBeLessThan(0.05)
+  await expect(ui.simSetup.playTool(page)).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('bottom-simulation.png') })
+
+  // Switching the header face to Top keeps the Bottom operation off Top's
+  // stock in selected mode: the selection does not follow the stock over…
+  await ui.face.switchTo(page, 'Top')
+  await expect(viewport).toHaveAttribute('data-simulation-setup', topId)
+  await expect(ui.simSetup.info(page)).toHaveAttribute('aria-label', 'Top is simulated on fresh stock: material removed by other setups is not shown.')
+  await expect.poll(async () => (await simStats(page)).removed).toBe(0)
+  await expect(ui.simSetup.playTool(page)).toBeDisabled()
+
+  // …and the visible set is Top's alone, on fresh stock: its floor, no Bottom cut.
+  await ui.simSetup.modeVisible(page).click()
+  await expect.poll(async () => (await simStats(page)).removed).toBeGreaterThan(0)
+  const top = await simStats(page)
+  expect(top.setup).toBe(topId)
+  expect(Math.abs(top.minZ - TOP_FLOOR)).toBeLessThan(0.05)
+  await page.screenshot({ path: testInfo.outputPath('top-simulation.png') })
+
+  // Selecting an operation of another face switches the header face, and the
+  // simulation follows it: there is no setup choice of its own to hand back.
+  // From Top, the Bottom row alone moves the workspace — no face switch first.
+  await ui.face.switchTo(page, 'Top')
+  await selectOperation(page, 'Top pass', 'top')
+  await selectOperation(page, 'Bottom pass', 'bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(viewport).toHaveAttribute('data-simulation-setup', 'setup-bottom')
+})
+
+// Review of PR #992: a face switch changes what must be acquired without
+// changing the document, so a set acquired for the other setup must not count
+// as ready. Here Bottom's earlier operation is still being produced when the
+// workspace returns to Bottom: playback must wait for it, not start on fresh
+// stock without that operation's cut.
+test('switching the workspace face waits for the new setup\'s acquisition before offering playback', async ({ app }) => {
+  const { page } = app
+  const project = await seedTwoSetups(page)
+  const bottom = project.operations.find((operation) => operation.id === 'op-bottom')!
+  project.operations.push({ ...bottom, id: 'op-bottom-2', name: 'Bottom pass 2' })
+  const steps = await page.evaluate(async ({ project, topId }) => {
+    const probeUrl = '/e2e/setupSimulationProbe.ts'
+    const { runFaceTransitionProbe } = await import(probeUrl) as typeof import('./setupSimulationProbe')
+    return runFaceTransitionProbe(project, 'op-bottom-2', topId)
+  }, { project, topId: project.setups[0].id })
+
+  expect(steps.initial).toMatchObject({ setup: 'setup-bottom', pending: true, playback: false })
+  expect(steps.acquired).toMatchObject({ setup: 'setup-bottom', pending: false, playback: true })
+  expect(steps.acquired.baseCutCells).toBeGreaterThan(0)
+  // Top: the selected Bottom operation is not simulated there.
+  expect(steps.other).toMatchObject({ setup: project.setups[0].id, playback: false })
+  // Back on Bottom with its earlier operation still held: not ready.
+  expect(steps.backHeld).toMatchObject({ setup: 'setup-bottom', pending: true, playback: false })
+  expect(steps.backAcquired).toMatchObject({ setup: 'setup-bottom', pending: false, playback: true })
+  expect(steps.backAcquired.baseCutCells).toBe(steps.acquired.baseCutCells)
+})
+
+test('a single-setup project simulates as before, with no info button and no note', async ({ app, ui }) => {
+  const { page } = app
+  await seedTwoSetups(page, false)
+  await ui.operations.rowByName(page, 'Top pass').click()
+  // Generation runs on the background thread by default (#1087); on the dev
+  // server its first start loads the worker's modules one by one, so give the
+  // first toolpaths the same 30 s the other generation waits use.
+  await expect(ui.generation.gearStatus(page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
+  await ui.viewMenu.tabSimulation(page).click()
+  await expect.poll(async () => (await simStats(page)).removed, { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect(ui.simSetup.info(page)).toHaveCount(0)
+  await expect(ui.simSetup.note(page)).toHaveCount(0)
+})
+
+test('the sketch draws both setups, the other muted, on Canvas and on GPU in a mirrored Bottom view', async ({ app }, testInfo) => {
+  await allowSoftwareToolpathWebgl(app.page)
+  const result = await app.page.evaluate(async () => {
+    const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
+    const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
+    const paletteUrl = '/src/components/canvas/canvasPalette.ts'
+    const viewUrl = '/src/components/canvas/viewTransform.ts'
+    const { GpuToolpathRenderer } = await import(gpuUrl) as typeof import('../src/components/canvas/gpuToolpathRenderer')
+    const { drawToolpath } = await import(canvasUrl) as typeof import('../src/components/canvas/previewPrimitives')
+    const { canvasColors } = await import(paletteUrl) as typeof import('../src/components/canvas/canvasPalette')
+    const { reflectContextForView } = await import(viewUrl) as typeof import('../src/components/canvas/viewTransform')
+    const size = { width: 240, height: 160 }
+    const gpuCanvas = document.createElement('canvas')
+    const reference = document.createElement('canvas')
+    const readback = document.createElement('canvas')
+    for (const canvas of [gpuCanvas, reference, readback]) Object.assign(canvas, size)
+    const gpu = new GpuToolpathRenderer(gpuCanvas, () => {})
+    const point = (x: number, y: number) => ({ x, y, z: 0 })
+    const path = (operationId: string, y: number): ToolpathResult => ({
+      operationId, bounds: null, warnings: [],
+      moves: [{ kind: 'cut', from: point(20, y), to: point(100, y) }],
+    })
+    const active = path('active', 30)
+    const muted = path('muted', 60)
+    const visibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: false }
+    // Bottom flipped about X: world y is drawn at 150 − y.
+    const vt = { scale: 1, offsetX: 10, offsetY: 0, mirrorY: 150 }
+    const ctx = reference.getContext('2d')!
+    const read = readback.getContext('2d')!
+    ctx.save()
+    reflectContextForView(ctx, vt)
+    drawToolpath(ctx, muted, vt, false, visibility, 0.4, { simplifyForDisplay: false, muted: true })
+    drawToolpath(ctx, active, vt, false, visibility, 0.4, { simplifyForDisplay: false })
+    ctx.restore()
+    gpu.render([
+      { toolpath: muted, emphasized: false, slotScale: 0.4, muted: true },
+      { toolpath: active, emphasized: false, slotScale: 0.4 },
+    ], vt, size.width, size.height, visibility, canvasColors())
+    read.drawImage(gpuCanvas, 0, 0)
+    const sample = (context: CanvasRenderingContext2D, x: number, y: number) => Array.from(context.getImageData(x, y, 1, 1).data)
+    // x = 10 + 60, y = 150 − world y.
+    const rows = { active: 120, muted: 90, unmirroredActive: 30 }
+    const out = {
+      canvasActive: sample(ctx, 70, rows.active), gpuActive: sample(read, 70, rows.active),
+      canvasMuted: sample(ctx, 70, rows.muted), gpuMuted: sample(read, 70, rows.muted),
+      gpuUnmirrored: sample(read, 70, rows.unmirroredActive),
+      swatch: readback.toDataURL(),
+    }
+    gpu.dispose()
+    return out
+  })
+  // The GPU draws the mirrored view where Canvas does, and nothing where an unmirrored one would.
+  expect(result.gpuActive[3]).toBeGreaterThan(0)
+  expect(result.gpuUnmirrored[3]).toBe(0)
+  for (const [canvas, gpu] of [[result.canvasActive, result.gpuActive], [result.canvasMuted, result.gpuMuted]]) {
+    for (let channel = 0; channel < 4; channel += 1) expect(Math.abs(canvas[channel] - gpu[channel])).toBeLessThanOrEqual(12)
+  }
+  // The other setup's path is drawn, but clearly fainter than the active one.
+  expect(result.gpuMuted[3]).toBeGreaterThan(0)
+  expect(result.gpuMuted[3]).toBeLessThan(result.gpuActive[3] / 2)
+  await testInfo.attach('mirrored-muted-swatch', { body: Buffer.from(result.swatch.split(',')[1], 'base64'), contentType: 'image/png' })
+})
+
+test('the GPU renderer keeps drawing when the workspace turns to Bottom', async ({ app, ui }, testInfo) => {
+  const { page } = app
+  await allowSoftwareToolpathWebgl(page)
+  await page.goto('/?toolpathRenderer=gpu')
+  await seedTwoSetups(page)
+  const base = page.locator('canvas.sketch-canvas')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await ui.face.switchTo(page, 'Bottom')
+  await expect(ui.face.current(page)).toHaveAttribute('data-face', 'bottom')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('bottom-sketch-gpu.png') })
+  await ui.viewMenu.tab3d(page).click()
+  await page.screenshot({ path: testInfo.outputPath('bottom-3d.png') })
+})

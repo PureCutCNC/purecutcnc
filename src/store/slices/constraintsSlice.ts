@@ -38,6 +38,7 @@ import { translateProfile, transformProfile } from '../../geometry/profile'
 import { cloneProject } from '../helpers/normalize'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import { commitResolvedInstances, resolveFeatureInstance, resolveProject, restoreResolvedFeatureMetadata } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
 
 export type ConstraintsSlice = Pick<
   ProjectStore,
@@ -113,6 +114,11 @@ export function createConstraintsSlice(
     set((s) => {
       const feature = resolveFeatureInstance(s.project, featureId)
       if (!feature || feature.locked) {
+        return {}
+      }
+      // Constraints need an editable sketch. A canned shape's geometry comes
+      // from its parameters, so it refuses until Expand to features (#1112).
+      if (isCannedFeature(feature)) {
         return {}
       }
       // Construction features don't carry their own constraints (deferred for

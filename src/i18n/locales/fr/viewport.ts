@@ -40,6 +40,7 @@ export const viewportFr: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.modeVisible': 'Visible',
   'viewport.sim.detailLabel': 'Détail',
   'viewport.sim.detailTitle': 'Détail de la simulation',
+  'viewport.sim.freshStockNote': '{setup} est simulé sur un brut neuf : la matière enlevée par les autres montages n’est pas affichée.',
   'viewport.sim.playTool': 'Lire l’outil',
   'viewport.sim.playToolDisabledMode': 'Passez au mode Sélectionné pour lire l’outil',
   'viewport.sim.playToolDisabledNoOp': 'Sélectionnez une opération avec un parcours d’outil valide à lire',

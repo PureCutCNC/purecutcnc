@@ -239,14 +239,82 @@ function testDrillingFallsBackToFlatWhenNoDrill(): void {
   assert(sel?.source === 'existing' && sel.toolId === 't-flat', 'drilling accepts flat when no drill available')
 }
 
-function testImportConvertsUnits(): void {
-  // mm project, inch library v_bit → imported tool is in mm with a converted diameter.
-  const project = projectWith([], [makeFeature('f', 'subtract', 50, 50)], 'mm')
-  const library = [libEntry('lib-vbit', 'v_bit', 0.5, 'inch')]
-  const sel = selectToolForOperation(project, 'v_carve', featureTarget('f'), library)
-  assert(sel?.source === 'import', 'should import')
-  assert(sel.tool.units === 'mm', 'imported tool converted to project units')
-  assert(Math.abs(sel.tool.diameter - 12.7) < 1e-6, `0.5in → 12.7mm, got ${sel.tool.diameter}`)
+function testEachUnitTakesItsOwnLibraryEntry(): void {
+  // The bundled library holds some tools once per unit. Each project imports
+  // the entry written in its own units, under its own name and values; the
+  // other entry is never a candidate, so no conversion happens at all (#1132).
+  const inchTorch = { ...libEntry('torch-in', 'plasma', 1.4 / 25.4, 'inch'), name: 'Torch — inch units', defaultFeed: 200 }
+  const mmTorch = { ...libEntry('torch-mm', 'plasma', 1.4, 'mm'), name: 'Torch', defaultFeed: 5000 }
+  const orders: Array<[string, ToolLibraryEntry[]]> = [['inch first', [inchTorch, mmTorch]], ['mm first', [mmTorch, inchTorch]]]
+  for (const [order, library] of orders) {
+    const metric = selectToolForOperation(projectWith([], [makeFeature('f', 'add', 100, 100)], 'mm'), 'plasma_profile', featureTarget('f'), library)
+    assert(metric?.source === 'import', `${order}: a mm project imports a torch`)
+    assert(metric.tool.name === 'Torch' && metric.tool.units === 'mm', `${order}: a mm project takes the mm entry, got "${metric.tool.name}"`)
+    assert(metric.tool.diameter === 1.4 && metric.tool.defaultFeed === 5000, `${order}: with the mm entry's own values, got ${metric.tool.diameter} / ${metric.tool.defaultFeed}`)
+
+    const imperial = selectToolForOperation(projectWith([], [makeFeature('f', 'add', 4, 4)], 'inch'), 'plasma_profile', featureTarget('f'), library)
+    assert(imperial?.source === 'import', `${order}: an inch project imports a torch`)
+    assert(imperial.tool.name === 'Torch — inch units' && imperial.tool.units === 'inch', `${order}: an inch project takes the inch entry, got "${imperial.tool.name}"`)
+    assert(imperial.tool.diameter === 1.4 / 25.4 && imperial.tool.defaultFeed === 200, `${order}: with the inch entry's own values`)
+  }
+}
+
+function testNeverImportsTheOtherUnitsEntry(): void {
+  // #1132: the other unit's entry is not imported by conversion either. With
+  // no entry in the project's units the caller gets `null` (its own fallback
+  // then uses a project-units default tool) rather than a wrong-unit cutter.
+  const metric = projectWith([], [makeFeature('f', 'subtract', 50, 50)], 'mm')
+  const inchVBit = libEntry('lib-vbit', 'v_bit', 0.5, 'inch')
+  assert(
+    selectToolForOperation(metric, 'v_carve', featureTarget('f'), [inchVBit]) === null,
+    'an inch library entry is never converted into a mm project',
+  )
+
+  // The rule is about the units, not one direction.
+  const imperial = projectWith([], [makeFeature('f', 'subtract', 2, 2)], 'inch')
+  const mmVBit = libEntry('lib-vbit-mm', 'v_bit', 12, 'mm')
+  assert(
+    selectToolForOperation(imperial, 'v_carve', featureTarget('f'), [mmVBit]) === null,
+    'a mm library entry is never converted into an inch project',
+  )
+}
+
+function testSameUnitsBeatsTheLargerCutter(): void {
+  // Frank's report (#1132): an inch project holding a 6 mm and a 3/16" endmill
+  // picked the 6 mm one, because converting it made it physically larger. Only
+  // the inch tool is a candidate now, so the 3/16" wins despite being smaller.
+  const inchProject = projectWith([
+    makeTool('t-six-mm', 'flat_endmill', 6, 'mm'),
+    makeTool('t-three-sixteenths', 'flat_endmill', 0.1875),
+  ], [makeFeature('f', 'subtract', 2, 2)])
+  const imperial = selectToolForOperation(inchProject, 'pocket', featureTarget('f'), [])
+  assert(imperial?.source === 'existing' && imperial.toolId === 't-three-sixteenths', `an inch project picks the 3/16", got ${JSON.stringify(imperial)}`)
+
+  // Mirrored: 1/4" is 6.35 mm and the larger cutter, but the mm project may
+  // only take its own 5 mm.
+  const metricProject = projectWith([
+    makeTool('t-quarter-inch', 'flat_endmill', 0.25, 'inch'),
+    makeTool('t-five-mm', 'flat_endmill', 5, 'mm'),
+  ], [makeFeature('f', 'subtract', 50, 50)], 'mm')
+  const metric = selectToolForOperation(metricProject, 'pocket', featureTarget('f'), [])
+  assert(metric?.source === 'existing' && metric.toolId === 't-five-mm', `a mm project picks the 5 mm, got ${JSON.stringify(metric)}`)
+}
+
+function testFallsBackToTheProjectUnitsLibraryEntry(): void {
+  // All of a project's own tools are in the other units: the pick comes from
+  // the library in the project's units, never from one of those tools and never
+  // by converting the other unit's entry.
+  const inchProject = projectWith([makeTool('t-six-mm', 'flat_endmill', 6, 'mm')], [makeFeature('f', 'subtract', 2, 2)])
+  const inchLibrary = [libEntry('lib-six-mm', 'flat_endmill', 6, 'mm'), libEntry('lib-quarter', 'flat_endmill', 0.25)]
+  const imperial = selectToolForOperation(inchProject, 'pocket', featureTarget('f'), inchLibrary)
+  assert(imperial?.source === 'import', `an inch project imports an inch library cutter, got ${JSON.stringify(imperial)}`)
+  assert(imperial.tool.units === 'inch' && imperial.tool.name === 'lib-quarter', `the inch entry, got ${imperial.tool.name}`)
+
+  const metricProject = projectWith([makeTool('t-quarter', 'flat_endmill', 0.25)], [makeFeature('f', 'subtract', 50, 50)], 'mm')
+  const mmLibrary = [libEntry('lib-six-mm', 'flat_endmill', 6, 'mm'), libEntry('lib-quarter-inch', 'flat_endmill', 0.25)]
+  const metric = selectToolForOperation(metricProject, 'pocket', featureTarget('f'), mmLibrary)
+  assert(metric?.source === 'import', `a mm project imports a mm library cutter, got ${JSON.stringify(metric)}`)
+  assert(metric.tool.units === 'mm' && metric.tool.name === 'lib-six-mm', `the metric entry, got ${metric.tool.name}`)
 }
 
 function testReturnsNullWhenNoCandidates(): void {
@@ -267,7 +335,10 @@ testSizeFallsBackToSmallestWhenNoneFit()
 testImportsVBitWhenProjectHasNone()
 testPrefersIdealTypeOverExistingLesserType()
 testDrillingFallsBackToFlatWhenNoDrill()
-testImportConvertsUnits()
+testEachUnitTakesItsOwnLibraryEntry()
+testNeverImportsTheOtherUnitsEntry()
+testSameUnitsBeatsTheLargerCutter()
+testFallsBackToTheProjectUnitsLibraryEntry()
 testReturnsNullWhenNoCandidates()
 
 console.log('toolSelection tests passed')

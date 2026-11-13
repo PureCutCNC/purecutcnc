@@ -75,7 +75,10 @@ protected_bucket() {
     # a gate belongs here — not just check-*. Add to this list when a new gate
     # lands; scripts/backlog-hygiene.ts arrived after the first draft and was
     # missed by the original `scripts/check-*` glob.
-    scripts/check-*|scripts/run-tests.ts|scripts/docs-check-core.ts|scripts/backlog-hygiene.ts|tools/resume-work/*|tools/manual-impact/*)
+    # scripts/gcode-conformance/ joined with the QtPlasmaC simulator check
+    # (#954), which gates the plasma post output: a weakened verdict rule or a
+    # softened negative fixture there would pass plasma programs unverified.
+    scripts/check-*|scripts/run-tests.ts|scripts/docs-check-core.ts|scripts/backlog-hygiene.ts|scripts/gcode-conformance/*|tools/resume-work/*|tools/manual-impact/*)
       echo 'process & gate machinery' ;;
     *) return 1 ;;
   esac

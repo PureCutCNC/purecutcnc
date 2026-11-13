@@ -20,8 +20,9 @@
  * Run with: npx tsx src/engine/simulation/playback.test.ts
  */
 
-import { PlaybackController, subdivideMoves } from './playback'
+import { PlaybackController, cloneSimulationGrid, subdivideMoves } from './playback'
 import type { PlaybackToolInfo } from './playback'
+import { applyMoveToGrid } from './replay'
 import type { SimulationGrid } from './types'
 import type { ToolpathMove } from '../toolpaths/types'
 
@@ -76,6 +77,53 @@ function testSubdivideLeavesShortMovesUntouched(): void {
   assert(out.length === 1, 'a move shorter than the max segment length should not be split')
   assert(out[0].feedScale === 0.5, 'short move should retain feedScale')
   console.log('subdivideMoves short-move passthrough: PASSED')
+}
+
+function testSubdivideInterpolatesAngle(): void {
+  console.log('Testing subdivideMoves interpolates the rotary angle only when both ends carry one...')
+  const rotary: ToolpathMove = {
+    kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 10, y: 0, z: 0, a: 90 },
+  }
+  const out = subdivideMoves([rotary], 2)
+  assert(out.length === 5, `expected 5 sub-segments, got ${out.length}`)
+  assert(approx(out[0].from.a ?? NaN, 0) && approx(out[0].to.a ?? NaN, 18), 'the angle interpolates across the first sub-segment')
+  assert(approx(out[out.length - 1].to.a ?? NaN, 90), 'and reaches the end angle')
+  for (let i = 1; i < out.length; i += 1) {
+    assert(approx(out[i].from.a ?? NaN, out[i - 1].to.a ?? NaN), 'the angle stays continuous across sub-segments')
+  }
+
+  const oneEnded: ToolpathMove = { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 5 }, to: { x: 10, y: 0, z: 0 } }
+  assert(
+    subdivideMoves([oneEnded], 2).every((move) => move.from.a === undefined && move.to.a === undefined),
+    'a move with an angle at one end only is not partly rotary',
+  )
+  console.log('subdivideMoves interpolates the angle: PASSED')
+}
+
+function testPoseCarriesAngle(): void {
+  console.log('Testing getPose carries the program angle, and has no a key without one...')
+  const controller = new PlaybackController(
+    flatGrid(),
+    [{ kind: 'cut', from: { x: 0, y: 0, z: 0, a: 10 }, to: { x: 10, y: 0, z: 0, a: 30 } }],
+    FLAT_TOOL,
+    { maxSegmentLength: 0 },
+  )
+  assert(approx(controller.getPose().a ?? NaN, 10), 'the pose starts at the move start angle')
+  controller.advance(5)
+  assert(approx(controller.getPose().a ?? NaN, 20), 'the pose interpolates the angle halfway along the move')
+  controller.advance(5)
+  assert(controller.isFinished(), 'the move is finished')
+  assert(approx(controller.getPose().a ?? NaN, 30), 'the finished pose holds the end angle')
+
+  const plain = new PlaybackController(
+    flatGrid(),
+    [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 } }],
+    FLAT_TOOL,
+    { maxSegmentLength: 0 },
+  )
+  assert(!('a' in plain.getPose()), 'a move without an angle gives a pose with no a key')
+  assert(!('a' in new PlaybackController(flatGrid(), [], FLAT_TOOL).getPose()), 'an empty path gives a pose with no a key')
+  console.log('getPose carries the program angle: PASSED')
 }
 
 function testReducedFeedMoveAdvancesSlower(): void {
@@ -209,15 +257,59 @@ function testDirtyRegionAccumulatesUntilCleared(): void {
   console.log('dirty region accumulation and reset: PASSED')
 }
 
+function testCloneOfRoundGridGainsNoSquareKeys(): void {
+  console.log('Testing cloning a round/flat grid preserves its exact keys and shares no square state...')
+  const source = flatGrid()
+  const clone = cloneSimulationGrid(source)
+  assert(!('squareBar' in clone) && !('initialTopZ' in clone), 'a round clone must not gain square keys')
+  const keys = Object.keys(clone).sort()
+  const expected = ['cellSize', 'cols', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ'].sort()
+  assert(keys.length === expected.length && keys.every((key, i) => key === expected[i]), `clone keys drifted: ${keys.join(',')}`)
+  assert(clone.topZ !== source.topZ, 'the clone owns a mutable copy of topZ')
+  console.log('round clone keys: PASSED')
+}
+
+function testWrappedRoundPlaybackMatchesBatchReplay(): void {
+  console.log('Testing wrapped round playback matches a batch replay through the unchanged kernel...')
+  const cols = 40
+  const rows = 8
+  const base = (): SimulationGrid => ({
+    cols,
+    rows,
+    cellSize: 1,
+    originX: 0,
+    originY: 0,
+    stockTopZ: 0,
+    stockBottomZ: -6,
+    wrap: { axis: 'y', period: 8 },
+    topZ: new Float32Array(cols * rows).fill(0),
+  })
+  const moves: ToolpathMove[] = [
+    { kind: 'plunge', from: { x: 5, y: 7, z: 0 }, to: { x: 5, y: 7, z: -3 } },
+    { kind: 'cut', from: { x: 5, y: 7, z: -3 }, to: { x: 30, y: 9, z: -3 } },
+  ]
+  const batch = base()
+  for (const move of moves) applyMoveToGrid(batch, move, 1.5, 'flat_endmill', null)
+
+  const controller = new PlaybackController(base(), moves, { toolType: 'flat_endmill', toolRadius: 1.5, vBitAngle: null }, { maxSegmentLength: 0 })
+  controller.seekToFraction(1)
+  assert(gridsEqual(controller.liveGrid, batch), 'wrapped round playback must match the batch replay')
+  console.log('wrapped round playback parity: PASSED')
+}
+
 try {
   testSubdividePreservesMoveMetadata()
   testSubdivideLeavesShortMovesUntouched()
+  testSubdivideInterpolatesAngle()
+  testPoseCarriesAngle()
   testReducedFeedMoveAdvancesSlower()
   testDisabledReferenceFeedIsConstantSpeed()
   testSeekIsGeometricDespiteFeedScaling()
   testForwardSeekMatchesFreshReplay()
   testBackwardSeekRestoresEarlierState()
   testDirtyRegionAccumulatesUntilCleared()
+  testCloneOfRoundGridGainsNoSquareKeys()
+  testWrappedRoundPlaybackMatchesBatchReplay()
   console.log('\nAll playback tests PASSED.')
 } catch (e) {
   console.error(e)

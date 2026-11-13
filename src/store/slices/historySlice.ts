@@ -18,10 +18,14 @@ import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { keepWorkspaceFace } from '../helpers/provisionalSetup'
+import type { ProjectMigrationInfo } from '../helpers/projectFormat'
+import { rescueMachinesToLibrary } from '../../machine/store'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { sanitizeSelection } from './selectionSlice'
 
 export interface HistorySliceDependencies {
-  normalizeProject: (project: Project) => Project
+  normalizeProject: (project: Project, migrationInfo?: ProjectMigrationInfo) => Project
 }
 
 export type HistorySlice = Pick<
@@ -42,6 +46,42 @@ export function createHistorySlice(
     normalizeProject,
   } = deps
 
+  // Which setup the workspace is on is a view choice, not an edit (issue
+  // #944): a snapshot is restored onto the face the user is looking at. When
+  // the snapshot has no setup for that face — the undone edit was the one
+  // that made it — the face stays in view provisionally (issue #945).
+  const restoreSnapshot = (
+    snapshot: Project,
+    current: Project,
+  ): { project: Project, diagnostics: MachineLoadDiagnostic[] } => {
+    // A history snapshot is already compact, but running the same rescue seam
+    // as a load means a machine it somehow still carries reaches My Machines
+    // instead of being dropped when the snapshot is normalized. When the
+    // library cannot store it, the restored project keeps it (#1119).
+    const info: ProjectMigrationInfo = {
+      retractHeightsReexpressed: 0,
+      edgeEntryStrategiesReset: 0,
+      machineDiagnostics: [],
+      rescuedMachineDefinitions: [],
+      rescueMachineDefinitions: rescueMachinesToLibrary,
+    }
+    const restored = normalizeProject(
+      { ...cloneProject(snapshot), activeSetupId: current.activeSetupId },
+      info,
+    )
+    return {
+      project: keepWorkspaceFace(restored, current),
+      diagnostics: info.machineDiagnostics,
+    }
+  }
+
+  /** Surface a kept-machine diagnostic from a history restore, if there is one. */
+  const diagnosticsPatch = (diagnostics: MachineLoadDiagnostic[]) => (
+    diagnostics.some((diagnostic) => diagnostic.kind === 'machine-kept-in-project')
+      ? { machineLoadDiagnostics: diagnostics }
+      : {}
+  )
+
   return {
     undo: () =>
       set((state) => {
@@ -49,14 +89,15 @@ export function createHistorySlice(
         if (!previous) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(previous))
+        const restored = restoreSnapshot(previous, state.project)
         return {
-          project: restored,
+          project: restored.project,
+          ...diagnosticsPatch(restored.diagnostics),
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
-          selection: sanitizeSelection(restored, state.selection),
+          selection: sanitizeSelection(restored.project, state.selection),
           history: {
             past: state.history.past.slice(0, -1),
             future: [cloneProject(state.project), ...state.history.future].slice(0, 100),
@@ -71,14 +112,15 @@ export function createHistorySlice(
         if (!next) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(next))
+        const restored = restoreSnapshot(next, state.project)
         return {
-          project: restored,
+          project: restored.project,
+          ...diagnosticsPatch(restored.diagnostics),
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
-          selection: sanitizeSelection(restored, state.selection),
+          selection: sanitizeSelection(restored.project, state.selection),
           history: {
             past: [...state.history.past, cloneProject(state.project)].slice(-100),
             future: state.history.future.slice(1),
@@ -106,7 +148,8 @@ export function createHistorySlice(
         if (!transactionStart) {
           return {}
         }
-        if (projectsEqual(transactionStart, state.project)) {
+        // Switching setups inside a transaction is not a change to undo.
+        if (projectsEqual({ ...transactionStart, activeSetupId: state.project.activeSetupId }, state.project)) {
           return {
             history: {
               ...state.history,
@@ -129,14 +172,15 @@ export function createHistorySlice(
         if (!transactionStart) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(transactionStart))
+        const restored = restoreSnapshot(transactionStart, state.project)
         return {
-          project: restored,
+          project: restored.project,
+          ...diagnosticsPatch(restored.diagnostics),
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
-          selection: sanitizeSelection(restored, state.selection),
+          selection: sanitizeSelection(restored.project, state.selection),
           history: {
             ...state.history,
             transactionStart: null,

@@ -33,12 +33,20 @@ import {
   operationTargetsRegion,
   quickOperationGroup,
   quickOperationLabel,
+  rotaryAddKindsForFace,
+  rotaryOperationHint,
   selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
+import { squareStock } from '../../types/barStock'
+import { operationCutsInProject } from '../../store/helpers/projectType'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { rotaryMultiModelFixture, rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import { camT } from './camI18n'
 import { getTextFontOptions } from '../../text'
+import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
+import type { MachineDefinition } from '../../engine/gcode/types'
 import {
   newProject,
   rectProfile,
@@ -617,6 +625,223 @@ function testTargetFromSelectionRefusesUnknownIds(): void {
   )
 }
 
+// ── quick operations follow the machine (issue #960) ──────────────
+
+/**
+ * The feature context menu's "Create operation" submenu used to offer the
+ * eleven milling kinds on every machine and never the plasma cut. It now takes
+ * the machine from the same derived mode the CAM panel's Add menu uses
+ * (`machineMode` + `operationOffer`), so plasma mode offers only the plasma
+ * cut and router mode only the milling family. The underlying feature rules
+ * (`getOperationAddHintWithMap`) are unchanged — the mode is an extra gate.
+ */
+function bundled(id: string): MachineDefinition {
+  const definition = BUNDLED_DEFINITIONS.find((candidate) => candidate.id === id)
+  assert(definition !== undefined, `expected the bundled ${id} definition`)
+  return definition
+}
+
+function projectWithMachine(definition: MachineDefinition | null, features: SketchFeature[]): Project {
+  const project = projectWith(features)
+  return {
+    ...project,
+    meta: {
+      ...project.meta,
+      // A coherent fixture: the project type suits the machine it selects, as
+      // `inferProjectType` would give it on load (issue #1028).
+      projectType: definition?.machineKind === 'plasma' ? 'plasma' : 'milling',
+      machineDefinitions: definition ? [definition] : [],
+      selectedMachineId: definition?.id ?? null,
+    },
+  }
+}
+
+const ROUTER_MACHINE = bundled('generic')
+const PLASMA_MACHINES = [bundled('qtplasmac'), bundled('grbl-plasma')]
+
+/** The milling menu each feature offered before the plasma kind existed. */
+const MILLING_MENU_BY_FEATURE: Record<'add' | 'subtract' | 'model', OperationKind[]> = {
+  add: ['edge_route_outside', 'surface_clean', 'follow_line'],
+  subtract: ['pocket', 'edge_route_inside', 'v_carve', 'v_carve_medial', 'follow_line'],
+  model: [
+    'edge_route_outside',
+    'surface_clean',
+    'follow_line',
+    'rough_surface',
+    'finish_surface',
+    'finish_surface_cleanup',
+  ],
+}
+
+function testPlasmaMachineOffersOnlyThePlasmaCut(): void {
+  for (const machine of PLASMA_MACHINES) {
+    for (const operation of ['add', 'subtract'] as const) {
+      const project = projectWithMachine(machine, [makeFeature('f', operation)])
+      const ops = validQuickOperationsForFeature(project, 'f')
+      const kinds = ops.map((op) => op.kind)
+
+      assert(
+        JSON.stringify(kinds) === JSON.stringify(['plasma_profile']),
+        `plasma (${machine.id}) + closed ${operation} should offer exactly the plasma cut, got ${JSON.stringify(kinds)}`,
+      )
+
+      const plasma = ops[0]
+      assert(plasma.pass === 'rough', `plasma quick op on ${machine.id} should default to the rough pass`)
+      assert(plasma.group === '2d', `plasma quick op on ${machine.id} should be a 2D quick operation`)
+      assert(
+        plasma.label === quickOperationLabel('plasma_profile'),
+        `plasma quick op label should be quickOperationLabel('plasma_profile'), got ${plasma.label}`,
+      )
+      assert(
+        plasma.label === 'Create plasma through-cut',
+        `plasma quick op label mismatch, got ${plasma.label}`,
+      )
+    }
+  }
+}
+
+function testPlasmaMachineRejectsFeaturesThePlasmaHintRejects(): void {
+  for (const machine of PLASMA_MACHINES) {
+    const openLine = projectWithMachine(machine, [makeFeature('openLine', 'line', 'polygon', false)])
+    assert(
+      validQuickOperationsForFeature(openLine, 'openLine').length === 0,
+      `plasma (${machine.id}) + open line should offer nothing`,
+    )
+
+    const model = projectWithMachine(machine, [makeFeature('model', 'model', 'stl')])
+    assert(
+      validQuickOperationsForFeature(model, 'model').length === 0,
+      `plasma (${machine.id}) + stl model should offer nothing`,
+    )
+  }
+}
+
+function testRouterAndMachineLessProjectsKeepTheMillingMenu(): void {
+  const features: Record<'add' | 'subtract' | 'model', SketchFeature> = {
+    add: makeFeature('add', 'add'),
+    subtract: makeFeature('sub', 'subtract'),
+    model: makeFeature('model', 'model', 'stl'),
+  }
+
+  for (const key of ['add', 'subtract', 'model'] as const) {
+    for (const machine of [ROUTER_MACHINE, null]) {
+      const project = projectWithMachine(machine, [features[key]])
+      const kinds = validQuickOperationsForFeature(project, features[key].id).map((op) => op.kind)
+      const where = machine === null ? 'no machine' : `router ${machine.id}`
+
+      assert(
+        !kinds.includes('plasma_profile'),
+        `${where} should not offer the plasma cut on a ${key} feature`,
+      )
+      assert(
+        JSON.stringify(kinds) === JSON.stringify(MILLING_MENU_BY_FEATURE[key]),
+        `${where} + ${key} quick operations must be unchanged, got ${JSON.stringify(kinds)}`,
+      )
+    }
+  }
+}
+
+// ── rotary add-menu rows (issue #1015) ────────────────────────────
+
+/**
+ * The slice-D rotary fixture holds one imported model and one 2D Around
+ * feature. Adding a second model (a clone of the first) makes "one of two
+ * selected" and "target every model" distinguishable.
+ */
+function withSecondModel(project: Project): Project {
+  const model = project.features.find((feature) => feature.id === 'model')
+  const definition = model && project.featureDefinitions[model.definitionId]
+  assert(model !== undefined && definition !== undefined, 'rotary fixture should hold its model')
+  project.featureDefinitions = { ...project.featureDefinitions, 'model-2': { ...definition, id: 'model-2' } }
+  project.features = [...project.features, { ...model, id: 'model-2', definitionId: 'model-2', name: 'Model 2' }]
+  return project
+}
+
+/** The same fixture with its imported models removed: only the 2D feature is left. */
+function withoutModels(project: Project): Project {
+  project.features = project.features.filter(
+    (feature) => project.featureDefinitions[feature.definitionId]?.kind !== 'stl',
+  )
+  return project
+}
+
+/**
+ * The rotary rows do not depend on the selection: on a round bar in Around any
+ * imported model makes them available, the selection only narrows which model
+ * Add targets, and with nothing suitable selected every model is targeted.
+ */
+function testRotaryAddRowsTargetModelsWithoutASelection(): void {
+  const project = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+  const allModels = ['model', 'model-2']
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    assert(
+      getOperationAddHint(project, selectionFor([]), kind) === null,
+      `${kind} should be available with nothing selected`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor([]), kind))
+        === JSON.stringify({ source: 'features', featureIds: allModels }),
+      `${kind} with nothing selected should target every model`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor(['model-2']), kind))
+        === JSON.stringify({ source: 'features', featureIds: ['model-2'] }),
+      `${kind} with one model selected should target that model`,
+    )
+    assert(
+      JSON.stringify(operationTargetFromSelection(project, selectionFor(['sketch']), kind))
+        === JSON.stringify({ source: 'features', featureIds: allModels }),
+      `${kind} with a non-model selected should still target every model`,
+    )
+  }
+}
+
+/** Without an imported model the rows stay unavailable, with their own tooltip. */
+function testRotaryAddRowsNeedAnImportedModel(): void {
+  const project = withoutModels(rotaryOperationFixture('x', 'rotary_rough'))
+
+  for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+    const key = kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel'
+    assert(
+      getOperationAddHint(project, selectionFor([]), kind) === camT(key),
+      `${kind} without a model should show its own hint`,
+    )
+    assert(
+      operationTargetFromSelection(project, selectionFor([]), kind) === null,
+      `${kind} without a model should give no target`,
+    )
+  }
+}
+
+/** The rows belong to Around alone, and to a rotary project alone (issue #1028). */
+function testRotaryAddRowsAreOfferedOnlyOnAround(): void {
+  const project = rotaryOperationFixture('x', 'rotary_rough')
+  assert(
+    JSON.stringify(rotaryAddKindsForFace(project, 'around')) === JSON.stringify(['rotary_rough', 'rotary_finish']),
+    'Around should offer both rotary rows',
+  )
+  assert(JSON.stringify(rotaryAddKindsForFace(project, 'top')) === '[]', 'Top should offer no rotary row')
+  assert(JSON.stringify(rotaryAddKindsForFace(project, 'bottom')) === '[]', 'Bottom should offer no rotary row')
+
+  const milling = { ...project, meta: { ...project.meta, projectType: 'milling' as const } }
+  assert(
+    JSON.stringify(rotaryAddKindsForFace(milling, 'around')) === '[]',
+    'a project that is not rotary should offer no rotary row even on Around',
+  )
+
+  const onTop = withSecondModel(rotaryOperationFixture('x', 'rotary_finish'))
+  const topSetup = { ...onTop, activeSetupId: onTop.setups[0].id }
+  assert(
+    getOperationAddHint(topSetup, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
+    'a Top setup should refuse the rotary rows',
+  )
+  assert(
+    getOperationAddHint(milling, selectionFor([]), 'rotary_rough') === camT('cam.rotary.aroundRequired'),
+    'a non-rotary project should refuse the rotary rows',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -647,5 +872,127 @@ testAddTextWithoutCountersIsRefusedForInsideRoute()
 testSubtractTextWithIslandsOffersOutsideRoute()
 testTargetFromMultiSelectionOfAddTexts()
 testTargetFromSelectionRefusesUnknownIds()
+testPlasmaMachineOffersOnlyThePlasmaCut()
+testPlasmaMachineRejectsFeaturesThePlasmaHintRejects()
+testRouterAndMachineLessProjectsKeepTheMillingMenu()
+testRotaryAddRowsTargetModelsWithoutASelection()
+testRotaryAddRowsNeedAnImportedModel()
+testRotaryAddRowsAreOfferedOnlyOnAround()
+/**
+ * #1096 review (P2): adding a region with "Use current selection" must keep the
+ * model choice the operation already has. With only model A ticked, selecting a
+ * region must not bring unchecked model B back.
+ *
+ * Mutations checked here:
+ * - a region-only selection falling back to every model -> the first assertion;
+ * - a selected model no longer replacing the current choice -> the second;
+ * - the Add route losing its "every model" default -> the third;
+ * - a current id that names no model being written back -> the fourth.
+ */
+function testRotaryTargetUpdateKeepsModelChoice(): void {
+  const project = rotaryMultiModelFixture('x', 'rotary_finish')
+  const update = (featureIds: string[], currentTarget: OperationTarget): OperationTarget | null =>
+    operationTargetFromSelection(project, selectionFor(featureIds), 'rotary_finish', {
+      requireSelection: true,
+      currentTarget,
+    })
+  const same = (actual: unknown, expected: unknown, message: string): void => assert(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${message}: got ${JSON.stringify(actual)}`,
+  )
+  same(
+    update(['region'], { source: 'features', featureIds: ['model', 'region'] }),
+    { source: 'features', featureIds: ['model', 'region'] },
+    'a region-only selection keeps the one model the operation already targets',
+  )
+  same(
+    update(['second', 'region'], { source: 'features', featureIds: ['model'] }),
+    { source: 'features', featureIds: ['second', 'region'] },
+    'a selected model is the new explicit choice, and the region joins it',
+  )
+  same(
+    operationTargetFromSelection(project, selectionFor(['region']), 'rotary_finish'),
+    { source: 'features', featureIds: ['model', 'second', 'region'] },
+    'adding an operation still defaults to every model, as the Add route requires',
+  )
+  same(
+    update(['region'], { source: 'features', featureIds: ['model', 'gone'] }),
+    { source: 'features', featureIds: ['model', 'region'] },
+    'a model id that no longer resolves is not written back',
+  )
+}
+testRotaryTargetUpdateKeepsModelChoice()
+
+// ── square rotary model hints (issue #1016 C2-U1) ─────────────────
+
+/** The slice-D rotary fixture with a real square blank in place of its bar. */
+function squareRotaryFixture(axis: 'x' | 'y', kind: OperationKind): Project {
+  const project = rotaryOperationFixture(axis, kind)
+  project.stock = squareStock(12, 30, axis)
+  return project
+}
+
+/**
+ * A generated rotary model on a **square** blank is a legitimate target: the
+ * rough/finish hints are clear on both axes, with either usable cutter, and
+ * never say the round bar is required. Non-rotary kinds on that Around sheet
+ * stay disabled (`operationCutsInProject`), and the model / tool errors are
+ * still truthful.
+ */
+function testSquareRotaryModelHints(): void {
+  const roundStockRequired = camT('cam.rotary.roundStockRequired')
+  for (const axis of ['x', 'y'] as const) {
+    const project = squareRotaryFixture(axis, 'rotary_rough')
+    const operation = project.operations[0]
+    assert(
+      rotaryOperationHint(project, operation) === null,
+      `${axis}: a square-blank rotary model with a ball cutter has no hint`,
+    )
+    assert(
+      rotaryOperationHint(project, operation) !== roundStockRequired,
+      `${axis}: the square blank never reports the round-stock requirement`,
+    )
+    for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
+      assert(
+        getOperationAddHint(project, selectionFor([]), kind) === null,
+        `${axis}: ${kind} is offered on the square blank`,
+      )
+      assert(
+        JSON.stringify(operationTargetFromSelection(project, selectionFor([]), kind))
+          === JSON.stringify({ source: 'features', featureIds: ['model'] }),
+        `${axis}: ${kind} targets the generated model`,
+      )
+    }
+
+    // A flat cutter is as usable as the ball one.
+    const flat = { ...project, tools: [{ ...project.tools[0], type: 'flat_endmill' as const }] }
+    assert(rotaryOperationHint(flat, flat.operations[0]) === null, `${axis}: a flat cutter is usable`)
+
+    // The model requirement is still truthful.
+    const onSketch = { ...project, operations: [{ ...operation, target: { source: 'features' as const, featureIds: ['sketch'] } }] }
+    assert(
+      rotaryOperationHint(onSketch, onSketch.operations[0]) === camT('cam.rotary.modelOnly'),
+      `${axis}: a non-model target is still refused`,
+    )
+    // The tool requirement is still truthful.
+    const noTool = { ...project, operations: [{ ...operation, toolRef: null }] }
+    assert(rotaryOperationHint(noTool, noTool.operations[0]) === camT('cam.operation.noTool'), `${axis}: a missing tool is still refused`)
+
+    // Non-rotary operations on that Around sheet stay disabled.
+    assert(
+      operationCutsInProject(project, { kind: 'pocket', setupId: project.activeSetupId }) === false,
+      `${axis}: a non-rotary Around operation stays disabled`,
+    )
+    assert(
+      operationCutsInProject(project, { kind: 'rotary_rough', setupId: project.activeSetupId }) === true,
+      `${axis}: the rotary model operation still cuts`,
+    )
+
+    // A block still needs a round bar: the widened check did not drop it.
+    const block = { ...project, stock: { ...project.stock, shape: undefined } }
+    assert(rotaryOperationHint(block, block.operations[0]) === roundStockRequired, `${axis}: a block still needs a bar`)
+  }
+}
+testSquareRotaryModelHints()
 
 console.log('operationValidity tests passed')

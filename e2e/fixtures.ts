@@ -42,10 +42,42 @@ export interface AppPage {
   errors: string[]
 }
 
+/** localStorage entries written once, before the application's first load. */
+export type PreferenceSeeds = Record<string, string>
+
 export const test = base.extend<{
   app: AppPage
   ui: typeof ui
+  /**
+   * Machine-local preferences to seed before the app boots, e.g. a stored
+   * `canvas` renderer or `inline` backend. The worker and GPU are the shipped
+   * defaults (issue #1087), so a spec that wants the fallback lane or an
+   * explicit opt-out states it here instead of clicking through the UI — and
+   * a later `reload()` keeps whatever the test then chose.
+   *
+   * One-shot: a sessionStorage marker stops the seed from overwriting a
+   * preference the test itself changes and reloads.
+   */
+  preferences: PreferenceSeeds
 }>({
+  preferences: [{}, { option: true }],
+
+  page: async ({ page, preferences }, use) => {
+    if (Object.keys(preferences).length > 0) {
+      await page.addInitScript((entries: PreferenceSeeds) => {
+        // about:blank and non-web origins have no usable storage.
+        try {
+          if (sessionStorage.getItem('__e2ePreferencesSeeded') === '1') return
+          for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value)
+          sessionStorage.setItem('__e2ePreferencesSeeded', '1')
+        } catch {
+          return
+        }
+      }, preferences)
+    }
+    await use(page)
+  },
+
   app: async ({ page }, use) => {
     const errors: string[] = []
 

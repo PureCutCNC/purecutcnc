@@ -76,7 +76,7 @@ if [[ ! -f "$log" ]]; then
   exit 0
 fi
 
-mtime="$(stat -f '%m' "$log" 2>/dev/null || stat -c '%Y' "$log" 2>/dev/null)" \
+mtime="$(stat -c '%Y' "$log" 2>/dev/null || stat -f '%m' "$log" 2>/dev/null)" \
   || fail "cannot stat progress log: $log"
 idle=$(( $(date +%s) - mtime ))
 

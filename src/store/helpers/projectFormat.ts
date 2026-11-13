@@ -21,26 +21,36 @@ import {
   defaultMaxTravelZ,
   defaultOperationClearanceZ,
   defaultOrigin,
+  defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
   LATEST_PROJECT_VERSION, cloneTextLayout,
+  normalizeRoundStock,
 } from '../../types/project'
 import type {
+  BlockStock,
   FeatureDefinition,
   FeatureInstance,
+  MachiningSetup,
   Matrix2D,
   NestMargins,
   NestRecord,
   Operation,
   PersistedImportedMesh,
   Project,
+  ProjectMeta,
+  ProjectType,
   SketchFeature,
+  Stock,
 } from '../../types/project'
 import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneCannedShapeData, cloneTextFeatureData, isCannedShapeData } from '../../types/project'
+import { isBarStock, normalizeSquareStock } from '../../types/barStock'
 import type { MachineDefinition } from '../../engine/gcode/types'
+import type { MachineLoadDiagnostic } from '../../machine/diagnostics'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
+import { rebuildCannedShapeModels } from '../../cannedShapes/model'
 import {
   dedupeProjectIds,
   normalizeClamp,
@@ -51,20 +61,40 @@ import {
   normalizeTab,
   normalizeTool,
   syncFeatureTreeProject,
+  type MachineRescuer,
+  type MachineSnapshotNormalization,
 } from './normalize'
 import { createFeatureInstance } from './featureDefinitions'
 import { invertMatrix, multiplyMatrix } from './instanceTransforms'
 import { resolveFeatureRow } from './resolveFeatures'
 import { transformProfileAffine, transformStlFeatureData } from './transform'
+import { assertOperationSetupsExist, decodeSetups, isSetupFace, syncProjectSetups } from './setups'
+import { syncRoundWorkholding } from './roundWorkholding'
 import { normalizeBackdrop } from '../slices/backdropSlice'
+import { inferProjectTypeFrom } from './projectType'
 
 export type LegacyFeatureRow = SketchFeature & {
   definitionId?: string
   transform?: Matrix2D
 }
 
-export type ProjectFormatInput = Omit<Project, 'features'> & {
+/**
+ * A project's metadata as a file carries it. `projectType` is optional here
+ * because every file saved before the field existed lacks it (issue #1028);
+ * {@link normalizeProject} infers one.
+ */
+export type ProjectMetaFormatInput = Omit<ProjectMeta, 'projectType'> & { projectType?: ProjectType }
+
+/**
+ * A project as a file or snapshot carries it. `setups` and `activeSetupId`
+ * are optional here because every file saved before setups existed lacks
+ * them (issue #944); {@link normalizeProject} supplies them.
+ */
+export type ProjectFormatInput = Omit<Project, 'features' | 'setups' | 'activeSetupId' | 'meta'> & {
+  meta: ProjectMetaFormatInput
   features: Array<FeatureInstance | LegacyFeatureRow>
+  setups?: MachiningSetup[]
+  activeSetupId?: string
 }
 
 /** What the machine-library compaction rescued or dropped while decoding. */
@@ -75,6 +105,8 @@ export interface DecodedMachineMigration {
   compacted: boolean
   /** A machine ID the file selected but could not resolve; the selection was cleared. */
   unresolvedSelectionId: string | null
+  /** Structured rescue/retention reports for the load-warning surface (#1119). */
+  diagnostics: MachineLoadDiagnostic[]
 }
 
 export interface DecodedProjectFormat {
@@ -95,6 +127,22 @@ export interface DecodedProjectFormat {
 export interface ProjectMigrationInfo {
   retractHeightsReexpressed: number
   edgeEntryStrategiesReset: number
+  /**
+   * What machine reading rescued or retained (#1119). A caller that has an
+   * application-library seam (`loadProject`, save, template extraction) merges
+   * `rescuedMachineDefinitions` and shows `machineDiagnostics`; leaving them
+   * unused is how the old code lost a project's other machines silently.
+   */
+  machineDiagnostics: MachineLoadDiagnostic[]
+  rescuedMachineDefinitions: MachineDefinition[]
+  /**
+   * The durable library seam. When present, `normalizeProject` hands the
+   * unselected machines to it and compacts them away only if it reports them
+   * durably stored (#1119).
+   */
+  rescueMachineDefinitions?: MachineRescuer
+  /** The machine normalization the project actually used, for `decodeProjectFormat`. */
+  machineNormalization?: MachineSnapshotNormalization
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -218,6 +266,12 @@ function normalizeDefinition(id: string, value: unknown): FeatureDefinition {
   if (value.text !== undefined && value.text !== null && !isRecord(value.text)) {
     throw new Error(`Project definition ${id} has invalid text data.`)
   }
+  // Canned shape data is additive (issue #1112): a definition either carries the
+  // kind/params envelope or does not. An unregistered kind is kept verbatim, so
+  // a file from a newer build never loses its shape data on an older one.
+  if (value.canned !== undefined && value.canned !== null && !isCannedShapeData(value.canned)) {
+    throw new Error(`Project definition ${id} has invalid canned shape data.`)
+  }
   if (value.stl !== undefined && value.stl !== null && !isRecord(value.stl)) {
     throw new Error(`Project definition ${id} has invalid STL data.`)
   }
@@ -275,7 +329,7 @@ function normalizeLegacyFeature(
 
 function normalizeInstance(feature: FeatureInstance, definitions: Record<string, FeatureDefinition>): FeatureInstance {
   const raw = feature as unknown as Record<string, unknown>
-  const duplicatedField = ['sketch', 'kind', 'operation', 'regionMaskMode', 'text', 'stl']
+  const duplicatedField = ['sketch', 'kind', 'operation', 'regionMaskMode', 'text', 'canned', 'stl']
     .find((field) => field in raw)
   if (duplicatedField) {
     throw new Error(`Project feature ${feature.id || '(unnamed)'} contains definition-owned field ${duplicatedField}.`)
@@ -303,6 +357,12 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     || typeof feature.locked !== 'boolean') {
     throw new Error(`Project feature ${feature.id || '(unnamed)'} has invalid instance metadata.`)
   }
+  // Absent on every file saved before setups existed (issue #944): those
+  // features were all drawn on the top face.
+  const authoringFace: unknown = feature.authoringFace ?? 'top'
+  if (!isSetupFace(authoringFace)) {
+    throw new Error(`Project feature ${feature.id || '(unnamed)'} has an invalid authoring face.`)
+  }
   const normalized: FeatureInstance = {
     id: feature.id,
     name: feature.name,
@@ -314,6 +374,7 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     constraints: feature.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
+    authoringFace,
     folderId: feature.folderId,
     visible: feature.visible,
     locked: feature.locked,
@@ -506,8 +567,17 @@ function migrateDormantEdgeEntryStrategy(
   return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
 }
 
-/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
-export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
+/**
+ * Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project.
+ *
+ * `rescue` is the optional durable-library seam: open/load pass it so an
+ * unselected machine is compacted away only once it is safely in My Machines.
+ * Inspection omits it and reads what the source carried instead (#1119).
+ */
+export function decodeProjectFormat(
+  input: unknown,
+  rescue?: MachineRescuer,
+): DecodedProjectFormat {
   assertProjectEnvelope(input)
   const sourceVersion = typeof input.version === 'string' ? input.version : null
   const convertedLegacy = sourceVersion === null
@@ -520,11 +590,19 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   if (!convertedLegacy && hasLegacyRows) {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
-  const machines = normalizeMachineDefinitions(input as unknown as Project)
-  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0, edgeEntryStrategiesReset: 0 }
+  const migrationInfo: ProjectMigrationInfo = {
+    retractHeightsReexpressed: 0,
+    edgeEntryStrategiesReset: 0,
+    machineDiagnostics: [],
+    rescuedMachineDefinitions: [],
+    rescueMachineDefinitions: rescue,
+  }
+  // Nest records are session state, never read from a file (#889).
+  const project = normalizeProject({ ...input, nests: undefined }, migrationInfo)
+  const machines = migrationInfo.machineNormalization
+    ?? normalizeMachineDefinitions(input as unknown as Project)
   return {
-    // Nest records are session state, never read from a file (#889).
-    project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
+    project,
     sourceVersion,
     convertedLegacy,
     retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,
@@ -533,8 +611,30 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
       customDefinitions: machines.customDefinitions,
       compacted: machines.compacted,
       unresolvedSelectionId: machines.unresolvedSelectionId,
+      diagnostics: machines.diagnostics,
     },
   }
+}
+
+/**
+ * A loaded stock in canonical form. A round bar is repaired by
+ * {@link normalizeRoundStock} and a square blank by
+ * {@link normalizeSquareStock}, each keeping its shape and axis; anything else
+ * — `shape` absent, `'block'`, or an unknown value — becomes a block with no
+ * `shape` and no `axis` key, so files written before round stock existed
+ * normalize exactly as they did before and an old 3.3 file is never read as a
+ * bar.
+ */
+function canonicalizeStock(stock: Stock): Stock {
+  const profile = { ...stock.profile, closed: stock.profile.closed ?? true }
+  if (stock.shape === 'round') {
+    return normalizeRoundStock({ ...stock, profile })
+  }
+  if (stock.shape === 'square') {
+    return normalizeSquareStock({ ...stock, profile })
+  }
+  const { shape: _shape, axis: _axis, ...block } = stock as BlockStock & { axis?: unknown }
+  return { ...block, profile }
 }
 
 /** Normalize a decoded project without ever placing resolved geometry in features. */
@@ -584,6 +684,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
           profile: canonicalized.feature.sketch.profile,
           dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
           text: cloneTextFeatureData(canonicalized.feature.text),
+          ...(canonicalized.feature.canned
+            ? { canned: cloneCannedShapeData(canonicalized.feature.canned) }
+            : {}),
           stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
           operation: canonicalized.feature.operation,
           regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -617,6 +720,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
             profile: canonicalized.feature.sketch.profile,
             dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
             text: cloneTextFeatureData(canonicalized.feature.text),
+            ...(canonicalized.feature.canned
+              ? { canned: cloneCannedShapeData(canonicalized.feature.canned) }
+              : {}),
             stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
             operation: canonicalized.feature.operation,
             regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -634,9 +740,23 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     }
   }
 
+  // Machining setups (issue #944). 0.6.0 stays on one format number, so this
+  // migration keys on the fields being absent, not on the version: a 3.2 file
+  // and a 3.3 file saved before setups existed both lack `setups`, and both
+  // become one Top setup holding every operation in order. A file that has
+  // setups is validated strictly and then only reconciled.
+  const rawSetups: { setups?: unknown; activeSetupId?: unknown } = input
+  const setups = decodeSetups(rawSetups.setups) ?? [defaultTopSetup()]
+
   const authoritativeProject: Project = {
     ...input,
     version: LATEST_PROJECT_VERSION,
+    // A placeholder only: the type the project actually gets is resolved just
+    // below from the normalized machine snapshot, and nothing between the two
+    // points reads `meta.projectType` (issue #1028).
+    meta: { ...input.meta, projectType: input.meta.projectType ?? 'milling' },
+    setups,
+    activeSetupId: typeof rawSetups.activeSetupId === 'string' ? rawSetups.activeSetupId : setups[0].id,
     modelAssets,
     featureDefinitions,
     features,
@@ -653,9 +773,36 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
   const nests = normalizeNests(input.nests, features)
   if (nests.length > 0) authoritativeProject.nests = nests
   else delete authoritativeProject.nests
-  const machines = normalizeMachineDefinitions(authoritativeProject)
-  const meta = {
+  const machines = normalizeMachineDefinitions(
+    authoritativeProject,
+    migrationInfo?.rescueMachineDefinitions,
+  )
+  // `normalizeMachineDefinitions` is the one rescue-or-keep gate for this path:
+  // it already moved every unselected definition into the library on a durable
+  // rescue, or kept it in `machineDefinitions` when the rescue failed. Running
+  // the write gate again would rescue the originals a second time and re-embed
+  // them under their old ids (an edited bundled copy would appear both in My
+  // Machines under its new id and in the project under the bundled one), and
+  // its diagnostics would disagree with `compacted` (#1119).
+  const normalizedMachineDefinitions = machines.machineDefinitions
+  const normalizedSelectedMachineId = machines.selectedMachineId
+  if (migrationInfo) {
+    migrationInfo.machineDiagnostics = machines.diagnostics
+    migrationInfo.rescuedMachineDefinitions = machines.customDefinitions
+    migrationInfo.machineNormalization = machines
+  }
+  const meta: ProjectMeta = {
     ...authoritativeProject.meta,
+    // A stored type is kept exactly; a file without one gets what today's
+    // machine and stock imply, read off the normalized snapshot so a cleared
+    // selection cannot leave a plasma type behind (issue #1028).
+    projectType: input.meta.projectType ?? inferProjectTypeFrom(
+      {
+        machineDefinitions: normalizedMachineDefinitions,
+        selectedMachineId: normalizedSelectedMachineId,
+      },
+      authoritativeProject.stock,
+    ),
     showFeatureInfo: authoritativeProject.meta.showFeatureInfo ?? true,
     showDimensions: authoritativeProject.meta.showDimensions ?? true,
     copyMode: authoritativeProject.meta.copyMode ?? 'reference',
@@ -663,26 +810,26 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     operationClearanceZ: authoritativeProject.meta.operationClearanceZ ?? defaultOperationClearanceZ(authoritativeProject.meta.units),
     clampClearanceXY: authoritativeProject.meta.clampClearanceXY ?? defaultClampClearanceXY(authoritativeProject.meta.units),
     clampClearanceZ: authoritativeProject.meta.clampClearanceZ ?? defaultClampClearanceZ(authoritativeProject.meta.units),
-    machineDefinitions: machines.machineDefinitions,
-    selectedMachineId: machines.selectedMachineId,
+    machineDefinitions: normalizedMachineDefinitions,
+    selectedMachineId: normalizedSelectedMachineId,
   }
 
   const stockBounds = getStockBounds(authoritativeProject.stock)
+  // The legacy rule moves an origin that sits on the block's min corner (its
+  // former default). A bar — round or square — is never a legacy file, so a
+  // bar whose origin the user put on its min corner reloads unchanged
+  // (#1016 C2-S2: a square blank keeps a custom corner origin too).
   const legacyDefaultOrigin = authoritativeProject.origin
     && authoritativeProject.origin.name === 'Origin'
     && authoritativeProject.origin.x === stockBounds.minX
     && authoritativeProject.origin.y === stockBounds.minY
     && authoritativeProject.origin.z === authoritativeProject.stock.thickness
+    && !isBarStock(authoritativeProject.stock)
   const deduped = dedupeProjectIds({
     ...authoritativeProject,
     meta,
-    stock: {
-      ...authoritativeProject.stock,
-      profile: {
-        ...authoritativeProject.stock.profile,
-        closed: authoritativeProject.stock.profile.closed ?? true,
-      },
-    },
+    stock: canonicalizeStock(authoritativeProject.stock),
+    // normalizeTool backfills missing plasma fields, even in mid-release 3.3 files.
     tools: authoritativeProject.tools.map((tool, index) => normalizeTool(tool, authoritativeProject.meta.units, index)),
     tabs: authoritativeProject.tabs.map((tab, index) => normalizeTab(tab, authoritativeProject.meta.units, index)),
     clamps: authoritativeProject.clamps.map((clamp, index) => normalizeClamp(clamp, authoritativeProject.meta.units, index)),
@@ -691,11 +838,15 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
       : defaultOrigin(authoritativeProject.stock),
   })
   const normalizedBase = syncFeatureTreeProject(deduped)
-  const prunedProject = pruneUnusedModelAssets({
+  // Plasma operation defaults also key on missing fields, including mid-release 3.3 files.
+  const operations = authoritativeProject.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index))
+  assertOperationSetupsExist(operations, setups)
+  // Stamps every operation with its setup and rebuilds each setup's list.
+  const prunedProject = syncProjectSetups(pruneUnusedModelAssets({
     ...normalizedBase,
     backdrop: normalizeBackdrop(authoritativeProject.backdrop, normalizedBase),
-    operations: authoritativeProject.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
-  })
+    operations,
+  }))
   const resolvedStockSource = prunedProject.stock.sourceFeature
     ? resolveFeatureRow(prunedProject, prunedProject.stock.sourceFeature)
     : null
@@ -717,5 +868,10 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     migrationInfo.edgeEntryStrategiesReset = edgeEntry.rewritten
   }
   syncIdCounter(edgeEntry.project)
-  return edgeEntry.project
+  // A round bar's chuck and tailstock are centred and their height derived
+  // (#392 slice C). The stock and clamps are canonical by now. Canned models
+  // regenerate their mesh from the saved parameters here, so a file opened in
+  // another build cannot disagree with itself about the geometry (#1112 A2).
+  const rebuiltCannedModels = rebuildCannedShapeModels(edgeEntry.project)
+  return syncRoundWorkholding(pruneUnusedModelAssets(rebuiltCannedModels))
 }

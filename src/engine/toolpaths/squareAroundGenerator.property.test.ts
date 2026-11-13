@@ -1,0 +1,5584 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * #1045 slice K: the square blank's around-mode generator, proven safe by an
+ * independent model.
+ *
+ * Slice K replaced the export standing-material guard with a
+ * regenerate-and-match check: the export proves a toolpath is the *current
+ * generator's own* motion, not that the motion is safe. Safety is therefore a
+ * property of the generator, and this file is the test that owns it.
+ *
+ * It generates 300 seeded **generator-emitted** square around programs -- flat
+ * and ball cutters, Ø1-12, a bare around rough, a bare around finish, around
+ * rough + around finish, and along rough + around finish, with and without
+ * retained ends, `stepdown` 0.5-3 mm (one seed in ten draws the low end; the
+ * rest take 3 mm, since a millimetre-scale layer multiplies both the emitted
+ * rings and the replay), default and custom stepover/sampling, blanks from 10
+ * to 60 mm square and 20 to 1 000 mm long (every size band, the large ones on
+ * one seed in eight) -- plus, since #1045 slice R, eight along-finish programs
+ * (a bare along finish and an along rough + along finish, on a round bar and a
+ * square blank) -- and replays each one, in order, through its own reference.
+ * A finish emits only its model-following passes (2026-10-22 decision), so a
+ * finish-only program cuts to full depth in one pass: it is replayed, but its
+ * layer bounds are not asserted; it must carry the no-rough advisory instead.
+ * At least 38 of them (every eighth seed) are **default-parameter**
+ * programs on a shortened bar: their generator sampling is never coarsened, so
+ * the defaults the adapter actually emits are covered rather than only the
+ * coarsened draws. (The non-compact draws ask for a coarser sampling than the
+ * adapter's defaults for the run's time budget; the reference stays four times
+ * finer than whatever the case asks for.)
+ *
+ * #1093 adds the around ring-to-ring link to the proof. A full ring's end and
+ * the next ring's start share one physical angle, so the emitter feeds along
+ * the bar instead of retracting. The finish follows the model at that angle
+ * through a row sampled no coarser than the ring spacing or a quarter of the
+ * tool radius; the rough rises only to the material its own earlier layers
+ * left, plus the 1 mm clearance, and that constant-height traverse is a rapid.
+ * Ten **round-bar** around cases (a bare rough, a rough + finish and a bare
+ * finish, with and without retained ends) join the seeded set, plus four
+ * **non-revolved** models -- a square prism inside a round bar and inside a
+ * square blank, ball and flat -- so a link crossing a feature between two rings
+ * is replayed against the full cutter body rather than one ray of a surface of
+ * revolution. The square-blank pair is the case the rough's cutter-body window
+ * exists for: the blank's own raised envelope at a neighbouring angle is not in
+ * the model sampler, and at a face-angle link it stands more than the 1 mm
+ * clearance above the link's ray. Every finish link is
+ * replayed too; after a rough its removal is bounded by that rough's stepdown
+ * (a surface link removes the between-ring terrace, so the rough's air
+ * allowance does not apply), while a finish-only link is covered by the
+ * advisory. The final-surface check reads the prism's own boundary radius, so a
+ * finish link that cuts 0.2 mm below it fails on these cases too. A split ring
+ * still retracts through the old travel path.
+ *
+ * #1117 makes the rough's ring-to-ring link stay down at the layer and cut. This
+ * file proves that independently on the same reference. A **cutting** link (one
+ * angle, along the bar) is an at-layer link, and it
+ * - removes at most **one rough stepdown** from the material the earlier layers
+ *   left -- never the terrace above it, and never a second layer's band;
+ * - keeps its whole commanded span at or above the model's own surface, sampled
+ *   at the reference's along resolution so a chord cannot sag through it, and
+ *   the reference's material under its own ray stays at or above the model;
+ * - leaves every cell its body can reach outside the cut band at the blank, so a
+ *   link that swings into a retained end is named;
+ * - never cuts outside the operation's region: the gap between two region bands
+ *   is uncut blank, and a stay-down link across it is the gouge this refuses.
+ * A link that cannot qualify keeps the #1093 raised form, whose constant-height
+ * traverse is a compact **rapid** the whole cutter body must clear standing
+ * material above -- it removes nothing. Every corner turn is checked too: a cut
+ * that sweeps A at one along position either cuts material at its own ray (a
+ * ring arc at this layer) or turns at the blank's corner envelope plus the
+ * clearance, and a "low" turn across the face fails. Eight always-present small
+ * around roughs carry the proof across round/square, ball/flat, **both stock
+ * axes and both units**, with and without a region; the run asserts that each of
+ * those dimensions produced at least one qualifying link, so the proof cannot
+ * pass by only covering the cases that happened to be drawn.
+ *
+ * The reference is written without the generator's helpers (no
+ * `squareRotaryStock`, no `rotaryModel` function is called here): the blank is
+ * a square cross-section sampled into dense polar slices per along position,
+ * the true cutter body is a flat's cylinder or a ball's sphere/shank
+ * (including the shank above a ball's equator), and the material is lowered
+ * through the exact ray/body intersection. The reference's along, angle and Z
+ * bins are four times finer than **every cell the generator uses**
+ * (`stepover`, `sampleSpacing`, `aroundArcStep`, **and the `requestedCellSize`
+ * height-map cell**); every move is swept continuously at that resolution
+ * (#1045 slice L), so a pure plunge sweeps its whole Z travel and a slanted
+ * move cannot hide a bite between the sampled fractions. The generator's
+ * adaptive angular refinement is what makes the emitted motion meet its own
+ * 0.005 mm surface bound, so the reference judges the *emitted moves* (not the
+ * ideal endpoints) and the surface tolerance includes that stated bound. A
+ * consecutive straight **commanded** A move at one along and Z is replayed as
+ * the one line it describes; that is the same controller path, not a coarser
+ * one. A run of A-cuts whose interior points all lie within 0.05 mm of the
+ * chord is replayed as that chord too: a ring emitted as hundreds of short
+ * fragments would otherwise re-scan its whole cutter footprint for every
+ * fragment, and 0.05 mm is an order of magnitude tighter than the 0.49 mm gouge
+ * this suite exists to catch (and far inside both the around allowance and the
+ * along stage's exact-geometry radial bound). The reference's sweep, pure-plunge, ball-shank and interior-span behaviour
+ * is pinned by hand-computed unit cases before the seeded run. #1103 slice ca-a
+ * adds the diagonal case: a move whose along sweep crosses the cell only in its
+ * interior, with both endpoints outside the cutter's axial footprint, so an
+ * endpoint-only reference would remove nothing and the swept one cuts the cell
+ * to the bottom face. Every ray keeps
+ * all occupied intervals, including cavities below an unchanged outer surface.
+ * Engagement sums newly removed material over the whole swept move; interior
+ * material counts against the same bound and retained ends must keep every span.
+ *
+ * Each case is drawn inside a fixed work budget. A case whose drawn bar would
+ * exceed it is redrawn **shorter** (20 mm is the floor) and, only at that floor,
+ * has its generator sampling -- including a coarser `requestedCellSize` -- and
+ * finally its `stepdown`, still inside 0.5-3 mm, coarsened. The reference's
+ * 4x-finer relationship to whatever the case asks the generator for is never
+ * reduced.
+ *
+ * #1095 adds eight always-present **bare ball roughs** and eight **rough +
+ * finish sequences**, each with a positive stock to leave and a retained end on
+ * both sides, round and square, along and around. They prove independently that
+ * the retained walls keep the blank and that the material left over the first
+ * cutter radius next to each wall is bounded by the ball's own fillet plus the
+ * leave and the sampler's one-cell allowance -- not the wall thickened by the
+ * leave. The sequences run the finish in the same direction and prove the
+ * finish leaves the requested stock across the machined band (assertion 3) with
+ * no lifted wall collar. The tight discrimination against that thickened wall
+ * lives in the unit fixtures, where the height-map cell can be finer than the
+ * reference's grid allows here.
+ *
+ * For each program the reference asserts:
+ *
+ * 1. a **rough** turning cut or plunge engages no more than its `stepdown`
+ *    plus the stated reference tolerance. An along-mode stage's non-turning
+ *    cuts are judged on a different metric (#1045 slice O): the **radial
+ *    surface bite**, the material one move removes from the outermost solid at
+ *    a ray, is asserted against the cutter's **exact geometry** (#1045 slice
+ *    Q): the largest radial bite one stepdown can take, derived from the ball's
+ *    sphere cap (or the flat's bottom face) at the ray's offset from the axis
+ *    -- see `alongRadialBiteBound`. A finish **after a rough** keeps that
+ *    bound with the **rough's** stepdown: the rough left at most one of those
+ *    above the surface, so the finish's model-following pass removes at most
+ *    that. A finish-only program has no layer bound at all (2026-10-22
+ *    decision); it is covered by the advisory. The reference's interior number
+ *    -- material below an intact shell -- is reported as a diagnostic and
+ *    deliberately **not** asserted (#1045 slice P): it is not a radial depth
+ *    and has no geometric bound, so the old stepover + diameter "flank bound"
+ *    was removed.
+ * 2. no cutter body enters a retained end: every reference cell outside the
+ *    band keeps the blank's material;
+ * 3. no rapid turns A below the blank's corner radius plus 1 mm clearance;
+ * 4. a finished surface (a finish after a rough) is within tolerance of the
+ *    model -- it is not cut below it, and no more than the finish's own scallop
+ *    plus the sampler's stated cell lift is left above it. A finish-only
+ *    program is not a finished surface: the raw blank stands between its
+ *    passes, so only the not-below-the-model half applies to it.
+ *
+ * #1045 slice S adds an **independent structural assertion on the emitted
+ * moves**, for every **rough** stage in both directions: at every along
+ * position / angle sample the stage cuts, its commanded tip radii must descend
+ * from the raw stock's surface -- the round bar's radius or the square blank's
+ * **touch radius** at that angle, computed here from the blank's box and the
+ * cutter's body, never from `rotaryModel` -- one operation stepdown at a time.
+ * The first cut at a sample must be within one stepdown of the raw surface;
+ * later cuts may use the slice-Q cutter-cap allowance as well. A cut above the
+ * standing material removes nothing and is ignored, so the emitter's vertical
+ * step leg is judged by the drop it actually makes. This is what a missing
+ * clearing pass violates: the along-stage standing-material allowance in
+ * assertion 1 is measured from whatever the reference still holds, so on its
+ * own it could excuse a whole uncleared column. That allowance is therefore
+ * conditional on this descent holding for the stage's own samples inside the
+ * measured cutter's footprint; otherwise the plain previous-layer bound
+ * applies.
+ *
+ * 2026-10-22 decision: a finish (around or along, round or square) only follows
+ * the model -- no clearing layers and no link to a rough. This file therefore
+ * asserts no layer bound for a finish-only program; the adapter's advisory,
+ * `rotaryFinishWithoutRough`, says it cuts to full depth in one pass, and the
+ * seeded program asserts that advisory through the real helper. A finish after a
+ * rough keeps the along-stage radial bound with the rough's stepdown.
+ *
+ * The per-sample **touch-radius gate** is asserted by the seeded square-material
+ * property in `rotarySquareAroundPasses.test.ts`, not duplicated here: a cut
+ * point above the blank's local radius is not necessarily air, because the
+ * cutter's body can reach material elsewhere in its slab, and a naive version
+ * of that check false-positives on a legitimate end-face cut.
+ *
+ * It reports the worst value found for each assertion.
+ *
+ * Run with: npx tsx src/engine/toolpaths/squareAroundGenerator.property.test.ts
+ */
+import assert from 'node:assert/strict'
+import { barCentre, barMaxRadius, barPivotZ, squareStock } from '../../types/barStock'
+import type { BarStock } from '../../types/project'
+import { defaultTool, getStockBounds, roundStock } from '../../types/project'
+import { convertLength, type Units } from '../../utils/units'
+import { generateRotaryFinish, generateRotaryRough } from './rotaryModel'
+import type { RotaryModelMesh, RotaryRegionMask } from './rotaryModel'
+import { rotaryFinishWithoutRough } from './rotaryOperation'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
+
+/**
+ * A rectangular region in the Around sheet's unwrapped coordinates (#1096): the
+ * along span and the across span from the sheet's zero line. Built here rather
+ * than through `regions.ts`, so the reference owns its own mask.
+ */
+interface CaseRegion {
+  readonly alongFrom: number
+  readonly alongTo: number
+  readonly acrossFrom: number
+  readonly acrossTo: number
+}
+
+/** One rectangle, or several disjoint ones (two bands leave untouched stock). */
+type CaseRegionSpec = CaseRegion | readonly CaseRegion[]
+
+function regionList(region: CaseRegionSpec): readonly CaseRegion[] {
+  return Array.isArray(region) ? region as readonly CaseRegion[] : [region as CaseRegion]
+}
+
+/**
+ * The region as a periodic mask: one sheet turn each way, like the generator's.
+ *
+ * It answers a **segment** as well as a point (#1096 review, #1117): a cutting
+ * ring link is one straight cut, and a mask built from include rectangles
+ * contains it exactly when its whole along span is covered. Point membership
+ * alone is not enough -- an excluded strip narrower than the generator's
+ * sampling falls between two tested points -- so a production mask (which comes
+ * from `buildRegionMask` and has this test) can refuse a link the point-only
+ * form cannot, and the proof has to be run against that same shape. The along
+ * intervals the rectangles cover are clipped and merged, so the answer does not
+ * depend on where the samples land.
+ */
+function regionMask(stock: BarStock, region: CaseRegionSpec): RotaryRegionMask {
+  const circumference = Math.PI * stock.thickness
+  const regions = regionList(region)
+  const at = (point: { x: number; y: number }): { along: number; across: number } => (stock.axis === 'x'
+    ? { along: point.x, across: point.y }
+    : { along: point.y, across: point.x })
+  const coversAcross = (across: number, rect: CaseRegion): boolean => {
+    // The mask is periodic in the across coordinate: `across` may be measured
+    // from any commanded turn (a helix reaches A720 while the sheet repeats
+    // every circumference). Solve for the turns whose shifted value lands in the
+    // rectangle instead of assuming the commanded A is within one turn of it
+    // (#1103 ca-d fix 1: a full-turn helix was read as outside its own band).
+    const first = Math.ceil((rect.acrossFrom - across) / circumference - 1e-9)
+    const last = Math.floor((rect.acrossTo - across) / circumference + 1e-9)
+    return first <= last
+  }
+  return {
+    containsPoint(point: { x: number; y: number }): boolean {
+      const { along, across } = at(point)
+      return regions.some((rect) => along >= rect.alongFrom && along <= rect.alongTo
+        && coversAcross(across, rect))
+    },
+    containsSegment(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+      const start = at(from)
+      const end = at(to)
+      // A ring link runs along the bar at one angle; a segment that does not is
+      // judged at its endpoints and midpoint rather than by interval algebra.
+      if (Math.abs(start.across - end.across) > 1e-9) {
+        const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+        return (this.containsPoint(from) && this.containsPoint(to) && this.containsPoint(mid))
+      }
+      const across = start.across
+      const low = Math.min(start.along, end.along)
+      const high = Math.max(start.along, end.along)
+      const intervals: Array<{ from: number; to: number }> = []
+      for (const rect of regions) {
+        if (!coversAcross(across, rect)) continue
+        const clippedFrom = Math.max(low, rect.alongFrom)
+        const clippedTo = Math.min(high, rect.alongTo)
+        if (clippedTo >= clippedFrom) intervals.push({ from: clippedFrom, to: clippedTo })
+      }
+      intervals.sort((a, b) => a.from - b.from)
+      let reach = low
+      for (const interval of intervals) {
+        if (interval.from > reach + 1e-9) return false
+        reach = Math.max(reach, interval.to)
+      }
+      return reach >= high - 1e-9
+    },
+  }
+}
+
+// ── deterministic random source ──────────────────────────────────────────
+
+// ── the model, built here rather than through the generator's helpers ─────
+
+/** A closed revolved surface: one ring per profile entry, quads between them. */
+function revolved(
+  stock: BarStock,
+  profile: readonly { along: number; radius: number }[],
+  segments = 96,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  // The ring's cross-section is the same in both frames; only which coordinate
+  // carries the along position changes (#1117: the proof covers both axes).
+  const push = (along: number, across: number, up: number): void => {
+    if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+    else positions.push(centre + across, along, pivot + up)
+  }
+  for (const ring of profile) {
+    for (let j = 0; j < segments; j++) {
+      const t = 2 * Math.PI * j / segments
+      push(ring.along, ring.radius * Math.cos(t), ring.radius * Math.sin(t))
+    }
+  }
+  for (let ring = 0; ring + 1 < profile.length; ring++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = ring * segments
+      const b = (ring + 1) * segments
+      index.push(a + j, a + j2, b + j2, a + j, b + j2, b + j)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * An extruded rectangle (a closed box) inside the blank (#1093). A box is not a
+ * surface of revolution: its material height varies with the angle under one
+ * cutter pose, so replaying a link across it exercises the **full cutter
+ * body**, not just the link's own ray. The side walls are quads rather than the
+ * vertex-pair triangles first tried here; the pair winding left the
+ * across-facing sides invisible to the sampler at some angles. The reference
+ * stays blind to the generator's model code.
+ */
+function box(
+  stock: BarStock,
+  alongFrom: number,
+  alongTo: number,
+  acrossMin: number,
+  acrossMax: number,
+  upMin: number,
+  upMax: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  // Extruded rectangle (four corners, caps and side walls). The earlier
+  // vertex-pair box winding left the across-facing sides invisible to the
+  // sampler at some angles; the prism's side quads sample at every angle.
+  const crossSection: Array<readonly [number, number]> = [
+    [acrossMin, upMin], [acrossMax, upMin], [acrossMax, upMax], [acrossMin, upMax],
+  ]
+  const positions: number[] = []
+  for (const along of [alongFrom, alongTo]) {
+    for (const [across, up] of crossSection) {
+      if (stock.axis === 'x') positions.push(along, centre + across, pivot + up)
+      else positions.push(centre + across, along, pivot + up)
+    }
+  }
+  const n = crossSection.length
+  const index: number[] = []
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    index.push(i, j, n + j, i, n + j, n + i)
+  }
+  for (let i = 1; i < n - 1; i++) index.push(0, i + 1, i, n, n + i, n + i + 1)
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * A closed surface whose radius varies **along the bar and with the angle**
+ * (#1117 rl-e): a cylindrical body with one smooth lobe. This is the case that
+ * makes a ring *partial* and its run boundary drift with the along position, so
+ * two neighbouring rings' runs end a few degrees apart and the link that joins
+ * them changes A. `radiusAt(along, aDeg)` is written in the Around frame's own A
+ * -- A0 is the mesh's +up direction, which is the angle the around rings start
+ * and end on -- so the mesh and the case's `meshRadiusAt2` boundary are the same
+ * function and the independent model read is not a second convention.
+ *
+ * The placement below is `A + 90`, the **mirror** of the mapping a turned stock
+ * actually has (see `twisted`). It is only interchangeable with it for a model
+ * that is **even** in A, which every `lobed` caller here is; a chiral model has
+ * to go through `twisted` (#1117 rl-f).
+ */
+function lobed(
+  stock: BarStock,
+  radiusAt: (along: number, aDeg: number) => number,
+  alongFrom: number,
+  alongTo: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  const centre = barCentre(stock)
+  const pivot = barPivotZ(stock)
+  const positions: number[] = []
+  const index: number[] = []
+  for (let step = 0; step <= steps; step++) {
+    const along = alongFrom + (alongTo - alongFrom) * step / steps
+    for (let j = 0; j < segments; j++) {
+      const aDeg = 360 * j / segments
+      // A0 is the mesh's +up direction, so the mesh angle is A + 90 degrees.
+      const meshAngle = (aDeg + 90) * Math.PI / 180
+      const radius = radiusAt(along, aDeg)
+      const across = centre + radius * Math.cos(meshAngle)
+      const up = pivot + radius * Math.sin(meshAngle)
+      if (stock.axis === 'x') positions.push(along, across, up)
+      else positions.push(across, along, up)
+    }
+  }
+  for (let step = 0; step < steps; step++) {
+    for (let j = 0; j < segments; j++) {
+      const j2 = (j + 1) % segments
+      const a = step * segments + j
+      const b = step * segments + j2
+      const c = (step + 1) * segments + j2
+      const d = (step + 1) * segments + j
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+/**
+ * `lobed`, for a model that is **chiral** in A (#1117 rl-f): a twisted ridge
+ * whose crest moves with the along position, where the angular mapping is not
+ * interchangeable with its mirror.
+ *
+ * `lobed` places Around-frame A at the mesh's `A + 90` direction. A positive
+ * machine A turns the stock by +A about the bar axis (`turnStripTriangles`,
+ * `rotarySampling.ts`), so the direction the tool meets at A is the mesh's
+ * `90 - A`. Reading the model as `A -> -A` turns `lobed`'s `A + 90` placement
+ * into that `90 - A`: mesh direction `d` ends up holding `radiusAt(along,
+ * 90 - d)`, which is exactly the machine-frame surface, and the case's
+ * `meshRadiusAt2: radiusAt` oracle is then the mesh rather than its mirror.
+ *
+ * The rl-e fixture this replaces built its mesh with `radiusAt(along,
+ * meshAngle - 90)` -- `lobed`'s placement used as if it were this one -- which
+ * put the mirror image under the tool: the oracle claimed 3.4909 mm where the
+ * mesh stood at 2.6805 mm at X2.895 / A14.391, and four links that met the mesh
+ * were read as gouges.
+ */
+function twisted(
+  stock: BarStock,
+  radiusAt: (along: number, aDeg: number) => number,
+  alongFrom: number,
+  alongTo: number,
+  steps: number,
+  segments: number,
+): RotaryModelMesh {
+  return lobed(stock, (along, aDeg) => radiusAt(along, -aDeg), alongFrom, alongTo, steps, segments)
+}
+
+/**
+ * The finished model's radius at an along position between two profile rings,
+ * or `null` in a vertical shoulder (where a revolved "radius at this along"
+ * does not exist) or outside the model.
+ */
+function modelSurfaceAt(profile: readonly { along: number; radius: number }[], along: number): number | null {
+  for (let i = 0; i + 1 < profile.length; i++) {
+    const a = profile[i]
+    const b = profile[i + 1]
+    if (b.along === a.along) {
+      if (along === a.along) return null
+      continue
+    }
+    if (along < a.along || along > b.along) continue
+    return a.radius + (b.radius - a.radius) * (along - a.along) / (b.along - a.along)
+  }
+  return null
+}
+
+/**
+ * #1095 slice D: no emitted ring or pass may sit in the air over a retained
+ * wall while the model below it is lower.
+ *
+ * The check reads the **emitted** motion, not the sampler: one group per ring
+ * (around, constant along and an A sweep) or one per pass (along, constant
+ * angle and an along sweep). A group is an air pass when **every** point is
+ * above the model by more than the finish's own stock to leave plus the
+ * sampler's whole conservative lift (a cell plus its pad, counted as
+ * `2.75 * cell`), and at or below the blank's surface at its own angle. That
+ * allowance is well above a model-following ring and well below the gap a ring
+ * lifted to a tall wall's top leaves (`wall - model - radius`). A point that
+ * meets the model, or that stands above the blank (a travel-height step),
+ * clears the group. A model without a radius at that along (a vertical
+ * shoulder) also clears it.
+ *
+ * Only the finish is checked. A rough's first layer sits one stepdown below the
+ * raw blank by design and is a real cut, not air; the finish is the operation
+ * whose entire surface is the model.
+ */
+function assertNoWallTopPass(
+  entry: Case,
+  moves: readonly ToolpathMove[],
+  direction: 'around' | 'along',
+  pivot: number,
+): void {
+  const groups = new Map<string, Array<{ along: number; angle: number; tip: number }>>()
+  const add = (key: string, along: number, angle: number, tip: number): void => {
+    let points = groups.get(key)
+    if (!points) {
+      points = []
+      groups.set(key, points)
+    }
+    points.push({ along, angle, tip })
+  }
+  const record = (move: ToolpathMove): void => {
+    if (move.kind !== 'cut') return
+    if (direction === 'around') {
+      // A ring sweeps A at one along position; a plunge or a step has one A and
+      // is not part of the sweep.
+      if (move.from.x !== move.to.x || move.from.a === move.to.a) return
+      const key = `x${move.from.x.toFixed(9)}`
+      add(key, move.from.x, move.from.a ?? 0, move.from.z - pivot)
+      add(key, move.to.x, move.to.a ?? 0, move.to.z - pivot)
+    } else {
+      // A pass sweeps along at one angle; a plunge or a step has one along
+      // position and is not part of the sweep.
+      if (move.from.a !== move.to.a || move.from.x === move.to.x) return
+      const key = `a${(move.from.a ?? 0).toFixed(9)}`
+      add(key, move.from.x, move.from.a ?? 0, move.from.z - pivot)
+      add(key, move.to.x, move.to.a ?? 0, move.to.z - pivot)
+    }
+  }
+  for (const move of moves) record(move)
+  // The finish's own leave is not air, and the sampler's conservative lift is
+  // the documented allowance for a model-following ring.
+  const airGap = entry.stockToLeave + 2.75 * entry.requestedCellSize
+  for (const points of groups.values()) {
+    if (points.length < 3) continue
+    let air = true
+    for (const point of points) {
+      const model = modelSurfaceAt(entry.profile, point.along)
+      if (model === null) {
+        air = false
+        break
+      }
+      if (point.tip - model <= airGap) {
+        air = false
+        break
+      }
+      if (point.tip > blankRadius(entry.stock, point.angle) + entry.requestedCellSize) {
+        air = false
+        break
+      }
+    }
+    assert.ok(!air,
+      `${entry.label}: the ${direction} pass at ${points[0].along.toFixed(2)} sits in the air `
+      + `(${(Math.min(...points.map((point) => point.tip)) - modelSurfaceAt(entry.profile, points[0].along)!).toFixed(3)} mm `
+      + `above the model)`)
+  }
+}
+
+/** The steepest slope of the model's revolved surface, for the flat's staircase. */
+function modelMaxSlope(profile: readonly { along: number; radius: number }[]): number {
+  let slope = 0
+  for (let i = 0; i + 1 < profile.length; i++) {
+    const a = profile[i]
+    const b = profile[i + 1]
+    if (b.along === a.along) continue
+    slope = Math.max(slope, Math.abs(b.radius - a.radius) / (b.along - a.along))
+  }
+  return slope
+}
+
+// ── the independent reference ─────────────────────────────────────────────
+//
+// A polar slice per along position: `material[i][k]` is the radius of the
+// material still standing at along bin `i` and angle bin `k`. It starts at the
+// square blank's own cross-section and is lowered by the exact ray/cutter
+// intersection of every commanded sample. Written blind to `rotaryModel.ts`.
+
+export const worstCell = { depth: 0, along: 0, angle: 0, material: 0, contact: 0 }
+/**
+ * Largest cumulative interior removal from one ray during a commanded move,
+ * with the case and the commanded pose that produced it (#1045 slice O): a
+ * reported worst value is useless without the program it came from.
+ */
+export const interiorWorst = {
+  depth: 0, along: 0, angle: 0, kind: '', label: '', seed: -1,
+  fromAngle: 0, toAngle: 0, fromAlong: 0, toAlong: 0, fromTip: 0, toTip: 0,
+  material: 0, standing: 0, stepover: 0, diameter: 0, stepdown: 0,
+}
+/** The case whose moves are being replayed, so a worst value can name it. */
+let currentCaseLabel = ''
+let currentCaseSeed = -1
+let currentCaseStepover = 0
+let currentCaseDiameter = 0
+let moveInteriorWorst = 0
+/**
+ * Largest radial bite into the **outermost solid** any one ray took during a
+ * commanded move (#1045 slice O). A cavity below the surface makes the outer
+ * radius jump across air that an earlier pose already removed, so the raw
+ * `startMaterial - material[index]` overstates the bite; this counts only the
+ * removal from the interval that is the surface at that step.
+ */
+let moveSurfaceWorst = 0
+let moveSurfaceCell = { along: 0, angle: 0, material: 0, standing: 0 }
+const referenceStats = { moves: 0, cells: 0, steps: 0 }
+const lowestContact = { contact: Number.POSITIVE_INFINITY, along: 0, angle: 0, tip: 0, kind: '' }
+
+interface Reference {
+  alongStart: number
+  alongBins: number
+  alongBin: number
+  angleBins: number
+  angleDeg: number
+  /** The blank's largest radius, an upper bound on any cell's material. */
+  maxMaterial: number
+  /** Non-scalar occupied rays; all others are the interval [0, material[index]]. */
+  occupied: Map<number, Array<{ contact: number; exit: number }>>
+  material: Float64Array
+}
+
+/** The blank's radius along the radial ray at `angleDeg`: round is constant, square is its flat. */
+function blankRadius(stock: BarStock, angleDeg: number): number {
+  if (stock.shape === 'round') return stock.thickness / 2
+  const radians = angleDeg * Math.PI / 180
+  return stock.thickness / 2 / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+}
+
+/**
+ * The along-the-bar span of the blank in the stock's own axis (#1117): the
+ * reference is a frame, so a case drawn along Y must not be windowed with the
+ * X bounds. Without this an axis-Y case would replay inside a window that does
+ * not cover its moves, and every assertion would silently skip the clipped
+ * rows.
+ */
+function alongBounds(stock: BarStock): { min: number; max: number } {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x'
+    ? { min: bounds.minX, max: bounds.maxX }
+    : { min: bounds.minY, max: bounds.maxY }
+}
+
+/**
+ * The raw stock's surface at one program angle, derived here rather than by the
+ * generator (#1045 slice S).
+ *
+ * A round bar is its radius at every angle. A square blank's surface at a pass
+ * is not the ray's own radius: the cutter's body spans a slab across the pass
+ * ray, and the highest blank material inside that slab is what the first layer
+ * meets. That **touch radius** is computed from the blank's box and the
+ * cutter's own cross-section -- a flat's bottom face (`Y`) or a ball's lower
+ * surface (`Y - r + sqrt(r^2 - X^2)`) -- by taking the maximum over the square's
+ * intersection with `|X| <= r`. That intersection is convex, so its maximum is
+ * on the boundary: a square corner inside the slab, an edge crossing
+ * `X = +/-r`, or, for a ball, the interior tangency of a square edge.
+ */
+function rawStockSurface(stock: BarStock, angleDeg: number, cutterRadius: number, ball: boolean): number {
+  if (stock.shape === 'round') return stock.thickness / 2
+  const half = stock.thickness / 2
+  const radians = angleDeg * Math.PI / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+    const across = u * half
+    const up = v * half
+    return { x: across * cos - up * sin, y: across * sin + up * cos }
+  })
+  const reach = Math.abs(cutterRadius)
+  const heightAt = ball
+    ? (x: number, y: number): number => y - reach + Math.sqrt(Math.max(0, reach * reach - x * x))
+    : (_x: number, y: number): number => y
+  const tolerance = 1e-9 * Math.max(1, reach, half)
+  let best = Number.NEGATIVE_INFINITY
+  const consider = (x: number, y: number): void => {
+    if (Math.abs(x) <= reach + tolerance) best = Math.max(best, heightAt(x, y))
+  }
+  for (const corner of corners) consider(corner.x, corner.y)
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i]
+    const b = corners[(i + 1) % corners.length]
+    const dx = b.x - a.x
+    if (dx === 0) continue
+    for (const boundary of [-reach, reach]) {
+      const t = (boundary - a.x) / dx
+      if (t < -tolerance || t > 1 + tolerance) continue
+      const clamped = Math.min(1, Math.max(0, t))
+      consider(boundary, a.y + clamped * (b.y - a.y))
+    }
+    if (!ball) continue
+    const length = Math.hypot(dx, b.y - a.y)
+    if (!(length > 0)) continue
+    // d/dX [Y - r + sqrt(r^2 - X^2)] = 0 at X = +/- r |dY| / |edge|.
+    const xStar = reach * Math.abs(b.y - a.y) / length
+    for (const x of [xStar, -xStar]) {
+      const t = (x - a.x) / dx
+      if (t < 0 || t > 1) continue
+      consider(x, a.y + t * (b.y - a.y))
+    }
+  }
+  return best
+}
+
+function createReference(stock: BarStock, alongStart: number, alongEnd: number, alongBin: number, angleBins: number): Reference {
+  const alongBins = Math.max(1, Math.ceil((alongEnd - alongStart) / alongBin))
+  const material = new Float64Array(alongBins * angleBins)
+  const angleDeg = 360 / angleBins
+  const row = new Float64Array(angleBins)
+  for (let k = 0; k < angleBins; k++) row[k] = blankRadius(stock, (k + 0.5) * angleDeg)
+  for (let i = 0; i < alongBins; i++) material.set(row, i * angleBins)
+  return { alongStart, alongBins, alongBin, angleBins, angleDeg, maxMaterial: barMaxRadius(stock), occupied: new Map(), material }
+}
+
+/**
+ * The radii at which the cutter body meets a ray `dTheta` off its axis and
+ * `dx` along it, as the interval(s) of solid the ray passes through. A flat is
+ * the solid `radial ≥ tip` inside its cylinder; a ball is its sphere **plus**
+ * the shank above the ball's equator, exactly the emitted body. The intervals
+ * are united into the convex body interval before subtracting it from every
+ * occupied stock interval, including spans below an intact outer surface.
+ */
+function bodyInterval(
+  ball: boolean,
+  cutterRadius: number,
+  tip: number,
+  dTheta: number,
+  dx: number,
+): { contact: number; exit: number } | null {
+  const cos = Math.cos(dTheta)
+  const sin = Math.sin(dTheta)
+  const alongSq = dx * dx
+  const radiusSq = cutterRadius * cutterRadius
+  const reachSq = radiusSq - alongSq
+  if (cos <= 0) return null
+  if (!ball) {
+    // The solid is the cylinder `radial ≥ tip`: the ray enters at the bottom
+    // face's own radius and leaves through the cylindrical wall.
+    if (reachSq < 0) return null
+    const contact = Math.max(0, tip / cos)
+    const exit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
+    return exit >= contact ? { contact, exit } : null
+  }
+  const centre = tip + cutterRadius
+  if (!(centre > 0)) return null
+  const discriminant = reachSq - centre * centre * sin * sin
+  let contact = Number.POSITIVE_INFINITY
+  let exit = Number.NEGATIVE_INFINITY
+  if (discriminant >= 0) {
+    const root = Math.sqrt(discriminant)
+    contact = Math.max(0, centre * cos - root)
+    exit = centre * cos + root
+  }
+  if (reachSq >= 0) {
+    const shankStart = centre / cos
+    const shankExit = Math.abs(sin) > 1e-12 ? Math.sqrt(reachSq) / Math.abs(sin) : Number.POSITIVE_INFINITY
+    if (shankExit >= shankStart) {
+      contact = Math.min(contact, shankStart)
+      exit = Math.max(exit, shankExit)
+    }
+  }
+  // Sphere plus shank is convex: their ray intervals overlap whenever both
+  // exist. Their union is one interval; avoid sorting/allocating a second list
+  // for every swept pose. Stock can still contain arbitrarily many intervals.
+  return exit >= contact ? { contact, exit } : null
+}
+
+/**
+ * The widest angle off its axis at which the cutter body can reach a cell whose
+ * standing material reaches `materialRadius` (#1045 slice M).
+ *
+ * A ball's body -- the sphere **and** the shank above its equator -- stays
+ * within `asin(R / (tip + R))` of the axis, because every point of it is inside
+ * the cylinder of radius `R` about the axis whose closest radius to the turn
+ * centre is `tip + R`. That bound is independent of the material: a ray 20 deg
+ * off a Ø4 ball at tip 2 crosses the body at radii 2.30..5.85, so material out
+ * at 6.5 is still reached in the interior. The old `asin(R / materialRadius)`
+ * admitted only 17.9 deg there and skipped the cell entirely.
+ *
+ * A flat's bottom face crosses a ray at `tip / cos(delta)`, so material out to
+ * `M` is reachable up to `min(atan(R / tip), acos(tip / M))`; `asin(R / M)` (the cylinder wall at
+ * the material radius) understated that too.
+ */
+function bodyAngularReachDeg(ball: boolean, cutterRadius: number, tip: number, materialRadius: number): number {
+  if (ball) {
+    const centre = tip + cutterRadius
+    return centre > cutterRadius ? Math.min(90, Math.asin(cutterRadius / centre) * 180 / Math.PI) : 90
+  }
+  if (!(tip > 0)) return 90
+  if (!(materialRadius > tip)) return 0
+  return Math.min(Math.atan(cutterRadius / tip), Math.acos(tip / materialRadius)) * 180 / Math.PI
+}
+
+/**
+ * Apply one commanded move to the reference and return the deepest bite it
+ * takes (`0` when it removes nothing measurable).
+ *
+ * The move is **swept continuously** (#1045 slice L): for every cell the
+ * parameter interval in which the cutter body can reach that cell is derived
+ * from the cell's angle, along position and standing radius (the angular reach,
+ * the cutter's axial footprint, and the body's contact being at or above the
+ * tip), and that interval is sampled no coarser than the reference's own angle,
+ * along and Z resolution. A pure plunge has a non-zero interval in Z and its
+ * whole travel is swept; a slanted move cannot hide a bite in the middle at a
+ * fraction the old single "nearest" sample never visited.
+ */
+function referenceMove(
+  reference: Reference,
+  move: ToolpathMove,
+  pivot: number,
+  cutterRadius: number,
+  ball: boolean,
+  alongOf: (point: ToolpathMove['from']) => number,
+  fromAngle: number,
+  toAngle: number,
+): number {
+  const { material, alongBins, alongStart, alongBin, angleBins, angleDeg } = reference
+  const fromAlong = alongOf(move.from)
+  const toAlong = alongOf(move.to)
+  const fromTip = move.from.z - pivot
+  const toTip = move.to.z - pivot
+  const dAlong = toAlong - fromAlong
+  const dAngle = toAngle - fromAngle
+  const dTip = toTip - fromTip
+  const tipMin = Math.min(fromTip, toTip)
+  // Bound the whole cutter body, including interior contact. The blank's
+  // radius cannot bound the cutter wall's angular reach at smaller radii.
+  const halfSpanDegrees = bodyAngularReachDeg(ball, cutterRadius, tipMin, reference.maxMaterial)
+  const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - cutterRadius - alongStart) / alongBin))
+  const i1 = Math.min(alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + cutterRadius - alongStart) / alongBin))
+  const windowLo = Math.min(fromAngle, toAngle) - halfSpanDegrees - angleDeg
+  const windowHi = Math.max(fromAngle, toAngle) + halfSpanDegrees + angleDeg
+  const allAngles = windowHi - windowLo >= 360 - 1e-9
+  const firstBin = allAngles ? 0 : Math.floor(windowLo / angleDeg)
+  const lastBin = allAngles ? angleBins - 1 : Math.ceil(windowHi / angleDeg)
+  referenceStats.moves++
+  let engagement = 0
+  moveInteriorWorst = 0
+  moveSurfaceWorst = 0
+  moveSurfaceCell = { along: 0, angle: 0, material: 0, standing: 0 }
+  worstCell.depth = 0
+  for (let i = i0; i <= i1; i++) {
+    const cellAlong = alongStart + (i + 0.5) * alongBin
+    const rowOffset = i * angleBins
+    for (let cell = firstBin; cell <= lastBin; cell++) {
+      const k = allAngles ? cell : ((cell % angleBins) + angleBins) % angleBins
+      const cellAngle = (k + 0.5) * angleDeg
+      const index = rowOffset + k
+      referenceStats.cells++
+      const startMaterial = material[index]
+      if (!(startMaterial > 0)) continue
+      let standing = startMaterial
+      let removed = 0
+      let interiorRemoved = 0
+      let surfaceBite = 0
+      const materialRadius = startMaterial
+      // The body's contact is never below the tip, so a tip above the standing
+      // material removes nothing. The along and tip windows do not depend on
+      // which turn of a multi-turn helix reaches this cell, so they are once.
+      let lo = 0
+      let hi = 1
+      if (Math.abs(dAlong) > 1e-12) {
+        const a = (cellAlong - cutterRadius - fromAlong) / dAlong
+        const b = (cellAlong + cutterRadius - fromAlong) / dAlong
+        lo = Math.max(lo, Math.min(a, b))
+        hi = Math.min(hi, Math.max(a, b))
+        if (hi < lo) continue
+      } else if (Math.abs(cellAlong - fromAlong) > cutterRadius) {
+        continue
+      }
+      if (Math.abs(dTip) > 1e-12) {
+        const boundary = (materialRadius - fromTip) / dTip
+        if (dTip > 0) hi = Math.min(hi, boundary)
+        else lo = Math.max(lo, boundary)
+        if (hi < lo) continue
+      } else if (fromTip > materialRadius) {
+        continue
+      }
+      if (hi < 0 || lo > 1) continue
+      lo = Math.max(0, lo)
+      hi = Math.min(1, hi)
+      const angularHalfDeg = bodyAngularReachDeg(ball, cutterRadius, tipMin, materialRadius)
+      // Every representative of this cell's angle the move's A span can reach.
+      // A multi-turn helix visits the same physical angle once per turn at a
+      // different along position, so the turn that reaches this cell is not the
+      // one nearest the move's midpoint: a nine-turn rough helix left the
+      // reference's material at the blank on every turn but one, and the next
+      // layer was read as a 3.58 mm first cut (#1103 ca-d fix 1).
+      const targets: number[] = []
+      if (Math.abs(dAngle) > 1e-12) {
+        const minA = Math.min(fromAngle, toAngle)
+        const maxA = Math.max(fromAngle, toAngle)
+        const first = Math.ceil((minA - angularHalfDeg - cellAngle) / 360)
+        const last = Math.floor((maxA + angularHalfDeg - cellAngle) / 360)
+        for (let turn = first; turn <= last; turn++) targets.push(cellAngle + 360 * turn)
+      } else {
+        targets.push(cellAngle + 360 * Math.round((fromAngle - cellAngle) / 360))
+      }
+      for (const target of targets) {
+        // The interval of the move that can reach this cell on this turn.
+        let turnLo = lo
+        let turnHi = hi
+        if (Math.abs(dAngle) > 1e-12) {
+          const a = (target - angularHalfDeg - fromAngle) / dAngle
+          const b = (target + angularHalfDeg - fromAngle) / dAngle
+          turnLo = Math.max(turnLo, Math.min(a, b))
+          turnHi = Math.min(turnHi, Math.max(a, b))
+          if (turnHi < turnLo) continue
+        } else {
+          const delta = Math.abs(((target - fromAngle + 180) % 360 + 360) % 360 - 180)
+          if (delta > angularHalfDeg + angleDeg) continue
+        }
+        turnLo = Math.max(0, turnLo)
+        turnHi = Math.min(1, turnHi)
+        if (turnHi < turnLo) continue
+        // Steps no coarser than the reference's own resolution in angle, along
+        // and Z.
+        // At fixed along and tip, ray/body intervals nest as |delta| grows:
+        // contact rises and exit falls. The closest angle therefore gives the
+        // exact union over a turning move. A pure plunge has the same nesting
+        // as tip rises, so its deepest endpoint is the exact swept union too.
+        // Slanted moves still require the full fine-grid continuous sweep.
+        const fixedRing = dAlong === 0 && dTip === 0
+        const purePlunge = dAlong === 0 && dAngle === 0
+        const exactT = fixedRing && dAngle !== 0
+          ? Math.max(turnLo, Math.min(turnHi, (target - fromAngle) / dAngle))
+          : dTip <= 0 ? turnHi : turnLo
+        const steps = fixedRing || purePlunge ? 0 : Math.max(1, Math.ceil(Math.max(
+          Math.abs(dAngle) * (turnHi - turnLo) / angleDeg,
+          Math.abs(dAlong) * (turnHi - turnLo) / alongBin,
+          Math.abs(dTip) * (turnHi - turnLo) / alongBin,
+        )))
+        referenceStats.steps += steps + 1
+        for (let step = 0; step <= steps; step++) {
+          const t = steps === 0 ? exactT : turnLo + (turnHi - turnLo) * step / steps
+          const toolAlong = fromAlong + dAlong * t
+          const dx = cellAlong - toolAlong
+          if (dx * dx >= cutterRadius * cutterRadius) continue
+          const toolAngle = fromAngle + dAngle * t
+          let delta = cellAngle - toolAngle
+          while (delta > 180) delta -= 360
+          while (delta < -180) delta += 360
+          const tip = fromTip + dTip * t
+          const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
+          if (!span || span.contact >= standing - 1e-12) continue
+          const cavity = reference.occupied.get(index)
+          if (!cavity && span.exit >= standing) {
+            // Most samples lower one solid surface. Preserve the scalar form
+            // without allocating occupied/subtraction lists on this hot path.
+            const next = Math.min(standing, span.contact)
+            removed += standing - next
+            surfaceBite += standing - next
+            standing = next
+            material[index] = next
+            if (removed > engagement) {
+              engagement = removed
+              Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: next })
+            }
+            if (span.contact < lowestContact.contact) {
+              Object.assign(lowestContact, { contact: span.contact, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+            }
+            // The fast path is the ordinary case (material removed from the
+            // outermost solid), so it must update the same radial-bite counter the
+            // slow path does (#1045 slice P, Codex pass 9): a 1.95 mm removal was
+            // reporting zero here because this branch jumped straight back to the
+            // next step.
+            if (surfaceBite > moveSurfaceWorst) {
+              moveSurfaceWorst = surfaceBite
+              moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: next }
+            }
+            continue
+          }
+          let occupied = cavity ?? [{ contact: 0, exit: standing }]
+          const next: Array<{ contact: number; exit: number }> = []
+          for (const solid of occupied) {
+            const low = Math.max(solid.contact, span.contact)
+            const high = Math.min(solid.exit, span.exit)
+            if (high <= low + 1e-12) { next.push(solid); continue }
+            const depth = high - low
+            removed += depth
+            if (high < standing - 1e-12) interiorRemoved += depth
+            else if (high >= solid.exit - 1e-12) surfaceBite += solid.exit - low
+            if (solid.contact < low) next.push({ contact: solid.contact, exit: low })
+            if (high < solid.exit) next.push({ contact: high, exit: solid.exit })
+            if (low < lowestContact.contact) {
+              Object.assign(lowestContact, { contact: low, along: cellAlong, angle: cellAngle, tip, kind: move.kind })
+            }
+          }
+          occupied = next
+          standing = occupied.length ? occupied[occupied.length - 1].exit : 0
+          material[index] = standing
+          // A single interval starting at zero needs only the scalar fast path.
+          if (occupied.length <= 1 && (!occupied.length || occupied[0].contact === 0)) reference.occupied.delete(index)
+          else reference.occupied.set(index, occupied)
+          moveInteriorWorst = Math.max(moveInteriorWorst, interiorRemoved)
+          if (interiorRemoved > interiorWorst.depth) {
+            Object.assign(interiorWorst, {
+              depth: interiorRemoved, along: cellAlong, angle: cellAngle, kind: move.kind,
+              label: currentCaseLabel, seed: currentCaseSeed, fromAngle, toAngle, fromAlong, toAlong, fromTip, toTip,
+              material: startMaterial, standing,
+              stepover: currentCaseStepover, diameter: currentCaseDiameter,
+            })
+          }
+          if (surfaceBite > moveSurfaceWorst) {
+            moveSurfaceWorst = surfaceBite
+            moveSurfaceCell = { along: cellAlong, angle: cellAngle, material: startMaterial, standing: material[index] }
+          }
+          if (removed > engagement) {
+            engagement = removed
+            Object.assign(worstCell, { depth: removed, along: cellAlong, angle: cellAngle, material: startMaterial, contact: standing })
+          }
+          if (!(standing > 0)) break
+        }
+      }
+    }
+  }
+  return engagement
+}
+
+/**
+ * How far the cutter body of a constant-height along rapid clears the
+ * reference's standing material, in mm (#1093).
+ *
+ * The rough's ring-to-ring link is now a rapid: it runs at one angle and one
+ * height, derived from what the operation's own earlier layers left plus the
+ * clearance. It must be in air, so at every cell the cutter passes over the
+ * body's own contact must be at or above the material -- not the tip, because a
+ * ball or a flat reaches a neighbouring angle higher than its lowest point.
+ * The move is along the bar, so the tool passes directly over every cell it
+ * spans; `dx = 0` is the deepest pose for that cell. Returns the smallest
+ * `contact - material`, negative when the body is inside the material.
+ */
+export const rapidWorst = { along: 0, angle: 0, material: 0, contact: 0, tip: 0, delta: 0 }
+
+function rapidClearance(
+  reference: Reference,
+  move: ToolpathMove,
+  pivot: number,
+  cutterRadius: number,
+  ball: boolean,
+  alongOf: (point: ToolpathMove['from']) => number,
+): number {
+  const { material, alongBins, alongStart, alongBin, angleBins, angleDeg } = reference
+  const fromAlong = alongOf(move.from)
+  const toAlong = alongOf(move.to)
+  const tip = move.from.z - pivot
+  const angle = move.from.a ?? 0
+  const halfSpan = bodyAngularReachDeg(ball, cutterRadius, tip, reference.maxMaterial)
+  const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - cutterRadius - alongStart) / alongBin))
+  const i1 = Math.min(alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + cutterRadius - alongStart) / alongBin))
+  const loBin = Math.floor((angle - halfSpan - angleDeg) / angleDeg)
+  const hiBin = Math.ceil((angle + halfSpan + angleDeg) / angleDeg)
+  let margin = Number.POSITIVE_INFINITY
+  for (let i = i0; i <= i1; i++) {
+    const cellAlong = alongStart + (i + 0.5) * alongBin
+    // The tool passes over this cell only inside the link's own span; outside
+    // it, the nearest pose is the nearer endpoint, `dx` away. Using dx = 0 for
+    // a cell beyond the span overstates the body's reach by the whole offset.
+    const dx = cellAlong < fromAlong ? fromAlong - cellAlong
+      : cellAlong > toAlong ? cellAlong - toAlong : 0
+    if (dx > cutterRadius) continue
+    for (let cell = loBin; cell <= hiBin; cell++) {
+      const k = ((cell % angleBins) + angleBins) % angleBins
+      const cellAngle = (k + 0.5) * angleDeg
+      const delta = Math.abs(((cellAngle - angle + 180) % 360 + 360) % 360 - 180)
+      if (delta > halfSpan + angleDeg) continue
+      const standing = material[i * angleBins + k]
+      if (standing <= 0) continue
+      const span = bodyInterval(ball, cutterRadius, tip, delta * Math.PI / 180, dx)
+      if (!span) continue
+      const cellMargin = span.contact - standing
+      if (cellMargin < margin) {
+        margin = cellMargin
+        Object.assign(rapidWorst, {
+          along: cellAlong, angle: cellAngle,
+          material: standing, contact: span.contact, tip, delta,
+        })
+      }
+    }
+  }
+  return margin
+}
+
+/** Count cavities as well as surface loss when judging retained stock. */
+function retainedRemoval(reference: Reference, index: number, blank: number): number {
+  const occupied = reference.occupied.get(index)
+  const remaining = occupied
+    ? occupied.reduce((sum, span) => sum + span.exit - span.contact, 0)
+    : reference.material[index]
+  return blank - remaining
+}
+
+/**
+ * The common engagement assertion for a turning cut and for a plunge (#1045
+ * slice M). Extracted so a hand-built over-bound plunge is checked directly by
+ * the unit block below: a mutation that turns this check into a no-op fails
+ * there as well as in the seeded run.
+ */
+function checkEngagement(engagement: number, bound: number, message: string): void {
+  assert.ok(engagement <= bound + 1e-6,
+    `${message} engages ${engagement.toFixed(4)} mm, over its ${bound.toFixed(4)} mm bound`)
+}
+
+// ── reference unit tests against hand-computed values (#1045 slice L) ─────
+
+/**
+ * One reference row with `angleBins` half-degree cells and one along bin, so a
+ * cell's angle is `(k + 0.5) * 0.5` and its along position is `cellAlong`.
+ */
+function singleCellReference(cellAlong: number, material: number, angleBins = 720): Reference {
+  const alongBin = 0.05
+  const reference = createReference(
+    squareStock(20, 40, 'x', { x: 0, y: 0 }),
+    cellAlong - alongBin / 2,
+    cellAlong + alongBin / 2,
+    alongBin,
+    angleBins,
+  )
+  reference.material.fill(material)
+  return reference
+}
+
+console.log('Testing the continuous reference against hand-computed values...')
+{
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  // Reviewer repro 1: a Ø4 flat move from tip 10 to 8 while A turns 0 -> 10.
+  // The A0.25 cell is nearest the move's start, but the body reaches it deepest
+  // at the end (dTheta = 9.75° with the tip at 8): the bottom face there is
+  // 8 / cos(9.75°) = 8.117 mm, so material at 9.95 is cut to ~8.12, not to the
+  // 9.95 the old single nearest sample reported.
+  {
+    const reference = singleCellReference(10, 9.95)
+    const k = 0 // cell angle 0.25°
+    const engagement = referenceMove(reference, {
+      kind: 'cut',
+      from: { x: 10, y: 10, z: 10, a: 0 },
+      to: { x: 10, y: 10, z: 8, a: 10 },
+    }, 0, 2, false, alongOf, 0, 10)
+    const left = reference.material[k]
+    const expected = 8 / Math.cos(9.75 * Math.PI / 180)
+    assert.ok(Math.abs(left - expected) < 0.02,
+      `flat sweep: material at A0.25 was ${left.toFixed(4)}, expected ${expected.toFixed(4)}`)
+    assert.ok(left < 8.2, `flat sweep: material at A0.25 (${left.toFixed(4)}) is cut below 8.2`)
+    assert.ok(engagement > 1.5, `flat sweep: engagement ${engagement.toFixed(4)} is the full bite`)
+  }
+  // Reviewer repro 2: a pure plunge. The whole Z travel is swept, so the
+  // starting tip (10) is not the answer: the cut reaches the end tip (8).
+  {
+    const reference = singleCellReference(10, 9.95)
+    const k = 0
+    const engagement = referenceMove(reference, {
+      kind: 'plunge',
+      from: { x: 10, y: 10, z: 10, a: 0.25 },
+      to: { x: 10, y: 10, z: 8, a: 0.25 },
+    }, 0, 2, false, alongOf, 0.25, 0.25)
+    assert.ok(Math.abs(reference.material[k] - 8) < 0.01,
+      `pure plunge: material at A0.25 was ${reference.material[k].toFixed(4)}, expected 8`)
+    assert.ok(Math.abs(engagement - 1.95) < 0.01,
+      `pure plunge: engagement ${engagement.toFixed(4)}, expected 1.95`)
+    // #1045 slice P (Codex pass 9): this removal takes the reference's ordinary
+    // (no-cavity) fast path, which used to `continue` before updating the
+    // radial-bite counter, so a 1.95 mm surface removal reported zero.
+    assert.ok(Math.abs(moveSurfaceWorst - 1.95) < 0.01,
+      `pure plunge: the radial surface bite is recorded (${moveSurfaceWorst.toFixed(4)}, expected 1.95)`)
+  }
+  // Pass-8 repro: a pure plunge reaches the ray ten degrees off-axis,
+  // even though the blank-radius window would exclude it.
+  {
+    const reference = singleCellReference(10, 0)
+    const k = 20
+    reference.material[k] = 9.95
+    const engagement = referenceMove(reference, {
+      kind: 'plunge', from: { x: 10, y: 10, z: 10, a: 0.25 },
+      to: { x: 10, y: 10, z: 8, a: 0.25 },
+    }, 0, 2, false, alongOf, 0.25, 0.25)
+    const contact = 8 / Math.cos(10 * Math.PI / 180)
+    assert.ok(Math.abs(reference.material[k] - contact) < 1e-9)
+    assert.ok(Math.abs(engagement - 1.826587104914) < 1e-9)
+    assert.throws(() => checkEngagement(engagement, 1, 'off-axis plunge'), /off-axis plunge engages/)
+  }
+  // Reviewer repro 3: interior ball-shank removal. A Ø4 ball (tip 2, centre 4)
+  // at dTheta = 20° removes material at 5.5 mm: the sphere ends at 5.218, the
+  // shank covers 4.257..5.848, and the union's lower boundary is the sphere's
+  // contact 4cos20 - sqrt(16 - 16sin²20) = 2.299. The old outer-wall condition
+  // skipped material above the sphere; the body reaches it.
+  {
+    const reference = singleCellReference(10, 5.5)
+    const k = 40 // cell angle 20.25°; the cutter sits at A0.25
+    referenceMove(reference, {
+      kind: 'cut',
+      from: { x: 10, y: 10, z: 2, a: 0.25 },
+      to: { x: 10, y: 10, z: 2, a: 0.25 },
+    }, 0, 2, true, alongOf, 0.25, 0.25)
+    const expected = 4 * Math.cos(20 * Math.PI / 180)
+      - Math.sqrt(Math.max(0, 4 - 16 * Math.sin(20 * Math.PI / 180) ** 2))
+    assert.ok(Math.abs(reference.material[k] - expected) < 0.02,
+      `ball shank: material at A${(k + 0.5) * 0.5} was ${reference.material[k].toFixed(4)}, expected ${expected.toFixed(4)}`)
+    assert.ok(reference.material[k] < 2.4, 'ball shank: the interior shank removes down to the sphere contact')
+  }
+  // Reviewer repro 4 (#1045 slice M): interior removal with the material above
+  // the body. The same Ø4 ball at 20 deg occupies radii 2.299..5.848. With the
+  // solid out to 6.5 the whole body is inside it: the outermost surface cannot
+  // move (the body never crosses it), but the 3.548 mm span the body removes is
+  // interior material and must be recorded as engagement, not lost. The old
+  // `standing > exit` skip reported zero there.
+  {
+    const reference = singleCellReference(10, 6.5)
+    const k = 40 // cell angle 20.25 deg; the cutter sits at A0.25
+    // Stand material only at the cell under test, so the returned engagement is
+    // that cell's and not a nearer cell's (the ray at the cutter's own angle is
+    // cut much deeper).
+    reference.material.fill(0)
+    reference.material[k] = 6.5
+    const engagement = referenceMove(reference, {
+      kind: 'cut',
+      from: { x: 10, y: 10, z: 2, a: 0.25 },
+      to: { x: 10, y: 10, z: 2, a: 0.25 },
+    }, 0, 2, true, alongOf, 0.25, 0.25)
+    const radians = 20 * Math.PI / 180
+    const contact = 4 * Math.cos(radians)
+      - Math.sqrt(Math.max(0, 4 - 16 * Math.sin(radians) ** 2))
+    const exit = 2 / Math.sin(radians)
+    assert.ok(Math.abs(engagement - (exit - contact)) < 0.0001,
+      'interior span: the complete occupied span counts as engagement')
+    assert.throws(() => checkEngagement(engagement, 1, 'ball interior repro'), /ball interior repro engages/)
+    assert.deepEqual(reference.occupied.get(k), [{ contact: 0, exit: contact }, { contact: exit, exit: 6.5 }])
+    assert.equal(referenceMove(reference, {
+      kind: 'cut', from: { x: 10, y: 10, z: 2, a: 0.25 }, to: { x: 10, y: 10, z: 2, a: 0.25 },
+    }, 0, 2, true, alongOf, 0.25, 0.25), 0, 'a second identical pose removes no cavity material twice')
+    assert.ok(Math.abs(interiorWorst.depth - (exit - contact)) < 0.02,
+      `interior span: recorded span ${interiorWorst.depth.toFixed(4)}, expected ${(exit - contact).toFixed(4)}`)
+    assert.ok(Math.abs(retainedRemoval(reference, k, 6.5) - (exit - contact)) < 1e-9,
+      'retained-end exclusion detects the cavity despite its intact outer surface')
+    assert.equal(reference.material[k], 6.5,
+      'interior span: the outermost stock is unchanged, because the body never crosses it')
+  }
+  // A fixed-height ring reaches a ray deepest in the middle of its A span,
+  // not at an endpoint. Its exact swept union must preserve that minimum.
+  for (const ball of [false, true]) {
+    const reference = singleCellReference(10, 0)
+    const k = 40
+    reference.material[k] = 6.5
+    const engagement = referenceMove(reference, {
+      kind: 'cut', from: { x: 10, y: 10, z: 2, a: 0.25 },
+      to: { x: 10, y: 10, z: 2, a: 40.25 },
+    }, 0, 2, ball, alongOf, 0.25, 40.25)
+    assert.ok(Math.abs(engagement - 4.5) < 1e-9)
+    assert.ok(Math.abs(reference.material[k] - 2) < 1e-9,
+      'a ring includes its closest-angle pose inside the commanded sweep')
+  }
+  // Reviewer repro 5 (#1045 slice M): the engagement bound is checked for a
+  // plunge as well as a turning cut. A plunge that takes more than its bound
+  // must be reported; this is the assertion the seeded run applies to every
+  // plunge, exercised directly so dropping the check fails here too.
+  {
+    assert.throws(() => checkEngagement(4.5, 3, 'plunge repro'), /plunge repro engages 4\.5000 mm/,
+      'an over-bound plunge is reported')
+    checkEngagement(3, 3, 'plunge at its bound')
+  }
+  console.log('  continuous sweep, pure plunge, ball-shank and interior-span repros match')
+}
+
+// #1045 slice O: the reference unit tests above are not a separate mode. The
+// seeded run always follows them; an environment variable must not be able to
+// skip the 300 programs CI is meant to check.
+interiorWorst.depth = 0
+
+// ---------------------------------------------------------------------------
+// #1103 slice ca-a: diagonal moves sample the actual combined path.
+//
+// A diagonal cut changes the along position and A together. The move below
+// crosses the reference cell in along only in its **interior**: at the start
+// and at the end the cutter's axial footprint is 1.5 mm away from the cell,
+// outside its 0.6 mm radius, so an endpoint-only sweep removes nothing. Between
+// them the body is over the cell while A is within the flat's angular reach,
+// and the cell is cut to the bottom face's own contact. This is the property a
+// helix depends on (slice ca-c): the reference must walk the commanded path,
+// not swap in one endpoint's pose.
+// ---------------------------------------------------------------------------
+{
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const reference = singleCellReference(10, 0)
+  const k = 10 // cell angle 5.25 deg
+  reference.material[k] = 9.95
+  const engagement = referenceMove(reference, {
+    kind: 'cut',
+    from: { x: 8.5, y: 10, z: 2, a: 0 },
+    to: { x: 11.5, y: 10, z: 2, a: 10 },
+  }, 0, 0.6, false, alongOf, 0, 10)
+  assert.ok(reference.material[k] < 2.01 && reference.material[k] > 1.99,
+    `diagonal combined path: material ${reference.material[k].toFixed(4)}, expected the 2.0 mm bottom face`)
+  assert.ok(engagement > 7.9,
+    `diagonal combined path: engagement ${engagement.toFixed(4)} is the cell's full removal`)
+  // Both endpoints' own poses leave the cell untouched: the removal above can
+  // only have come from an interior sample.
+  const endpoints = singleCellReference(10, 0)
+  endpoints.material[k] = 9.95
+  for (const pose of [
+    { x: 8.5, a: 0 }, { x: 11.5, a: 10 },
+  ]) {
+    referenceMove(endpoints, {
+      kind: 'cut', from: { x: pose.x, y: 10, z: 2, a: pose.a },
+      to: { x: pose.x, y: 10, z: 2, a: pose.a },
+    }, 0, 0.6, false, alongOf, pose.a, pose.a)
+  }
+  assert.equal(endpoints.material[k], 9.95, 'neither endpoint pose reaches the cell')
+  console.log('  diagonal combined-path repro: the interior sweep reaches a cell both endpoints miss')
+}
+
+// ── the seeded cases ──────────────────────────────────────────────────────
+
+/**
+ * The reference's grid is capped, and so is the number of cell visits one
+ * program may cost. A case whose drawn bar would exceed the visit cap is
+ * redrawn **shorter** -- never with a coarser reference -- so the 4x-finer
+ * resolution above always holds. The drawn side, cutter, stepdown, stepover and
+ * model are kept; only the bar length shrinks (20 mm is the stated minimum).
+ */
+const MAX_REFERENCE_CELLS = 150_000
+const MAX_REPLAY_CELLS = 400_000
+/**
+ * How far an intermediate commanded point may sit from the chord that replaces
+ * its run, in millimetres (#1045 slice M). Every move is still swept at the
+ * reference's own resolution, but a ring emitted as hundreds of three-degree
+ * fragments would otherwise re-scan its whole footprint for each fragment. A
+ * 0.05 mm chord tolerance is far inside this file's stated allowances (the
+ * around `alongBin + ballRise` on the order of a third of a millimetre, and the
+ * along stage's exact-geometry radial bound of about a millimetre) and an order
+ * of magnitude tighter than the 0.49 mm gouge this suite was built to catch.
+ */
+const COALESCE_TOLERANCE_MM = 0.05
+const MAX_ANGLE_BINS = 2_048
+
+type ProgramKind = 'rough' | 'finish' | 'both' | 'mixed'
+
+interface Case {
+  label: string
+  stock: BarStock
+  profile: { along: number; radius: number }[]
+  /**
+   * A non-revolved model (#1093). When present it replaces the revolved mesh;
+   * `profile` is then only the label's shape and `meshRadiusAt` supplies the
+   * boundary the finished-surface check measures against.
+   */
+  mesh?: RotaryModelMesh
+  /** The non-revolved model's boundary radius at one angle (#1093 review). */
+  meshRadiusAt?: (angleDeg: number) => number
+  /**
+   * The same boundary for a model whose radius also varies **along** the bar
+   * (#1117 rl-e). The lobe case needs it: the boundary angle only drifts because
+   * the lobe's cross-section changes along, so one angle's radius is not enough.
+   */
+  meshRadiusAt2?: (along: number, angleDeg: number) => number
+  /** The along span the non-revolved model occupies. */
+  meshAlong?: { readonly from: number; readonly to: number }
+  type: 'flat_endmill' | 'ball_endmill'
+  diameter: number
+  stepdown: number
+  stepover: number
+  roughSpacing: number
+  finishSpacing: number
+  requestedCellSize: number
+  stockToLeave: number
+  programKind: ProgramKind
+  roughKind: 'around' | 'along'
+  /** The finish's own pass direction (#1045 slice R adds along finishes). */
+  finishKind: 'around' | 'along'
+  retained: boolean
+  alongStart: number
+  alongEnd: number
+  defaultParams: boolean
+  /** A default-parameter case whose bar is drawn short; never coarsened. */
+  compact: boolean
+  /**
+   * A per-case replay budget (#1093 review). A small mesh case's conservative
+   * estimate overstates its actual replay, and coarsening it would loosen the
+   * finished-surface bound past the 0.2 mm gouge this set exists to catch.
+   */
+  maxReplayCells?: number
+  /**
+   * #1095: a bare rough whose radial stock to leave must apply to the model
+   * only. The replay then also asserts that the material next to each retained
+   * wall is bounded by the ball fillet plus the leave, instead of the lifted
+   * thickened wall.
+   */
+  wallLeave?: boolean
+  /**
+   * #1095: a rough + finish sequence with the same rule. The finish's own
+   * model-following passes must keep the requested stock across the machined
+   * band (assertion 3), and it must not lift a collar over a thickened wall.
+   */
+  wallLeaveSequence?: boolean
+  /**
+   * #1095 slice D: a tall retained wall (three cutter radii above the model) so
+   * a ring that the sampler lifts to the wall's top can be told apart from the
+   * model by more than the height-map cell. The replay asserts no emitted ring
+   * or pass is in the air over the wall while the model below is lower.
+   */
+  wallAir?: boolean
+  /**
+   * #1096: a region the operation is limited to, in the Around sheet's
+   * unwrapped coordinates. Every non-air emitted move must keep its tool centre
+   * inside this area (plus the cutter radius), and -- on a square blank -- a
+   * turn that leaves it must be at the travel height. More than one rectangle
+   * makes disjoint bands with untouched stock between them.
+   */
+  region?: CaseRegionSpec
+  /**
+   * #1117: the project units every dimension above is drawn in. The generator
+   * converts its own millimetre constants through the tool's units, so an inch
+   * case is the same motion with every length divided by 25.4. Omitted means
+   * `mm`, which is every case that predates this slice.
+   */
+  units?: Units
+  /**
+   * #1117 rl-f: this case exists for links that also change A. The replay
+   * asserts it emitted at least one, so the swept-footprint branch of the link
+   * proof cannot pass vacuously on it.
+   */
+  requiresAcrossAngle?: boolean
+  /**
+   * #1117 (square links): this case exists for a square blank's **whole-ring**
+   * links -- the A0/A360 boundary of a ring below the blank's inscribed radius,
+   * which the touch-gate boundary rule used to refuse. The replay asserts it
+   * proved at least one, so restoring that rule fails here.
+   */
+  requiresWholeRingSquareLinks?: boolean
+}
+
+function normalizedTool(type: 'flat_endmill' | 'ball_endmill', diameter: number, units: Units = 'mm'): NormalizedTool {
+  const row = { ...defaultTool('mm', 1), units, type, diameter }
+  return {
+    id: 'tool', name: 'tool', sourceUnits: units, units,
+    type, diameter, radius: diameter / 2, vBitAngle: null,
+    flutes: row.flutes, material: row.material, defaultRpm: 0, defaultFeed: 0,
+    defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+  }
+}
+
+/**
+ * The generator's nominal angular arc step for an around pass, in project units
+ * (#1117: the proof runs in inches too, and the generator converts its 0.005 mm
+ * sagitta through the tool's units, so a replay that assumed millimetres would
+ * compare against the wrong grid).
+ */
+function aroundArcStep(cornerRadius: number, sampleSpacing: number, units: Units = 'mm'): number {
+  return Math.min(sampleSpacing, Math.sqrt(8 * cornerRadius * convertLength(0.005, 'mm', units)))
+}
+
+/**
+ * The generator's two sampling cells for this program: the distance between
+ * along steps (an around ring's `stepover`, or an along pass's
+ * `sampleSpacing`) and the distance round the blank between angle samples (an
+ * around pass's `aroundArcStep`, or an along pass's `stepover`). These are the
+ * cells the emitted program is actually built on; the height map inside the
+ * sampler is a model lookup, not an emitted grid.
+ */
+function generatorCells(entry: Case): { along: number; arc: number } {
+  const corner = barMaxRadius(entry.stock)
+  let along = Number.POSITIVE_INFINITY
+  let arc = Number.POSITIVE_INFINITY
+  const roughRan = entry.programKind !== 'finish'
+  const finishRan = entry.programKind !== 'rough'
+  if (roughRan) {
+    if (entry.roughKind === 'along') {
+      along = Math.min(along, entry.roughSpacing)
+      arc = Math.min(arc, entry.stepover)
+    } else {
+      along = Math.min(along, entry.stepover)
+      arc = Math.min(arc, aroundArcStep(corner, entry.roughSpacing, entry.units ?? 'mm'))
+    }
+  }
+  if (finishRan) {
+    if (entry.finishKind === 'along') {
+      along = Math.min(along, entry.finishSpacing)
+      arc = Math.min(arc, entry.stepover)
+    } else {
+      along = Math.min(along, entry.stepover)
+      arc = Math.min(arc, aroundArcStep(corner, entry.finishSpacing, entry.units ?? 'mm'))
+    }
+  }
+  return { along, arc }
+}
+
+/** The reference's grid for one case: bins, start, and cell count. */
+function referenceBudget(entry: Case): {
+  alongStart: number
+  alongBins: number
+  alongBin: number
+  angleBins: number
+  angleDeg: number
+  cells: number
+} {
+  const corner = barMaxRadius(entry.stock)
+  const cells = generatorCells(entry)
+  // The reference must be finer than **every** cell the generator uses,
+  // including the height-map cell it was asked for (`requestedCellSize`), which
+  // the earlier budget ignored (#1045 slice L). Angle, along and Z all take
+  // their step from the finest of them.
+  const fineAlong = Math.min(cells.along, entry.requestedCellSize)
+  const fineArc = Math.min(cells.arc, entry.requestedCellSize)
+  const alongBin = fineAlong / 4
+  const angleBins = Math.max(24, Math.ceil((2 * Math.PI * corner) / (fineArc / 4)))
+  const limits = alongBounds(entry.stock)
+  const band = (limits.max - limits.min) + 2 * (entry.diameter / 2 + 1)
+  const alongBins = Math.ceil(band / alongBin)
+  return {
+    alongStart: limits.min,
+    alongBins,
+    alongBin,
+    angleBins,
+    angleDeg: 360 / angleBins,
+    cells: alongBins * angleBins,
+  }
+}
+
+/** A small deterministic PRNG, so one case's draw does not depend on the order of others. */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * One seeded case, with the blank shortened by `lengthScale`. The large drawn
+ * lengths (up to 1 000 mm) are part of the draw; a case whose reference cannot
+ * afford them is redrawn shorter rather than checked against a coarser
+ * reference. `programKind` covers a bare rough, a bare finish (refused), an
+ * around rough + around finish, and an along rough + around finish.
+ */
+function drawCase(seed: number, lengthScale: number): Case {
+  const rand = mulberry32(seed * 0x9e3779b1 + 0x1045)
+  const pick = (low: number, high: number): number => low + (high - low) * rand()
+  // #1045 slice M: every eighth seed is a **default-parameter** program on a
+  // short bar. Its grid and replay are affordable without coarsening anything,
+  // so the default cutting programs the adapter actually produces are replayed,
+  // not only custom-sampling ones. The shapes cycle through finish-only,
+  // rough+finish, along-rough + around-finish and rough-only, and the retained
+  // ends alternate, so every combination is covered on both sides.
+  if (seed % 8 === 0) {
+    const compactKinds: ProgramKind[] = ['finish', 'both', 'mixed', 'rough', 'finish', 'both', 'mixed', 'both']
+    const slot = Math.floor(seed / 8)
+    const programKind = compactKinds[slot % compactKinds.length]
+    const roughKind = programKind === 'mixed' ? 'along' as const : 'around' as const
+    // Short bars and a cutter large against the blank keep the reference grid
+    // and the replay affordable at the adapter's own defaults.
+    const side = Math.round(pick(24, 30) * 2) / 2
+    const length = Math.max(20, Math.round(pick(20, 24) * lengthScale))
+    // Mostly balls: the surface sweep's window is `asin(R / material)`, so a
+    // ball's replay is affordable at default parameters; an eighth of the
+    // default cases carry a flat so flats are covered too.
+    const type = slot % 8 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
+    const diameter = Math.round(pick(8, Math.min(12, side * 0.5)) * 10) / 10
+    const radius = diameter / 2
+    const inscribed = side / 2
+    const modelRadius = Math.round(pick(0.7, 0.9) * inscribed * 10) / 10
+    const endsWanted = slot % 3 !== 2
+    const ends = endsWanted ? Math.max(1, Math.round(pick(0.05, 0.15) * length)) : 0
+    const bounds = getStockBounds(squareStock(side, length, 'x', { x: 0, y: 0 }))
+    const alongStart = bounds.minX + ends
+    const alongEnd = bounds.maxX - ends
+    const modelKind = seed % 2
+    const profile: { along: number; radius: number }[] = modelKind === 0
+      ? [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }]
+      : [
+        { along: alongStart, radius: modelRadius },
+        { along: alongEnd, radius: Math.max(0.6, modelRadius * pick(0.6, 0.95)) },
+      ]
+    const defaultStepover = Math.max(0.5 * diameter, 1e-3)
+    const stepover = defaultStepover
+    const roughSpacing = Math.max(radius / 2, 1e-3)
+    const finishSpacing = Math.max(radius / 4, 1e-3)
+    const requestedCellSize = Math.min(radius / 3, defaultStepover * 0.5)
+    // The layer depth drives the rough's layer count; a millimetre-scale
+    // default keeps a deep corner to a handful of layers.
+    const stepdown = Math.round(pick(2.5, 3) * 10) / 10
+    return {
+      label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
+        + `${modelKind === 0 ? 'cyl' : 'cone'} ${programKind} ${roughKind} rough `
+        + `ends ${ends} stepdown ${stepdown} default`,
+      stock: squareStock(side, length, 'x', { x: 0, y: 0 }),
+      profile,
+      type,
+      diameter,
+      stepdown,
+      stepover,
+      roughSpacing,
+      finishSpacing,
+      requestedCellSize,
+      stockToLeave: 0,
+      programKind,
+      roughKind,
+      finishKind: 'around',
+      retained: ends > 0,
+      alongStart,
+      alongEnd,
+      defaultParams: true,
+      compact: true,
+    }
+  }
+  // Every size band is covered, but the large ones only on one seed in eight:
+  // the reference's cells and sweep steps scale with the side, and a uniform
+  // draw over 10-60 mm spends most of the run on the top band.
+  const scale = [0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 1][seed % 16]
+  const sizeRanges: ReadonlyArray<{ side: [number, number]; length: [number, number] }> = [
+    { side: [10, 18], length: [20, 40] },
+    { side: [16, 28], length: [40, 110] },
+    { side: [24, 40], length: [110, 300] },
+    { side: [36, 60], length: [300, 1000] },
+  ]
+  const size = sizeRanges[scale]
+  const side = Math.round(pick(size.side[0], size.side[1]) * 2) / 2
+  const length = Math.max(20, Math.round(pick(size.length[0], size.length[1]) * lengthScale))
+  // A flat's replay is the expensive shape (the cutter's wall reaches a given
+  // material radius at `asin(R/M)`, and its ring follows the square's own
+  // corner more closely than a ball's), so a quarter of the seeds carry one.
+  const type = seed % 4 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
+  // The cutter scales with the blank, so the set covers Ø1-12 without asking a
+  // sub-millimetre tool to machine a metre of stock in this test.
+  const diameter = Math.round(pick(
+    scale === 0 ? 1 : scale === 1 ? 2 : scale === 2 ? 3 : 6,
+    Math.min(12, side * 0.5),
+  ) * 10) / 10
+  const radius = diameter / 2
+  const inscribed = side / 2
+  // Most programs leave a realistic corner to clear; a quarter keep a deep
+  // one (a rough that must clear it is the most demanding case).
+  const modelRadius = Math.round(pick(seed % 4 === 0 ? 0.4 : 0.6, 0.9) * inscribed * 10) / 10
+  // A bare around rough is the most expensive program to replay (every ring
+  // follows the raw square's corner), so it is one seed in eight; the finish and
+  // the mixed and rough+finish programs carry the rest of the coverage.
+  const kinds: ProgramKind[] = ['both', 'rough', 'finish', 'mixed', 'both', 'mixed', 'both', 'mixed']
+  const programKind = kinds[seed % kinds.length]
+  const roughKind = programKind === 'mixed' ? 'along' as const : 'around' as const
+  // A mixed program with a retained end is the unsafe combination the finish
+  // generator refuses; the set keeps both sides of it (some mixed cases have
+  // ends, some do not). Every other kind keeps ends on most seeds.
+  const endsWanted = programKind === 'mixed'
+    ? seed % 3 !== 0
+    : (seed % 2 === 0 ? seed % 3 !== 0 : seed % 3 === 0)
+  const ends = endsWanted ? Math.max(1, Math.round(pick(0.05, 0.18) * length)) : 0
+  const bounds = getStockBounds(squareStock(side, length, 'x', { x: 0, y: 0 }))
+  const alongStart = bounds.minX + ends
+  const alongEnd = bounds.maxX - ends
+  // A revolved part with a continuous surface: a cylinder or a cone. A model
+  // with a mid-band vertical shoulder asks the around pass to face a wall it
+  // has no along pass for; that is a separate geometry question, and the
+  // reference's surface check excludes a vertical face (`modelSurfaceAt`).
+  // A cone makes every ring's Z change and keeps more of the emitted
+  // polyline; a quarter of the seeds carry one.
+  const modelKind = seed % 4 === 0 ? 1 : 0
+  const profile: { along: number; radius: number }[] =
+    modelKind === 0
+      ? [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }]
+      : [
+        { along: alongStart, radius: modelRadius },
+        { along: alongEnd, radius: Math.max(0.6, modelRadius * pick(0.55, 0.95)) },
+      ]
+  // The default adapter parameters for this tool and operation kind.
+  const defaultStepover = Math.max(0.5 * diameter, 1e-3)
+  // The seeded set is one program per seed and the reference replays all 300
+  // inside its time budget, so a non-compact case asks for a coarser sampling
+  // than the adapter's default: the **default** sampling and the default
+  // cutting programs are the compact subset (every eighth seed), which is never
+  // coarsened. Coarser sampling also coarsens the reference by the same 4x
+  // relationship, never the other way round.
+  const roughSpacing = Math.max(radius, 1e-3)
+  const finishSpacing = Math.max(radius / 2, 1e-3)
+  const requestedCellSize = Math.min(radius / 2, defaultStepover * 0.5)
+  const custom = seed % 5 === 0
+  const stepover = custom ? Math.max(pick(0.6, 1) * diameter, 1e-3) : Math.max(0.75 * diameter, 1e-3)
+  const rough = roughSpacing
+  const finish = finishSpacing
+  const cell = requestedCellSize
+  // One seed in ten draws a stepdown anywhere in 0.5-3 (the range the review
+  // asks the set to cover); the rest take 3 mm, because a millimetre-scale
+  // layer on a 60 mm corner multiplies both the emitted rings and the reference
+  // replay by the layer count. The covered range is unchanged; the distribution
+  // is not uniform.
+  const stepdown = seed % 10 === 3 ? Math.round(pick(0.5, 3) * 10) / 10 : 3
+  const stockToLeave = custom ? Math.round(pick(0, 0.5) * 100) / 100 : 0
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
+      + `${modelKind === 0 ? 'cyl' : 'cone'} ${programKind} ${roughKind} rough `
+      + `ends ${ends} stepdown ${stepdown}${custom ? ' custom' : ''}`,
+    stock: squareStock(side, length, 'x', { x: 0, y: 0 }),
+    profile,
+    type,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing: rough,
+    finishSpacing: finish,
+    requestedCellSize: cell,
+    stockToLeave,
+    programKind,
+    roughKind,
+    finishKind: 'around',
+    retained: ends > 0,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: false,
+  }
+}
+
+/**
+ * One seeded **along-finish** case: a short bar, a cutter large against it and
+ * a deep model corner, on a round bar and a square blank, both a bare along
+ * finish and an along rough + along finish. A bare along finish cuts to full
+ * depth in one pass and carries the advisory; the rough + finish pair keeps the
+ * along-stage radial bound with the rough's stepdown (2026-10-22 decision).
+ */
+function drawAlongCase(seed: number): Case {
+  const rand = mulberry32(seed * 0x9e3779b1 + 0x52)
+  const pick = (low: number, high: number): number => low + (high - low) * rand()
+  const square = seed % 2 === 1
+  const kind: ProgramKind = seed < 4 ? 'finish' : 'both'
+  // Balls on most seeds: the reference's surface sweep is affordable at the
+  // adapter's default sampling, and a flat covers the staircase scallop.
+  const type = seed % 3 === 0 ? 'flat_endmill' as const : 'ball_endmill' as const
+  const side = Math.round(pick(22, 26) * 2) / 2
+  const length = Math.max(20, Math.round(pick(20, 22)))
+  const diameter = Math.round(pick(6, 8) * 10) / 10
+  const radius = diameter / 2
+  const inscribed = side / 2
+  const modelRadius = Math.round(pick(0.6, 0.75) * inscribed * 10) / 10
+  const ends = seed >= 4 && seed % 3 === 0 ? 0 : Math.max(1, Math.round(pick(0.05, 0.1) * length))
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const bounds = getStockBounds(stock)
+  const alongStart = bounds.minX + ends
+  const alongEnd = bounds.maxX - ends
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const stepover = Math.max(0.5 * diameter, 1e-3)
+  const roughSpacing = Math.max(radius / 2, 1e-3)
+  const finishSpacing = Math.max(radius / 4, 1e-3)
+  const requestedCellSize = Math.min(radius / 3, stepover * 0.5)
+  const stepdown = seed >= 4 ? 3 : 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${side}x${length} `
+      + `${square ? 'square' : 'round'} cyl ${kind} along-clear ends ${ends} stepdown ${stepdown}`,
+    stock,
+    profile,
+    type,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing,
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind: kind,
+    roughKind: 'along',
+    finishKind: 'along',
+    retained: ends > 0,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * One seeded **round-bar around** case (#1093). The square set above proves
+ * the blank's corner rules; these prove the same ring links on a bar whose
+ * cross-section is a circle, where the blank's support is its radius at every
+ * angle and the finish's between-ring link has no corner to clear. Both a bare
+ * around rough and a rough + around finish are drawn, with and without retained
+ * ends, and a bare around finish (which carries the no-rough advisory) on every
+ * fourth seed.
+ */
+function drawRoundCase(seed: number, lengthScale = 1): Case {
+  const rand = mulberry32(seed * 0x9e3779b1 + 0x1093)
+  const pick = (low: number, high: number): number => low + (high - low) * rand()
+  const kinds: ProgramKind[] = ['both', 'rough', 'finish', 'both', 'rough', 'both', 'finish', 'both']
+  const programKind = kinds[seed % kinds.length]
+  // Balls on most seeds: a ball's replay window is the affordable one, and a
+  // flat covers the staircase link height.
+  const type = seed % 3 === 1 ? 'flat_endmill' as const : 'ball_endmill' as const
+  const side = Math.round(pick(16, 22) * 2) / 2
+  const length = Math.max(20, Math.round(pick(20, 24) * lengthScale))
+  const diameter = Math.round(pick(3, 6) * 10) / 10
+  const radius = diameter / 2
+  const modelRadius = Math.round(pick(0.55, 0.8) * (side / 2) * 10) / 10
+  const ends = seed % 2 === 0 ? Math.max(1, Math.round(pick(0.05, 0.12) * length)) : 0
+  const stock = roundStock(side, length)
+  const bounds = getStockBounds(stock)
+  const alongStart = bounds.minX + ends
+  const alongEnd = bounds.maxX - ends
+  const cone = seed % 4 === 0
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: cone ? Math.max(0.6, modelRadius * pick(0.6, 0.95)) : modelRadius },
+  ]
+  const stepover = Math.max(0.75 * diameter, 1e-3)
+  const roughSpacing = Math.max(radius / 2, 1e-3)
+  const finishSpacing = Math.max(radius / 4, 1e-3)
+  const requestedCellSize = Math.min(radius / 3, stepover * 0.5)
+  const stepdown = Math.round(pick(1, 3) * 10) / 10
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `${cone ? 'cone' : 'cyl'} ${programKind} around ends ${ends} stepdown ${stepdown}`,
+    stock,
+    profile,
+    type,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing,
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind,
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: ends > 0,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * #1095: the rough's radial stock to leave applies to the model surface only.
+ *
+ * A retained end makes the wall the binding material at the outermost pass,
+ * which is pulled exactly one cutter radius inside it. The blank here is only
+ * one cutter radius larger than the model — a round bar radius 2 with a model
+ * radius 1, or a 3 mm square (face 1.5) with a model radius 0.5 — so the real
+ * wall's contact and the model are the same height with no leave; the leave is
+ * the only difference the pass may show. The old generator handed the stub to a
+ * sampler enlarged by the leave, so the wall was thickened and the pass was
+ * lifted by `sqrt(2 * radius * leave)` on top of the leave. The height-map cell
+ * is one cutter radius — the coarsest the sampler documents for a small tool,
+ * and the finest the independent reference's grid can afford on a retained bar
+ * with its 4x-finer reference — so the sampler's own cell lift is part of the
+ * bound here. The tight discrimination lives in the unit fixtures, where the
+ * cell is fine; the replay proves independently that the retained walls are
+ * untouched and that the leftover above model + stock next to them is no more
+ * than one cell plus the ball's fillet.
+ *
+ * Every case is a bare **ball** rough so the replay measures the rough's own
+ * leftover next to each wall, with no finish cleaning it up. The sequence
+ * fixture below adds the finish.
+ */
+function drawWallLeaveCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = square ? 3 : 4
+  const length = 6
+  const diameter = 2
+  const radius = diameter / 2
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 0.6
+  const alongStart = ends
+  const alongEnd = length - ends
+  // The face (or bar) is exactly one cutter radius above the model.
+  const modelRadius = side / 2 - radius
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const leave = seed % 2 === 0 ? 0.5 : 0.3
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} rough leave ${leave} retained`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 0.5,
+    stepover: Math.max(0.5 * diameter, 1e-3),
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: Math.max(radius / 4, 1e-3),
+    requestedCellSize: 1,
+    stockToLeave: leave,
+    programKind: 'rough',
+    roughKind: direction,
+    finishKind: 'around',
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    wallLeave: true,
+  }
+}
+
+/**
+ * #1095 slice D: a **tall** retained wall on both ends, and a finish that
+ * follows a much smaller model. The wall stands three cutter radii above the
+ * model, so a ring the sampler lifts to the wall's top is unmistakably in the
+ * air, and the emitted-move check (`assertNoWallTopPass`) can tell it apart
+ * from a model-following ring by more than the height-map cell. The tight
+ * wall-leave fixtures above cannot: with the face only one radius above the
+ * model, a lifted ring and a model ring are within that radius of each other.
+ *
+ * Round and square, along and around, finish-only (the stage the air ring was
+ * seen on): the finish is the operation whose whole surface is the model, so a
+ * ring in the air over the wall has no material to cut.
+ */
+function drawWallAirCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = 8
+  const length = 12
+  const diameter = 3
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 2
+  const alongStart = ends
+  const alongEnd = length - ends
+  const modelRadius = 1
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} finish tall retained wall`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 1,
+    stepover: 2,
+    roughSpacing: 0.5,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'finish',
+    roughKind: 'around',
+    finishKind: direction,
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // The square along program's reference replay is expensive at this cell;
+    // buy it a larger budget instead of coarsening the cell, which would
+    // loosen the finished-surface bound this fixture must keep.
+    maxReplayCells: 4_000_000,
+    wallAir: true,
+  }
+}
+
+/**
+ * #1095: a rough + finish sequence whose finish is the thing under test.
+ *
+ * The bare wall-leave fixture above uses a 2 mm ball on a 3-4 mm blank, which
+ * is deliberately the tightest wall contact but a height-map cell one quarter
+ * the model diameter: the finish on that blank is below the model for the
+ * sampler's own coarse-cell reason, so it cannot also prove the finished
+ * surface. This fixture keeps the same shape -- the face is exactly one cutter
+ * radius above the model and both ends are retained -- with a 1 mm ball, a
+ * model radius of 1.5 mm and the adapter's cell (`radius / 3`), so the finish's
+ * own output is judged cleanly. The replay budget may raise the cell to at most
+ * one cutter radius, which this blank still resolves; the 4x relationship
+ * between the reference and whatever cell the case ends on is never reduced.
+ */
+function drawWallLeaveSequenceCase(seed: number): Case {
+  const square = seed % 2 === 0
+  const direction: 'along' | 'around' = seed % 4 < 2 ? 'around' : 'along'
+  const side = 4
+  const length = 8
+  const diameter = 1
+  const radius = diameter / 2
+  const stock = square ? squareStock(side, length) : roundStock(side, length)
+  const ends = 1.5
+  const alongStart = ends
+  const alongEnd = length - ends
+  // The face (or bar) is exactly one cutter radius above the model.
+  const modelRadius = side / 2 - radius
+  const profile: { along: number; radius: number }[] = [
+    { along: alongStart, radius: modelRadius },
+    { along: alongEnd, radius: modelRadius },
+  ]
+  const leave = seed % 2 === 0 ? 0.2 : 0.15
+  return {
+    label: `ball D${diameter} ${square ? 'square' : 'round'} ${side}x${length} cyl `
+      + `${direction} rough+finish leave ${leave} retained`,
+    stock,
+    profile,
+    type: 'ball_endmill',
+    diameter,
+    stepdown: 0.5,
+    stepover: diameter,
+    roughSpacing: radius,
+    finishSpacing: radius,
+    requestedCellSize: Math.max(radius / 3, 1e-3),
+    stockToLeave: leave,
+    programKind: 'both',
+    roughKind: direction,
+    finishKind: direction,
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // The sequence's finish and rough are replayed to the end of the band on
+    // both sides; the cell is kept fine because the finish's own surface is the
+    // property under test, so this case buys a larger replay budget instead of
+    // coarsening it.
+    maxReplayCells: 1_000_000,
+    wallLeaveSequence: true,
+  }
+}
+
+/** The boundary radius of a centred square prism of half-width `half`. */
+function prismRadius(half: number): (angleDeg: number) => number {
+  return (angleDeg) => {
+    const radians = angleDeg * Math.PI / 180
+    return half / Math.max(Math.abs(Math.cos(radians)), Math.abs(Math.sin(radians)))
+  }
+}
+
+/**
+ * A non-revolved around case (#1093 review): the model is a **square prism**
+ * inside a round bar, so the material height under one cutter pose varies with
+ * the angle and the link's whole body is judged, not one ray. Two cases cover
+ * a ball and a flat cutter, both rough + finish, so every finish link is
+ * replayed after a rough and the removal bound applies.
+ *
+ * The model is a box rather than `revolved`; the finished-surface check reads
+ * `meshRadiusAt` instead of the analytic profile, so a finish that cuts below
+ * the prism still fails.
+ */
+function drawFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 14
+  const stock = roundStock(side, length)
+  const alongStart = 3
+  const alongEnd = 11
+  const half = 2.6
+  const diameter = 1.5
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `square prism ${2 * half} both around ends 0 stepdown 1.5`,
+    stock,
+    // The prism's inscribed radius; only the label reads it now.
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: 1,
+    roughSpacing: 0.35,
+    finishSpacing: 0.3,
+    requestedCellSize: 0.25,
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * A square blank with a square prism inside it (#1093 review). The blank's own
+ * raised envelope at a neighbouring angle is not in the model sampler, so this
+ * is the case the rough's cutter-body window exists for: at a face-angle link
+ * the blank stands above the link's ray by more than the 1 mm clearance, and the
+ * window is what raises the link over it. The finished-surface check also runs
+ * against the prism, so a finish link that cuts below it fails.
+ */
+function drawSquareFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 25
+  const length = 30
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const alongStart = 3
+  const alongEnd = 27
+  const half = 2.6
+  const diameter = 6
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  const radius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} square ${side}x${length} `
+      + `prism ${2 * half} both around ends 0 stepdown 3`,
+    stock,
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
+    type,
+    diameter,
+    stepdown: 3,
+    stepover: Math.max(0.75 * diameter, 1e-3),
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: Math.max(radius / 4, 1e-3),
+    requestedCellSize: Math.min(radius / 3, 0.75 * diameter * 0.5),
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * A finish-only prism case whose reference stays fine enough to assert the
+ * finished surface against the 0.2 mm gouge (#1093 review). The cut band meets
+ * the bar's ends, so no retained stub lifts the finish link off the prism's top;
+ * a small cutter keeps the reference grid affordable.
+ */
+function drawFinishFeatureCase(seed: number): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 6
+  const stock = roundStock(side, length)
+  // The cut band meets the bar's own ends, so there is no retained stub: the
+  // finish link runs on the prism's top, not on the stub's 5 mm shoulder.
+  const alongStart = 0
+  const alongEnd = 6
+  const half = 1
+  const diameter = 0.4
+  const mesh = box(stock, alongStart, alongEnd, -half, half, -half, half)
+  const radius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} round ${side}x${length} `
+      + `prism ${2 * half} finish-only around ends 0`,
+    stock,
+    profile: [{ along: alongStart, radius: half }, { along: alongEnd, radius: half }],
+    mesh,
+    meshRadiusAt: prismRadius(half),
+    meshAlong: { from: alongStart, to: alongEnd },
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: 2,
+    roughSpacing: Math.max(radius / 2, 1e-3),
+    finishSpacing: 0.4,
+    requestedCellSize: 0.35,
+    stockToLeave: 0,
+    programKind: 'finish',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    maxReplayCells: 2_000_000,
+  }
+}
+
+/**
+ * A program limited to a region (#1096). The region is a rectangle on the
+ * sheet (across 4..6 mm -- the top of the 10 mm bar -- along 4..10) that
+ * covers the ring's two ends: the operation must split into inside runs and
+ * leave the rest uncut.
+ * Round and square, around and along, rough and finish.
+ */
+function drawRegionCase(seed: number, direction: 'around' | 'along', square: boolean): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 14
+  const stock = square ? squareStock(side, length, 'x', { x: 0, y: 0 }) : roundStock(side, length)
+  const alongStart = 2
+  const alongEnd = 12
+  const radius = 2
+  const diameter = 1.5
+  const toolRadius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${square ? 'square' : 'round'} `
+      + `${side}x${length} ${direction} region across 4..6 along 4..10`,
+    stock,
+    profile: [{ along: alongStart, radius }, { along: alongEnd, radius }],
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: Math.max(0.75 * diameter, 1e-3),
+    roughSpacing: Math.max(toolRadius / 2, 1e-3),
+    finishSpacing: Math.max(toolRadius / 4, 1e-3),
+    requestedCellSize: Math.min(toolRadius / 3, 0.75 * diameter * 0.5),
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: direction,
+    finishKind: direction,
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    region: { alongFrom: 4, alongTo: 10, acrossFrom: 4, acrossTo: 6 },
+  }
+}
+
+/**
+ * #1096 review (P1): two along bands with untouched stock between them. A
+ * link from the last ring of one band to the first ring of the next can cross
+ * the gap, where no layer removed anything; it must clear the uncut blank, not
+ * the model height. The band widths leave the two link ends at the same A for
+ * the round cases; the run-level counter requires at least one crossing rapid,
+ * and the square cases still replay a two-band region. Both cutters are drawn.
+ */
+function drawGapRegionCase(seed: number, square: boolean): Case {
+  const type = seed % 2 === 0 ? 'ball_endmill' as const : 'flat_endmill' as const
+  const side = 10
+  const length = 16
+  const stock = square ? squareStock(side, length, 'x', { x: 0, y: 0 }) : roundStock(side, length)
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const alongStart = 2
+  const alongEnd = 14
+  const radius = 2
+  const diameter = 1.5
+  const toolRadius = diameter / 2
+  return {
+    label: `${type === 'ball_endmill' ? 'ball' : 'flat'} D${diameter} ${square ? 'square' : 'round'} `
+      + `${side}x${length} around region bands 3..4 and 9..11 across the full sheet`,
+    stock,
+    profile: [{ along: alongStart, radius }, { along: alongEnd, radius }],
+    type,
+    diameter,
+    stepdown: 1.5,
+    stepover: Math.max(0.75 * diameter, 1e-3),
+    roughSpacing: Math.max(toolRadius / 2, 1e-3),
+    finishSpacing: Math.max(toolRadius / 4, 1e-3),
+    requestedCellSize: Math.min(toolRadius / 3, 0.75 * diameter * 0.5),
+    stockToLeave: 0,
+    programKind: 'both',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    // A region band splits every ring, so the replay touches the whole circle
+    // at each band ring. Give this case the larger budget rather than letting
+    // `fitEntry` coarsen the stepover until a band has no ring left -- which is
+    // exactly the gap rapid this case exists to exercise.
+    maxReplayCells: 8_000_000,
+    region: [
+      // The first band is one ring wide and the second starts an odd number of
+      // rings later, so the ring directions leave both link ends at A0 and the
+      // rough does link across the untouched gap rather than retracting.
+      { alongFrom: 3, alongTo: 4, acrossFrom: centre - circumference / 2, acrossTo: centre + circumference / 2 },
+      { alongFrom: 9, alongTo: 11, acrossFrom: centre - circumference / 2, acrossTo: centre + circumference / 2 },
+    ],
+  }
+}
+
+/**
+ * #1117 slice C's coverage matrix: one small around rough whose ring links stay
+ * down at the layer, drawn to fill the dimensions the existing seeded set cannot
+ * reach -- both **stock axes** and both **units** -- and to guarantee a masked
+ * case with qualifying links too.
+ *
+ * The geometry is chosen so links qualify at both layers: a round bar's stock
+ * above a layer is exactly `max(blank, previous radius)`, and a square blank's
+ * first layer still cuts corner arcs at a radius above its face's touch radius
+ * (side 14, stepdown 2 -> 7.9 against a 7 mm face). The bar is short, the model
+ * a cylinder, and the sampling fine enough that the generator's link row has a
+ * sample inside every transition, so the candidate is not refused for lack of
+ * span coverage. An inch case is the same motion in inches (`convertLength`
+ * carries every length and the generator's own mm constants), which is what
+ * proves the one-band and model bounds are not silently mm-only.
+ *
+ * Two masked cases are drawn. `full` is one band spanning the sheet's whole
+ * circumference: a full ring then stays one run, so the ring is not split and the
+ * link is eligible, and the whole along span of each link is inside the mask.
+ * `strip` is that band broken by a 0.02 mm excluded strip between two
+ * neighbouring rings -- the #1096 review's repro, which must be refused on the
+ * whole span. The two-band gap cases above are the ones that must keep their
+ * raised link across a wide gap.
+ */
+interface LinkCaseSpec {
+  shape: 'round' | 'square'
+  cutter: 'flat_endmill' | 'ball_endmill'
+  axis: 'x' | 'y'
+  units: Units
+  /**
+   * A masked case. `full` is one band spanning the sheet's whole circumference
+   * (a ring stays one run, so links stay eligible); `strip` is that band split
+   * by a 0.02 mm excluded strip between two neighbouring rings, which is the
+   * case a stay-down link must refuse -- the whole span is tested, not only the
+   * dense row's samples (#1096 review, plan decision 3).
+   */
+  region?: 'full' | 'strip'
+}
+
+function drawLinkCase(spec: LinkCaseSpec): Case {
+  const units = spec.units
+  const mm = (value: number): number => convertLength(value, 'mm', units)
+  const side = mm(14)
+  const length = mm(22)
+  const stock = spec.shape === 'round'
+    ? roundStock(side, length, spec.axis, { x: 0, y: 0 })
+    : squareStock(side, length, spec.axis, { x: 0, y: 0 })
+  const limits = alongBounds(stock)
+  const centre = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const diameter = mm(4.5)
+  const modelRadius = spec.shape === 'round' ? mm(3.6) : mm(5)
+  const ends = mm(3)
+  const alongStart = limits.min + ends
+  const alongEnd = limits.max - ends
+  const stepover = mm(2)
+  const roughSpacing = mm(1.2)
+  const requestedCellSize = mm(0.55)
+  const stepdown = mm(2)
+  const regionFrom = alongStart + mm(2)
+  const regionTo = alongEnd - mm(2)
+  // A strip case splits the band between the first two rings: the rings sit at
+  // `alongStart + radius + k * stepover`, so their midpoint is a span no dense
+  // row sample need fall inside.
+  const stripCentre = alongStart + diameter / 2 + stepover / 2
+  return {
+    label: `#1117 ${spec.cutter === 'ball_endmill' ? 'ball' : 'flat'} D${diameter.toFixed(3)} `
+      + `${spec.shape} ${side.toFixed(3)}x${length.toFixed(3)} cyl around rough `
+      + `axis ${spec.axis} ${units}${spec.region === undefined ? '' : ` region ${spec.region}`}`,
+    stock,
+    profile: [{ along: alongStart, radius: modelRadius }, { along: alongEnd, radius: modelRadius }],
+    type: spec.cutter,
+    diameter,
+    stepdown,
+    stepover,
+    roughSpacing,
+    finishSpacing: Math.max(roughSpacing / 2, mm(0.4)),
+    requestedCellSize,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: true,
+    alongStart,
+    alongEnd,
+    defaultParams: false,
+    compact: true,
+    units,
+    // The replay estimate is deliberately conservative for a square's many short
+    // corner arcs and for a ring's full A sweep; these cases are small enough to
+    // replay refitted rather than coarsened. Coarsening would draw no qualifying
+    // link at all, and for the strip case it would also move the ring grid away
+    // from the strip the mask excludes.
+    maxReplayCells: spec.region === 'strip' ? 20_000_000 : 2_000_000,
+    ...(spec.region === undefined
+      ? {}
+      : {
+        region: (spec.region === 'strip'
+          ? [
+            { alongFrom: alongStart, alongTo: stripCentre - mm(0.01) },
+            { alongFrom: stripCentre + mm(0.01), alongTo: alongEnd },
+          ]
+          : [{ alongFrom: regionFrom, alongTo: regionTo }]
+        ).map((band) => ({
+          ...band,
+          acrossFrom: centre - circumference / 2,
+          acrossTo: centre + circumference / 2,
+        })),
+      }),
+  }
+}
+
+/**
+ * The case the A-changing link exists for (#1117 rl-e correction, review finding
+ * 2): a cylinder with one smooth lobe whose height grows along the bar. The angle
+ * where the lobe crosses each layer -- the end of a partial ring's run -- moves
+ * with the along position, so two neighbouring rings' runs end and start a few
+ * degrees apart and the link joining them changes A. Without a case of this shape
+ * the link proof's swept-footprint branch (the union of body windows across the A
+ * change) is never entered, and the suite passes with zero A-changing links.
+ *
+ * The body is deliberately smaller than the lobe's crest (`base + lobe` on a
+ * Ø`thickness` bar) so the lobe is machined, and the bar's own ends are the
+ * operation's ends, so no retained stub lifts the rings. A rough-only program is
+ * enough: the at-layer link is the rough's, and the finish's link never changes A.
+ */
+function drawLinkAcrossCase(cutter: 'ball_endmill' | 'flat_endmill' = 'ball_endmill'): Case {
+  const thickness = 20
+  const length = 12
+  const stock = roundStock(thickness, length, 'x', { x: 0, y: 0 })
+  const base = 5
+  const lobe = 3.6
+  const rise = 0.02
+  /** The LOBE's own radius in the Around frame's A (A0 is the crest). */
+  const radiusAt = (along: number, aDeg: number): number => {
+    const height = lobe + rise * along
+    let delta = ((aDeg % 360) + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= 70) return base
+    const c = Math.cos(u * Math.PI / 140)
+    return base + height * c * c
+  }
+  const diameter = 3
+  const cutterLabel = cutter === 'ball_endmill' ? 'ball' : 'flat'
+  return {
+    label: `#1117 ${cutterLabel} D${diameter} round ${thickness}x${length} drifting lobe around rough ends 0`,
+    stock,
+    // Only the label and the revolved fallback read the profile; this model is
+    // the mesh and its own boundary below.
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: lobed(stock, radiusAt, 0, length, 120, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: cutter,
+    diameter,
+    stepdown: 1,
+    stepover: 1,
+    roughSpacing: 1,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+  }
+}
+
+/**
+ * #1117 rl-f: the corrected twisted ridge, replayed under the unchanged rl-c
+ * rules.
+ *
+ * A V-lobe whose crest rotates six degrees per millimetre. Every ring's run end
+ * drifts with the along position, so the transition between two rings' runs is
+ * an A-changing link; the model is **chiral** in A, which is why it goes through
+ * `twisted` and not `lobed` (the rl-e fixture's mistake). Its emitted links are
+ * proved by the generic at-layer replay, i.e. against the reference's whole
+ * standing solid across the body's swept footprint -- the same proof as every
+ * other link in this file, with no A-changing-specific rule of its own. In the
+ * seeded run this case proves 35 links across an A change and reports 0 mm of
+ * protected-solid shortfall.
+ *
+ * The window-height assertion rl-e's fix round 3 added to this fixture is gone:
+ * a link's sampled pose is already `linkRowAt`'s footprint-convolved
+ * `safeToolTipZAt` tip, and removing `linkAcrossAngle`'s window lift changes
+ * five links out of these 361 cases. That lift stays in production as defence in
+ * depth, and no test is required to fail without it (rl-f decision).
+ */
+function drawTwistCase(): Case {
+  const thickness = 8
+  const length = 6
+  const stock = roundStock(thickness, length, 'x', { x: 0, y: 0 })
+  const base = 2
+  const lobe = 1.5
+  const twist = 6
+  const halfWidth = 60
+  /** The model in the Around frame's own A: the crest is at A = `twist * along`. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= halfWidth) return base
+    const c = Math.cos(u * Math.PI / (2 * halfWidth))
+    return base + lobe * c * c
+  }
+  return {
+    label: `#1117 rl-f flat D1 round ${thickness}x${length} twisted ridge around rough ends 0`,
+    stock,
+    // Only the label and the revolved fallback read the profile; this model is
+    // the mesh and its own boundary below.
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: twisted(stock, radiusAt, 0, length, 120, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: 'flat_endmill',
+    diameter: 1,
+    stepdown: 1,
+    stepover: 0.5,
+    roughSpacing: 0.5,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.12,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+    // The fixture exists for its A-changing links: a run that stops emitting
+    // them on this model must fail rather than pass with the branch unproved.
+    requiresAcrossAngle: true,
+    // Keep the replay budget. The default estimate counts every ring as a full
+    // angular window and coarsens this case's stepover and layer until it emits
+    // two A-changing links; at 1.5M it stops at the grid's own cell ceiling
+    // (0.5 mm, one cutter radius) with the drawn 0.5 mm ring spacing and 1 mm
+    // layer, and emits 35 for under a second more replay.
+    maxReplayCells: 1_500_000,
+  }
+}
+
+/**
+ * #1117 (square links): a busto-rect-like square case. Frank's busto-rect rough
+ * (a 1/4" ball, a sculpted model well inside a square blank) retracted at every
+ * ring boundary below the corner layers, because the touch-gate boundary rule
+ * refused complete rings and model-split rings alike. This is that shape small
+ * enough to replay: a square blank, a ball, and a chiral model -- a base well
+ * inside the inscribed radius with one twisted lobe -- so the upper layers cut
+ * corner arcs, the middle layers whole rings (links at A0/A360) and the lowest
+ * layers rings the lobe splits, whose run ends drift with the along position
+ * (A-changing links). Rings sit closer than a radius apart, as on busto-rect, so
+ * the link's between-ring scallop is small. Every emitted link goes through the
+ * same unchanged proof as every other; the case must emit both whole-ring and
+ * A-changing links.
+ */
+function drawSquareWholeRingCase(): Case {
+  const side = 14
+  const length = 8
+  const stock = squareStock(side, length, 'x', { x: 0, y: 0 })
+  const base = 3
+  const lobe = 2.4
+  const twist = 7
+  const halfWidth = 70
+  /** The model in the Around frame's own A: the crest is at A = `twist * along`. */
+  const radiusAt = (along: number, aDeg: number): number => {
+    let delta = ((aDeg - twist * along) % 360 + 360) % 360
+    if (delta > 180) delta -= 360
+    const u = Math.abs(delta)
+    if (u >= halfWidth) return base
+    const c = Math.cos(u * Math.PI / (2 * halfWidth))
+    return base + lobe * c * c
+  }
+  return {
+    label: `#1117 square links ball D2 square ${side}x${length} twisted lobe around rough ends 0`,
+    stock,
+    profile: [{ along: 0, radius: base }, { along: length, radius: base }],
+    mesh: twisted(stock, radiusAt, 0, length, 80, 240),
+    meshRadiusAt2: radiusAt,
+    meshAlong: { from: 0, to: length },
+    type: 'ball_endmill',
+    diameter: 2,
+    stepdown: 1.5,
+    stepover: 0.6,
+    roughSpacing: 0.6,
+    finishSpacing: 0.5,
+    requestedCellSize: 0.25,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: length,
+    defaultParams: false,
+    compact: true,
+    requiresAcrossAngle: true,
+    requiresWholeRingSquareLinks: true,
+    maxReplayCells: 3_000_000,
+  }
+}
+
+/**
+ * The matrix the link proof must cover (#1117): round and square, ball and
+ * flat, axis X and Y, millimetres and inches, and a masked case. Every entry is
+ * an around rough so the emitted links are the operation's own.
+ */
+const LINK_MATRIX: readonly LinkCaseSpec[] = [
+  { shape: 'round', cutter: 'flat_endmill', axis: 'y', units: 'inch' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'y', units: 'mm' },
+  { shape: 'square', cutter: 'flat_endmill', axis: 'y', units: 'inch' },
+  { shape: 'square', cutter: 'ball_endmill', axis: 'y', units: 'mm' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'x', units: 'inch' },
+  { shape: 'square', cutter: 'flat_endmill', axis: 'x', units: 'inch' },
+  { shape: 'round', cutter: 'flat_endmill', axis: 'y', units: 'inch', region: 'full' },
+  { shape: 'round', cutter: 'ball_endmill', axis: 'x', units: 'inch', region: 'strip' },
+]
+
+/** The reference grid limit for one case. Default-parameter cases keep the full
+ *  resolution; a coarsened non-compact case may run on a smaller grid, which
+ *  coarsens the generator's requested cells too (the 4x relationship holds). */
+function referenceLimits(entry: Case): { cells: number; angleBins: number } {
+  return entry.compact
+    ? { cells: MAX_REFERENCE_CELLS, angleBins: MAX_ANGLE_BINS }
+    : { cells: 100_000, angleBins: 1_024 }
+}
+
+/** Whether the reference's grid itself fits the per-case cell budget. */
+function fitsGrid(entry: Case): boolean {
+  const budget = referenceBudget(entry)
+  const limit = referenceLimits(entry)
+  return budget.cells <= limit.cells && budget.angleBins <= limit.angleBins
+}
+
+interface Program {
+  roughMoves: ToolpathMove[]
+  finishMoves: ToolpathMove[]
+  roughCodes: string[]
+  finishCodes: string[]
+}
+
+function generate(entry: Case): Program {
+  const tool = normalizedTool(entry.type, entry.diameter, entry.units ?? 'mm')
+  const stock = entry.stock
+  const model = entry.mesh ?? revolved(stock, entry.profile)
+  const common = {
+    stepover: entry.stepover,
+    // The rough's own sampling. The finish reads its own in the call below.
+    sampleSpacing: entry.roughSpacing,
+    // The adapter passes the operation's radial stock to both generators: a
+    // rough that cut to the model while the finish was asked to leave stock
+    // would leave the finish no material to leave it in.
+    stockToLeave: entry.stockToLeave,
+    alongStart: entry.alongStart,
+    alongEnd: entry.alongEnd,
+    safeRadius: barMaxRadius(stock) * 2,
+    requestedCellSize: entry.requestedCellSize,
+    ...(entry.region === undefined ? {} : { region: regionMask(stock, entry.region) }),
+  }
+  const roughResult = entry.programKind === 'finish'
+    ? null
+    : generateRotaryRough(`${entry.label} rough`, model, stock, tool, {
+      ...common,
+      stepdown: entry.stepdown,
+      passDirection: entry.roughKind,
+    }, {})
+  const rough = roughResult ?? { moves: [] as ToolpathMove[], warnings: [] as { code: string }[] }
+  const finish = entry.programKind === 'rough'
+    ? { moves: [] as ToolpathMove[], warnings: [] as { code: string }[] }
+    : generateRotaryFinish(`${entry.label} finish`, model, stock, tool, {
+      ...common,
+      sampleSpacing: entry.finishSpacing,
+      stockToLeave: entry.stockToLeave,
+      passDirection: entry.finishKind,
+    }, {})
+  const finishCodes = finish.warnings.map((warning) => warning.code)
+  if (entry.programKind !== 'rough') {
+    // The adapter decides the advisory from the ordered rough dependency the
+    // cache captures. Reproduce that here so a finish-only program asserts the
+    // real helper's answer; the motion above is unchanged either way. A region
+    // case carries the same include region on both operations, so the region
+    // half of the rule stays satisfied -- the emitted-move region check owns
+    // that.
+    const regions = entry.region === undefined
+      ? { includeIds: [] as string[], excludeIds: [] as string[], entries: [] }
+      : {
+          includeIds: ['region'],
+          excludeIds: [] as string[],
+          entries: [{ id: 'region', mode: 'include' as const }],
+        }
+    const precedingRoughs = entry.programKind === 'finish'
+      ? []
+      : [{ setupId: 'setup', modelIds: ['model'], regions }]
+    if (rotaryFinishWithoutRough(precedingRoughs, ['model'], regions)) finishCodes.push('rotaryFinishWithoutRough')
+  }
+  return {
+    roughMoves: rough.moves,
+    finishMoves: finish.moves,
+    roughCodes: rough.warnings.map((warning) => warning.code),
+    finishCodes,
+  }
+}
+
+
+/**
+ * Collapse consecutive straight **commanded** moves on the controller into the
+ * one move they describe. A ring's emitted chords run at constant along and
+ * constant Z with a continuous A, so their union is the same linear A move; the
+ * reference judges the commanded path, not the emitter's segmentation, and one
+ * ring costs one window instead of a few hundred overlapping ones. A move that
+ * changes Z or along, or reverses A, starts a new group.
+ */
+function coalesceCommandedMoves(moves: readonly ToolpathMove[], tolerance = 0): ToolpathMove[] {
+  const out: ToolpathMove[] = []
+  const intermediates: ToolpathPoint[][] = []
+  const collinear = (point: ToolpathPoint, chord: ToolpathMove, tol: number): boolean => {
+    if (chord.from.a === undefined || chord.to.a === undefined) return false
+    const span = chord.to.a - chord.from.a
+    if (span === 0) return false
+    const fraction = ((point.a ?? 0) - chord.from.a) / span
+    if (!(fraction > -1e-9 && fraction < 1 + 1e-9)) return false
+    const f = Math.min(1, Math.max(0, fraction))
+    const x = chord.from.x + (chord.to.x - chord.from.x) * f
+    const z = chord.from.z + (chord.to.z - chord.from.z) * f
+    return Math.abs(point.x - x) <= tol + 1e-12 && Math.abs(point.z - z) <= tol + 1e-12
+  }
+  for (const move of moves) {
+    const last = out[out.length - 1]
+    const joins = last !== undefined
+      && last.kind === 'cut' && move.kind === 'cut'
+      && last.from.x === last.to.x && move.from.x === move.to.x
+      && last.to.x === move.from.x && last.to.y === move.from.y && last.to.z === move.from.z
+      && last.to.a === move.from.a
+      && last.from.a !== undefined && last.to.a !== undefined
+      && move.to.a !== undefined
+      && last.from.a !== last.to.a && move.from.a !== move.to.a
+      && Math.sign(last.to.a - last.from.a) === Math.sign(move.to.a! - move.from.a!)
+    if (joins && last) {
+      const candidate: ToolpathMove = { kind: 'cut', from: last.from, to: move.to }
+      const points = [...(intermediates[intermediates.length - 1] ?? []), last.to]
+      if (points.every((point) => collinear(point, candidate, tolerance))) {
+        out[out.length - 1] = candidate
+        intermediates[intermediates.length - 1] = points
+        continue
+      }
+    }
+    out.push(move)
+    intermediates.push([])
+  }
+  return out
+}
+
+/**
+ * How much work the reference will do replaying these moves: the cells each
+ * move's window covers times the sweep steps each cell is sampled at. The
+ * estimate is deliberately conservative -- it is a runtime budget, not an
+ * accuracy bound -- so a case whose replay would be slow is redrawn with
+ * coarser generator sampling (never with a coarser reference).
+ */
+function estimateReplayCells(program: Program, entry: Case): number {
+  const budget = referenceBudget(entry)
+  const pivot = barPivotZ(entry.stock)
+  const radius = entry.diameter / 2
+  const ball = entry.type === 'ball_endmill'
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const travel = pivot + barMaxRadius(entry.stock) + 1
+  let total = 0
+  let controller = 0
+  for (const move of coalesceCommandedMoves([...program.roughMoves, ...program.finishMoves],
+    convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm'))) {
+    const hasAngle = move.from.a !== undefined || move.to.a !== undefined
+    const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
+    const toAngle = hasAngle ? (move.to.a ?? fromAngle) : fromAngle
+    controller = toAngle
+    if (move.kind === 'rapid' || Math.min(move.from.z, move.to.z) >= travel) continue
+    const fromAlong = alongOf(move.from)
+    const toAlong = alongOf(move.to)
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    const tipMin = Math.min(fromTip, toTip)
+    // #1045 slice O: use the reference's own body reach. The old
+    // `asin(R / barMaxRadius)` window excluded interior material that a ball's
+    // shank (or a flat's bottom face at a small tip) reaches, so the estimate
+    // under-counted the replay cost of exactly the moves that are most
+    // expensive to check.
+    const halfSpanDegrees = bodyAngularReachDeg(ball, radius, tipMin, barMaxRadius(entry.stock))
+    const i0 = Math.max(0, Math.floor((Math.min(fromAlong, toAlong) - radius - budget.alongStart) / budget.alongBin))
+    const i1 = Math.min(budget.alongBins - 1, Math.floor((Math.max(fromAlong, toAlong) + radius - budget.alongStart) / budget.alongBin))
+    if (i1 < i0) continue
+    const windowLo = Math.min(fromAngle, toAngle) - halfSpanDegrees - budget.angleDeg
+    const windowHi = Math.max(fromAngle, toAngle) + halfSpanDegrees + budget.angleDeg
+    const allAngles = windowHi - windowLo >= 360 - 1e-9
+    const first = allAngles ? 0 : Math.floor(windowLo / budget.angleDeg)
+    const last = allAngles ? budget.angleBins - 1 : Math.ceil(windowHi / budget.angleDeg)
+    const angleCount = Math.max(0, last - first + 1)
+    // The sweep: a cell's relevant angular window is at most twice the cutter's
+    // angular reach, and its Z travel at most the move's tip change.
+    const angularSweep = Math.min(Math.abs(toAngle - fromAngle), 2 * halfSpanDegrees + budget.angleDeg)
+    const steps = Math.max(1,
+      Math.ceil(angularSweep / budget.angleDeg)
+      + Math.ceil(Math.abs(toTip - fromTip) / budget.alongBin))
+    total += (i1 - i0 + 1) * angleCount * steps
+  }
+  return total
+}
+
+interface Fitted {
+  entry: Case
+  program: Program
+}
+
+/**
+ * Draw a case and shorten its bar until the reference's actual replay fits the
+ * visit cap. Resolution never changes: a case that still does not fit at the
+ * 20 mm minimum is coarsened in its **sampling** parameters (and marked
+ * custom), which is still a legitimate generator input, rather than checked
+ * against a reference coarser than 4x.
+ */
+/** The coarsest height-map cell a case may be reduced to: one cutter radius. */
+function cellCeiling(entry: Case): number {
+  return Math.max(entry.requestedCellSize, Math.min(barMaxRadius(entry.stock), entry.diameter / 2))
+}
+
+/** Coarsen the generator's requested height-map cell until the reference grid fits, without generating. */
+function coarsenGrid(entry: Case): Case {
+  let fitted = entry
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const budget = referenceBudget(fitted)
+    const limit = referenceLimits(fitted)
+    if (budget.cells <= limit.cells && budget.angleBins <= limit.angleBins) break
+    const ratio = Math.max(budget.cells / limit.cells, budget.angleBins / limit.angleBins, 1)
+    const factor = Math.max(1.3, Math.min(5, Math.sqrt(ratio) * 1.05))
+    const next = Math.min(fitted.requestedCellSize * factor, cellCeiling(fitted))
+    if (next <= fitted.requestedCellSize * 1.001) break
+    fitted = { ...fitted, requestedCellSize: next, defaultParams: false }
+  }
+  return fitted
+}
+
+function fitCase(seed: number): Fitted {
+  return fitEntry(drawCase(seed, 1), (scale) => drawCase(seed, scale))
+}
+
+function fitEntry(initial: Case, redraw?: (scale: number) => Case): Fitted {
+  if (initial.defaultParams) {
+    // A default-parameter case is never coarsened: the drawn side, cutter,
+    // stepdown and sampling are the adapter's defaults, and the short bar is
+    // what makes its reference affordable. If the grid does not fit, the draw
+    // itself is wrong and must be fixed rather than silently degraded.
+    assert.ok(fitsGrid(initial), `${initial.label}: a default-parameter case must fit the reference grid`)
+    return { entry: initial, program: generate(initial) }
+  }
+  let scale = 1
+  let entry = coarsenGrid(initial)
+  let program = generate(entry)
+  let cells = estimateReplayCells(program, entry)
+  const replayCap = initial.maxReplayCells ?? MAX_REPLAY_CELLS
+  for (let attempt = 0; attempt < 8 && redraw !== undefined
+    && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const length = entry.alongEnd - entry.alongStart
+    if (length <= 20.5) break
+    const ratio = cells > 0 ? replayCap / cells : 0.8
+    const nextScale = scale * Math.max(0.1, Math.min(0.9, ratio * 0.95))
+    if (nextScale >= scale * 0.999) break
+    scale = nextScale
+    entry = coarsenGrid(redraw(scale))
+    program = generate(entry)
+    cells = estimateReplayCells(program, entry)
+  }
+  // A small cutter's height-map cell is its own `radius / 3`, which the adapter
+  // never coarsens, so on a large blank that is the finest grid the generator
+  // asks for. The replay work scales roughly with the reference grid, which
+  // scales with the inverse square of the cell: compute the step, and regenerate
+  // the motion once afterwards because a coarser height map can change the tips.
+  let coarseChanged = false
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const before = referenceBudget(entry)
+    const ratio = Math.max(cells / replayCap, before.cells / MAX_REFERENCE_CELLS, 1)
+    const factor = Math.max(1.3, Math.min(5, Math.sqrt(ratio) * 1.05))
+    const next = Math.min(entry.requestedCellSize * factor, cellCeiling(entry))
+    if (next <= entry.requestedCellSize * 1.001) break
+    entry = { ...entry, requestedCellSize: next, defaultParams: false }
+    const after = referenceBudget(entry)
+    cells = Math.ceil(cells * Math.max(0.02, after.cells / Math.max(1, before.cells)))
+    coarseChanged = true
+  }
+  if (coarseChanged) {
+    program = generate(entry)
+    cells = estimateReplayCells(program, entry)
+  }
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const ratio = Math.max(cells / replayCap, referenceBudget(entry).cells / MAX_REFERENCE_CELLS, 1)
+    const factor = Math.max(1.25, Math.min(3, Math.sqrt(ratio) * 1.05))
+    const nextCell = Math.min(entry.requestedCellSize * factor, cellCeiling(entry))
+    entry = {
+      ...entry,
+      stepover: Math.min(entry.stepover * factor, Math.max(0.5 * entry.diameter, entry.diameter)),
+      roughSpacing: Math.min(entry.roughSpacing * factor, entry.diameter),
+      finishSpacing: Math.min(entry.finishSpacing * factor, entry.diameter),
+      requestedCellSize: nextCell,
+      defaultParams: false,
+    }
+    program = generate(entry)
+    cells = estimateReplayCells(program, entry)
+  }
+  // The angular sampling is the generator's own 0.005 mm sagitta cap, so a
+  // minimum-length, thin-stepdown case can still exceed the visit cap after
+  // every sampling parameter has been coarsened. Coarsen the **layer** height
+  // instead (still inside the stated 0.5-3 mm range) rather than the reference:
+  // this is the one input that changes how many rings a layer emits.
+  for (let attempt = 0; attempt < 4 && (cells > replayCap || !fitsGrid(entry)); attempt++) {
+    const ratio = Math.max(cells / replayCap, 1)
+    entry = {
+      ...entry,
+      stepdown: Math.min(3, entry.stepdown * Math.max(1.2, Math.min(1.8, ratio))),
+      defaultParams: false,
+    }
+    program = generate(entry)
+    cells = estimateReplayCells(program, entry)
+  }
+  // `cells` is an estimated work budget used to drive coarsening, not an
+  // accuracy bound; the estimate over-counts a wide angular window and is
+  // deliberately not asserted. The grid itself must fit, because it is the
+  // material map the reference actually allocates.
+  // Coarsening the height-map cell must not coarsen a cutting case into emitting
+  // nothing. On a bar only a few cutter radii wide the sampler's conservative
+  // cell lift, plus a positive leave, can raise every sampled tip to the blank:
+  // the fitted program then has no rough at all. The wall-leave sequence met
+  // this at a 0.429 mm cell and replayed a program with no motion, measuring
+  // nothing. Revert to the case's own grid, which its replay budget affords.
+  if (initial.programKind !== 'finish' && program.roughMoves.length === 0) {
+    const own = generate(initial)
+    if (own.roughMoves.length > 0) {
+      assert.ok(fitsGrid(initial), `${initial.label}: the case's own cell keeps the rough it measures`)
+      return { entry: initial, program: own }
+    }
+  }
+  assert.ok(fitsGrid(entry), `${entry.label}: the reference grid does not fit its cell cap`)
+  return { entry, program }
+}
+
+// ── the program and the reference replay ──────────────────────────────────
+
+function ballRiseAt(radius: number, dx: number): number {
+  return radius - Math.sqrt(Math.max(0, radius * radius - dx * dx))
+}
+
+/**
+ * The exact largest **radial surface bite** a cutter can take at one ray while
+ * it descends one stepdown, given the layer's own tip radius (#1045 slice Q).
+ *
+ * The along-stage metric is not engagement but a radial depth: the material one
+ * move removes from the outermost solid at a ray. For a cutter whose axis is
+ * `d` off the ray and `dx` along it, the reference's body contact is exact:
+ *
+ *   ball: c(t) = (t+R) cos(d) - sqrt(R^2 - dx^2 - (t+R)^2 sin(d)^2)
+ *   flat: c(t) = t / cos(d)                    (dx only limits the reach)
+ *
+ * A move at layer tip `t` is preceded, at the same pass angle and the same
+ * along span (every layer shares the sample grid), by a pass at tip `t+s` or
+ * lower. That pass swept this ray, so the standing material before the move is
+ * at most `c(t+s)` -- any other earlier move only lowers it -- and the move
+ * leaves `c(t)`. The bite is therefore at most `c(t+s) - c(t)`, and the bound
+ * is that difference maximised over the ray offsets the reference resolves.
+ * The first layer has no such pass, but its standing material is the blank,
+ * at most `t + s` because its layer tip is `maxRadius - s` (raised to the
+ * model where the model stands above it), while its contact is at least `t`;
+ * that bite is at most `s`, which every bound below exceeds.
+ *
+ * **Ball.** At a fixed `d` the difference grows with `|dx|` (the two sphere
+ * surfaces diverge as the ray moves toward the upper one's tangent), so the
+ * maximum is at that tangency, `dx^2 = R^2 - (t+s+R)^2 sin(d)^2`, where the
+ * upper contact is `(t+s+R) cos(d)`. The difference is then
+ *
+ *   D(d) = s cos(d) + sqrt(s (2 (t+R) + s)) sin(d),
+ *
+ * which increases over the whole reachable range `d <= asin(R/(t+s+R))`: its
+ * unconstrained peak sits at `atan(sqrt((2 (t+R) + s) / s))`, beyond that
+ * tangency. The exact maximum is therefore at the tangency:
+ *
+ *   bound = [ s sqrt((t+s+R)^2 - R^2) + R sqrt(s (2 (t+R) + s)) ] / (t+s+R).
+ *
+ * The ball's shank does not raise it: its bite is the flat expression at tip
+ * `t+R`, and its reach `atan(R/(t+s+R))` lies inside the sphere's
+ * `asin(R/(t+s+R))`, so the sphere alone sets the bound.
+ *
+ * **Flat.** The bite is `s / cos(d)`, and the upper layer's rim limits the
+ * reach to `d <= atan(R/(t+s))`, where `cos(d) = (t+s)/sqrt((t+s)^2 + R^2)`:
+ *
+ *   bound = s sqrt((t+s)^2 + R^2) / (t+s).
+ *
+ * `tip` is the **lowest** tip the move reaches. The bound falls as `t` grows,
+ * so evaluating it at the move's minimum tip can only over-estimate: the
+ * previous layer's tip at that along position is at most `minTip + stepdown`.
+ * Unlike the old `alongBin + ballRise` term, this is the cutter's own geometry;
+ * the reference's bin sizes do not appear as a tolerance, only as the cell
+ * offsets whose maximum the bound describes.
+ */
+function alongRadialBiteBound(ball: boolean, radius: number, stepdown: number, tip: number): number {
+  if (!ball) {
+    const upper = tip + stepdown
+    return stepdown * Math.sqrt(upper * upper + radius * radius) / upper
+  }
+  const lower = tip + radius
+  const upper = tip + stepdown + radius
+  return (stepdown * Math.sqrt(upper * upper - radius * radius)
+    + radius * Math.sqrt(stepdown * (2 * lower + stepdown))) / upper
+}
+
+/**
+ * The cutter body's nearest radial contact at a ray `deltaDeg` off its axis and
+ * `dx` along it (#1045 slice Q extension).
+ *
+ * `alongRadialBiteBound` assumes the previous layer's pass reached the ray, so
+ * the standing material there is at most that pass's own contact. That is not
+ * always true: a lower layer reaches rays the layer above cannot, because the
+ * ball's angular reach `asin(R / (tip + R))` grows as the tip gets smaller, and
+ * the shank above its equator reaches high-radius rays the sphere misses. On
+ * such a **newly reached** ray the material is whatever stood there before --
+ * the blank, or whatever an even earlier pass left -- not the previous layer's
+ * contact. The exact allowance is then measured from that standing material
+ * down to this body's own contact, which is what this helper returns.
+ *
+ * The formula is the reference's own body contact for the near side of the
+ * sphere (`centre * cos - sqrt(...)`), the shank's entry, and a flat's bottom
+ * face. It is `bodyInterval`'s own contact, so the two cannot disagree about
+ * which rays the body reaches.
+ *
+ * **No intersection is `null`, never the tip** (#1103 ca-d correction 2, review
+ * P2). A ray the body misses entirely carries no contact, and returning the tip
+ * let `footprintStanding` credit that sample as material already removed: a
+ * Ø4 ball at tip 9 misses the ray 1.99 mm along its axis and 5 degrees off it,
+ * yet the descent checker then treated a 1.9 mm drop from the raw blank as a
+ * covered, later cut and accepted it against a 1 mm stepdown. `null` says the
+ * pass left nothing on this ray, so the cut stays a first cut and is judged by
+ * the one-stepdown rule.
+ */
+function alongRayContact(
+  ball: boolean,
+  radius: number,
+  tip: number,
+  deltaDeg: number,
+  dx: number,
+): number | null {
+  const interval = bodyInterval(ball, radius, tip, deltaDeg * Math.PI / 180, dx)
+  return interval === null ? null : interval.contact
+}
+
+// ── the emitted motion's own layer descent (#1045 slice S) ────────────────
+//
+// The along-stage radial bound above assumes the previous layer's pass reached
+// the ray under test. Slice Q extended it to a ray the previous layer missed by
+// measuring from the material still standing there, but that standing material
+// is read from the reference: if the operation never emitted a clearing pass at
+// all, the reference still holds the raw blank and the allowance becomes the
+// whole bite. A 1 000 mm generator stepdown left every along-finish replay case
+// green that way, including a 9.3975 mm bite.
+//
+// So the emitted motion is judged independently, at its own samples: every
+// stage's tip radii must descend from the raw stock's surface one operation
+// stepdown at a time. Only where that holds may the standing-material allowance
+// widen the along-stage bound.
+
+/** The generator's own collinear-merge tolerance; a sampled pose may drift this far. */
+const DESCENT_TOLERANCE = 1e-3
+/** Angle key resolution, 0.0001 degrees. */
+const DESCENT_ANGLE_QUANTUM = 1e4
+/** Along key resolution, 0.001 mm. */
+const DESCENT_ALONG_QUANTUM = 1e3
+const DESCENT_ALONG_OFFSET = 10_000_000
+const DESCENT_KEY_BASE = 40_000_000
+
+/** One sample that actually cut, for the standing allowance's footprint query. */
+interface DescentSample {
+  readonly along: number
+  readonly angle: number
+  /** The verified cut tip; a covering pass bounds the material it left. */
+  readonly tip: number
+}
+
+interface StageDescent {
+  /** Every sample this stage cut, with its raw-surface descent verified. */
+  readonly samples: Map<number, DescentSample>
+  /** Cuts that lowered a sample's standing material. */
+  readonly cuts: number
+  /** The closest a step came to its allowance, for the report. */
+  readonly margin: number
+  readonly marginLabel: string
+}
+
+function descentKey(along: number, angleDeg: number): number {
+  const angle = Math.round((((angleDeg % 360) + 360) % 360) * DESCENT_ANGLE_QUANTUM)
+    % (360 * DESCENT_ANGLE_QUANTUM)
+  const alongKey = Math.round(along * DESCENT_ALONG_QUANTUM) + DESCENT_ALONG_OFFSET
+  return angle * DESCENT_KEY_BASE + alongKey
+}
+
+/**
+ * Assert that one stage's emitted cuts descend from the raw stock at every
+ * along/angle sample it visits (#1045 slice S).
+ *
+ * The samples are the generator's own pass/ring positions: its along vertex
+ * positions (an along pass) or its base angular grid plus every emitted vertex
+ * angle (an around ring). All layers share those positions, so each key is the
+ * same physical sample for every layer. For each key:
+ *
+ * 1. the **first** cut may be at most one stepdown below the raw surface there
+ *    -- on a square blank the touch radius, on a round bar its radius. This is
+ *    what a missing clearing layer violates immediately;
+ * 2. every **later** cut may descend at most one stepdown plus the slice-Q
+ *    cutter-cap allowance from the material the previous cut left. The cap
+ *    allowance is the extra radial depth the cutter's own geometry reaches at a
+ *    ray off its axis (`alongRadialBiteBound - stepdown`); at a sample's own ray
+ *    it is zero and the plain stepdown is the whole allowance.
+ *
+ * A cut above the standing material removes nothing and is ignored, so a
+ * generator's vertical step leg (which arrives high and then drops) is judged
+ * by the drop it actually makes, not by the height it transits.
+ */
+function assertStageDescent(
+  entry: Case,
+  label: string,
+  moves: readonly ToolpathMove[],
+  direction: 'around' | 'along',
+  pivot: number,
+  ball: boolean,
+  cutterRadius: number,
+  stepdown: number,
+  alongOf: (point: ToolpathMove['from']) => number,
+  sampleSpacing: number,
+): StageDescent {
+  const stock = entry.stock
+  const corner = barMaxRadius(stock)
+  const rawCache = new Map<number, number>()
+  const rawAt = (angleDeg: number): number => {
+    const key = Math.round((((angleDeg % 360) + 360) % 360) * DESCENT_ANGLE_QUANTUM)
+    let raw = rawCache.get(key)
+    if (raw === undefined) {
+      raw = rawStockSurface(stock, key / DESCENT_ANGLE_QUANTUM, cutterRadius, ball)
+      rawCache.set(key, raw)
+    }
+    return raw
+  }
+  const alongGrid = new Map<number, number>()
+  const collectAlong = (value: number): void => {
+    const key = Math.round(value * DESCENT_ALONG_QUANTUM)
+    if (!alongGrid.has(key)) alongGrid.set(key, key / DESCENT_ALONG_QUANTUM)
+  }
+  const angleGrid = new Map<number, number>()
+  const collectAngle = (value: number): void => {
+    const angle = ((value % 360) + 360) % 360
+    const key = Math.round(angle * DESCENT_ANGLE_QUANTUM)
+    if (!angleGrid.has(key)) angleGrid.set(key, key / DESCENT_ANGLE_QUANTUM)
+  }
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    collectAlong(alongOf(move.from))
+    collectAlong(alongOf(move.to))
+    // The emitted vertices carry any refined angle too, so a plunge or a
+    // bisected segment is sampled at its own ray as well as on the base grid.
+    collectAngle(move.from.a ?? 0)
+    collectAngle(move.to.a ?? 0)
+  }
+  if (direction === 'around') {
+    // The generator's base angular grid: `ceil(2 pi R / cap)` intervals, each
+    // `360 / n` degrees, so the corner is resolved by the same 0.005 mm sagitta
+    // rule the generator uses. Sampling only emitted vertices would miss the
+    // corner on a ring that merged into one full-turn move.
+    const intervals = Math.max(1, Math.ceil(2 * Math.PI * corner
+      / aroundArcStep(corner, sampleSpacing, entry.units ?? 'mm')))
+    for (let k = 0; k <= intervals; k++) collectAngle(360 * k / intervals)
+  }
+  const alongSamples = [...alongGrid.values()].sort((a, b) => a - b)
+  const angleSamples = [...angleGrid.values()].sort((a, b) => a - b)
+  const standing = new Map<number, number>()
+  const samples = new Map<number, DescentSample>()
+  // #1103 ca-d fix 1 (review P1): the key grid cannot line up every pass. A
+  // helix's refined pose grid depends on the layer's tips, so a later layer's
+  // sampled pose often has no earlier cut at its exact (along, angle) key even
+  // though an earlier pass's cutter body swept that ray. Judging such a pose as
+  // a **first** cut against the raw blank charges the whole blank instead of
+  // the one stepdown the previous layer left (seed 1 of the round set: 3.8483
+  // mm against the 3.001 mm allowance). The body's own contact at the offset is
+  // the same bound the along-stage standing allowance uses, and it is an upper
+  // bound on the material left, so a pass here still proves the real drop is
+  // inside the allowance. Bucket the samples by along so the lookup stays local.
+  const sampleBins = new Map<number, DescentSample[]>()
+  const sampleBinOf = (value: number): number => Math.floor(value / Math.max(cutterRadius, 1e-9))
+  const footprintStanding = (along: number, angleDeg: number, raw: number): number | null => {
+    const bin = sampleBinOf(along)
+    let material = Number.POSITIVE_INFINITY
+    for (let candidate = bin - 1; candidate <= bin + 1; candidate++) {
+      const bucket = sampleBins.get(candidate)
+      if (bucket === undefined) continue
+      for (const sample of bucket) {
+        if (Math.abs(sample.along - along) >= cutterRadius) continue
+        let delta = ((sample.angle - angleDeg) % 360 + 360) % 360
+        if (delta > 180) delta = 360 - delta
+        // The reach shrinks as the cut tip rises, so each sample's own tip
+        // decides whether its body covered this ray.
+        const reach = bodyAngularReachDeg(ball, cutterRadius, sample.tip, Math.max(raw, cutterRadius))
+        if (delta > reach + 1e-9) continue
+        // No intersection means this pass left nothing on the ray (#1103 ca-d
+        // correction 2, review P2); `null` must not become a material height.
+        const contact = alongRayContact(ball, cutterRadius, sample.tip, delta, Math.abs(sample.along - along))
+        if (contact === null) continue
+        material = Math.min(material, contact)
+      }
+    }
+    return material === Number.POSITIVE_INFINITY ? null : material
+  }
+  let cuts = 0
+  let margin = Number.POSITIVE_INFINITY
+  let marginLabel = ''
+  const visit = (along: number, angleRaw: number, tip: number): void => {
+    if (!Number.isFinite(tip)) return
+    const angle = ((angleRaw % 360) + 360) % 360
+    const raw = rawAt(angle)
+    if (!(raw > 0)) return
+    const key = descentKey(along, angle)
+    let current = standing.get(key)
+    if (current === undefined) {
+      current = raw
+      standing.set(key, raw)
+    }
+    if (!(tip < current - 1e-12)) return
+    let drop = current - tip
+    let first = !samples.has(key)
+    // #1103 ca-j: a square blank's layer can be a **helix**, and one layer's
+    // passes at a ray sit on that band's own axial phase (the pitch follows the
+    // band's length, which changes as the qualifying rings change). The pose that
+    // established the material at this exact key is therefore not always the
+    // immediately preceding layer's pose at the same key, so a phase-shifted
+    // pose could read the layer-above height instead of what the passes actually
+    // left. `footprintStanding` is the existing answer to exactly that -- it
+    // finds the pass whose **body** covered the ray and returns that body's
+    // contact, an upper bound on the material left -- and it used to run only for
+    // a first cut. Run it whenever the drop is over the one-stepdown bound: a
+    // contact can only lower the measured drop, so this cannot hide a deep cut.
+    if (drop > stepdown + DESCENT_TOLERANCE + 1e-9) {
+      const covered = footprintStanding(along, angle, raw)
+      if (covered !== null) {
+        current = Math.min(current, covered)
+        first = false
+        drop = current - tip
+        // The covering pass already left the material at or below this pose:
+        // nothing is removed here.
+        if (!(drop > 1e-12)) return
+      }
+    }
+    const cap = first ? 0 : Math.max(0, alongRadialBiteBound(ball, cutterRadius, stepdown, tip) - stepdown)
+    const allowed = stepdown + cap + DESCENT_TOLERANCE
+    cuts++
+    const slack = allowed - drop
+    if (slack < margin) {
+      margin = slack
+      marginLabel = `${label} along ${along.toFixed(3)} A${angle.toFixed(3)} `
+        + `drop ${drop.toFixed(4)} against ${allowed.toFixed(4)}`
+    }
+    if (drop > allowed + 1e-9) {
+      assert.ok(false,
+        `${entry.label}: the emitted ${label} does not descend from the raw blank at along `
+        + `${along.toFixed(3)} A${angle.toFixed(3)}: ${first ? 'the first cut is' : 'one cut drops'} `
+        + `${drop.toFixed(4)} mm (${current.toFixed(4)} -> ${tip.toFixed(4)}), over the `
+        + `${allowed.toFixed(4)} mm allowed ${first ? '(one stepdown)' : `(one stepdown ${stepdown.toFixed(4)} `
+        + `+ cutter cap ${cap.toFixed(4)})`}`,
+      )
+    }
+    const sample: DescentSample = { along, angle, tip }
+    samples.set(key, sample)
+    const bin = sampleBinOf(along)
+    const bucket = sampleBins.get(bin)
+    if (bucket === undefined) sampleBins.set(bin, [sample])
+    else bucket.push(sample)
+    standing.set(key, tip)
+  }
+  for (const move of moves) {
+    if (move.kind === 'rapid') continue
+    const fromAlong = alongOf(move.from)
+    const toAlong = alongOf(move.to)
+    const fromTip = move.from.z - pivot
+    const toTip = move.to.z - pivot
+    const fromAngle = move.from.a ?? 0
+    const toAngle = move.to.a ?? fromAngle
+    const dAlong = toAlong - fromAlong
+    const dAngle = toAngle - fromAngle
+    // A pure vertical move (a plunge, a steep step or a travel-height drop) has
+    // no along or angle span, so the interpolation below would judge only its
+    // start height. #1098 makes a layer's last cut commonly end at the bar end
+    // the next layer starts from, followed by a rapid retract the checker skips;
+    // its end height is then never revisited as a later move's `from`. Judge
+    // both ends here: the start is at the travel height on a drop and removes
+    // nothing, the end is the actual cut.
+    if (Math.abs(dAlong) <= 1e-9 && Math.abs(dAngle) <= 1e-9) {
+      visit(fromAlong, fromAngle, fromTip)
+      visit(toAlong, toAngle, toTip)
+      continue
+    }
+    if (direction === 'along') {
+      if (Math.abs(dAngle) > 1e-9) {
+        // A turning link at travel height: judge its endpoints at their own
+        // angles. It is above the blank and removes nothing.
+        visit(fromAlong, fromAngle, fromTip)
+        visit(toAlong, toAngle, toTip)
+        continue
+      }
+      const low = Math.min(fromAlong, toAlong)
+      const high = Math.max(fromAlong, toAlong)
+      for (const along of alongSamples) {
+        if (along < low - DESCENT_TOLERANCE) continue
+        if (along > high + DESCENT_TOLERANCE) break
+        const fraction = dAlong === 0 ? 0 : (along - fromAlong) / dAlong
+        visit(along, fromAngle, fromTip + (toTip - fromTip) * fraction)
+      }
+    } else {
+      // #1117 (square links): a cut along the bar at one angle -- an at-layer
+      // ring link -- is a straight commanded move, so it passes over every along
+      // sample between its ends at the interpolated tip, exactly as an along
+      // stage's pass does. Judging only its two ends let a later layer's link
+      // meet a sample the earlier layer's straight link had already lowered as
+      // if it were the raw blank (117 false first-cut misses on flat cones once
+      // square whole rings link). Sampling it judges more of the motion, not
+      // less.
+      if (Math.abs(dAlong) > 1e-9 && Math.abs(dAngle) <= 1e-9) {
+        const low = Math.min(fromAlong, toAlong)
+        const high = Math.max(fromAlong, toAlong)
+        for (const along of alongSamples) {
+          if (along < low - DESCENT_TOLERANCE) continue
+          if (along > high + DESCENT_TOLERANCE) break
+          visit(along, fromAngle, fromTip + (toTip - fromTip) * (along - fromAlong) / dAlong)
+        }
+        continue
+      }
+      // A cut that advances along **and** A is a link or a helix segment. It
+      // used to be judged at its two endpoints only, which let a coalesced
+      // helix hide its whole thread from the replay: the layer below sampled
+      // the thread at its own merged endpoints, so the layer above met poses
+      // with no recorded cut and was read as a first cut after a 3.85 mm drop
+      // (#1103 ca-d fix 1). Sample the segment at the reference angle grid
+      // instead, interpolating along and Z exactly as the commanded move does.
+      const low = Math.min(fromAngle, toAngle)
+      const high = Math.max(fromAngle, toAngle)
+      // #1103 slice ca-d fix 1 (review P1): commanded A grows a turn per ring, so
+      // a later layer's ring is commanded at A > 360 while the reference samples
+      // stay inside one turn. Sampling only the raw 0..360 grid skipped every
+      // later-turn interior: the pose that had established standing material at
+      // that physical ray was never visited, and a later cut there was judged as
+      // the **first** cut against the raw blank. The seeded replay failed on
+      // seed 1 that way (3.0655 mm against the 3.001 mm one-stepdown allowance).
+      // Shift the reference samples into each commanded turn the move spans; the
+      // key `visit` builds still normalises to the physical ray, so the standing
+      // material is the same one a one-turn program records.
+      const firstTurn = Math.floor((low - DESCENT_TOLERANCE) / 360)
+      const lastTurn = Math.floor((high + DESCENT_TOLERANCE) / 360)
+      for (let turn = firstTurn; turn <= lastTurn; turn++) {
+        const shift = 360 * turn
+        const from = Math.max(low - DESCENT_TOLERANCE, shift)
+        const to = Math.min(high + DESCENT_TOLERANCE, shift + 360)
+        for (const sample of angleSamples) {
+          const angle = sample + shift
+          if (angle < from) continue
+          if (angle > to) break
+          const fraction = dAngle === 0 ? 0 : (angle - fromAngle) / dAngle
+          visit(fromAlong + dAlong * fraction, angle, fromTip + (toTip - fromTip) * fraction)
+        }
+      }
+    }
+  }
+  return { samples, cuts, margin, marginLabel }
+}
+
+// #1103 ca-d correction 2 (review P2): the descent footprint may only credit a
+// pass whose cutter body actually intersects the ray.
+//
+// A Ø4 ball at tip 9 sits 1.99 mm along and 5 degrees away from a pose on a
+// 16 mm square blank. Its footprint reach admits the sample (10.48 degrees), but
+// its sphere and shank both miss the ray: `alongRayContact` used to return the
+// tip 9 there, so `footprintStanding` reported 9 mm of standing material and the
+// checker treated a 1.9 mm drop from the raw blank (10.21 -> 8.31) as a covered,
+// later cut. The allowed drop became one stepdown plus the cutter cap (1.81 mm)
+// and the motion passed a 1 mm stepdown. With the intersection required the
+// sample contributes nothing, the cut stays a **first** cut, and its 1.9 mm drop
+// against the 1.001 mm one-stepdown allowance is rejected -- which is the
+// regression: on the old code this `assert.throws` never fires.
+{
+  const stock = squareStock(16, 20, 'x', { x: 0, y: 0 })
+  const radius = 2
+  const ball = true
+  const stepdown = 1
+  const rawAt = (angle: number): number => rawStockSurface(stock, angle, radius, ball)
+  const previousTip = 9
+  const targetAngle = 35
+  const targetTip = rawAt(targetAngle) - 1.9
+  const entry: Case = {
+    label: 'descent footprint repro',
+    stock,
+    profile: [{ along: 0, radius: 0 }],
+    type: 'ball_endmill',
+    diameter: 2 * radius,
+    stepdown,
+    stepover: 1,
+    roughSpacing: 1,
+    finishSpacing: 1,
+    requestedCellSize: 0.2,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: false,
+    alongStart: 0,
+    alongEnd: 20,
+    defaultParams: false,
+    compact: false,
+  }
+  // The first pose cuts 0.55 mm below the blank on its own ray, so it is a
+  // recorded sample inside one stepdown. The second is the repro.
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: previousTip, a: 30 }, to: { x: 0, y: 0, z: previousTip, a: 30 } },
+    { kind: 'cut', from: { x: 1.99, y: 0, z: targetTip, a: targetAngle }, to: { x: 1.99, y: 0, z: targetTip, a: targetAngle } },
+  ]
+  assert.ok(rawAt(30) > previousTip && rawAt(30) - previousTip <= stepdown + 1e-9,
+    'the previous pose is a legal first cut on its own ray')
+  assert.ok(Math.abs(rawAt(targetAngle) - targetTip - 1.9) < 1e-9,
+    'the repro pose sits 1.9 mm below the raw blank')
+  // The reach test admits the sample, so only the intersection check can stop
+  // the false credit.
+  assert.ok(bodyAngularReachDeg(ball, radius, previousTip, Math.max(rawAt(targetAngle), radius)) > 5,
+    'the footprint reach test admits the repro sample (so the reach test cannot be the guard)')
+  assert.equal(bodyInterval(ball, radius, previousTip, 5 * Math.PI / 180, 1.99), null,
+    'the Ø4 ball at tip 9 misses the ray 1.99 mm along and 5 degrees off its axis')
+  assert.throws(
+    () => assertStageDescent(entry, 'footprint', moves, 'around', 0, ball, radius, stepdown, alongOf, 1),
+    /does not descend from the raw blank at along/,
+    'the 1.9 mm first cut is rejected instead of being credited to a pass that misses the ray',
+  )
+}
+
+/**
+ * Whether a stage's verified descent covers the measured ray: some cut sample
+ * lies inside this cutter body's footprint of it (along within one radius,
+ * angle within the body's own angular reach). The along-stage standing
+ * allowance may only use its measurement where this is true (#1045 slice S);
+ * otherwise the plain previous-layer bound applies.
+ */
+function descentCoversRay(
+  stage: StageDescent,
+  along: number,
+  angleDeg: number,
+  ball: boolean,
+  cutterRadius: number,
+  tip: number,
+  material: number,
+): boolean {
+  if (stage.samples.size === 0) return false
+  const reach = bodyAngularReachDeg(ball, cutterRadius, tip, Math.max(material, cutterRadius))
+  for (const sample of stage.samples.values()) {
+    if (Math.abs(sample.along - along) >= cutterRadius) continue
+    let delta = ((sample.angle - angleDeg) % 360 + 360) % 360
+    if (delta > 180) delta = 360 - delta
+    if (delta <= reach + 1e-9) return true
+  }
+  return false
+}
+
+// The repro the slice-Q bound missed (#1045 slice Q extension), checked before
+// the seeded run and independently of it: a Ø4 ball at tip 2 removes 2.3435 mm
+// from a ray 24.25° off its axis where 4.85 mm of material still stands, while
+// the layer above (tip 3) cannot reach that ray at all -- `asin(2 / 5) =
+// 23.58°`. Slice Q's bound of 2.1165 mm assumed the previous layer swept the
+// ray, so the measured bite exceeded it. The extended allowance measures that
+// bite from the standing material at the ray, and passes.
+{
+  const radius = 2
+  const lowerTip = 2
+  const upperTip = 3
+  const stepdown = 1
+  const angleDeg = 0.5
+  const angleBins = 720
+  const standing = 4.85
+  const reference: Reference = {
+    // The cell sits at along 0.5, and the move from 0.5 to 1.5 is swept at
+    // half-bin steps, so its first step is directly over the cell (dx = 0) --
+    // the same continuous sweep the seeded reference performs.
+    alongStart: 0.25,
+    alongBins: 1,
+    alongBin: 0.5,
+    angleBins,
+    angleDeg,
+    maxMaterial: standing,
+    occupied: new Map(),
+    material: new Float64Array(angleBins).fill(standing),
+  }
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+  // The move starts directly over the cell (dx = 0 at its first swept step), so
+  // the lower layer's contact is the outermost-surface removal the slice-Q
+  // metric records. The previous layer's window cannot reach that ray.
+  const cutAt = (tip: number): ToolpathMove => ({
+    kind: 'cut', from: { x: 0.5, y: 0, z: tip }, to: { x: 1.5, y: 0, z: tip },
+  })
+  // The upper layer misses the 24.25° ray, so the material there stays blank.
+  referenceMove(reference, cutAt(upperTip), 0, radius, true, alongOf, 0, 0)
+  assert.ok(asinDeg(radius / (upperTip + radius)) < 24.25,
+    'the previous layer is out of reach of the repro ray')
+  assert.equal(reference.material[48], standing,
+    'the upper layer leaves the repro ray standing')
+  // The lower layer reaches it through the ball's shank and takes the column.
+  referenceMove(reference, cutAt(lowerTip), 0, radius, true, alongOf, 0, 0)
+  const reproBite = standing - reference.material[48]
+  const oldBound = alongRadialBiteBound(true, radius, stepdown, lowerTip)
+  assert.ok(Math.abs(reproBite - 2.3435) < 1e-3,
+    `the repro ray removes ${reproBite.toFixed(4)} mm, not 2.3435`)
+  assert.ok(reproBite > oldBound + 1e-6,
+    `the repro exceeds the previous-layer bound (${reproBite.toFixed(4)} > ${oldBound.toFixed(4)})`)
+  // The seeded allowance is evaluated at the **recorded worst cell** exactly as
+  // the seeded loop does it: the standing material there minus this body's
+  // contact at that ray, never below the previous-layer bound.
+  const cell = moveSurfaceCell
+  const cellDelta = (() => {
+    const d = ((cell.angle - 0) % 360 + 360) % 360
+    return d > 180 ? 360 - d : d
+  })()
+  const cellDx = cell.along < 0.5 ? 0.5 - cell.along : cell.along > 1.5 ? cell.along - 1.5 : 0
+  // The lower layer does reach this ray through the ball's shank, so the contact
+  // exists; `null` here would mean the formula and the reach test disagree.
+  const cellContact = alongRayContact(true, radius, lowerTip, cellDelta, cellDx)
+  assert.ok(cellContact !== null, 'the lower layer intersects the recorded worst cell')
+  const extendedBound = cellContact === null
+    ? oldBound
+    : Math.max(oldBound, cell.material - cellContact)
+  assert.ok(extendedBound >= moveSurfaceWorst - 1e-12,
+    `the standing-material bound ${extendedBound.toFixed(4)} covers the measured ${moveSurfaceWorst.toFixed(4)}`)
+  console.log(`  slice-Q repro: ${reproBite.toFixed(4)} mm at the 24.25 deg ray; previous-layer bound `
+    + `${oldBound.toFixed(4)} mm (missed); worst cell ${moveSurfaceWorst.toFixed(4)} mm covered by `
+    + `the standing-material bound ${extendedBound.toFixed(4)} mm`)
+}
+
+/** `Math.asin` in degrees, for the repro's reach check. */
+function asinDeg(value: number): number {
+  return Math.asin(Math.min(1, value)) * 180 / Math.PI
+}
+
+interface Worst {
+  /** The largest engagement any cut of this operation took. */
+  peak: number
+  peakLabel: string
+  bound: number
+  excess: number
+  label: string
+}
+
+const worst: Record<'rough' | 'finish', Worst> = {
+  rough: { peak: 0, peakLabel: '', bound: 0, excess: Number.NEGATIVE_INFINITY, label: '' },
+  finish: { peak: 0, peakLabel: '', bound: 0, excess: Number.NEGATIVE_INFINITY, label: '' },
+}
+let worstRapidMargin = Number.POSITIVE_INFINITY
+let worstRapidLabel = ''
+let worstStubDrop = 0
+let worstStubLabel = ''
+// #1095: the material left next to a retained wall, relative to model + leave.
+let wallLeaveChecks = 0
+let wallLeaveCaseCount = 0
+let wallLeaveSequenceCount = 0
+let wallAirCaseCount = 0
+let worstWallLeave = Number.NEGATIVE_INFINITY
+let worstWallLeaveLabel = ''
+let worstSurfaceOver = Number.NEGATIVE_INFINITY
+let worstSurfaceOverLabel = ''
+// #1093 review: surface cells the non-revolved prism cases assert, so a run
+// that silently skips them fails below instead of passing with no check.
+let meshSurfaceCells = 0
+let worstSurfaceUnder = Number.NEGATIVE_INFINITY
+let worstSurfaceUnderLabel = ''
+let worstAssertedInterior = 0
+let worstAssertedInteriorLabel = ''
+let worstAlongBite = 0
+let worstAlongBiteLabel = ''
+// The closest an along-stage radial bite came to its exact-geometry bound, and
+// the bound it was checked against (#1045 slice Q).
+let worstAlongMargin = Number.POSITIVE_INFINITY
+let worstAlongMarginLabel = ''
+// Diagnostic only, never asserted (#1045 slice P): interior removal an along
+// move finds below an intact shell. It is not a radial depth and has no bound.
+let alongInteriorDiagnostic = { depth: 0, label: '', stepover: 0, diameter: 0, stepdown: 0 }
+// Count the along-stage assertion so a change that drops it (rather than making
+// it a no-op) cannot pass silently: the seeded set must assert the radial
+// surface bite of every along program.
+let alongBiteChecks = 0
+// The subset of those checks on a **finish after a rough** (the task's bound).
+let finishAlongBiteChecks = 0
+// #1045 slice S: how many emitted cuts the independent raw-descent assertion
+// judged, split so a run that drops one mode (or one stage) cannot pass silently.
+let descentChecks = 0
+let alongDescentChecks = 0
+let aroundDescentChecks = 0
+let roughDescentChecks = 0
+let worstDescentMargin = Number.POSITIVE_INFINITY
+let worstDescentMarginLabel = ''
+let nonTurningWorst = 0
+let nonTurningLabel = ''
+// #1093: finish links replayed against the independent model.
+let finishLinkChecks = 0
+let worstFinishLinkBite = 0
+let worstFinishLinkBiteLabel = ''
+let worstFinishAfterRoughLinkBite = 0
+let worstFinishAfterRoughLinkBiteLabel = ''
+let finishAfterRoughLinkChecks = 0
+// #1093: the rough's in-air link is a rapid now, checked for clearance.
+let rapidLinkChecks = 0
+let roundRapidLinkChecks = 0
+let worstRapidLinkMargin = Number.POSITIVE_INFINITY
+let worstRapidLinkLabel = ''
+// #1117: the rough's at-layer cutting link, proved independently. The counters
+// are split by the dimensions the slice must cover, so a run that stops
+// producing a qualifying link on one of them fails instead of passing with a
+// hole in the proof.
+const atLayerLinkCounts = {
+  total: 0, round: 0, square: 0, ball: 0, flat: 0, axisX: 0, axisY: 0, mm: 0, inch: 0, region: 0,
+  // #1117 rl-e: at-layer links whose whole swept path also changes A. A run that
+  // stops drawing them must fail rather than pass with a hole in the proof.
+  acrossAngle: 0,
+}
+// The minima below are compared and reported in **millimetres** (#1117 rl-c
+// correction, review finding 2). The set carries millimetre and inch cases, so a
+// raw project-unit value would let an inch case win the minimum with a number
+// 25.4 times smaller and then print it as millimetres. Every site records through
+// `trackMinimumMm`, so the comparison and the label cannot use different units.
+interface LinkMinimum {
+  /** The smallest value seen so far, in millimetres. */
+  value: number
+  label: string
+}
+
+/**
+ * Record one case's project-unit value as a running minimum in millimetres.
+ *
+ * #1117 rl-c correction (review finding 2), extracted for the same reason
+ * `checkEngagement` is: the unit block below drives it directly, so a mutation
+ * that drops the conversion (or compares raw values) fails there as well as in
+ * the seeded run. The passing run before this fix reported `0.0279 mm` -- an
+ * inch fixture's raw value -- as the closest model tip.
+ */
+function trackMinimumMm(minimum: LinkMinimum, value: number, units: Units, label: string): void {
+  const millimetres = convertLength(value, units, 'mm')
+  if (millimetres < minimum.value) {
+    minimum.value = millimetres
+    minimum.label = label
+  }
+}
+
+const worstAtLayerLinkMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+// #1117 rl-f: A-changing links proved **per case**, by label. `requiresAcrossAngle`
+// cases read this to assert their own coverage, and the seeded run's totals are
+// asserted separately below.
+const acrossAngleByCase = new Map<string, number>()
+// #1117 (square links): equal-angle at-layer links at A0/A360 on a square blank,
+// per case -- the whole-ring boundary the touch-gate rule used to refuse.
+const wholeRingSquareByCase = new Map<string, number>()
+const worstLinkModelSlack: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+/** The largest shortfall of the protected solid from the model in a swept footprint, in mm. */
+let worstLinkSolidGap = 0
+let worstLinkSolidGapLabel = ''
+/** Footprint cells the model-protection proof read, and how many were off the link's own ray. */
+let linkFootprintCells = 0
+let linkFootprintOffRay = 0
+let linkEndCells = 0
+// #1117: a low A-changing rough cut turns through material at its own ray; one
+// that cannot show that is only allowed at the blank's corner envelope.
+let lowTurnChecks = 0
+let cornerTurnChecks = 0
+/** The closest a low turn came to its allowed sampler lift, in millimetres. */
+const worstTurnMargin: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+
+// #1117 rl-c correction (review finding 2): a running minimum is compared **and**
+// reported in millimetres, whatever units its case was drawn in. Checked here as
+// well as through the seeded run because the seeded minimum is data-dependent:
+// comparing raw project units lets an inch case win with a number 25.4 times
+// smaller, and reporting the winner unconverted labels that raw number "mm" --
+// the run before this fix printed 0.0279 mm from an inch fixture.
+{
+  const minimum: LinkMinimum = { value: Number.POSITIVE_INFINITY, label: '' }
+  // 0.1 mm expressed in inches: raw 0.003937, and 0.1 mm when normalised.
+  const inchValue = convertLength(0.1, 'mm', 'inch')
+  trackMinimumMm(minimum, 0.2, 'mm', 'a 0.2 mm case')
+  trackMinimumMm(minimum, inchValue, 'inch', 'a 0.1 mm inch case')
+  assert.equal(minimum.label, 'a 0.1 mm inch case',
+    'the 0.1 mm inch case is the smaller of the two once both are millimetres')
+  assert.ok(Math.abs(minimum.value - 0.1) < 1e-9,
+    `the inch case is reported as ${minimum.value.toFixed(4)} mm, not its raw `
+    + `${inchValue.toFixed(4)} project units`)
+  // The comparison converts too: raw units would keep the inch value (0.003937 <
+  // 0.05) even though 0.05 mm is the smaller length.
+  trackMinimumMm(minimum, 0.05, 'mm', 'a 0.05 mm case')
+  assert.equal(minimum.label, 'a 0.05 mm case',
+    'a 0.05 mm case is smaller than the 0.1 mm inch case, not larger as raw units would say')
+}
+
+/**
+ * The independent model radius a rough link must protect, at one along position
+ * and angle, or `null` where this case's model has no surface there.
+ *
+ * A revolved case's profile gives the radius at any along between its ends; the
+ * non-revolved prism cases give their boundary radius at an angle and only exist
+ * inside their own along span. Read here rather than through the generator, so
+ * the model bound is the model's own geometry.
+ */
+function linkModelRadiusAt(entry: Case, along: number, angleDeg: number): number | null {
+  if (entry.mesh) {
+    const span = entry.meshAlong
+    if (span && (along < span.from - 1e-9 || along > span.to + 1e-9)) return null
+    if (entry.meshRadiusAt2) return entry.meshRadiusAt2(along, angleDeg)
+    return entry.meshRadiusAt ? entry.meshRadiusAt(angleDeg) : null
+  }
+  return modelSurfaceAt(entry.profile, along)
+}
+
+/**
+ * What the protected solid still stands at in one reference cell, against the
+ * independent model there, or `null` where this case's model has no surface.
+ *
+ * #1117 rl-c correction (review finding 1). The solid is **every** interval the
+ * ray still holds, not its outermost radius: a cut that takes a band out from
+ * under an intact shell leaves `material` at the shell while the model's own
+ * surface is gone, and `reference.occupied` is the only place that interval list
+ * survives. `gap` is how far the solid inside `[0, model]` falls short of the
+ * model -- `0` when the model is intact, positive when it was cut into -- and
+ * `cavity` says which read produced it.
+ */
+interface LinkSolid {
+  readonly gap: number
+  /** The solid standing inside the model radius, in project units. */
+  readonly standing: number
+  readonly cavity: boolean
+}
+
+function linkProtectedSolid(
+  entry: Case,
+  reference: Reference,
+  index: number,
+  along: number,
+  angleDeg: number,
+): LinkSolid | null {
+  const model = linkModelRadiusAt(entry, along, angleDeg)
+  if (model === null) return null
+  const occupied = reference.occupied.get(index)
+  if (occupied === undefined) {
+    const standing = reference.material[index]
+    return { gap: Math.max(0, model - standing), standing, cavity: false }
+  }
+  let standing = 0
+  for (const span of occupied) {
+    // The list is ascending and disjoint, so nothing after the model matters.
+    if (span.contact >= model) break
+    standing += Math.min(span.exit, model) - span.contact
+  }
+  return { gap: Math.max(0, model - standing), standing, cavity: true }
+}
+
+/** Everything the at-layer link and corner-turn proofs read for one case. */
+interface LinkProofContext {
+  readonly entry: Case
+  readonly reference: Reference
+  readonly stock: BarStock
+  readonly pivot: number
+  readonly cutterRadius: number
+  readonly ball: boolean
+  readonly alongOf: (point: ToolpathMove['from']) => number
+  readonly alongLimits: { min: number; max: number }
+  readonly regionMask?: RotaryRegionMask
+  readonly regionPoint: (along: number, angleDeg: number) => { x: number; y: number }
+  readonly budget: ReturnType<typeof referenceBudget>
+  readonly linkAllowance: number
+  /** The blank's corner envelope plus the clearance: the travel height in tip radius. */
+  readonly travelTip: number
+}
+
+/**
+ * #1117 slice C: prove one **at-layer rough link** against the reference.
+ *
+ * The move is a cut at one exact angle that changes the along position -- after
+ * #1117 that is the rough's stay-down ring-to-ring link, and the raised fallback
+ * is a compact rapid instead. Four independent bounds:
+ *
+ * 1. **Layer-bounded removal.** The material the earlier layers left may stand
+ *    over the link by at most this layer's own `stepdown` plus the reference's
+ *    discretisation allowance. A link clamped one band too low removes two
+ *    stepdowns there; a link cutting across material no layer removed (the gap
+ *    between two region bands, a skipped ring) removes the whole column. This is
+ *    the assertion that replaces the obsolete "a rough feed link removes
+ *    nothing": an at-layer link *is* a cut, and one band is what it may take.
+ * 2. **The model is protected.** The commanded span is sampled at the reference's
+ *    along resolution and its interpolated tip must stay at or above the
+ *    independent model surface (`max(model, layer)` is convex in along, so the
+ *    commanded chord cannot sag below it), and the reference's solid across the
+ *    **whole footprint the cutter body sweeps** -- every along bin within one
+ *    cutter radius and every angle bin within the body's angular reach, reading
+ *    `reference.occupied` as well as the outermost material -- must still hold the
+ *    model. A link that dives to a low model between rings fails the first; one
+ *    that cuts a gouge at its own ray **or at a neighbouring ray of a
+ *    non-revolved model, or under an intact shell**, fails the second. The
+ *    single-ray read this replaces passed a link at A30 that removed 0.4348 mm of
+ *    protected model 12.25 deg away (the review measured it at A42.125; this
+ *    reference's nearest cell centre is A42.25).
+ * 3. **The retained ends are protected.** Every cell the cutter body can reach
+ *    inside the link's axial footprint and outside the cut band keeps the blank.
+ *    The global retained-end assertion already says so; this attributes it to the
+ *    link that did it.
+ * 4. **The region is protected.** The link is one straight cut at one angle, so a
+ *    region decides on its whole span: every interior sample must be inside the
+ *    mask. A link that steps over an excluded strip or crosses the gap between
+ *    two bands cuts uncut blank, and the reference's own material there is the
+ *    blank -- which is what makes it unsafe, not merely out of region.
+ *
+ * #1117 rl-e extends all four to a link that **also changes A** (the partial-ring
+ * case: a ring's run ends where the layer's boundary crosses, and the next
+ * ring's run starts a few degrees away). The same bounds are swept across the A
+ * change: the removal is `referenceMove`'s continuous sweep of the slope, the
+ * model is read at the interpolated angle and the footprint window covers every
+ * angle from the start to the end of the change, and the region is sampled along
+ * the slope rather than at one angle.
+ */
+/** Whether two commanded A values are the same physical rotation. */
+function sameRotaryAngleDegrees(a: number, b: number): boolean {
+  const delta = Math.abs(((a - b) % 360 + 360) % 360)
+  return delta <= 1e-9 || delta >= 360 - 1e-9
+}
+
+function proveAtLayerLink(
+  context: LinkProofContext,
+  move: ToolpathMove,
+  fromAngle: number,
+  toAngle: number = fromAngle,
+): void {
+  const { entry, reference, stock, pivot, cutterRadius, budget, alongOf } = context
+  const fromAlong = alongOf(move.from)
+  const toAlong = alongOf(move.to)
+  const span = toAlong - fromAlong
+  const counts = atLayerLinkCounts
+  counts.total++
+  if (stock.shape === 'round') counts.round++
+  else counts.square++
+  if (context.ball) counts.ball++
+  else counts.flat++
+  if (stock.axis === 'x') counts.axisX++
+  else counts.axisY++
+  if ((entry.units ?? 'mm') === 'mm') counts.mm++
+  else counts.inch++
+  if (entry.region !== undefined) counts.region++
+  if (toAngle !== fromAngle) {
+    counts.acrossAngle++
+    acrossAngleByCase.set(entry.label, (acrossAngleByCase.get(entry.label) ?? 0) + 1)
+  } else if (stock.shape === 'square' && sameRotaryAngleDegrees(fromAngle, 0)) {
+    // The coverage counter asks for a **whole-ring** link at physical A0/A360.
+    // Commanded A accumulates a turn per ring (#1103), so by the time a whole
+    // ring links it may be at A2880: normalise before deciding (fix 1).
+    wholeRingSquareByCase.set(entry.label, (wholeRingSquareByCase.get(entry.label) ?? 0) + 1)
+  }
+
+  // Every value this proof compares and reports is normalised to millimetres
+  // (#1117 rl-c correction, review finding 2): the set carries millimetre and
+  // inch cases, and an inch case's raw project-unit number is 25.4 times smaller.
+  const units = entry.units ?? 'mm'
+  const mm = (value: number): number => convertLength(value, units, 'mm')
+  // #1117 rl-e: the link may sweep A as well as along, so every message names the
+  // angle it *starts* at and, when it moves, the one it ends at.
+  const angleLabel = toAngle === fromAngle
+    ? `A${fromAngle.toFixed(2)}`
+    : `A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)}`
+  const dAngle = toAngle - fromAngle
+  const bound = entry.stepdown + context.linkAllowance
+  trackMinimumMm(worstAtLayerLinkMargin, bound - moveSurfaceWorst, units,
+    `${entry.label} ${angleLabel} along ${fromAlong.toFixed(2)}->${toAlong.toFixed(2)}`)
+  assert.ok(moveSurfaceWorst <= bound,
+    `${entry.label}: a rough at-layer link at ${angleLabel} along `
+    + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} removes ${mm(moveSurfaceWorst).toFixed(4)} mm of the `
+    + `material the earlier layers left, over the ${mm(bound).toFixed(4)} mm one-stepdown bound `
+    + `(cell along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+    + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)})`)
+
+  // The region: the link is one straight cut, so a mask that can answer a whole
+  // **segment** must say yes. Point sampling at the reference's along resolution
+  // is not enough on its own -- an excluded strip narrower than one sample falls
+  // between two of them, which is exactly the gap a stay-down link must not step
+  // over -- so both views are asserted. #1117 rl-e: a link that also changes A is
+  // a slope in (along, A); the mask is asked along it, one segment per sampled
+  // pair of path points, so a strip anywhere on the slope is still named.
+  if (context.regionMask !== undefined) {
+    if (dAngle === 0) {
+      const segment = context.regionMask.containsSegment?.(
+        context.regionPoint(fromAlong, fromAngle),
+        context.regionPoint(toAlong, fromAngle),
+      )
+      assert.ok(segment !== false,
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
+        + `operation's region; its whole span must be inside`)
+    } else {
+      const steps = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin),
+        Math.ceil(Math.abs(dAngle) / budget.angleDeg))
+      for (let segmentStep = 0; segmentStep < steps; segmentStep++) {
+        const t0 = segmentStep / steps
+        const t1 = (segmentStep + 1) / steps
+        const mid = fromAngle + dAngle * (t0 + t1) / 2
+        const segment = context.regionMask.containsSegment?.(
+          context.regionPoint(fromAlong + span * t0, mid),
+          context.regionPoint(fromAlong + span * t1, mid),
+        )
+        assert.ok(segment !== false,
+          `${entry.label}: a rough at-layer link at ${angleLabel} along `
+          + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} crosses an excluded part of the `
+          + `operation's region at A${mid.toFixed(2)}; its whole swept path must be inside`)
+      }
+    }
+  }
+
+  const corner = barMaxRadius(stock)
+  const modelAllowance = entry.requestedCellSize + budget.alongBin + 1e-6
+  const underLimit = corner * budget.angleDeg * Math.PI / 180 + budget.alongBin + 1e-6
+  const samples = Math.max(1, Math.ceil(Math.abs(span) / budget.alongBin),
+    Math.ceil(Math.abs(dAngle) / budget.angleDeg))
+  const wrapped = ((fromAngle % 360) + 360) % 360
+  const rayCell = Math.floor(wrapped / reference.angleDeg) % reference.angleBins
+  for (let s = 0; s <= samples; s++) {
+    const fraction = s / samples
+    const along = fromAlong + span * fraction
+    // #1117 rl-e: the path is one straight move in (along, A), so the angle at
+    // fraction `f` is the linear interpolation -- the same pose the reference's
+    // own sweep replays.
+    const angle = fromAngle + dAngle * fraction
+    const tip = (move.from.z - pivot) + (move.to.z - move.from.z) * fraction
+    const model = linkModelRadiusAt(entry, along, angle)
+    if (model !== null) {
+      const slack = tip - model
+      trackMinimumMm(worstLinkModelSlack, slack, units,
+        `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`)
+      const slackMm = mm(slack)
+      assert.ok(slackMm >= -mm(modelAllowance),
+        `${entry.label}: a rough at-layer link at ${angleLabel} commands tip `
+        + `${mm(tip).toFixed(4)} mm at along ${along.toFixed(2)} A${angle.toFixed(2)}, `
+        + `${(-slackMm).toFixed(4)} mm below the model ${mm(model).toFixed(4)} mm `
+        + `(allowed ${mm(modelAllowance).toFixed(4)} mm)`)
+    }
+    if (context.regionMask !== undefined) {
+      assert.ok(context.regionMask.containsPoint(context.regionPoint(along, angle)),
+        `${entry.label}: a rough at-layer link at ${angleLabel} cuts across untouched `
+        + `stock at along ${along.toFixed(2)} A${angle.toFixed(2)}, outside the operation's region`)
+    }
+  }
+
+  // The protected model across the **whole footprint the cutter body sweeps**
+  // (#1117 rl-c correction, review finding 1). The material under the link's own
+  // ray is not enough: the body reaches neighbouring rays, and a non-revolved
+  // model's radius differs at each of them, so a link that meets the model at its
+  // own angle can still cut 0.4348 mm out of the model 12.25 deg away. Reading
+  // `reference.occupied` as well means a band removed from under an intact shell
+  // counts too -- the scalar material read cannot see it. The window is the same
+  // one `referenceMove` sweeps with: every along bin within one cutter radius and
+  // every angle bin within the body's angular reach at the link's lowest tip.
+  const low = Math.min(fromAlong, toAlong) - cutterRadius
+  const high = Math.max(fromAlong, toAlong) + cutterRadius
+  const first = Math.max(0, Math.floor((low - reference.alongStart) / reference.alongBin))
+  const last = Math.min(reference.alongBins - 1, Math.floor((high - reference.alongStart) / reference.alongBin))
+  const tipLow = Math.min(move.from.z, move.to.z) - pivot
+  const reachBins = Math.ceil((bodyAngularReachDeg(context.ball, cutterRadius, tipLow, reference.maxMaterial)
+    + reference.angleDeg) / reference.angleDeg)
+  const allowedMm = mm(underLimit)
+  // #1117 rl-e: a link that changes A sweeps the body across **every angle from
+  // its start to its end**, not just the reach around its own ray, so the window
+  // is the union of the reach at each angle of the slope. A rock held at the end
+  // angle would still leave the body free to cut at the middle of the change.
+  const angleBinsToCheck: number[] = []
+  if (dAngle === 0) {
+    for (let step = -reachBins; step <= reachBins; step++) {
+      angleBinsToCheck.push(((rayCell + step) % reference.angleBins + reference.angleBins) % reference.angleBins)
+    }
+  } else {
+    const sweptFirst = Math.floor((Math.min(fromAngle, toAngle) - reachBins * reference.angleDeg) / reference.angleDeg)
+    const sweptLast = Math.ceil((Math.max(fromAngle, toAngle) + reachBins * reference.angleDeg) / reference.angleDeg)
+    for (let bin = sweptFirst; bin <= sweptLast; bin++) {
+      angleBinsToCheck.push(((bin % reference.angleBins) + reference.angleBins) % reference.angleBins)
+    }
+  }
+  for (let i = first; i <= last; i++) {
+    const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
+    for (const k of angleBinsToCheck) {
+      const cellAngle = (k + 0.5) * reference.angleDeg
+      const solid = linkProtectedSolid(entry, reference, i * reference.angleBins + k, cellAlong, cellAngle)
+      if (solid === null) continue
+      linkFootprintCells++
+      if (k !== rayCell) linkFootprintOffRay++
+      const gapMm = mm(solid.gap)
+      if (gapMm > worstLinkSolidGap) {
+        worstLinkSolidGap = gapMm
+        worstLinkSolidGapLabel = `${entry.label} along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)}`
+      }
+      assert.ok(gapMm <= allowedMm,
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} leaves the protected model `
+        + `${gapMm.toFixed(4)} mm short at along ${cellAlong.toFixed(2)} A${cellAngle.toFixed(2)} `
+        + `(${solid.cavity ? 'a cavity below the intact shell' : 'the outermost surface'} stands at `
+        + `${mm(solid.standing).toFixed(4)} mm; allowed ${allowedMm.toFixed(4)} mm). The body sweeps `
+        + `this cell somewhere between A${Math.min(fromAngle, toAngle).toFixed(2)} and `
+        + `A${Math.max(fromAngle, toAngle).toFixed(2)}.`)
+    }
+  }
+
+  // The retained ends: this link's own body footprint, outside the cut band.
+  //
+  // #1155 rn-e: on a **round** bar the plain bar beyond the model's own end is
+  // material the operation may cut into, so a cell within one cutter radius of
+  // the band's end is not "retained" any more -- the body legitimately reaches
+  // it. Every cell further out still must not move. A square blank keeps the
+  // whole band's edge: its retained corners hold the part.
+  const roundOverrun = entry.stock.shape === 'round'
+  const retainedLow = roundOverrun ? entry.alongStart - cutterRadius : entry.alongStart
+  const retainedHigh = roundOverrun ? entry.alongEnd + cutterRadius : entry.alongEnd
+  for (let i = first; i <= last; i++) {
+    const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
+    if (cellAlong < context.alongLimits.min || cellAlong > context.alongLimits.max) continue
+    if (cellAlong >= retainedLow - 1e-9 && cellAlong <= retainedHigh + 1e-9) continue
+    for (let k = 0; k < reference.angleBins; k++) {
+      const index = i * reference.angleBins + k
+      const blank = blankRadius(stock, (k + 0.5) * reference.angleDeg)
+      const drop = retainedRemoval(reference, index, blank)
+      linkEndCells++
+      assert.ok(drop <= 1e-6,
+        `${entry.label}: a rough at-layer link at ${angleLabel} along `
+        + `${fromAlong.toFixed(2)}->${toAlong.toFixed(2)} lowered a retained end by `
+        + `${drop.toFixed(4)} mm at along ${cellAlong.toFixed(2)} A${((k + 0.5) * reference.angleDeg).toFixed(2)}`)
+    }
+  }
+}
+
+/**
+ * #1117 slice C: prove one **A-changing rough cut** at a single along position.
+ *
+ * Two shapes are sound. A **low** turn is a ring arc at this layer: it cuts
+ * material at its own ray, so at every swept angle the raw blank's touch radius
+ * (the reference's own `rawStockSurface`, not the generator's gate) is at or
+ * above the cut height. A **high** turn is the corner-envelope traverse: it sits
+ * at the blank's largest radius plus the clearance, above every cell, and removes
+ * nothing. The mutation this catches is anything between them -- a corner turn
+ * lowered to the arc height or the layer radius, which swings the cutter through
+ * the blank's face at a height the blank does not reach.
+ */
+function proveRoughTurn(context: LinkProofContext, move: ToolpathMove): void {
+  const { entry, stock, pivot, cutterRadius } = context
+  if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) return
+  const low = Math.min(move.from.z, move.to.z) - pivot
+  const height = Math.max(move.from.z, move.to.z) - pivot
+  const label = `${entry.label} A${move.from.a.toFixed(2)}->${move.to.a.toFixed(2)}`
+  if (low >= context.travelTip - 1e-6) {
+    // The corner-envelope turn: above the blank's largest radius, so it removes
+    // nothing. Kept as its own coverage count -- a run with no such turn would
+    // not be exercising the rule this proof exists for.
+    cornerTurnChecks++
+    return
+  }
+  // Within one cutter radius of a band face the sampler's retained-stub floor may
+  // lift a ring above the blank's own touch radius -- it keeps the cutter's side
+  // off the stub (#1016) -- so the blank-touch rule cannot judge a turn there.
+  // The mid-bar turns carry this rule; the stub floors carry their own proof.
+  const along = context.alongOf(move.from)
+  const fromFace = Math.min(Math.abs(along - entry.alongStart), Math.abs(along - entry.alongEnd))
+  if (fromFace <= cutterRadius + context.budget.alongBin) return
+  lowTurnChecks++
+  // The sampler's documented conservative cell lift is what may put a ring above
+  // the blank's own touch radius; anything more is a turn through air.
+  const allowance = entry.requestedCellSize + context.budget.alongBin + 1e-6
+  // Reported in millimetres (#1117 rl-c correction, review finding 2), so an
+  // inch case's raw value cannot win the minimum 25.4 times smaller.
+  const units = entry.units ?? 'mm'
+  const delta = move.to.a - move.from.a
+  const steps = Math.max(2, Math.ceil(Math.abs(delta) / 2))
+  for (let s = 0; s <= steps; s++) {
+    const angle = move.from.a + delta * s / steps
+    const touch = rawStockSurface(stock, angle, cutterRadius, context.ball)
+    trackMinimumMm(worstTurnMargin, allowance - (height - touch), units, `${label} at A${angle.toFixed(2)}`)
+    const slack = touch - height
+    assert.ok(slack >= -allowance,
+      `${entry.label}: a low A-changing rough cut at A${move.from.a.toFixed(2)}->`
+      + `${move.to.a.toFixed(2)} turns through A${angle.toFixed(2)} at ${height.toFixed(4)} where the `
+      + `blank stands at only ${touch.toFixed(4)} (allowed ${allowance.toFixed(4)}, and a turn above `
+      + `the blank must be at the corner envelope ${context.travelTip.toFixed(4)})`)
+  }
+}
+
+
+// `SQUARE_CASES` is a profiling aid only: the committed run uses all 300 seeded
+// cases, and the assertions below still require the full set.
+const CASE_COUNT = process.env.SQUARE_CASES ? Number(process.env.SQUARE_CASES) : 300
+const startedAt = Date.now()
+const ROUND_CASES = 10
+const CASES = [
+  ...Array.from({ length: CASE_COUNT }, (_, seed) => fitCase(seed)),
+  // #1045 slice R's along-finish cases are always in the set, whatever the
+  // profiling count: a finish-only along program on a round bar and a square
+  // blank, and the same with a rough in front of it.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawAlongCase(seed))),
+  // #1093: the round-bar around equivalent of the square set, always present.
+  ...Array.from({ length: ROUND_CASES }, (_, seed) =>
+    fitEntry(drawRoundCase(seed), (scale) => drawRoundCase(seed, scale))),
+  // #1095: bare ball roughs with a positive leave next to retained ends, both
+  // blank shapes and both pass directions. A retained end is the only place the
+  // leave could thicken a wall the rough does not finish, so these are always in
+  // the set whatever the profiling count.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawWallLeaveCase(seed))),
+  // #1095: the same shape with a finish in the same direction, so the finish
+  // itself is replayed with a positive leave next to both retained ends -- on a
+  // round bar and a square blank, along and around.
+  ...Array.from({ length: 8 }, (_, seed) => fitEntry(drawWallLeaveSequenceCase(seed))),
+  // #1095 slice D: a tall retained wall and a much smaller model, so an emitted
+  // ring lifted to the wall's top is unmistakable air. Round and square, along
+  // and around; the emitted-move check asserts none exists.
+  ...Array.from({ length: 4 }, (_, seed) => fitEntry(drawWallAirCase(seed))),
+  // #1093 review: non-revolved around models, so a link crossing a feature
+  // between two rings is replayed against the full cutter body at every angle
+  // under the pose, not one ray of a surface of revolution.
+  fitEntry(drawFeatureCase(0)),
+  fitEntry(drawFeatureCase(1)),
+  fitEntry(drawSquareFeatureCase(0)),
+  fitEntry(drawSquareFeatureCase(1)),
+  fitEntry(drawFinishFeatureCase(0)),
+  // #1096: region-limited programs, round and square, around and along, so the
+  // emitted motion is replayed inside a mask as well as against the model.
+  fitEntry(drawRegionCase(0, 'around', false)),
+  fitEntry(drawRegionCase(1, 'around', true)),
+  fitEntry(drawRegionCase(2, 'along', false)),
+  fitEntry(drawRegionCase(3, 'along', true)),
+  // #1096 review: two bands leave untouched stock between them, and the rough's
+  // ring-to-ring link can cross it. Round and square, ball and flat; the
+  // crossing rapid is checked against the uncut blank, and the run asserts at
+  // least one case actually produces one (the ring parity gates the link).
+  fitEntry(drawGapRegionCase(0, false)),
+  fitEntry(drawGapRegionCase(1, false)),
+  fitEntry(drawGapRegionCase(2, true)),
+  fitEntry(drawGapRegionCase(3, true)),
+  // #1117 slice C: the link proof's own coverage matrix, always present whatever
+  // the profiling count. Small around roughs that qualify at both layers, over
+  // both stock axes, both units, both blank shapes, both cutters and a masked
+  // case.
+  ...LINK_MATRIX.map((spec) => fitEntry(drawLinkCase(spec))),
+  // #1117 rl-e correction (review finding 2): the A-changing link's own case. The
+  // matrix above emits equal-angle links only, so the swept-footprint branch of
+  // the proof (every body window from the start angle to the end one) was entered
+  // for no link at all and the suite passed with zero of them.
+  fitEntry(drawLinkAcrossCase('ball_endmill')),
+  // The same lobe with a **flat**: its body is a disc at the tip, so within its
+  // reach it clears nothing above the commanded height. rl-e's fix round 3 had
+  // this case keep the footprint-height lift load-bearing; #1117 rl-f settled
+  // that the lift is redundant for sampled poses (the row tips are already
+  // `safeToolTipZAt` samples), so the flat stays for the **swept-footprint**
+  // proof, which is the branch that reads neighbouring rays and cavities.
+  fitEntry(drawLinkAcrossCase('flat_endmill')),
+  // #1117 rl-f: the **chiral** twisted ridge. Every earlier A-changing case is a
+  // model even in A, where the mirrored angular mapping is the same geometry; on
+  // this one the coupling between the crest's along position and its angle makes
+  // the mapping load-bearing, and it is the model the rl-e review read as
+  // gouging. Its links go through the same proof as every other, and the case
+  // must emit A-changing links (`requiresAcrossAngle`).
+  fitEntry(drawTwistCase()),
+  // #1117 (square links): busto-rect's shape on a small square blank -- whole
+  // rings below the inscribed radius and lobe-split rings below them. Must emit
+  // whole-ring and A-changing links (`requiresWholeRingSquareLinks`).
+  fitEntry(drawSquareWholeRingCase()),
+]
+if (process.env.SQUARE_ESTIMATE_ONLY) {
+  const ranked = CASES.map(({ entry, program }, seed) => ({
+    seed,
+    estimate: estimateReplayCells(program, entry),
+    budget: referenceBudget(entry),
+    label: entry.label,
+  })).sort((a, b) => b.estimate - a.estimate)
+  for (const row of ranked.slice(0, 15)) {
+    console.log(`  [estimate] seed ${row.seed}: ${row.estimate} work, ${row.budget.cells} cells, `
+      + `${row.budget.alongBins}x${row.budget.angleBins} bins — ${row.label}`)
+  }
+  console.log(`  [estimate] total ${ranked.reduce((sum, row) => sum + row.estimate, 0)} work`)
+  process.exit(0)
+}
+
+console.log(`Testing ${CASES.length} seeded generator-emitted square around programs...`)
+let checkedCuts = 0
+let alongFinishStages = 0
+let alongFinishOnlyRound = 0
+let alongFinishOnlySquare = 0
+let casesDone = 0
+let checkedRapids = 0
+// #1096 review (P1): rapids that leave the region and are checked against the
+// uncut blank. At least one gap case must exercise one.
+let regionCrossingRapids = 0
+let checkedSurfaceCells = 0
+let defaultCases = 0
+let defaultFinishOnly = 0
+let defaultRoughOnly = 0
+let defaultBoth = 0
+let defaultMixed = 0
+let defaultRetained = 0
+let defaultFree = 0
+let profileSteps = 0
+let profileMoves = 0
+let checkedPlunges = 0
+let worstPlunge = 0
+let worstPlungeLabel = ''
+// #1093: rough link moves replayed against the reference's remaining material.
+// An in-air link is a rapid and is checked for body clearance below; a link
+// that stays a cut (the A-changing travel rule) must remove nothing.
+let roughLinkChecks = 0
+/**
+ * Rough around cut moves that are part of a **continuous helix** (#1103 ca-j).
+ *
+ * A square blank's whole-ring band is a helix now, so the emitted program holds
+ * moves that travel along the bar *and* turn A -- the shape the #1093/#1117
+ * at-layer link rules were written for. A helix is not a link: it is the layer's
+ * own cut, and its depth is owned by `assertStageDescent` above (which replays
+ * every emitted pose against the raw blank and the material the earlier layers
+ * left, corner shell and all). The link proof's one-stepdown bound is the wrong
+ * measure here: a square blank's intact corner shell stands more than a stepdown
+ * above the corner rays, exactly the reason the interior number is a diagnostic
+ * on a square blank, and a helix's cutter flank removes it just as a ring cut
+ * does. Counting them keeps the classification visible.
+ */
+let helixMoveChecks = 0
+/** Square blank and round bar share of those moves. */
+let helixSquareChecks = 0
+let roundAroundCases = 0
+/** Non-revolved models replayed (#1093 review). */
+let featureCases = 0
+
+/**
+ * The moves of one around stage that belong to a continuous helix (#1103 ca-j).
+ *
+ * Two shapes reach the analysis. The generator merges collinear moves, so a
+ * helix over a surface of revolution arrives as one (or a few) commanded moves
+ * whose A span is a whole number of turns -- 720 degrees on the failing fixture,
+ * which no at-layer link can be. A helix the surface does not make collinear
+ * stays a run of short (along, A) segments at one axial advance per degree,
+ * which the run test below recognises and a pair of ring links never is.
+ */
+function helixMovesOf(
+  moves: readonly ToolpathMove[],
+  alongOf: (point: ToolpathMove['from']) => number,
+): Set<ToolpathMove> {
+  const set = new Set<ToolpathMove>()
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const along = alongOf(move.to) - alongOf(move.from)
+    const turn = (move.to.a ?? 0) - (move.from.a ?? 0)
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) >= 360 - 1e-9) set.add(move)
+  }
+  let run: ToolpathMove[] = []
+  let pitch = 0
+  const flush = (): void => {
+    if (run.length >= 6) for (const move of run) set.add(move)
+    run = []
+  }
+  for (const move of moves) {
+    const along = move.kind === 'cut' ? alongOf(move.to) - alongOf(move.from) : 0
+    const turn = move.kind === 'cut' ? (move.to.a ?? 0) - (move.from.a ?? 0) : 0
+    if (Math.abs(along) > 1e-12 && Math.abs(turn) > 1e-9) {
+      const next = along / turn
+      if (run.length === 0
+        || Math.abs(next - pitch) <= 1e-6 * Math.max(Math.abs(next), Math.abs(pitch))) {
+        run.push(move)
+        pitch = next
+        continue
+      }
+    }
+    flush()
+  }
+  flush()
+  return set
+}
+
+for (const { entry, program } of CASES) {
+  currentCaseLabel = entry.label
+  currentCaseSeed = casesDone
+  currentCaseStepover = entry.stepover
+  currentCaseDiameter = entry.diameter
+  if (process.env.SQUARE_PROFILE) {
+    console.log(`  [case] ${casesDone} ${((Date.now() - startedAt) / 1000).toFixed(1)} s${entry.compact ? ' compact' : ''} `
+      + `est ${estimateReplayCells(program, entry)} steps ${referenceStats.steps - profileSteps} `
+      + `moves ${referenceStats.moves - profileMoves} sd ${entry.stepdown} ${entry.programKind} — ${entry.label}`)
+    profileSteps = referenceStats.steps
+    profileMoves = referenceStats.moves
+  }
+  casesDone++
+  if (entry.mesh) featureCases++
+  if (entry.stock.shape === 'round' && entry.roughKind === 'around') roundAroundCases++
+  if (entry.defaultParams) {
+    defaultCases++
+    if (entry.programKind === 'finish') defaultFinishOnly++
+    else if (entry.programKind === 'rough') defaultRoughOnly++
+    else if (entry.programKind === 'both') defaultBoth++
+    else defaultMixed++
+    if (entry.retained) defaultRetained++
+    else defaultFree++
+  }
+  const stock = entry.stock
+  const tool = normalizedTool(entry.type, entry.diameter, entry.units ?? 'mm')
+  const cutterRadius = tool.radius
+  const ball = entry.type === 'ball_endmill'
+  const pivot = barPivotZ(stock)
+  const corner = barMaxRadius(stock)
+  const clearance = convertLength(1, 'mm', entry.units ?? 'mm')
+  const travelZ = pivot + corner + clearance
+
+  const roughRan = entry.programKind !== 'finish'
+  const finishRan = entry.programKind !== 'rough'
+  if (roughRan) {
+    assert.ok(program.roughMoves.length > 0, `${entry.label}: the rough emits motion`)
+    // A non-revolved box that straddles the axis may legitimately need a cut
+    // below the centreline (#1093); every revolved case here is above it.
+    assert.ok(
+      entry.mesh
+        ? program.roughCodes.every((code) => code === 'rotaryBelowCentreline')
+        : program.roughCodes.length === 0,
+      `${entry.label}: the rough warns about nothing else`,
+    )
+  }
+  if (finishRan) {
+    // A finish only follows the model, so it cuts with or without a rough. A
+    // finish-only program therefore cuts to full depth in one pass and is
+    // outside every layer bound; it carries the advisory instead. A finish
+    // after a rough is bounded by what the rough left.
+    assert.ok(program.finishMoves.length > 0, `${entry.label}: the finish follows the model and cuts`)
+    if (entry.programKind === 'finish') {
+      assert.deepEqual(program.finishCodes, ['rotaryFinishWithoutRough'],
+        `${entry.label}: a finish-only program carries the no-rough advisory`)
+    } else {
+      assert.ok(entry.mesh
+        ? program.finishCodes.every((code) => code === 'rotaryBelowCentreline')
+        : program.finishCodes.length === 0,
+      `${entry.label}: a preceding rough suppresses the advisory`)
+    }
+    if (entry.finishKind === 'along') {
+      alongFinishStages++
+      if (entry.programKind === 'finish') {
+        if (entry.stock.shape === 'round') alongFinishOnlyRound++
+        else alongFinishOnlySquare++
+      }
+    }
+  }
+
+  const budget = referenceBudget(entry)
+  // The reference must be four times finer than both generator sampling cells
+  // **and** the height-map cell the generator asked for (#1045 slice L).
+  const cells = generatorCells(entry)
+  assert.ok(budget.alongBin <= Math.min(cells.along, entry.requestedCellSize) / 4 * (1 + 1e-9),
+    `${entry.label}: the reference's along bin ${budget.alongBin} is 4x finer than ${cells.along} and ${entry.requestedCellSize}`)
+  assert.ok((2 * Math.PI * corner / budget.angleBins) <= Math.min(cells.arc, entry.requestedCellSize) / 4 * (1 + 1e-9),
+    `${entry.label}: the reference's angle bin is 4x finer than ${cells.arc} and ${entry.requestedCellSize}`)
+
+  // The stock's own axis decides which coordinate is the along position (#1117:
+  // the proof runs on both axes).
+  const alongOf = (point: ToolpathMove['from']): number =>
+    stock.axis === 'x' ? point.x : point.y
+  const allMoves = [...program.roughMoves, ...program.finishMoves]
+  const alongLimits = alongBounds(stock)
+  let minCutAlong = Number.POSITIVE_INFINITY
+  let maxCutAlong = Number.NEGATIVE_INFINITY
+  for (const move of allMoves) {
+    if (move.kind === 'rapid') continue
+    minCutAlong = Math.min(minCutAlong, alongOf(move.from), alongOf(move.to))
+    maxCutAlong = Math.max(maxCutAlong, alongOf(move.from), alongOf(move.to))
+  }
+  const windowLow = Math.max(alongLimits.min, minCutAlong - cutterRadius - 1)
+  const windowHigh = Math.min(alongLimits.max, maxCutAlong + cutterRadius + 1)
+  const reference = createReference(stock, windowLow, windowHigh, budget.alongBin, budget.angleBins)
+
+  // #1093: a rough link is sized from the material its own earlier layers left
+  // plus the 1 mm clearance, so it is in air. The reference's cell and ball
+  // discretisation is the only removal it may report. Defined before the region
+  // block because a rapid crossing a region gap is judged with the same bound.
+  const linkBiteAllowance = budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+
+  // #1117 slice C: the link proof's own frame. The region mask and the sheet
+  // point it needs are this file's, not the generator's, and the travel height
+  // is derived from the blank plus the 1 mm clearance the generator converts.
+  const centreAcross = barCentre(stock)
+  const circumference = Math.PI * stock.thickness
+  const travelTip = barMaxRadius(stock) + convertLength(1, 'mm', entry.units ?? 'mm')
+  const linkProof: LinkProofContext = {
+    entry,
+    reference,
+    stock,
+    pivot,
+    cutterRadius,
+    ball,
+    alongOf,
+    alongLimits,
+    ...(entry.region === undefined ? {} : { regionMask: regionMask(stock, entry.region) }),
+    regionPoint: (along: number, angleDeg: number): { x: number; y: number } => (stock.axis === 'x'
+      ? { x: along, y: centreAcross + angleDeg * circumference / 360 }
+      : { x: centreAcross + angleDeg * circumference / 360, y: along }),
+    budget,
+    linkAllowance: linkBiteAllowance,
+    travelTip,
+  }
+
+  // #1096: a region the operation is limited to. The mask is this file's own,
+  // built from the sheet's unwrapped coordinates, and the checks below are on
+  // the **emitted** motion: a move that is not in air at the travel height must
+  // keep its tool centre inside the region (plus the cutter radius the boundary
+  // sample may reach past it), and a turn that leaves the region must happen at
+  // the travel height -- whose envelope is above a square blank's corners.
+  if (entry.region) {
+    const mask = regionMask(stock, entry.region)
+    const centre = centreAcross
+    const angleOf = (across: number): number => (across - centre) * 360 / circumference
+    // Distance outside the region in mm: along directly, angle as an arc
+    // length. The mask is periodic, and a set of bands is a union, so the
+    // distance is the nearest band's.
+    const outside = (along: number, angle: number): number => {
+      let distance = Number.POSITIVE_INFINITY
+      // #1103 slice ca-c: an around pass carries A past one turn (it never
+      // reverses), and the region is a property of the bar's surface, so the
+      // distance is measured on A modulo one turn.
+      const physical = ((angle % 360) + 360) % 360
+      for (const rect of regionList(entry.region!)) {
+        const alongOut = Math.max(0, rect.alongFrom - along, along - rect.alongTo)
+        let angleOut = Number.POSITIVE_INFINITY
+        for (let turn = -1; turn <= 1; turn++) {
+          const shifted = physical + turn * 360
+          angleOut = Math.min(angleOut, Math.max(0,
+            angleOf(rect.acrossFrom) - shifted, shifted - angleOf(rect.acrossTo)))
+        }
+        const acrossOut = angleOut * circumference / 360
+        distance = Math.min(distance, Math.hypot(alongOut, acrossOut))
+      }
+      return distance
+    }
+    const at = (along: number, angle: number): { x: number; y: number } => (stock.axis === 'x'
+      ? { x: along, y: centre + angle * circumference / 360 }
+      : { x: centre + angle * circumference / 360, y: along })
+    let regionMoves = 0
+    for (const move of allMoves) {
+      // A rough's #1093 traverse is a rapid in air at one height, and that
+      // height is only above the material its own layers left -- not
+      // necessarily the travel height. It removes nothing, so it is skipped.
+      if (move.kind === 'rapid') continue
+      const inAirAtTravel = Math.min(move.from.z, move.to.z) >= travelZ - 1e-9
+      if (inAirAtTravel) continue
+      const from = { along: alongOf(move.from), angle: move.from.a ?? 0 }
+      const to = { along: alongOf(move.to), angle: move.to.a ?? 0 }
+      const mid = { along: (from.along + to.along) / 2, angle: (from.angle + to.angle) / 2 }
+      for (const point of [from, to, mid]) {
+        const distance = outside(point.along, point.angle)
+        assert.ok(distance <= cutterRadius + 1e-6,
+          `${entry.label}: a cutting move's tool centre is ${distance.toFixed(3)} mm outside the region `
+          + `(along ${point.along.toFixed(2)}, A${point.angle.toFixed(2)}), beyond the cutter radius`)
+      }
+      regionMoves++
+    }
+    // A turn that leaves the region on a square blank must be at the travel
+    // height: the blank's corner envelope stands above every cut, so a turn
+    // taken lower would drive the cutter body into a corner it did not machine.
+    // An around stage has such a turn by construction when the region splits a
+    // ring; a band spanning the whole circumference does not split one, so it
+    // has no turn to check. An along stage's passes are separated by an angle
+    // change only where both passes cut, so it is not asserted to produce one.
+    if (stock.shape === 'square' && (entry.roughKind === 'around' || entry.finishKind === 'around')
+      && regionList(entry.region!).some((rect) => rect.acrossTo - rect.acrossFrom < circumference - 1e-9)) {
+      let turnChecks = 0
+      for (const move of allMoves) {
+        if (move.from.a === undefined || move.to.a === undefined || move.from.a === move.to.a) continue
+        if (alongOf(move.from) !== alongOf(move.to)) continue
+        const mid = { along: alongOf(move.from), angle: (move.from.a + move.to.a) / 2 }
+        // The mask repeats one circumference each way, so a commanded A past one
+        // turn is tested on its physical angle (#1103 slice ca-c).
+        const physicalMid = ((mid.angle % 360) + 360) % 360
+        if (mask.containsPoint(at(mid.along, physicalMid))) continue
+        // The A midpoint of a merged cut that wraps A0/A360 is not its physical
+        // midpoint; only a gap turn crosses the region this way, and one that
+        // does must already be in air.
+        assert.ok(Math.min(move.from.z, move.to.z) >= travelZ - 1e-6,
+          `${entry.label}: a turn outside the region at A${mid.angle.toFixed(2)} runs at `
+          + `Z${Math.min(move.from.z, move.to.z).toFixed(4)}, below the travel height ${travelZ.toFixed(4)}`)
+        turnChecks++
+      }
+      assert.ok(turnChecks > 0, `${entry.label}: the region splits a ring, so a turn outside it is exercised`)
+    }
+    // #1096 review (P1): outside the region nothing is removed, so a rapid that
+    // leaves it must clear the **uncut blank** it crosses. `reference` still
+    // holds the blank here -- its cuts are replayed in the stage loop below --
+    // so `rapidClearance` is exactly that check. A link between two region
+    // bands crosses untouched stock and used to fly at the model height.
+    for (const move of program.roughMoves) {
+      if (move.kind !== 'rapid') continue
+      if (move.from.a === undefined || move.from.a !== move.to.a) continue
+      const from = alongOf(move.from)
+      const to = alongOf(move.to)
+      if (from === to || move.from.z !== move.to.z) continue
+      const steps = Math.max(1, Math.ceil(Math.abs(to - from) / budget.alongBin))
+      let leaves = false
+      for (let s = 0; s <= steps && !leaves; s++) {
+        leaves = !mask.containsPoint(at(from + (to - from) * s / steps, move.from.a))
+      }
+      if (!leaves) continue
+      regionCrossingRapids++
+      const margin = rapidClearance(reference, move, pivot, cutterRadius, ball, alongOf)
+      assert.ok(margin >= -linkBiteAllowance,
+        `${entry.label}: a rapid crossing outside the region at A${move.from.a.toFixed(2)} along `
+        + `${from.toFixed(2)}->${to.toFixed(2)} stands ${(-margin).toFixed(4)} mm below the uncut blank `
+        + `(allowed ${linkBiteAllowance.toFixed(4)}; tip ${rapidWorst.tip.toFixed(3)} `
+        + `material ${rapidWorst.material.toFixed(3)} at along ${rapidWorst.along.toFixed(2)} `
+        + `A${rapidWorst.angle.toFixed(2)})`)
+    }
+    assert.ok(regionMoves > 0, `${entry.label}: the region still cuts inside itself`)
+  }
+
+  // A finish after a rough removes at most what the rough left at an along
+  // stage's ray: one rough `stepdown`, plus the reference's own cell allowance
+  // (`alongRadialBiteBound` below). A finish-only program has no layer bound
+  // (2026-10-22 decision). Turning engagement is a rough-only assertion: a
+  // finish has no clearing layers, and its single model-following ring can meet
+  // the rough's between-pass ridge frontally, which is not a radial depth.
+  const roughBound = entry.stepdown + budget.alongBin + ballRiseAt(cutterRadius, budget.alongBin) + 1e-6
+  const stageSpecs: Array<{ moves: ToolpathMove[]; finish: boolean; direction: 'around' | 'along' }> = []
+  if (roughRan) stageSpecs.push({
+    moves: coalesceCommandedMoves(program.roughMoves, convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm')),
+    finish: false,
+    direction: entry.roughKind,
+  })
+  if (finishRan) stageSpecs.push({
+    moves: coalesceCommandedMoves(program.finishMoves, convertLength(COALESCE_TOLERANCE_MM, 'mm', entry.units ?? 'mm')),
+    finish: true,
+    direction: entry.finishKind,
+  })
+  assert.ok(stageSpecs.length > 0, `${entry.label}: the program has motion`)
+
+  // #1045 slice S (2026-10-22 decision): judge the emitted motion of every
+  // **rough** before replaying it. A finish emits only the model-following
+  // passes, so it has no layer descent to verify; after a rough the radial
+  // bound below uses the rough's stepdown instead of a finish one.
+  const stages = stageSpecs.map((spec) => ({
+    ...spec,
+    descent: spec.finish || entry.mesh
+      ? null
+      : assertStageDescent(
+        entry,
+        `rough ${spec.direction} stage`,
+        spec.moves,
+        spec.direction,
+        pivot,
+        ball,
+        cutterRadius,
+        entry.stepdown,
+        alongOf,
+        entry.roughSpacing,
+      ),
+  }))
+  for (const stage of stages) {
+    if (!stage.descent) continue
+    descentChecks += stage.descent.cuts
+    if (stage.direction === 'along') alongDescentChecks += stage.descent.cuts
+    else aroundDescentChecks += stage.descent.cuts
+    roughDescentChecks += stage.descent.cuts
+    if (stage.descent.margin < worstDescentMargin) {
+      worstDescentMargin = stage.descent.margin
+      worstDescentMarginLabel = `${entry.label} ${stage.descent.marginLabel}`
+    }
+    assert.ok(stage.descent.cuts > 0,
+      `${entry.label}: the rough ${stage.direction} stage emits a verified descent`)
+  }
+
+  let controller = allMoves.find((move) => move.from.a !== undefined)?.from.a ?? 0
+  /** #1103 ca-j: the finish stage's helix moves, for the finished-surface bound below. */
+  let finishHelixMoves = 0
+  for (const stage of stages) {
+    const bound = roughBound
+    // A finish-only program cuts to full depth in one pass, so the along-stage
+    // radial bite does not apply to it; it is covered by the advisory instead.
+    // (Turning engagement and plunges are rough-only assertions regardless.)
+    const unlicensedFinish = stage.finish && entry.programKind === 'finish'
+    const helixMoves = stage.direction === 'around'
+      ? helixMovesOf(stage.moves, alongOf)
+      : new Set<ToolpathMove>()
+    for (const move of stage.moves) {
+      const hasAngle = move.from.a !== undefined || move.to.a !== undefined
+      const fromAngle = move.kind === 'rapid' ? controller : (move.from.a ?? controller)
+      const toAngle = hasAngle ? (move.to.a ?? fromAngle) : fromAngle
+      const turns = toAngle !== fromAngle
+      const lowZ = Math.min(move.from.z, move.to.z)
+      // #1117 slice C: every A-changing *cut* of an around rough stage is judged
+      // here, whether it is a ring arc at the layer or a turn at the corner
+      // envelope. It is outside the `lowZ` gate below because the corner-envelope
+      // turn is above the travel height and would otherwise never be looked at.
+      // #1117 rl-e: a cut that changes along **and** A is a link, not a turn --
+      // it is one straight commanded slope, and the at-layer link proof below
+      // owns it (the turn rule is about a pose that only rotates, where the blank
+      // under the body is the only thing that can be hit).
+      if (!stage.finish && stage.direction === 'around' && move.kind === 'cut'
+        && alongOf(move.from) === alongOf(move.to)) {
+        proveRoughTurn(linkProof, move)
+      }
+      if (move.kind === 'rapid') {
+        checkedRapids++
+        if (turns) {
+          const margin = lowZ - travelZ
+          if (margin < worstRapidMargin) {
+            worstRapidMargin = margin
+            worstRapidLabel = entry.label
+          }
+          assert.ok(margin >= -1e-6,
+            `${entry.label}: a rapid turns A at Z${lowZ.toFixed(4)}, below the corner envelope plus clearance `
+            + `(${travelZ.toFixed(4)})`)
+        } else if (stage.direction === 'around'
+          && fromAngle === toAngle && alongOf(move.from) !== alongOf(move.to)
+          && move.from.z === move.to.z) {
+          // #1093: the rough's in-air link is a constant-height rapid along the
+          // bar. It must clear everything the reference still holds under the
+          // whole cutter body; it removes nothing, so a rapid that dips below
+          // the leftover bound is a gouge the reference would never replay.
+          rapidLinkChecks++
+          if (entry.stock.shape === 'round') roundRapidLinkChecks++
+          const margin = rapidClearance(reference, move, pivot, cutterRadius, ball, alongOf)
+          if (margin < worstRapidLinkMargin) {
+            worstRapidLinkMargin = margin
+            worstRapidLinkLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+              + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+              + `tip ${(move.from.z - pivot).toFixed(3)}`
+          }
+          assert.ok(margin >= -linkBiteAllowance,
+            `${entry.label}: an in-air rough link at A${fromAngle.toFixed(2)} along `
+            + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} stands `
+            + `${(-margin).toFixed(4)} mm below the material its earlier layers left `
+            + `(allowed ${linkBiteAllowance.toFixed(4)}; tip ${rapidWorst.tip.toFixed(3)} `
+            + `contact ${rapidWorst.contact.toFixed(3)} material ${rapidWorst.material.toFixed(3)} `
+            + `at along ${rapidWorst.along.toFixed(2)} A${rapidWorst.angle.toFixed(2)} delta ${rapidWorst.delta.toFixed(2)})`)
+        }
+      } else if (lowZ < travelZ - 1e-6) {
+        const engagement = referenceMove(reference, move, pivot, cutterRadius, ball, alongOf, fromAngle, toAngle)
+        // #1093: a rough link is a feed at one angle that changes along. Its
+        // height came from what this operation's earlier layers left, so the
+        // reference should lose nothing to it; a link sized from the model
+        // instead would cut the terrace between the two rings.
+        // Only an around stage's constant-angle along feed is a #1093 link; an
+        // along-mode pass is a constant-angle cut by construction.
+        // #1117 rl-e: a rough link may also change A -- the partial-ring case, one
+        // straight slope in (along, A). The finish's links stay at one angle.
+        const helixMove = helixMoves.has(move)
+        if (helixMove) {
+          helixMoveChecks++
+          if (entry.stock.shape === 'square') helixSquareChecks++
+          if (stage.finish) finishHelixMoves++
+        }
+        const linkMove = stage.direction === 'around'
+          && alongOf(move.from) !== alongOf(move.to)
+          && (fromAngle === toAngle || !stage.finish)
+          && !helixMove
+        if (linkMove) {
+          if (stage.finish) {
+            finishLinkChecks++
+            if (moveSurfaceWorst > worstFinishLinkBite) {
+              worstFinishLinkBite = moveSurfaceWorst
+              worstFinishLinkBiteLabel = `${entry.label} ${entry.programKind} A${fromAngle.toFixed(2)} along `
+                + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+                + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+            }
+            // A surface-following link is not an air move: between two rings it
+            // removes the terrace the rough left, so the air allowance the rough
+            // link uses does not apply. A finish after a rough is bounded by that
+            // rough's stepdown, exactly as the along-stage finish above is; a
+            // finish-only program has no layer bound (2026-10-22 decision) and is
+            // covered by its advisory and the final-surface check.
+            if (entry.programKind !== 'finish') {
+              finishAfterRoughLinkChecks++
+              if (moveSurfaceWorst > worstFinishAfterRoughLinkBite) {
+                worstFinishAfterRoughLinkBite = moveSurfaceWorst
+                worstFinishAfterRoughLinkBiteLabel = `${entry.label} A${fromAngle.toFixed(2)} along `
+                  + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} `
+                  + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)}`
+              }
+              assert.ok(moveSurfaceWorst <= roughBound,
+                `${entry.label}: a finish link at A${fromAngle.toFixed(2)} along `
+                + `${alongOf(move.from).toFixed(2)}->${alongOf(move.to).toFixed(2)} removes `
+                + `${moveSurfaceWorst.toFixed(4)} mm of the material the rough left `
+                + `(allowed ${roughBound.toFixed(4)}, one rough stepdown; cell along `
+                + `${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+                + `material ${moveSurfaceCell.material.toFixed(3)} standing ${moveSurfaceCell.standing.toFixed(3)}; `
+                + `stepover ${entry.stepover} cell ${entry.requestedCellSize})`)
+            }
+          } else {
+            // #1117: a rough link that stays a cut is the at-layer link. It is
+            // proved independently against this reference -- one layer's band of
+            // removal, the model, the retained ends and the region. The obsolete
+            // "a rough feed link removes nothing" rule this replaces was written
+            // when every stay-down rough link was the old raised plan's rise and
+            // drop; since #1117 the traverse itself is a cut.
+            roughLinkChecks++
+            proveAtLayerLink(linkProof, move, fromAngle, toAngle)
+          }
+        }
+        if (stage.direction === 'around') {
+          if (!stage.finish) {
+            if (moveInteriorWorst > worstAssertedInterior) {
+              worstAssertedInterior = moveInteriorWorst
+              worstAssertedInteriorLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
+                + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)}`
+            }
+            // A sharp non-revolved corner makes the cumulative removed material
+            // an upper bound with no stepdown meaning (the same reason the along
+            // stage's interior number is not a bound); the link and rapid checks
+            // carry the non-revolved cases. A **square blank** has that corner
+            // even when its model is revolved: the body sweeps under the intact
+            // corner shell for several angles of one move, and the sum of those
+            // cavities is not a radial depth. So the number is a diagnostic there
+            // too, and the assertion is kept for the round bars it was written
+            // for (#1103 ca-d fix 1: the corrected multi-turn reference reports
+            // the true cumulative value, which the one-stepdown bound never
+            // described).
+            if (!entry.mesh && stock.shape === 'round') {
+              checkEngagement(moveInteriorWorst, bound, `${entry.label}: interior ${move.kind}`)
+            }
+          }
+        } else {
+          // #1045 slice O/P: an along pass is a **flank** cut, not a radial
+          // plunge. The radial metric that matters is the material this move
+          // removes from the outermost solid at a ray -- one radial depth of
+          // cut, which must stay within a stepdown exactly as a turning cut's
+          // does. The reference's cumulative "interior" number is the cutter's
+          // body occupying air below an intact shell (and spans a previous pose
+          // already removed); it is **not** a radial depth and has no geometric
+          // bound: a Ø4 flat sweeping at tip 2 with a 10° ray offset removes
+          // 9.4867 mm internally, so the stepover + diameter "flank bound" this
+          // file used to assert (4.1 mm there) was not a bound at all. It is
+          // reported as a diagnostic below and deliberately not asserted
+          // (#1045 slice P, Codex pass 9).
+          if (moveSurfaceWorst > worstAlongBite) {
+            worstAlongBite = moveSurfaceWorst
+            worstAlongBiteLabel = `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)} `
+              + `tip ${(move.from.z - pivot).toFixed(3)}->${(move.to.z - pivot).toFixed(3)} `
+              + `at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)}`
+          }
+          // #1045 slice Q: the allowance is the cutter's **exact geometry**, not
+          // the old `alongBin + ballRise` scallop term. A step down from layer
+          // `t + stepdown` to `t` can move the outermost solid at a ray by at
+          // most the difference between the ball's sphere (or the flat's bottom
+          // face) at those two tips, maximised over the ray offsets the
+          // reference resolves. `alongRadialBiteBound` derives that maximum in
+          // closed form; `tip` is the move's lowest tip, at which the bound is
+          // largest.
+          // A finish after a rough is bounded by the rough's stepdown: the
+          // rough left at most one of those above the surface, so the finish's
+          // model-following pass removes at most that. A rough uses its own.
+          // Both use slice Q's exact geometry. The bound is extended past the
+          // previous layer's reach (#1045 slice Q extension): on a ray that
+          // layer did **not** reach, the standing material is not its contact,
+          // so the allowance is measured from the material actually standing at
+          // that ray down to this body's own contact. Where the previous layer
+          // did reach, the standing material is at most its contact, so the
+          // second term cannot exceed the first and the exact bound is
+          // unchanged.
+          const tip = Math.min(move.from.z - pivot, move.to.z - pivot)
+          const stepdown = entry.stepdown
+          const cellDelta = (() => {
+            const d = ((moveSurfaceCell.angle - fromAngle) % 360 + 360) % 360
+            return d > 180 ? 360 - d : d
+          })()
+          const alongLo = Math.min(alongOf(move.from), alongOf(move.to))
+          const alongHi = Math.max(alongOf(move.from), alongOf(move.to))
+          const cellDx = moveSurfaceCell.along < alongLo
+            ? alongLo - moveSurfaceCell.along
+            : moveSurfaceCell.along > alongHi ? moveSurfaceCell.along - alongHi : 0
+          const reachedBound = alongRadialBiteBound(ball, cutterRadius, stepdown, tip)
+          // A body that misses the cell's ray left nothing there, so it cannot
+          // widen the allowance: the standing term is unavailable, not a whole
+          // tip of removal (#1103 ca-d correction 2, review P2).
+          const cellContact = alongRayContact(ball, cutterRadius, tip, cellDelta, cellDx)
+          const standingBound = cellContact === null
+            ? Number.NEGATIVE_INFINITY
+            : moveSurfaceCell.material - cellContact
+          // #1045 slice S: the standing-material term is only sound where the
+          // stage's own emitted samples inside this cutter's footprint really
+          // descended from the raw blank one stepdown at a time. A finish has
+          // no descent of its own (it follows the model), so it uses the plain
+          // previous-layer bound. Without that proof it would measure from
+          // material the operation never cleared and excuse any bite (a
+          // 1 000 mm stepdown passed all eight along-finish cases, including
+          // 9.3975 mm).
+          // #1155 rn-e: at a **region** boundary the band's edge is not the
+          // previous layer's edge. The two stages' grids are built from
+          // different sample spacings and the mask is evaluated per sample, so
+          // one stage's clipped run can start a grid step before the other's,
+          // and its body then reaches a cell the other stage never cut at all --
+          // the material there is still the blank. The previous-layer bound does
+          // not describe that cell (there was no previous layer there), so the
+          // standing-material bound is the only sound one, and it is exact:
+          // what stands above this body's own contact, never below it. Widening
+          // the band (#1155 rn-e) moved that phase, which is how this surfaced.
+          // The cell's own depth is still proved by `assertStageDescent`, which
+          // replays every pose against the exact solids.
+          const untouchedBlank = moveSurfaceCell.material >= blankRadius(stock, moveSurfaceCell.angle) - budget.alongBin
+          // An untouched cell needs no descent proof: there is nothing the
+          // previous layer could have descended, and the bound is the exact
+          // geometry of what stands above this body's contact.
+          const standingAllowed = untouchedBlank || (stage.descent !== null && descentCoversRay(
+            stage.descent,
+            moveSurfaceCell.along,
+            moveSurfaceCell.angle,
+            ball,
+            cutterRadius,
+            tip,
+            moveSurfaceCell.material,
+          ))
+          // #1050: a clipped no-centre triangle can raise a cell by up to one
+          // requested cell, and a rough stops one layer above that raised
+          // height, so a finish after a rough may remove that much extra stock
+          // in one pass. The same one-cell allowance is already part of the
+          // finished-surface over bound above; a rough's own cut gets none,
+          // because its own stepdown is the bound it must hold.
+          const samplerCellAllowance = stage.finish ? entry.requestedCellSize : 0
+          const alongBound = (standingAllowed ? Math.max(reachedBound, standingBound) : reachedBound)
+            + samplerCellAllowance
+          if (!unlicensedFinish) {
+            const alongMargin = alongBound - moveSurfaceWorst
+            if (alongMargin < worstAlongMargin) {
+              worstAlongMargin = alongMargin
+              worstAlongMarginLabel = `${entry.label} ${move.kind} `
+                + `A${fromAngle.toFixed(2)} tip ${tip.toFixed(3)} `
+                + `bite ${moveSurfaceWorst.toFixed(4)} against ${alongBound.toFixed(4)} `
+                + `(previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+                + `${standingAllowed ? 'covered' : 'not covered'} at ray off ${cellDelta.toFixed(2)} deg / along ${cellDx.toFixed(3)})`
+            }
+            checkEngagement(moveSurfaceWorst, alongBound,
+              `${entry.label}: along ${move.kind} radial surface bite `
+              + `(at along ${moveSurfaceCell.along.toFixed(2)} A${moveSurfaceCell.angle.toFixed(2)} `
+              + `material ${moveSurfaceCell.material.toFixed(3)} -> ${moveSurfaceCell.standing.toFixed(3)}; `
+              + `exact ${ball ? 'ball' : 'flat'} bound ${alongBound.toFixed(4)}: `
+              + `previous-layer ${reachedBound.toFixed(4)}, standing ${standingBound.toFixed(4)} `
+              + `(${standingAllowed
+                ? untouchedBlank ? 'the cell is untouched stock the rough never reached' : 'covered by the emitted descent'
+                : 'not applied: no verified descent inside the footprint'})`)
+            alongBiteChecks++
+            if (stage.finish) finishAlongBiteChecks++
+          }
+          // Diagnostic only: the interior removal an along move finds below an
+          // intact shell. It has no asserted bound (see above); recording the
+          // worst is what lets the report show how much it is, without claiming
+          // that number is safe or unsafe.
+          if (moveInteriorWorst > alongInteriorDiagnostic.depth) {
+            alongInteriorDiagnostic = {
+              depth: moveInteriorWorst,
+              label: `${entry.label} ${move.kind} A${fromAngle.toFixed(2)}`,
+              stepover: entry.stepover, diameter: entry.diameter, stepdown: entry.stepdown,
+            }
+          }
+        }
+        if (move.kind === 'cut') {
+          if (turns) {
+            // The bound is about a **turning** cut taking material out of the
+            // standing corner. An along-mode pass cuts at a constant angle; its
+            // layer residue is the frozen along-mode output the slice-K
+            // contract keeps byte-identical to the base, so it is reported but
+            // not asserted here (see `nonTurning`).
+            checkedCuts++
+            const key = stage.finish ? 'finish' : 'rough'
+            const keyLabel = `${entry.label} @A${fromAngle.toFixed(2)}->${toAngle.toFixed(2)}`
+            if (!stage.finish) {
+              if (engagement > worst[key].peak) {
+                worst[key].peak = engagement
+                worst[key].peakLabel = keyLabel
+              }
+              const excess = engagement - bound
+              if (excess > worst[key].excess) {
+                worst[key].bound = bound
+                worst[key].excess = excess
+                worst[key].label = keyLabel
+              }
+              // Within one cutter radius of a band face the outermost pass is
+              // pulled in, so the cutter's **side** cuts the retained collar:
+              // its radial bite there is not a layer stepdown, exactly as the
+              // blank-touch turn rule already carves out (`proveRoughTurn`).
+              const faceDistance = Math.min(
+                Math.abs(worstCell.along - entry.alongStart),
+                Math.abs(worstCell.along - entry.alongEnd),
+              )
+              const collar = faceDistance <= cutterRadius + budget.alongBin
+              // #1103 ca-j: a **helix** move is not a turning cut in this sense.
+              // Its A turn comes with the along advance, so the cumulative
+              // interior number spans several turns of the band and collects
+              // cavities under the intact corner shell that the ring path's
+              // one-turn check never sees (the same reason the interior number is
+              // a diagnostic on a square blank). What bounds how deep a helix may
+              // cut is `assertStageDescent`, which replays every emitted pose.
+              if (!entry.mesh && !collar && !helixMove) {
+                checkEngagement(engagement, bound,
+                  `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} turning cut `
+                  + `(A${fromAngle.toFixed(2)} -> ${toAngle.toFixed(2)}; worst cell along ${worstCell.along.toFixed(2)} `
+                  + `A${worstCell.angle.toFixed(2)} material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              }
+            }
+          } else if (engagement > nonTurningWorst) {
+            nonTurningWorst = engagement
+            nonTurningLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
+          }
+        } else if (move.kind === 'plunge') {
+          // A plunge enters stock from the travel height, so its whole Z travel
+          // is swept and the material it takes must fit the same bound (#1045
+          // slice M; the engagement was computed but never asserted before).
+          // The around stage is the slice's own motion and is asserted. An
+          // along-stage plunge is part of the frozen along output: like that
+          // stage's non-turning cuts, it is reported rather than asserted,
+          // because a plunge at the band edge cuts the shoulder the generator
+          // deliberately leaves within one cutter radius of a stub.
+          const around = stage.direction === 'around'
+          if (!around) {
+            if (engagement > nonTurningWorst) {
+              nonTurningWorst = engagement
+              nonTurningLabel = `${entry.label} @A${fromAngle.toFixed(2)} plunge`
+            }
+          } else {
+            checkedPlunges++
+            const keyLabel = `${entry.label} @A${fromAngle.toFixed(2)}`
+            if (!stage.finish) {
+              if (engagement > worstPlunge) {
+                worstPlunge = engagement
+                worstPlungeLabel = keyLabel
+              }
+              const plungeFace = Math.min(
+                Math.abs(worstCell.along - entry.alongStart),
+                Math.abs(worstCell.along - entry.alongEnd),
+              )
+              if (!entry.mesh && plungeFace > cutterRadius + budget.alongBin) {
+                checkEngagement(engagement, bound,
+                  `${entry.label}: a ${stage.finish ? 'finish' : 'rough'} plunge (A${fromAngle.toFixed(2)}; `
+                  + `cell along ${worstCell.along.toFixed(2)} A${worstCell.angle.toFixed(2)} `
+                  + `material ${worstCell.material.toFixed(3)} contact ${worstCell.contact.toFixed(3)})`)
+              }
+            }
+          }
+        }
+      }
+      controller = toAngle
+    }
+  }
+
+  // (2) The retained ends keep the blank. Cells outside the band are material
+  // the cutter's body must never reach -- except, on a round bar, the one cutter
+  // radius past each of the model's own ends that #1155 rn-e's rule opens (the
+  // approved "may cut into it"; a square blank keeps its retained corners).
+  const retainedLow = stock.shape === 'round' ? entry.alongStart - cutterRadius : entry.alongStart
+  const retainedHigh = stock.shape === 'round' ? entry.alongEnd + cutterRadius : entry.alongEnd
+  for (let i = 0; i < reference.alongBins; i++) {
+    const along = reference.alongStart + (i + 0.5) * reference.alongBin
+    if (along >= retainedLow - 1e-9 && along <= retainedHigh + 1e-9) continue
+    if (along < alongLimits.min || along > alongLimits.max) continue
+    for (let k = 0; k < reference.angleBins; k++) {
+      const angle = (k + 0.5) * reference.angleDeg
+      const blank = blankRadius(stock, angle)
+      const index = i * reference.angleBins + k
+      const drop = retainedRemoval(reference, index, blank)
+      if (drop > worstStubDrop) {
+        worstStubDrop = drop
+        worstStubLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`
+      }
+      assert.ok(drop <= 1e-6, `${entry.label}: the cutter lowered a retained end by ${drop.toFixed(4)} mm at along ${along.toFixed(2)}`)
+    }
+  }
+
+  // (2b) #1095: the radial stock to leave applies to the model only. Next to a
+  // retained wall the outermost pass is pulled exactly one cutter radius inside
+  // it, so the material it leaves over the first cutter radius must be the
+  // ball's own fillet envelope from that pass plus the leave -- never the wall,
+  // thickened by the leave, that the old sampler lifted the pass over. The
+  // allowance is the sampler's documented cell lift (at most one cell), the
+  // reference's own angular/along resolution and the between-pass cusp. A
+  // sequence's finish runs after the rough, so the material measured here is
+  // what the finish left: it must still be the requested stock at the pass, not
+  // a collar the finish lifted off a thickened wall.
+  if (entry.wallLeave || entry.wallLeaveSequence) {
+    const sequence = entry.wallLeaveSequence === true
+    assert.ok(roughRan && ball && entry.stockToLeave > 0,
+      `${entry.label}: the wall-leave check is a ball rough with a positive leave`)
+    if (sequence) {
+      assert.equal(entry.programKind, 'both', `${entry.label}: a wall-leave sequence runs a finish`)
+      assert.ok(finishRan, `${entry.label}: the wall-leave sequence's finish is replayed`)
+    }
+    wallLeaveCaseCount++
+    if (sequence) wallLeaveSequenceCount++
+    const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
+    const halfStep = Math.min(cutterRadius, entry.stepover / 2)
+    const allowance = entry.requestedCellSize + corner * referenceAngleRad
+      + budget.alongBin + ballRiseAt(cutterRadius, halfStep) + 0.005
+    for (const sign of [1, -1] as const) {
+      const face = sign > 0 ? entry.alongStart : entry.alongEnd
+      // The cutter-centre span's outermost pass, one real radius inside the wall.
+      const passRow = face + sign * cutterRadius
+      for (let i = 0; i < reference.alongBins; i++) {
+        const along = reference.alongStart + (i + 0.5) * reference.alongBin
+        // From the wall to one cutter radius inside the outermost pass: the
+        // whole collar the pass's side leaves, plus the pass itself and the
+        // first radius of the machined band.
+        if (Math.abs(along - passRow) > cutterRadius + budget.alongBin) continue
+        const model = modelSurfaceAt(entry.profile, along)
+        if (model === null) continue
+        const fromPass = Math.min(cutterRadius, Math.abs(along - passRow))
+        const fillet = ball ? cutterRadius - Math.sqrt(Math.max(0, cutterRadius * cutterRadius - fromPass * fromPass)) : 0
+        const bound = model + entry.stockToLeave + fillet + allowance
+        for (let k = 0; k < reference.angleBins; k++) {
+          const angle = (k + 0.5) * reference.angleDeg
+          const material = reference.material[i * reference.angleBins + k]
+          const over = material - (model + entry.stockToLeave)
+          wallLeaveChecks++
+          if (over > worstWallLeave) {
+            worstWallLeave = over
+            worstWallLeaveLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)}`
+          }
+          assert.ok(material <= bound,
+            `${entry.label}: the rough leaves ${over.toFixed(4)} mm above model + stock next to the `
+            + `${sign > 0 ? 'lower' : 'upper'} retained wall at along ${along.toFixed(2)} A${angle.toFixed(2)} `
+            + `(allowed ${(fillet + allowance).toFixed(4)} above model + stock)`)
+        }
+      }
+    }
+  }
+
+  // (2c) #1095 slice D: no emitted finish ring or pass is in the air over a
+  // retained wall. On the tall-wall cases the wall is three cutter radii above
+  // the model, so a ring the sampler lifts to the wall's top is unmistakably
+  // air; before the fix the round around finish's outermost ring was exactly
+  // that on both ends. The tight wall-leave sequence's finish is checked too,
+  // but its wall is only one radius above the model, so it cannot tell a lifted
+  // ring from a model ring by more than that radius. A rough's first layer is
+  // one stepdown below the blank by design (a real cut, not air), so only the
+  // finish is judged here.
+  if (entry.wallLeave || entry.wallLeaveSequence || entry.wallAir) {
+    if (entry.wallAir) {
+      assert.equal(entry.programKind, 'finish', `${entry.label}: the tall-wall check is finish-only`)
+      assert.ok(ball, `${entry.label}: the tall-wall check is a ball finish`)
+      assert.equal(entry.stockToLeave, 0, `${entry.label}: the tall-wall check leaves no stock`)
+      wallAirCaseCount++
+    }
+    if (finishRan) assertNoWallTopPass(entry, program.finishMoves, entry.finishKind, pivot)
+  }
+
+  // (3) The finished surface: not below the model, and -- for a finish that
+  // has a rough in front of it -- no more than the finish's own scallop above
+  // model + stock. A finish-only program cuts to full depth in one pass and
+  // leaves the raw blank between its passes, so its above-model material is not
+  // a finished-surface measure; it is covered by the advisory instead.
+  if (!finishRan) continue
+  const finishOnly = entry.programKind === 'finish'
+  const referenceAngleRad = (360 / budget.angleBins) * Math.PI / 180
+  // The same floor the revolved cases use: a conservative cell read plus the
+  // reference's own angle and along resolution. A finish that cuts below the
+  // model by more than this is a gouge, and it is now asserted for a
+  // non-revolved model too (#1093 review): the box/prism cases used to skip the
+  // finished-surface check, so a finish link 0.2 mm below the prism passed.
+  const underLimit = corner * referenceAngleRad + budget.alongBin + 1e-6
+  if (entry.mesh) {
+    const radiusAt = entry.meshRadiusAt
+    const radiusAt2 = entry.meshRadiusAt2
+    const meshAlong = entry.meshAlong
+    assert.ok((radiusAt !== undefined || radiusAt2 !== undefined) && meshAlong !== undefined,
+      `${entry.label}: a mesh case supplies its boundary radius and along span`)
+    if ((!radiusAt && !radiusAt2) || !meshAlong) continue
+    for (let i = 0; i < reference.alongBins; i++) {
+      const along = reference.alongStart + (i + 0.5) * reference.alongBin
+      if (along < meshAlong.from || along > meshAlong.to) continue
+      for (let k = 0; k < reference.angleBins; k++) {
+        const angle = (k + 0.5) * reference.angleDeg
+        const wanted = radiusAt2 ? radiusAt2(along, angle) : (radiusAt as (angleDeg: number) => number)(angle)
+        const material = reference.material[i * reference.angleBins + k]
+        checkedSurfaceCells++
+        meshSurfaceCells++
+        const under = wanted - material
+        if (under > worstSurfaceUnder) {
+          worstSurfaceUnder = under
+          worstSurfaceUnderLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} `
+            + `material ${material.toFixed(4)} model ${wanted.toFixed(4)}`
+        }
+        assert.ok(under <= underLimit,
+          `${entry.label}: the finish cuts ${under.toFixed(4)} mm below the prism `
+          + `(allowed ${underLimit.toFixed(4)}) at along ${along.toFixed(2)} A${angle.toFixed(2)}; `
+          + `lowest contact ${lowestContact.contact.toFixed(3)} at along ${lowestContact.along.toFixed(2)} `
+          + `A${lowestContact.angle.toFixed(2)} tip ${lowestContact.tip.toFixed(3)} (${lowestContact.kind}); `
+          + `params ${JSON.stringify({ stepover: entry.stepover, rough: entry.roughSpacing, finish: entry.finishSpacing, cell: entry.requestedCellSize, leave: entry.stockToLeave })}`)
+      }
+    }
+    continue
+  }
+  const slope = modelMaxSlope(entry.profile)
+  // A ball leaves its between-pass scallop; a flat leaves a staircase one full
+  // step tall on a sloped surface, because each pass's bottom is a horizontal
+  // plane at that pass's model height. An around finish steps `stepover` along
+  // and `sampleSpacing` round; an along finish steps `stepover` round and
+  // `sampleSpacing` along, so the two motions swap the two scallops.
+  const alongStep = entry.finishKind === 'along' ? entry.finishSpacing : entry.stepover
+  const alongScallop = ball
+    ? ballRiseAt(cutterRadius, alongStep / 2)
+    : slope * alongStep
+  const angleArc = entry.finishKind === 'along'
+    ? entry.stepover
+    : aroundArcStep(corner, entry.finishSpacing, entry.units ?? 'mm')
+  const angularScallop = ball ? (angleArc * angleArc) / (8 * cutterRadius) : 0
+  // The generator's conservative cell lift (`angleLifts`, capped at
+  // `requestedCellSize` in `sampleRotaryModel`) is part of the surface it
+  // promises: it guarantees the emitted tip is at or above the model. The
+  // property checked here is that the finish is not below the model and not
+  // further above it than that lift plus its own scallop.
+  const conservativeLift = entry.requestedCellSize
+  // #1103 ca-j: a square blank's finish band can be a **helix** now. A helix's
+  // between-sample error is the module's own tolerance (`helixTolerance`, whose
+  // floor is `AROUND_ANGLE_TOLERANCE_MM` = 0.005 mm) and it is measured along
+  // the **diagonal** (along, A) chord, so it adds to the cell lift and the ring
+  // scallops this allowance already names instead of being one of them. The ring
+  // path's angular sag is the `0.005` above; this is the diagonal one.
+  const helixTolerance = finishHelixMoves > 0 ? 0.005 : 0
+  // A square blank's blank support is not the cell's own ray: the corner stands
+  // above it, and the reference's cell carries that support. The ring path
+  // happened to sample the corner at the same angular phase as the reference's
+  // bins; a helix's (along, A) phase is its own, so the support it meets at a
+  // cell can be one reference bin away -- the same term the corner already
+  // contributes once. It is an angular-phase allowance, not slack in the cut.
+  const helixCornerSupport = finishHelixMoves > 0 && entry.stock.shape === 'square'
+    ? corner * referenceAngleRad
+    : 0
+  const surfaceTolerance = conservativeLift + alongScallop + angularScallop + 0.005
+    + helixTolerance + helixCornerSupport + corner * referenceAngleRad + 1e-6
+  const skip = 2 * budget.alongBin + cutterRadius
+  // A stubbed end keeps one cutter radius of the band uncut on purpose: the
+  // cutter-centre span is pulled inside the stub face so the cutter's side
+  // never enters the retained square. The finished-surface assertion is about
+  // the machined band, so those collars are excluded (the stub assertion above
+  // covers the retained ends themselves).
+  const lowerCollar = entry.alongStart + cutterRadius + skip
+  const upperCollar = entry.alongEnd - cutterRadius - skip
+  // #1096: a region leaves everything outside it uncut by design, so the
+  // finished-surface assertion is about the area the operation was asked to
+  // machine. The cell's own tool position is judged with this file's mask.
+  const regionOfEntry = entry.region === undefined ? undefined : regionMask(stock, entry.region)
+  for (let i = 0; i < reference.alongBins; i++) {
+    const along = reference.alongStart + (i + 0.5) * reference.alongBin
+    if (along < lowerCollar || along > upperCollar || along > entry.alongEnd || along < entry.alongStart) continue
+    const model = modelSurfaceAt(entry.profile, along)
+    if (model === null) continue
+    for (let k = 0; k < reference.angleBins; k++) {
+      const angle = (k + 0.5) * reference.angleDeg
+      if (regionOfEntry !== undefined) {
+        const across = barCentre(stock) + angle * Math.PI * stock.thickness / 360
+        const point = stock.axis === 'x' ? { x: along, y: across } : { x: across, y: along }
+        if (!regionOfEntry.containsPoint(point)) continue
+      }
+      const material = reference.material[i * reference.angleBins + k]
+      const wanted = model + entry.stockToLeave
+      checkedSurfaceCells++
+      const over = material - wanted
+      // #1096: only the *inside* of a region is machined. A cell there can
+      // still stand at the full blank height when it sits inside the region
+      // but inside the pass gap at its boundary (the region clips tool
+      // positions, not material), so the "leaves no more than the scallop"
+      // half is asserted only for a region-free case. The not-below-the-model
+      // half is asserted for every cell, region or not.
+      if (!finishOnly && regionOfEntry === undefined && over > worstSurfaceOver) {
+        worstSurfaceOver = over
+        worstSurfaceOverLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} material ${material.toFixed(4)} model ${model.toFixed(4)}`
+      }
+      const under = wanted - material
+      if (under > worstSurfaceUnder) {
+        worstSurfaceUnder = under
+        worstSurfaceUnderLabel = `${entry.label} along ${along.toFixed(2)} A${angle.toFixed(2)} material ${material.toFixed(4)} model ${model.toFixed(4)}`
+      }
+      if (!finishOnly && regionOfEntry === undefined) {
+        assert.ok(over <= surfaceTolerance,
+          `${entry.label}: the finish leaves ${over.toFixed(4)} mm above the model (allowed ${surfaceTolerance.toFixed(4)}) `
+          + `at along ${along.toFixed(2)} A${angle.toFixed(2)}`)
+      }
+      assert.ok(under <= underLimit,
+        `${entry.label}: the finish cuts ${under.toFixed(4)} mm below the model `
+        + `(allowed ${underLimit.toFixed(4)}) at along ${along.toFixed(2)} A${angle.toFixed(2)}; `
+        + `lowest contact ${lowestContact.contact.toFixed(3)} at along ${lowestContact.along.toFixed(2)} `
+        + `A${lowestContact.angle.toFixed(2)} tip ${lowestContact.tip.toFixed(3)} (${lowestContact.kind}); `
+        + `params ${JSON.stringify({ stepover: entry.stepover, rough: entry.roughSpacing, finish: entry.finishSpacing, cell: entry.requestedCellSize, leave: entry.stockToLeave })}`)
+    }
+  }
+}
+
+console.log(`  ${CASES.length} cases (${defaultCases} with default adapter parameters), `
+  + `${checkedCuts} cuts, ${checkedPlunges} plunges and ${checkedRapids} rapids replayed, `
+  + `${checkedSurfaceCells} surface cells checked`)
+console.log(`  default subset: ${defaultFinishOnly} finish-only, ${defaultRoughOnly} rough-only, `
+  + `${defaultBoth} rough+finish, ${defaultMixed} along-rough+around-finish; `
+  + `${defaultRetained} with retained ends, ${defaultFree} free`)
+console.log(`  rough: worst engagement ${worst.rough.peak.toFixed(4)} mm (${worst.rough.peakLabel}); `
+  + `closest to its bound at ${worst.rough.excess.toFixed(4)} mm excess against ${worst.rough.bound.toFixed(4)} `
+  + `(${worst.rough.label})`)
+console.log(`  finish: worst engagement ${worst.finish.peak.toFixed(4)} mm (${worst.finish.peakLabel}); `
+  + `closest to its bound at ${worst.finish.excess.toFixed(4)} mm excess against ${worst.finish.bound.toFixed(4)} `
+  + `(${worst.finish.label})`)
+console.log(`  rapid turns: worst margin ${worstRapidMargin.toFixed(4)} mm above the corner envelope plus clearance `
+  + `(${worstRapidLabel})`)
+console.log(`  interior engagement asserted in around stages: worst ${worstAssertedInterior.toFixed(4)} mm `
+  + `(${worstAssertedInteriorLabel || 'none'})`)
+console.log(`  interior engagement including frozen along stages: worst ${interiorWorst.depth.toFixed(4)} mm `
+  + `at along ${interiorWorst.along.toFixed(2)} A${interiorWorst.angle.toFixed(2)} (${interiorWorst.kind || 'none'}) `
+  + `— ${interiorWorst.label || 'none'} (seed ${interiorWorst.seed}); move A${interiorWorst.fromAngle.toFixed(2)}->${interiorWorst.toAngle.toFixed(2)} `
+  + `tip ${interiorWorst.fromTip.toFixed(3)}->${interiorWorst.toTip.toFixed(3)} `
+  + `along ${interiorWorst.fromAlong.toFixed(2)}->${interiorWorst.toAlong.toFixed(2)}; `
+  + `material ${interiorWorst.material.toFixed(3)} standing ${interiorWorst.standing.toFixed(3)}; `
+  + `stepover ${interiorWorst.stepover.toFixed(3)} diameter ${interiorWorst.diameter.toFixed(3)})`)
+console.log(`  retained ends: worst material lowered ${worstStubDrop.toFixed(6)} mm (${worstStubLabel || 'none'})`)
+console.log(`  retained-wall leave (#1095): ${wallLeaveChecks} cells in ${wallLeaveCaseCount} cases `
+  + `(${wallLeaveSequenceCount} rough+finish); `
+  + `worst ${worstWallLeave.toFixed(4)} mm above model + stock (${worstWallLeaveLabel || 'none'})`)
+console.log(`  retained-wall air passes (#1095 slice D): ${wallAirCaseCount} tall-wall cases, none emitted`)
+console.log(`  finished surface: worst ${worstSurfaceOver.toFixed(4)} mm above the model `
+  + `(${worstSurfaceOverLabel})`)
+console.log(`  finished surface: worst ${worstSurfaceUnder.toFixed(4)} mm below the model `
+  + `(${worstSurfaceUnderLabel}); ${meshSurfaceCells} cells on the non-revolved prisms`)
+console.log(`  along stage: worst radial surface bite ${worstAlongBite.toFixed(4)} mm (${worstAlongBiteLabel || 'none'})`)
+console.log(`  along stage: closest to its exact-geometry bound at ${worstAlongMargin.toFixed(4)} mm margin `
+  + `(${worstAlongMarginLabel || 'none'})`)
+console.log(`  emitted layer descent: ${descentChecks} cuts checked (${alongDescentChecks} along, `
+  + `${aroundDescentChecks} around; all ${roughDescentChecks} rough; finishes have no layer descent); `
+  + `closest to its allowance at ${worstDescentMargin.toFixed(4)} mm margin `
+  + `(${worstDescentMarginLabel || 'none'})`)
+// Diagnostic only, explicitly not a bound (#1045 slice P). The old
+// stepover + diameter "flank bound" is gone: a hand-built Ø4 flat sweep at tip 2
+// with a 10° ray offset removes 9.4867 mm internally, far past it.
+console.log(`  along stage: interior removal below an intact shell ${alongInteriorDiagnostic.depth.toFixed(4)} mm `
+  + `(${alongInteriorDiagnostic.label || 'none'}; stepover ${alongInteriorDiagnostic.stepover.toFixed(3)} `
+  + `diameter ${alongInteriorDiagnostic.diameter.toFixed(3)} stepdown ${alongInteriorDiagnostic.stepdown.toFixed(3)}) `
+  + '— diagnostic only, not a bound')
+console.log(`  non-turning cuts (reported, not asserted: the along-mode rough output is frozen): `
+  + `worst ${nonTurningWorst.toFixed(4)} mm (${nonTurningLabel || 'none'})`)
+if (process.env.SQUARE_CASES) {
+  console.log(`  [profile] ${referenceStats.moves} reference moves, ${referenceStats.cells} cell visits, `
+    + `${referenceStats.steps} sweep steps; ${((Date.now() - startedAt) / 1000).toFixed(1)} s`)
+}
+
+console.log(`  along finishes: ${alongFinishStages} stages (${alongFinishOnlyRound} finish-only round, `
+  + `${alongFinishOnlySquare} finish-only square) — finish-only programs carry the advisory; `
+  + `a finish after a rough keeps the radial bound with the rough's stepdown`)
+assert.ok(checkedCuts > 1000, `the reference checked turning/cut moves (${checkedCuts})`)
+// #1095: the retained-wall leave cases must actually be replayed and checked.
+assert.ok(wallLeaveCaseCount >= 16, `the retained-wall leave cases are in the set (${wallLeaveCaseCount})`)
+assert.ok(wallLeaveChecks > 0, `the retained-wall leave assertion checked cells (${wallLeaveChecks})`)
+assert.ok(wallLeaveSequenceCount >= 8, `the rough+finish wall-leave sequences are in the set (${wallLeaveSequenceCount})`)
+assert.ok(wallAirCaseCount >= 4, `the tall-wall air-pass cases are in the set (${wallAirCaseCount})`)
+assert.ok(alongFinishStages >= 8, `the along-finish stages are in the seeded set (${alongFinishStages})`)
+assert.ok(alongFinishOnlyRound >= 1, `a finish-only along program on a round bar (${alongFinishOnlyRound})`)
+assert.ok(alongFinishOnlySquare >= 1, `a finish-only along program on a square blank (${alongFinishOnlySquare})`)
+assert.ok(alongBiteChecks > 100, `the along stage's radial surface bite is asserted (${alongBiteChecks})`)
+assert.ok(finishAlongBiteChecks > 100,
+  `the finish-after-rough along stage's radial surface bite is asserted (${finishAlongBiteChecks})`)
+// #1045 slice S: the raw-descent assertion must actually cover every stage
+// shape, in both modes, for rough and finish. A change that stops calling it
+// fails here rather than passing with no checks.
+assert.ok(alongDescentChecks > 1000, `the emitted along descent is asserted (${alongDescentChecks})`)
+assert.ok(aroundDescentChecks > 1000, `the emitted around descent is asserted (${aroundDescentChecks})`)
+assert.ok(roughDescentChecks > 1000, `the emitted rough descent is asserted (${roughDescentChecks})`)
+assert.ok(checkedPlunges > 100, `the reference asserted plunges too (${checkedPlunges})`)
+console.log(`  plunges: worst engagement ${worstPlunge.toFixed(4)} mm (${worstPlungeLabel || 'none'})`)
+console.log(`  #1093 rough links: ${rapidLinkChecks} replayed as in-air rapids `
+  + `(${roundRapidLinkChecks} on round bars; ${roughLinkChecks} cut links), `
+  + `worst body clearance ${worstRapidLinkMargin.toFixed(4)} mm (${worstRapidLinkLabel || 'none'})`)
+// #1117 slice C: the at-layer cutting links proved against the reference, by the
+// dimensions the slice must cover, and the corner-turn rule that keeps a low
+// turn from swinging through the blank's face. The minima are in millimetres,
+// converted per case before the comparison (rl-c correction, review finding 2).
+console.log(`  #1117 at-layer rough links: ${atLayerLinkCounts.total} proved `
+  + `(${atLayerLinkCounts.acrossAngle} across an A change; `
+  + `${atLayerLinkCounts.round} round / ${atLayerLinkCounts.square} square; `
+  + `${atLayerLinkCounts.ball} ball / ${atLayerLinkCounts.flat} flat; `
+  + `axis x ${atLayerLinkCounts.axisX} / y ${atLayerLinkCounts.axisY}; `
+  + `${atLayerLinkCounts.mm} mm / ${atLayerLinkCounts.inch} inch; `
+  + `${atLayerLinkCounts.region} in a region), `
+  + `closest to the one-stepdown bound at ${worstAtLayerLinkMargin.value.toFixed(4)} mm margin `
+  + `(${worstAtLayerLinkMargin.label || 'none'}); `
+  + `closest model tip ${worstLinkModelSlack.value.toFixed(4)} mm (${worstLinkModelSlack.label || 'none'}); `
+  + `largest protected-solid shortfall ${worstLinkSolidGap.toFixed(4)} mm `
+  + `(${worstLinkSolidGapLabel || 'none'}); ${linkFootprintCells} footprint cells read `
+  + `(${linkFootprintOffRay} off the link's own ray) and ${linkEndCells} retained-end cells kept`)
+console.log(`  #1117 corner turns: ${lowTurnChecks} low cutting turns (closest to the allowed `
+  + `sampler lift at ${worstTurnMargin.value.toFixed(4)} mm margin, ${worstTurnMargin.label || 'none'}), `
+  + `${cornerTurnChecks} at the corner envelope`)
+console.log(`  #1093 finish links: ${finishLinkChecks} replayed `
+  + `(${finishAfterRoughLinkChecks} after a rough), worst removal ${worstFinishLinkBite.toFixed(4)} mm `
+  + `(${worstFinishLinkBiteLabel || 'none'}); after a rough ${worstFinishAfterRoughLinkBite.toFixed(4)} mm `
+  + `(${worstFinishAfterRoughLinkBiteLabel || 'none'})`)
+assert.ok(roundAroundCases >= ROUND_CASES,
+  `the round-bar around set is in the seeded run (${roundAroundCases} >= ${ROUND_CASES})`)
+assert.ok(featureCases >= 4,
+  `non-revolved around models are replayed (${featureCases})`)
+assert.ok(meshSurfaceCells > 0,
+  `the non-revolved cases assert the finished surface (${meshSurfaceCells} cells)`)
+assert.ok(rapidLinkChecks > 0, `the rough in-air links are replayed against the reference (${rapidLinkChecks})`)
+// #1096 review (P1): a rapid that leaves the region is judged against the
+// uncut blank, not the model. The two-band gap cases exist to produce one, and
+// the check above is silent if every case's ring parity happens to retract
+// instead of link, so require at least one.
+assert.ok(regionCrossingRapids > 0,
+  `a rapid crossing outside the region is checked against the uncut blank (${regionCrossingRapids})`)
+assert.ok(roundRapidLinkChecks > 0, `a round-bar rough in-air link is replayed (${roundRapidLinkChecks})`)
+// #1117 slice C: the link proof must actually cover every dimension it claims.
+// A run that stops emitting a qualifying link on one of them -- because the
+// generator fell back to raised links, or because a case was dropped -- fails
+// here instead of passing with a hole where that dimension's proof should be.
+assert.ok(helixMoveChecks > 0,
+  `a square blank's helix moves are classified as the layer's cut, not as links (${helixMoveChecks})`)
+assert.ok(helixSquareChecks > 0,
+  `the square blank's whole-ring bands reach the helix path (${helixSquareChecks})`)
+assert.ok(atLayerLinkCounts.total > 0,
+  `the at-layer rough links are proved against the reference (${atLayerLinkCounts.total})`)
+
+assert.ok(atLayerLinkCounts.round > 0, `an at-layer link on a round bar (${atLayerLinkCounts.round})`)
+assert.ok(atLayerLinkCounts.square > 0, `an at-layer link on a square blank (${atLayerLinkCounts.square})`)
+assert.ok(atLayerLinkCounts.ball > 0, `an at-layer link with a ball cutter (${atLayerLinkCounts.ball})`)
+assert.ok(atLayerLinkCounts.flat > 0, `an at-layer link with a flat cutter (${atLayerLinkCounts.flat})`)
+assert.ok(atLayerLinkCounts.axisX > 0, `an at-layer link on an X-axis bar (${atLayerLinkCounts.axisX})`)
+assert.ok(atLayerLinkCounts.axisY > 0, `an at-layer link on a Y-axis bar (${atLayerLinkCounts.axisY})`)
+assert.ok(atLayerLinkCounts.mm > 0, `an at-layer link in millimetres (${atLayerLinkCounts.mm})`)
+assert.ok(atLayerLinkCounts.inch > 0, `an at-layer link in inches (${atLayerLinkCounts.inch})`)
+assert.ok(atLayerLinkCounts.region > 0,
+  `an at-layer link inside a region (${atLayerLinkCounts.region})`)
+// #1117 rl-e correction (review finding 2): the swept-footprint proof for an
+// A-changing link is only a proof if the seeded run actually emits one. It passed
+// with zero, so the whole `dAngle !== 0` branch of `proveAtLayerLink` (the union
+// of body windows across the A change, the slope's region segments and its
+// region-point samples) never ran. The lobe case above is the one that emits them.
+assert.ok(atLayerLinkCounts.acrossAngle > 0,
+  `an at-layer link across an A change is proved (${atLayerLinkCounts.acrossAngle})`)
+// #1117 rl-f: the corrected twisted ridge is a case of its own, because every
+// earlier A-changing case is a model even in A, where the mirrored angular
+// mapping is the same geometry -- on the chiral model the mapping is
+// load-bearing, and that is the model the rl-e review read as gouging. Its links
+// are proved by the same generic replay as every other (`proveAtLayerLink`, with
+// the `dAngle !== 0` swept-footprint branch); this asserts the case really
+// emitted A-changing links, so that branch cannot pass vacuously on it.
+for (const { entry } of CASES) {
+  if (!entry.requiresAcrossAngle) continue
+  const across = acrossAngleByCase.get(entry.label) ?? 0
+  assert.ok(across > 0,
+    `${entry.label}: the case emits at-layer links that change A (${across})`)
+  console.log(`  #1117 A-changing case: ${across} at-layer links change A (${entry.label})`)
+}
+// #1117 (square links): the whole-ring case has to prove whole-ring links, or
+// the touch-gate rule could come back and the case would still pass on its
+// corner arcs alone.
+for (const { entry } of CASES) {
+  if (!entry.requiresWholeRingSquareLinks) continue
+  const whole = wholeRingSquareByCase.get(entry.label) ?? 0
+  assert.ok(whole > 0,
+    `${entry.label}: the case proves whole-ring at-layer links at A0/A360 (${whole})`)
+  console.log(`  #1117 square links: ${whole} whole-ring links at A0/A360 (${entry.label})`)
+}
+assert.ok(linkEndCells > 0,
+  `the at-layer link's retained-end proof checked cells (${linkEndCells})`)
+// The corner-turn rule needs both shapes exercised: an arc at the layer (low)
+// and a turn at the corner envelope (high). A run that emits neither is not
+// proving the rule the low-corner-turn mutation violates.
+assert.ok(lowTurnChecks > 0, `a low cutting corner turn is proved (${lowTurnChecks})`)
+assert.ok(cornerTurnChecks > 0, `a corner-envelope turn is proved (${cornerTurnChecks})`)
+assert.ok(finishLinkChecks > 0, `the finish links are replayed against the reference (${finishLinkChecks})`)
+assert.ok(finishAfterRoughLinkChecks > 0,
+  `a finish link after a rough is replayed against the reference (${finishAfterRoughLinkChecks})`)
+// #1045 slice N: at least 38 programs must run at the adapter's **default**
+// parameters -- never coarsened, only shortened -- so the default cutting
+// programs are covered, not only the custom-sampling ones. The subset covers
+// every program shape and both retained-end states.
+assert.ok(defaultCases >= 38, `at least 38 default-parameter programs (${defaultCases})`)
+assert.ok(defaultFinishOnly > 0, `a finish-only default program (${defaultFinishOnly})`)
+assert.ok(defaultRoughOnly > 0, `a rough-only default program (${defaultRoughOnly})`)
+assert.ok(defaultBoth > 0, `a rough+finish default program (${defaultBoth})`)
+assert.ok(defaultMixed > 0, `an along-rough + around-finish default program (${defaultMixed})`)
+assert.ok(defaultRetained > 0, `a default program with retained ends (${defaultRetained})`)
+assert.ok(defaultFree > 0, `a default program with free ends (${defaultFree})`)
+
+// Snapshot the seeded run's footprint coverage before the synthetic replays
+// below: they call `proveAtLayerLink` too, so the coverage asserts at the end must
+// judge the seeded run only.
+const seededFootprint = {
+  cells: linkFootprintCells,
+  offRay: linkFootprintOffRay,
+  links: atLayerLinkCounts.total,
+}
+
+// ── #1117 rl-c correction: the model proof sweeps the body's footprint ──────
+//
+// Review finding 1: the at-layer link's model protection read the material only
+// under the link's **own ray**, so an in-memory replay at A30 passed while
+// removing 0.4348 mm of protected model at A42.125 -- over the 0.0718 mm reference
+// allowance -- and a band taken from under an intact shell was invisible to the
+// scalar material read entirely. These synthetic replays are that repro, reduced
+// to one link and placed on this reference's 0.5 deg cell centres (so the gouged
+// cell is A42.25). They run **after** the seeded coverage assertions on purpose:
+// they replay through the same `referenceMove`, which updates the worst-case state
+// the diagnostics above report, and a synthetic call must not pad a coverage
+// count.
+//
+// #1117 rl-e correction (review finding 2) adds the third: an **A-changing** link
+// whose own path is clean and whose swept body still cuts an off-path ray. Its
+// spike sits outside the start pose's reach and inside the end pose's, so only the
+// union of body windows across the A change can see it -- the branch the seeded
+// run never entered while it emitted no A-changing link at all.
+{
+  const angleBins = 720
+  const angleDeg = 0.5
+  const alongBin = 0.0282
+  const alongBins = Math.ceil(10 / alongBin)
+  const linkAngle = 30
+  const cutterRadius = 2
+  const tip = 3
+  // The reference allowance the proof allows an intact model, exactly the
+  // review's 0.0718 mm on a 5 mm round bar: corner * angleDeg + alongBin.
+  const allowanceMm = 5 * angleDeg * Math.PI / 180 + alongBin + 1e-6
+  assert.ok(Math.abs(allowanceMm - 0.0718) < 5e-5,
+    `the repro's reference allowance is 0.0718 mm (${allowanceMm.toFixed(4)})`)
+  // A flat at A30 with its tip on a 3 mm model touches a ray 12.25 deg away at
+  // 3 / cos(12.25 deg); the model there stands 0.4348 mm higher.
+  const spikeAngle = 42.25
+  const lost = 0.4348
+  const contact = tip / Math.cos((spikeAngle - linkAngle) * Math.PI / 180)
+  const spikeRadius = contact + lost
+  const modelAt = (angleDegrees: number): number => (angleDegrees >= 42 ? spikeRadius : tip)
+  // Angle bin 84 -- the A42.25 cell -- and bin 60, the link's own ray at A30.25.
+  const spikeBin = 84
+  const rayBin = 60
+  const alongOf = (point: ToolpathMove['from']): number => point.x
+
+  const entryFor = (label: string, bar: BarStock, radiusAt: (angleDegrees: number) => number = modelAt): Case => ({
+    label,
+    stock: bar,
+    profile: [{ along: 0, radius: tip }, { along: 10, radius: tip }],
+    mesh: revolved(bar, [{ along: 0, radius: tip }, { along: 10, radius: tip }], 8),
+    meshRadiusAt: radiusAt,
+    meshAlong: { from: -2, to: 12 },
+    type: 'flat_endmill',
+    diameter: cutterRadius * 2,
+    stepdown: 1,
+    stepover: 2,
+    roughSpacing: 1,
+    finishSpacing: 1,
+    requestedCellSize: 0.5,
+    stockToLeave: 0,
+    programKind: 'rough',
+    roughKind: 'around',
+    finishKind: 'around',
+    retained: true,
+    alongStart: 0,
+    alongEnd: 10,
+    defaultParams: false,
+    compact: true,
+  })
+  /**
+   * The state an earlier layer left: the model exactly, except that a spike cell
+   * may keep a **shell** of `shell` mm standing above it (probe 2), which is what
+   * makes the removed band a cavity rather than a surface loss.
+   */
+  const referenceFor = (
+    bar: BarStock,
+    shell?: number,
+    radiusAt: (angleDegrees: number) => number = modelAt,
+  ): Reference => {
+    const reference = createReference(bar, 0, alongBins * alongBin, alongBin, angleBins)
+    for (let i = 0; i < reference.alongBins; i++) {
+      for (let k = 0; k < reference.angleBins; k++) {
+        const standing = shell !== undefined && k === spikeBin ? shell : radiusAt((k + 0.5) * angleDeg)
+        reference.material[i * reference.angleBins + k] = standing
+      }
+    }
+    return reference
+  }
+  const proofFor = (caseEntry: Case, reference: Reference, bar: BarStock, radius = cutterRadius): LinkProofContext => ({
+    entry: caseEntry,
+    reference,
+    stock: bar,
+    pivot: barPivotZ(bar),
+    cutterRadius: radius,
+    ball: false,
+    alongOf,
+    alongLimits: alongBounds(bar),
+    regionPoint: (along, angle): { x: number; y: number } => ({ x: along, y: angle }),
+    budget: { alongStart: 0, alongBins, alongBin, angleBins, angleDeg, cells: alongBins * angleBins },
+    linkAllowance: alongBin,
+    travelTip: barMaxRadius(bar) + 1,
+  })
+  const link = (bar: BarStock): ToolpathMove => ({
+    kind: 'cut',
+    from: { x: 0, y: 0, z: barPivotZ(bar) + tip },
+    to: { x: 10, y: 0, z: barPivotZ(bar) + tip },
+  })
+
+  // Probe 1: the neighbouring ray. The 5 mm blank lets the link take the model
+  // at A42.25 down from the model to the cutter's own contact.
+  {
+    const bar = roundStock(10, 30, 'x', { x: 0, y: 0 })
+    const entry = entryFor('#1117 rl-c repro: a link at A30 gouges the ray at A42.25', bar)
+    const reference = referenceFor(bar)
+    const move = link(bar)
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, linkAngle, linkAngle)
+    assert.equal(reference.material[rayBin], tip,
+      'the repro link leaves its own ray at the model, as the old single-ray read saw')
+    const neighbour = linkProtectedSolid(entry, reference, spikeBin, alongBin / 2, spikeAngle)
+    assert.ok(neighbour !== null && !neighbour.cavity
+      && Math.abs(neighbour.gap - lost) < 1e-9,
+    `the repro link removes ${neighbour?.gap.toFixed(4)} mm of protected model at A42.25 `
+      + `(expected ${lost.toFixed(4)}, allowance ${allowanceMm.toFixed(4)})`)
+    assert.throws(
+      () => proveAtLayerLink(proofFor(entry, reference, bar), move, linkAngle),
+      /protected model 0\.4348 mm short at along [\d.]+ A42\.25 \(the outermost surface[^)]*allowed 0\.0718 mm\)/,
+      'the footprint proof rejects a gouge at a neighbouring ray its own ray cannot see',
+    )
+    console.log(`  #1117 rl-c repro 1: an A${linkAngle} link leaves its own ray intact and removes `
+      + `${neighbour.gap.toFixed(4)} mm of protected model at A${spikeAngle} `
+      + `(allowance ${allowanceMm.toFixed(4)} mm); the footprint proof rejects it`)
+  }
+
+  // Probe 2: a cavity below an intact shell. A 15 mm blank leaves the flat's
+  // cylinder (which ends at 9.42 mm on this ray) inside the standing shell, so the
+  // outermost material still reads above the model at 10 mm while the band under
+  // the shell is gone. Only `reference.occupied` sees that.
+  {
+    const bar = roundStock(30, 30, 'x', { x: 0, y: 0 })
+    const entry = entryFor('#1117 rl-c repro: an intact shell over a cavity', bar)
+    const reference = referenceFor(bar, 10)
+    const move = link(bar)
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, linkAngle, linkAngle)
+    const shell = linkProtectedSolid(entry, reference, spikeBin, alongBin / 2, spikeAngle)
+    assert.equal(reference.material[spikeBin], 10,
+      'the repro leaves the outermost surface above the model, so a scalar read is clean')
+    assert.ok(shell !== null && shell.cavity && Math.abs(shell.gap - lost) < 1e-9,
+      `the repro leaves a ${shell?.gap.toFixed(4)} mm cavity under the shell (expected ${lost.toFixed(4)})`)
+    assert.throws(
+      () => proveAtLayerLink(proofFor(entry, reference, bar), move, linkAngle),
+      /protected model 0\.4348 mm short at along [\d.]+ A42\.25 \(a cavity below the intact shell/,
+      'the footprint proof reads reference.occupied, not only the outermost material',
+    )
+    console.log(`  #1117 rl-c repro 2: the outermost surface stands at 10.0000 mm over a `
+      + `${shell.gap.toFixed(4)} mm cavity below the model; the footprint proof rejects it`)
+  }
+
+  // Probe 3 (#1117 rl-e correction, review finding 2): the **A-changing** link.
+  // The link runs A30 -> A38 where the model is flat at the tip, so its own rays
+  // and every waypoint read clean. Its body, though, is swept across the change:
+  // the end pose reaches the A66.25 spike from 28.25 degrees away, while the start
+  // pose's reach stops at A63.7. That is exactly the branch the seeded run never
+  // entered before the lobe cases -- the window is the **union** of the body's
+  // reach at every angle on the slope, not the reach around the start ray -- and
+  // the spike cell stands 0.2 mm above the swept contact.
+  {
+    const bar = roundStock(10, 30, 'x', { x: 0, y: 0 })
+    const fromAngle = 30
+    const toAngle = 38
+    // The spike is one cell, outside the start ray's reach and inside the end
+    // pose's: A66.25 is 36.25 degrees from A30 and 28.25 from A38.
+    const spikeBin3 = 132
+    const spikeAngle3 = (spikeBin3 + 0.5) * angleDeg
+    const excess = 0.2
+    const sweptContact = tip / Math.cos((spikeAngle3 - toAngle) * Math.PI / 180)
+    const sweptRadius = sweptContact + excess
+    const modelAt3 = (angleDegrees: number): number =>
+      (Math.abs(angleDegrees - spikeAngle3) < 1e-9 ? sweptRadius : tip)
+    const entry = {
+      ...entryFor(
+        '#1117 rl-e repro: an A-changing link sweeps the body onto A66.25',
+        bar,
+        modelAt3,
+      ),
+      stepdown: 2,
+    }
+    const reference = referenceFor(bar, undefined, modelAt3)
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: { x: 0, y: 0, z: barPivotZ(bar) + tip, a: fromAngle },
+      to: { x: 10, y: 0, z: barPivotZ(bar) + tip, a: toAngle },
+    }
+    referenceMove(reference, move, barPivotZ(bar), cutterRadius, false, alongOf, fromAngle, toAngle)
+    // Nothing on the path itself is below the model: the single-ray rule passes.
+    for (const k of [60, 64, 68, 76]) {
+      assert.equal(reference.material[k], tip,
+        `the A-changing repro leaves its own path's ray at A${((k + 0.5) * angleDeg).toFixed(2)} alone`)
+    }
+    // The body reaches the spike only from the **end** of the move: at the start
+    // pose the same cell is beyond its reach. The sweep leaves the whole spike
+    // column cut where some pose could reach it, and the end cell is the deepest.
+    const spikeAlong3 = 10 - alongBin
+    const spikeIndex3 = Math.floor(spikeAlong3 / alongBin) * reference.angleBins + spikeBin3
+    const sweptEnd = reference.material[spikeIndex3]
+    assert.ok(sweptEnd < sweptRadius - 2 * allowanceMm,
+      `the swept body cuts the A${spikeAngle3} cell to ${sweptEnd.toFixed(4)} from its `
+      + `${sweptRadius.toFixed(4)} model, so the off-path spike is real`)
+    let rejected: Error | null = null
+    try {
+      proveAtLayerLink(proofFor(entry, reference, bar), move, fromAngle, toAngle)
+    } catch (error) {
+      rejected = error as Error
+    }
+    assert.ok(rejected !== null, 'the swept-footprint proof rejects the A-changing gouge')
+    // The rejection must name the angle **no pose on the link's own path** stands
+    // on -- A66.25 -- and say that the body sweeps it across the A change. The
+    // closest along cell whose state exceeds the allowance is a few bins into the
+    // path, so the message's along position is not pinned to the end.
+    assert.ok(rejected.message.includes(`A${spikeAngle3.toFixed(2)}`),
+      `the rejection names the swept angle A${spikeAngle3} (${rejected.message})`)
+    assert.match(rejected.message,
+      /The body sweeps this cell somewhere between A30\.00 and A38\.00/,
+      `the rejection names the swept A change (${rejected.message})`)
+    console.log(`  #1117 rl-e repro: an A30->A38 link leaves its own path intact and its swept `
+      + `body cuts the off-path A${spikeAngle3} cell to ${sweptEnd.toFixed(4)} of its `
+      + `${sweptRadius.toFixed(4)} model; the swept-footprint proof rejects it`)
+  }
+}
+
+// #1117 rl-c correction (review finding 1): the model proof must sweep the body's
+// footprint, not one ray per link. More cells than links is not enough on its own
+// (a link's own ray can visit several along bins), so require cells off that ray.
+// Judged on the snapshot above, so the synthetic replays cannot pad it; kept after
+// them so a footprint that collapses back to the link's own ray fails on the
+// synthetic gouge first, where the failure is readable.
+assert.ok(seededFootprint.cells > seededFootprint.links,
+  `the link model proof sweeps the cutter body's footprint (${seededFootprint.cells} cells)`)
+assert.ok(seededFootprint.offRay > 0,
+  `the link model proof reads neighbouring rays (${seededFootprint.offRay} cells off the link's own ray)`)
+
+console.log(`engine/toolpaths/squareAroundGenerator.property.test.ts: all assertions passed in ${((Date.now() - startedAt) / 1000).toFixed(1)} s (including generation)`)

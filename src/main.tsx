@@ -120,12 +120,23 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().openProjectFromText(json, null)
     },
-    /** Returns the current pendingMove state (null if idle). */
+    /**
+     * Returns the current pendingMove state (null if idle), with the points a
+     * spec needs to check what the preview is drawn from: the click that ends a
+     * drag stores the projected target, so `toPoint` is the place the outline
+     * was last drawn (issue #1112 rt6-d).
+     */
     getPendingMove: async () => {
       const { useProjectStore } = await _pcTestStore()
       const pm = useProjectStore.getState().pendingMove
       if (!pm) return null
-      return { mode: pm.mode, entityType: pm.entityType, entityIds: [...pm.entityIds] }
+      return {
+        mode: pm.mode,
+        entityType: pm.entityType,
+        entityIds: [...pm.entityIds],
+        fromPoint: pm.fromPoint,
+        toPoint: pm.toPoint,
+      }
     },
     /** Completes a pending copy/move starting from origin and ending at (x,y). */
     completePendingMove: async (x: number, y: number) => {
@@ -251,6 +262,16 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setActiveControl({ kind: 'segment', index })
     },
+    /**
+     * What the last rotary generation reported about its angle pool (#1115
+     * p-d3). `batches > 0` with more than one worker is the evidence that the
+     * pool really sampled in a real browser; `cancelled` counts superseded
+     * generations that reported they stopped (p-d3 fix 2).
+     */
+    getRotaryPoolStats: async () => {
+      const { readRotaryPoolTelemetry } = await import('./app/toolpathGeneration/rotaryPoolTelemetry')
+      return readRotaryPoolTelemetry()
+    },
     /** Picks a trim/extend subject so the mid-pick Escape rung can be tested. */
     setPendingSketchSubject: async (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
       const { useProjectStore } = await _pcTestStore()
@@ -295,6 +316,11 @@ declare global {
       getPendingAddShape: () => Promise<string | null>
       getFeatureCount: () => Promise<number>
       selectFeatures: (ids: string[]) => Promise<void>
+      getRotaryPoolStats: () => Promise<{
+        last: { mode: string; workers: number; batches: number; fallback: string } | null
+        generations: number
+        cancelled: number
+      }>
       startJoinFeatures: (ids: string[]) => Promise<void>
       startRotateFeature: (featureId: string) => Promise<void>
       getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }>

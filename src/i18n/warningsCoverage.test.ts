@@ -17,6 +17,8 @@
 import { warningsEn } from './locales/en/warnings'
 import { warningsZhCN } from './locales/zh-CN/warnings'
 import { interpolate } from './catalog'
+import { resetI18nStoreForTests, setActiveLocale } from './store'
+import { toolpathWarningText } from './warningText'
 import type { ToolpathWarning, ToolpathWarningCode } from '../engine/toolpaths/warningCodes'
 
 function assert(condition: boolean, message: string): void {
@@ -28,6 +30,9 @@ function assert(condition: boolean, message: string): void {
 // is checked against the catalog, and the exhaustiveness helper below
 // ensures the list IS the union.
 const ALL_CODES = [
+  'plasmaTopOnly', 'plasmaHoleBeforePart', 'plasmaPartialDepth', 'plasmaStraightLead',
+  'plasmaInvalid', 'plasmaOpenPath', 'plasmaNoLead', 'plasmaSmallHole', 'plasmaCentrePierce', 'plasmaLeadOutOmitted',
+  'plasmaOutlineBeforeHole',
   'finishScallopHeightOutOfRange', 'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'regionExtendedBySubtractDepth',
@@ -37,7 +42,8 @@ const ALL_CODES = [
   'entryStrategyFallback', 'entryHelixDiameterClamped', 'debug',
   'xyLeadUnsupported', 'xyLeadRegionMask', 'xyLeadNoViablePath', 'xyLeadNeedsRampedEntry',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
-  'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
+  'targetsNotFound', 'targetsMissing', 'targetsNoGeometry', 'stepoverRatioRange', 'operationStepoverRatioRange',
+  'rotaryStepdownBelowMinimum', 'rotaryWorkBudgetExceeded', 'rotaryFinishWithoutRough',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',
   'vcarveWrongKind', 'vcarveNeedsVBit', 'contourSpacingPositive', 'vBitInvalidSlope', 'vcarveNoMoves',
@@ -76,7 +82,7 @@ const ALL_CODES = [
   'drillCountersinkNeedsVBit', 'drillCountersinkDiameterPositive', 'drillCountersinkExceedsToolDiameter',
   'drillCountersinkDepthExceedsToolMax', 'drillCountersinkNotLargerThanHole',
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
-  'carveNoValidTargets',
+  'carveNoValidTargets', 'carveNeighbourTrimmed', 'carveNeighbourTrimmedSpan', 'carveNeighbourTrimmedAway',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',
   'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded', 'clampBlockedCut',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
@@ -85,7 +91,18 @@ const ALL_CODES = [
   'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'pocketFinishIslandWallTooTight',
-  'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
+  'aroundStockMismatch', 'aroundCentreline', 'aroundCutReachesCentreline',
+  'rotaryToolUnsupported', 'rotaryBelowCentreline', 'rotaryNoRoom', 'rotaryModelOutsideBar',
+  'rotaryStockToLeaveInvalid',
+  'setupTargetNotThrough', 'setupFlipAxisMismatch', 'postMixedSetups', 'postSetupOperationRefused',
+  'workholdingDiameter', 'workholdingPlacement', 'ordinaryClampOverlap',
+  'squareSheetNotTurned', 'squareSheetOnFlats',
+  'postSetupNoRegistration', 'exportMachineTypeMismatch', 'exportMachineMissingRotaryAxis', 'exportMachineTemplateInvalid',
+  'postPlasmaOperationSkipped', 'postPlasmaCutSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postPlasmaSafeHeightMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
+  'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel', 'postRotaryNeedsRoundStock',
+  'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis', 'postRotaryDrillNotExpanded',
+  'postRotaryAxisMismatch', 'postRotaryInchUnits',
+  'postRotarySquareTurnBelowEnvelope', 'postSquareAroundToolpathStale', 'postRotaryTurnWithoutClearance',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
@@ -112,15 +129,93 @@ for (const code of ALL_CODES) {
 // No orphans: every warnings.* key (except the moveKind word table) matches
 // a code in the union.
 const codeSet = new Set<string>(ALL_CODES)
+/** Word tables the warnings inject by id (see `warningText.ts`). */
+const WORD_TABLES = ['warnings.moveKind.', 'warnings.neighbour.', 'warnings.side.']
 for (const key of Object.keys(warningsEn)) {
-  if (key.startsWith('warnings.moveKind.')) continue
+  if (WORD_TABLES.some((prefix) => key.startsWith(prefix))) continue
   const code = key.slice('warnings.'.length)
   assert(codeSet.has(code), `catalog key ${key} corresponds to a ToolpathWarningCode`)
 }
 
+// The two rotary refusals added by #1045 slice O name the operation and say
+// what to change, so the message is actionable rather than a generic range.
+assert(
+  interpolate(warningsEn['warnings.rotaryStepdownBelowMinimum'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: the stepdown is below 0.01 mm'),
+  'the below-minimum stepdown message names the operation and the minimum',
+)
+assert(
+  interpolate(warningsEn['warnings.rotaryWorkBudgetExceeded'], { operation: 'Rotary rough' })
+    .startsWith('Rotary rough: this would generate too many moves'),
+  'the work-budget message names the operation and the remedy',
+)
+// The 2026-10-22 finish advisory names the operation and states the consequence
+// without claiming a refusal; since #1112 decision 7.11 it names the uncovered
+// model instead of saying "this model".
+assert(
+  interpolate(warningsEn['warnings.rotaryFinishWithoutRough'], { operation: 'Rotary finish', model: 'Turn 2' })
+    === 'Rotary finish: no earlier rough for Turn 2 comes before this finish in the setup; it will cut to full depth in one pass.',
+  'the finish-without-rough advisory names the operation, the uncovered model and the consequence',
+)
+
+// The Follow line's neighbour keep-out (#1112 rt6-e) names the line, the
+// distance, the material kept clear of and the end of the line it stopped at —
+// and the last two are words, so they follow the language with the rest.
+const neighbourWarning: ToolpathWarning = {
+  code: 'carveNeighbourTrimmed',
+  params: { name: 'Thread', distance: '0.033', units: 'in', neighbour: 'Hex', sideId: 'start' },
+}
+assert(
+  toolpathWarningText(neighbourWarning)
+    === 'Thread: stopped 0.033 in short of Hex at the start so the cutter does not cut into it.',
+  'the neighbour warning reads as the report asked for it',
+)
+const barWarning: ToolpathWarning = {
+  code: 'carveNeighbourTrimmed',
+  params: { name: 'Thread', distance: '0.02', units: 'mm', neighbourId: 'bar', sideId: 'end' },
+}
+assert(
+  toolpathWarningText(barWarning)
+    === 'Thread: stopped 0.02 mm short of the uncut bar at the end so the cutter does not cut into it.',
+  'the uncut bar is a translated word, not an English name baked into the engine',
+)
+setActiveLocale('de')
+assert(
+  toolpathWarningText(barWarning)
+    === 'Thread: endet 0.02 mm vor dem ungeschnittenen Rohteil am Ende, damit der Fräser nicht hineinschneidet.',
+  'the German message translates both nested words',
+)
+resetI18nStoreForTests()
+
+// A list param is joined at display time in the active language (#1112 C2),
+// not with a comma the engine baked in: switching language changes the
+// conjunction while the operation and model names stay verbatim.
+const multiModelWarning: ToolpathWarning = {
+  code: 'rotaryFinishWithoutRough',
+  params: { operation: 'Rotary finish', model: ['Model', 'Second'] },
+}
+assert(
+  toolpathWarningText(multiModelWarning)
+    === 'Rotary finish: no earlier rough for Model and Second comes before this finish in the setup; it will cut to full depth in one pass.',
+  'English joins the uncovered models with "and" at display time',
+)
+setActiveLocale('de')
+assert(
+  toolpathWarningText(multiModelWarning).includes('Model und Second'),
+  'German joins the same list with "und" without regenerating the warning',
+)
+resetI18nStoreForTests()
+
 // The debug passthrough renders its text verbatim in both locales.
 const debugWarning: ToolpathWarning = { code: 'debug', params: { text: 'Debug: xyz 42' } }
-assert(interpolate(warningsEn['warnings.debug'], debugWarning.params) === 'Debug: xyz 42', 'en debug passthrough')
-assert(interpolate(warningsZhCN['warnings.debug'], debugWarning.params) === 'Debug: xyz 42', 'zh debug passthrough')
+assert(
+  interpolate(warningsEn['warnings.debug'], { text: 'Debug: xyz 42' }) === 'Debug: xyz 42',
+  'en debug passthrough',
+)
+assert(
+  interpolate(warningsZhCN['warnings.debug'], { text: 'Debug: xyz 42' }) === 'Debug: xyz 42',
+  'zh debug passthrough',
+)
+assert(toolpathWarningText(debugWarning) === 'Debug: xyz 42', 'the mapper keeps the debug text verbatim')
 
 console.log('warnings coverage tests passed')

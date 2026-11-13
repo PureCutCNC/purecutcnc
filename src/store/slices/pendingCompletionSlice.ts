@@ -33,6 +33,7 @@ import type { ProjectStore } from '../types'
 import { transformProfile } from '../../geometry/profile'
 import { translateClamp, translateTab } from '../helpers/transform'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
+import { moveCannedRotaryFeatures, rotaryCopyStepDelta, rotaryMoveTranslateDelta } from '../helpers/rotaryMove'
 import {
   mirrorFeatureFromReference,
   resizeBackdropFromReference,
@@ -53,10 +54,13 @@ import { uniqueFolderName } from '../helpers/naming'
 import {
   commitResolvedInstances,
   resolveFeatureInstance,
+  resolveFeatureInstances,
   resolvedProjectFeatures,
   restoreResolvedFeatureMetadata,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
+import { aroundSheetAuthoringRefused, featureOperation } from '../helpers/activeFace'
+import { isCannedFeature } from '../../cannedShapes'
 
 export interface PendingCompletionSliceDependencies {
   clearStaleConstraints: (features: SketchFeature[], movedIds: Set<string>) => SketchFeature[]
@@ -93,6 +97,33 @@ function instanceFromReferencedDraft(feature: ReferencedSketchFeature): FeatureI
   )
 }
 
+/**
+ * Whether a derived-creation result would author new geometry on a round-only
+ * Around sheet (issue #1016 C2-U1F, extended by C2-U1G). Offset and cut keep
+ * their source's {@link SketchFeature.authoringFace}, and copies spread their
+ * source row (`copyFeatures.ts`), so the resulting faces are what the policy
+ * judges — not the current workspace face. All of these insert directly rather
+ * than through `addFeature`. An unset face means Top and is never refused, and
+ * a derived region or construction row never cuts the sheet, so it is admitted
+ * there (issue #1112 decision 17).
+ */
+function derivedAroundAuthoringRefused(project: Project, features: readonly SketchFeature[]): boolean {
+  return features.some((feature) => aroundSheetAuthoringRefused(project, feature.authoringFace ?? 'top', featureOperation(project, feature)))
+}
+
+/**
+ * Whether completion of a pending Join would create an Around-derived row on a
+ * square blank (issue #1016 C2-U1F). `mergeSelectedFeatures` derives from its
+ * anchor, so the anchor's face is the resulting face; this pre-check runs
+ * before the join branch's `selectFeatures` and pending clear, which happen
+ * ahead of the merge itself.
+ */
+function pendingJoinWouldAuthorRefusedAround(project: Project, entityIds: string[]): boolean {
+  const features = resolveFeatureInstances(project, entityIds)
+    .filter((feature) => feature.sketch.profile.closed)
+  return features.length >= 2 && aroundSheetAuthoringRefused(project, features[0].authoringFace, featureOperation(project, features[0]))
+}
+
 export function createPendingCompletionSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -106,8 +137,8 @@ export function createPendingCompletionSlice(
         }
 
         const { entityIds, entityType, fromPoint, mode } = s.pendingMove
-        const dx = toPoint.x - fromPoint.x
-        const dy = toPoint.y - fromPoint.y
+        let dx = toPoint.x - fromPoint.x
+        let dy = toPoint.y - fromPoint.y
 
         if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
           return { pendingMove: null }
@@ -147,6 +178,47 @@ export function createPendingCompletionSlice(
         }
 
         if (entityType === 'feature') {
+          // A canned rotary feature (Turn, Polygon, Thread, Flutes) moves its
+          // *band* along the bar, not a free 2D offset (issue #1112 rt6-d item
+          // 42). The projection lives in `rotaryMove.ts`, which the canvas
+          // preview calls too, so what is drawn during the drag is what is
+          // stored: the start the edit panel shows, the regenerated model and
+          // every Thread/Flutes following a Turn. `null` means "not this kind of
+          // move", and the generic translate below runs unchanged.
+          if (mode === 'move') {
+            const rotaryMove = moveCannedRotaryFeatures(s.project, entityIds, fromPoint, toPoint)
+            if (rotaryMove) {
+              if (projectsEqual(rotaryMove, s.project)) {
+                return { pendingMove: null }
+              }
+              return {
+                project: { ...rotaryMove, meta: { ...rotaryMove.meta, modified: new Date().toISOString() } },
+                pendingMove: null,
+                history: {
+                  past: [...s.history.past, cloneProject(s.project)].slice(-100),
+                  future: [],
+                  transactionStart: null,
+                },
+              }
+            }
+          }
+
+          // A copy of a canned rotary feature is placed like a move of one
+          // (issue #1112 rt7-f): Frank's copy slid off the bar's axis while a
+          // move of the same shape stayed on it. The copy is still a new row
+          // and the source band still stays where it is — what changes is only
+          // *where* the row lands: the same projected, clamped displacement the
+          // preview drew, so a copy travels along the bar, keeps within its
+          // ends, and every kind's copy stays a band on the axis. A
+          // non-rotary selection gets its own displacement back unchanged. For
+          // a move this is also the fallback when the shared band cannot be
+          // written (a linked copy outside the selection, or a start the
+          // kind's own generator refuses — the reviews of rt6-d), so what the
+          // outline was dragged to is still what is stored.
+          const projected = rotaryMoveTranslateDelta(s.project, entityIds, dx, dy)
+          dx = projected.dx
+          dy = projected.dy
+
           const sourceFeatures = entityIds
             .map((featureId) => featureById(s.project, featureId))
             .filter((feature): feature is ResolvedSketchFeature => feature !== null)
@@ -166,6 +238,10 @@ export function createPendingCompletionSlice(
                   normalizedCopyCount,
                   s.project.featureDefinitions,
                   effectiveCopyMode,
+                  // Each copy is placed from where the one before it landed, so
+                  // the bar's clamp applies to every placement rather than to
+                  // the first one only (issue #1112 rt7-f review).
+                  (step) => rotaryCopyStepDelta(s.project, entityIds, dx, dy, step),
                 )
               : []
 
@@ -178,6 +254,17 @@ export function createPendingCompletionSlice(
                 return rest
               })
             : []
+
+          // A copy preserves its source's authoring face (`copyFeatures.ts`
+          // spreads the source row) and is inserted directly, so a Square
+          // blank's round-only Around sheet must refuse the whole completion.
+          // Judged by the rows about to be created, never the workspace face,
+          // so moving the workspace to Top cannot bypass it. In-place moves and
+          // the clamp/tab/backdrop branches create no rows and stay allowed
+          // (issue #1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, cleanedCreatedFeatures)) {
+            return {}
+          }
 
           // Detect group copy: the sources are the ENTIRE membership of one
           // grouped folder. Only then do the copies get their own new grouped
@@ -499,6 +586,13 @@ export function createPendingCompletionSlice(
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
           }
+          // Rotated copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // rotation before any write. In-place rotate stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
+          }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
             ...s.project,
@@ -542,6 +636,13 @@ export function createPendingCompletionSlice(
           )
           if (createdFeatures.length === 0) {
             return { pendingTransform: null }
+          }
+          // Mirrored copies keep their source's authoring face and are inserted
+          // directly, so a Square blank's round-only Around sheet refuses the
+          // mirror before any write. In-place mirror stays allowed — it
+          // creates no rows (#1016 C2-U1G).
+          if (derivedAroundAuthoringRefused(s.project, createdFeatures)) {
+            return {}
           }
           const createdInstances = createdFeatures.map(instanceFromReferencedDraft)
           const nextProject = {
@@ -649,8 +750,23 @@ export function createPendingCompletionSlice(
         return []
       }
 
+      // The interactive path must refuse exactly as `offsetSelectedFeatures`
+      // does: a pending request can outlive a selection change, and an offset
+      // would freeze a canned shape's generated outlines. Leave the pending
+      // request untouched, like the Around-authoring refusal below (#1112 A2).
+      if (resolveFeatureInstances(state.project, state.pendingOffset.entityIds).some(isCannedFeature)) {
+        return []
+      }
+
       const offsetResult = deps.previewOffsetFeatures(state.project, state.pendingOffset.entityIds, distance)
       const createdFeatures = offsetResult.features
+      // A stale request started on a round bar may complete after the blank
+      // became square: its derived features keep the source's Around face and
+      // are inserted directly, so refuse atomically and leave the pending
+      // request, selection, project and history untouched (#1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       const createdInstances = createdFeatures.map((feature, index) => {
         const definition = offsetResult.definitions[index]
         if (!definition) {
@@ -710,6 +826,21 @@ export function createPendingCompletionSlice(
           return []
         }
 
+        // A pending Join can outlive a selection change, so the completion
+        // refuses a canned member even when the start did not see one. No
+        // state is written before this point (#1112 A2).
+        if (resolveFeatureInstances(state.project, pendingShapeAction.entityIds).some(isCannedFeature)) {
+          return []
+        }
+
+        // Refuse before `selectFeatures` or clearing the pending request: a
+        // Join whose anchor is Around-authored would insert new Around rows on
+        // a square blank (issue #1016 C2-U1F), and the atomic contract leaves
+        // selection and the pending request unchanged.
+        if (pendingJoinWouldAuthorRefusedAround(state.project, pendingShapeAction.entityIds)) {
+          return []
+        }
+
         state.selectFeatures(pendingShapeAction.entityIds)
         const result = get().mergeSelectedFeatures(pendingShapeAction.keepOriginals)
         set({ pendingShapeAction: null })
@@ -717,6 +848,15 @@ export function createPendingCompletionSlice(
       }
 
       if (pendingShapeAction.cutterIds.length === 0 || pendingShapeAction.targetIds.length === 0) {
+        return []
+      }
+
+      // The same stale-request rule as Join: a canned cutter or target refuses
+      // the completion before any cut, selection or pending write (#1112 A2).
+      if (resolveFeatureInstances(
+        state.project,
+        [...pendingShapeAction.cutterIds, ...pendingShapeAction.targetIds],
+      ).some(isCannedFeature)) {
         return []
       }
 
@@ -738,6 +878,12 @@ export function createPendingCompletionSlice(
       )
       const createdGroups: DerivedFeatureGroup[] = cutResult.groups
       const createdFeatures = createdGroups.flatMap((group) => group.features)
+      // A cut keeps each target's Around face and is inserted directly; refuse
+      // before the direct set and leave the pending request unchanged
+      // (issue #1016 C2-U1F).
+      if (derivedAroundAuthoringRefused(state.project, createdFeatures)) {
+        return []
+      }
       let definitionIndex = 0
       const createdInstanceGroups: Array<DerivedFeatureGroup<FeatureInstance>> = createdGroups.map((group) => ({
         sourceId: group.sourceId,

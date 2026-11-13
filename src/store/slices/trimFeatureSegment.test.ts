@@ -16,7 +16,8 @@
 
 import { newProject, type SketchProfile, type Point, type Project } from '../../types/project'
 import { useProjectStore } from '../projectStore'
-import { projectWithFeatures } from '../../test/projectFixtures'
+import { DEFAULT_SETUP_ID } from '../../types/project'
+import { BOTTOM_SETUP_ID, withBottomSetup, projectWithFeatures } from '../../test/projectFixtures'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 
 const ε = 1e-6
@@ -721,4 +722,39 @@ console.log(`\n${passed} passed, ${failed} failed`)
 
 if (failed > 0) {
   process.exit(1)
+}
+
+// #994: an opposite-face construction is a read-only reference, never a subject.
+for (const face of ['top', 'bottom'] as const) {
+  const project = withBottomSetup(makeMockProject([
+    { id: 'subject', profile: makeProfile(pt(0, 10), [{ type: 'line', to: pt(10, 10) }]) },
+    { id: 'reference', profile: makeProfile(pt(7, 0), [{ type: 'line', to: pt(7, 20) }]), locked: true },
+  ]))
+  project.features[0].authoringFace = face
+  project.features[1].authoringFace = face === 'top' ? 'bottom' : 'top'
+  project.featureDefinitions[project.features[1].definitionId].operation = 'construction'
+  project.activeSetupId = face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID
+  const before = structuredClone(project)
+  const referenceSnapshot = JSON.stringify(resolveFeatureInstance(project, 'reference'))
+  useProjectStore.setState({ project, dirty: false, history: { past: [], future: [], transactionStart: null }, pendingSketchEdit: null, sketchEditSession: null })
+  const subject = { featureId: 'subject', segmentIndex: 0, point: pt(10 * 0.8, 10), t: 0.8 }
+  const reference = { featureId: 'reference', segmentIndex: 0, point: pt(7, 10), t: 0.5 }
+  useProjectStore.getState().trimFeatureSegment(subject, reference)
+  const after = useProjectStore.getState()
+  assert(Math.abs(resolveFeatureInstance(after.project, 'subject')!.sketch.profile.segments[0].to.x - 7) < ε, `${face}: opposite-face construction supplies the intersection`)
+  assert(JSON.stringify(resolveFeatureInstance(after.project, 'reference')) === referenceSnapshot, 'locked reference stays byte-for-byte unchanged')
+  assert(after.history.past.length === 1 && after.dirty, 'applying the edit makes one undo step')
+  after.undo()
+  assert(JSON.stringify(useProjectStore.getState().project.features) === JSON.stringify(before.features), 'one undo restores both instance rows')
+  assert(JSON.stringify(useProjectStore.getState().project.featureDefinitions) === JSON.stringify(before.featureDefinitions), 'one undo restores both definitions')
+  useProjectStore.getState().redo()
+  assert(JSON.stringify(resolveFeatureInstance(useProjectStore.getState().project, 'reference')) === referenceSnapshot, 'redo leaves the reference unchanged')
+  // A stale direct-id subject call bypasses the picker but still must refuse.
+  const foreign = structuredClone(before)
+  foreign.features[0].authoringFace = face === 'top' ? 'bottom' : 'top'
+  useProjectStore.setState({ project: foreign, dirty: false, history: { past: [], future: [], transactionStart: null } })
+  const staleSnapshot = JSON.stringify(foreign)
+  useProjectStore.getState().trimFeatureSegment(subject, reference)
+  assert(JSON.stringify(useProjectStore.getState().project) === staleSnapshot, 'a stale foreign subject cannot write geometry')
+  assert(useProjectStore.getState().history.past.length === 0 && !useProjectStore.getState().dirty, 'a stale foreign subject cannot write history or dirty state')
 }

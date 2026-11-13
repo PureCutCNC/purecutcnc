@@ -42,6 +42,7 @@ function operationSelection(key: string): SelectedPlanItem {
 function operationKindLabel(operation: Operation): string {
   const kind = operation.kind
   switch (kind) {
+    case 'plasma_profile': return camT('cam.plasma.title')
     case 'pocket': return camT('cam.opLabel.pocket')
     case 'edge_route_inside': return camT('cam.opLabel.edgeRouteInside')
     case 'edge_route_outside': return camT('cam.opLabel.edgeRouteOutside')
@@ -49,6 +50,8 @@ function operationKindLabel(operation: Operation): string {
     case 'drilling': return camT('cam.opLabel.drilling')
     case 'v_carve': return camT('cam.opLabel.vCarve')
     case 'v_carve_medial': return camT('cam.opLabel.vCarveMedial')
+    case 'rotary_rough': return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish': return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface': return camT('cam.opLabel.roughSurface')
     case 'finish_surface': return camT('cam.opLabel.finishSurface')
     case 'finish_surface_cleanup': return camT('cam.opLabel.finishSurfaceCleanup')
@@ -428,6 +431,12 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
                   </button>
                 )
               })}
+              {plan.coverage.filter((coverage) => coverage.status === 'existing').map((coverage) => (
+                <p key={coverage.featureId} className="cam-plan-field-note">
+                  <span>{coverage.featureName}</span><br />
+                  {coverage.detail}
+                </p>
+              ))}
             </div>
             {uncovered.length > 0 ? (
               <div className="cam-plan-coverage">
@@ -462,8 +471,8 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
 
         <footer className="dialog-footer cam-plan-footer">
           <span className="cam-plan-footer__message" role="status">{message}</span>
-          <button type="button" className="secondary" onClick={onClose}>{camT('cam.plan.cancel')}</button>
-          <button type="button" className="primary" disabled={!canCreate} onClick={handleCreate}>{camT('cam.plan.createOperations', { count: enabledCount })}</button>
+          <button type="button" className="btn-secondary" onClick={onClose}>{camT('cam.plan.cancel')}</button>
+          <button type="button" className="btn-primary" disabled={!canCreate} onClick={handleCreate}>{camT('cam.plan.createOperations', { count: enabledCount })}</button>
         </footer>
       </div>
     </div>,

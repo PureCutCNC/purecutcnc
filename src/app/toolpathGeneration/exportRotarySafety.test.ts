@@ -1,0 +1,283 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Issue #1034 slice A: the output boundary still refuses what it must.
+ *
+ * Slice A moved machine suitability out of the authoring guard, so these are
+ * the checks that carry the safety, each driven through the **real** seam
+ * rather than by asserting the predicate alone. The export service generates
+ * the rotary fixture and `prepareExport` posts it; the refusals then land on
+ * different sides of that post. A machine whose rotary axis lies across the
+ * bar is refused inside the postprocessor (`postRotaryAxisMismatch`), while an
+ * unsuited machine still posts a program and then carries the matching error
+ * appended to it — `exportMachineMissingRotaryAxis` for a router with no rotary
+ * block (the right family, short one axis: issue #1112 item 35) and
+ * `exportMachineTypeMismatch` for one of the wrong family — posting runs and
+ * real G-code is constructed for those cases; it is the shared error predicate
+ * on the prepared program that blocks Save and the export/download. The one
+ * refusal that really does happen first is a missing machine, which
+ * `prepareExport` blocks before generation starts. A compatible machine emits
+ * its program byte-for-byte as it did at its recaptured baseline (the #1054
+ * fix-2 machine-coordinate retract included).
+ *
+ * Run with: npx tsx src/app/toolpathGeneration/exportRotarySafety.test.ts
+ */
+
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { validateMachineDefinition, type MachineDefinition } from '../../engine/gcode/types'
+import { BUNDLED_DEFINITIONS } from '../../engine/gcode/definitions'
+import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
+import { rotaryOperationFixture } from '../../test/rotaryOperationFixture'
+import type { Project } from '../../types/project'
+import {
+  createExportToken,
+  exportHasError,
+  prepareExport,
+  type ExportPostOptions,
+} from './exportPreparation'
+import { makeCountingService } from './testSupport'
+
+let passed = 0
+let failed = 0
+
+async function test(name: string, fn: () => Promise<void> | void): Promise<void> {
+  return Promise.resolve().then(fn).then(
+    () => { passed += 1; console.log(`   \u2713 ${name}`) },
+    (error: unknown) => {
+      failed += 1
+      console.log(`   \u2717 ${name}: ${error instanceof Error ? error.message : String(error)}`)
+    },
+  )
+}
+
+function bundled(id: string): MachineDefinition {
+  const found = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
+  assert.ok(found, `bundled definition ${id} exists`)
+  return validateMachineDefinition(structuredClone(found))
+}
+
+function rotaryRouter(about: 'x' | 'y'): MachineDefinition {
+  return validateMachineDefinition({
+    ...bundled('grbl'),
+    id: `rotary-${about}`,
+    name: `Rotary ${about}`,
+    rotary: { about, drive: 'own', reversed: false, inverseTimeFeed: { on: 'G93', off: 'G94' } },
+  })
+}
+
+const PLAIN_ROUTER = validateMachineDefinition({ ...bundled('generic'), id: 'plain-router', name: 'Plain router' })
+const QTPLASMAC = bundled('qtplasmac')
+const MATCHING = rotaryRouter('x')
+const OPPOSITE = rotaryRouter('y')
+
+const OPTIONS: ExportPostOptions = {
+  emitToolChanges: false,
+  emitCoolant: false,
+  programName: 'around',
+  captureMotionTrace: false,
+}
+
+/** The rotary fixture with `machine` selected, generating real motion. */
+function barProject(machine: MachineDefinition | null): Project {
+  const bar = rotaryOperationFixture('x', 'rotary_rough')
+  return {
+    ...bar,
+    meta: {
+      ...bar.meta,
+      projectType: 'rotary',
+      machineDefinitions: machine ? [machine] : [],
+      selectedMachineId: machine?.id ?? null,
+    },
+  }
+}
+
+function realService(project: Project): ReturnType<typeof makeCountingService> {
+  return makeCountingService({ project, documentKey: 1 }, (operationId) => {
+    const operation = project.operations.find((candidate) => candidate.id === operationId)
+    assert.ok(operation, `operation ${operationId} exists`)
+    const envelope = computeOperationToolpath(project, operation)
+    assert.ok(envelope, `operation ${operationId} generates`)
+    return envelope.result
+  })
+}
+
+/**
+ * The hash of this exact fixture's program, first captured at b5d407b9 with
+ * the wall-clock date header pinned to the capture day. It was recaptured on
+ * the #1054 branch because fix 2's machine-coordinate closing retract
+ * (`G53 G0 Z0`) changes the Around program text intentionally (the generated
+ * moves are unchanged); the original hash was `ea243dcd26bac24e`. The
+ * postprocessor stamps `Generated by PureCutCNC on {today}`, so that one field
+ * is rewritten before hashing. The pattern matches any date rather than
+ * today's, so a run that straddles midnight is not a spurious failure; the
+ * fixed-width replacement and the exactly-one-match check keep it narrow.
+ *
+ * Re-captured on the #1045 integration sync. The hash now includes both
+ * changes: #1045 slice D's C2-F7 cutter-centre pull-in, applied to a round
+ * bar's retained ends as well because a pass on the band edge cut into them,
+ * starts and ends the along grid one cutter radius inside the stubbed faces;
+ * #1054 fix 3's machine-coordinate closing retract then writes the
+ * definition's `motion.machineSafeZ` (default 0) rather than a project height.
+ * Only coordinates and that retract line moved; the program structure is
+ * unchanged.
+ *
+ * Re-captured for #1091, which removes that closing retract and the closing
+ * `G0 A0` unwind: the generated moves are unchanged, but the program loses its
+ * last two motion lines (`G53 G0 Z0` and `G0 A0`).
+ *
+ * Re-captured for #1095: the rough no longer applies the radial stock to leave
+ * to the retained end walls, so the end passes stop being lifted over the
+ * thickened wall. Only the wall-adjacent samples and the runs that end on them
+ * move; the mid-bar samples are bit-identical.
+ *
+ * Re-captured for #1098: this fixture is an along-the-bar rough, whose layers
+ * now alternate the direction of their angle sequence instead of adding a full
+ * turn per layer. The same cuts and depths are posted, in a different order and
+ * direction, with A staying within [0, 360].
+ *
+ * Re-captured for #1103 slice ca-h: the operation now ends facing 0 up, so the
+ * program gains the machine-coordinate retract, the forward turn to the next
+ * whole turn and the instruction that replace #1091's ending. The generated
+ * moves are unchanged.
+ *
+ * Re-captured for #1155 rn-e: `rotaryOperationFixture`'s prism runs 3..27 with
+ * the cut range on exactly those ends, so the approved rule now lets the cutter
+ * centre reach both of the model's own ends and the plain bar beyond them be
+ * cut. The moves and the posted text both move; the fixture is the same one
+ * `projectType.test.ts` pins.
+ */
+const BASE_DATE = '2026-10-14'
+const GENERATED_DATE_FIELD = 'Generated by PureCutCNC on '
+// #1177 recaptured it: the fixture's ball reads the exact sphere drop on a
+// round bar. The rough cuts the same 2277 mm in 407 moves instead of 1465
+// (its layers are now exactly level, so collinear samples merge).
+const BASE_AROUND_HASH = 'b8db92e84fd78a29'
+
+function normalizeGeneratedDate(gcode: string): string {
+  const pattern = new RegExp(`${GENERATED_DATE_FIELD}\\d{4}-\\d{2}-\\d{2}`, 'g')
+  const found = gcode.match(pattern) ?? []
+  assert.equal(found.length, 1, 'the program carries exactly one generated-date field')
+  const normalized = gcode.replace(pattern, `${GENERATED_DATE_FIELD}${BASE_DATE}`)
+  assert.equal(normalized.length, gcode.length, 'pinning the date changes no other byte')
+  return normalized
+}
+
+function hash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16)
+}
+
+async function main(): Promise<void> {
+  console.log('\nRotary output safety (issue #1034 slice A)')
+
+  await test('a compatible machine posts a real, byte-identical program', async () => {
+    const project = barProject(MATCHING)
+    const operationId = project.operations[0].id
+    const h = realService(project)
+    const token = createExportToken(1, h.context(), [operationId], MATCHING, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, MATCHING, OPTIONS)
+    assert.equal(prepared.status, 'ready', `expected ready, got ${prepared.status}`)
+    if (prepared.status !== 'ready') return
+    assert.equal(exportHasError(prepared.programs), false, 'a compatible machine does not refuse')
+    const program = prepared.programs[0]
+    assert.ok(program.operations[0].toolpath.moves.length > 0, 'the posted program carries real motion')
+    assert.ok(program.result.gcode.length > 0, 'and real text')
+    assert.equal(
+      hash(normalizeGeneratedDate(program.result.gcode)),
+      BASE_AROUND_HASH,
+      'the compatible program is byte-identical to its recaptured #1054 baseline',
+    )
+  })
+
+  await test('a rotary axis across the bar is refused at the post seam', async () => {
+    const project = barProject(OPPOSITE)
+    const operationId = project.operations[0].id
+    const h = realService(project)
+    const token = createExportToken(1, h.context(), [operationId], OPPOSITE, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, OPPOSITE, OPTIONS)
+    assert.equal(prepared.status, 'ready', 'the program still prepares, so the operator sees the reason')
+    if (prepared.status !== 'ready') return
+    assert.equal(exportHasError(prepared.programs), true, 'the mismatch blocks the save')
+    const warnings = prepared.programs.flatMap((program) => program.result.warnings)
+    const mismatch = warnings.find((warning) => warning.code === 'postRotaryAxisMismatch')
+    assert.ok(mismatch, `expected postRotaryAxisMismatch, got ${warnings.map((warning) => warning.code).join(', ')}`)
+    assert.deepEqual(
+      mismatch.params,
+      { operation: project.operations[0].name, machineAxis: 'Y', stockAxis: 'X' },
+      'naming the machine axis and the bar axis',
+    )
+  })
+
+  await test('a machine with no rotary block is posted, then refused for the missing axis', async () => {
+    const project = barProject(PLAIN_ROUTER)
+    const operationId = project.operations[0].id
+    const h = realService(project)
+    const token = createExportToken(1, h.context(), [operationId], PLAIN_ROUTER, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, PLAIN_ROUTER, OPTIONS)
+    assert.equal(prepared.status, 'ready', 'the program prepares so the reason is visible')
+    if (prepared.status !== 'ready') return
+    assert.equal(exportHasError(prepared.programs), true, 'a router cannot run a rotary project')
+    const warnings = prepared.programs
+      .flatMap((program) => program.result.warnings)
+    // A router on a rotary project is the right family of machine and short
+    // one axis, so the refusal says which piece of hardware is missing rather
+    // than calling the machine the wrong kind (issue #1112, item 35).
+    const missingAxes = warnings.filter((warning) => warning.code === 'exportMachineMissingRotaryAxis')
+    assert.equal(missingAxes.length, prepared.programs.length, 'every program carries the missing-axis refusal')
+    for (const warning of missingAxes) {
+      assert.deepEqual(warning.params, { machine: PLAIN_ROUTER.name }, 'naming the machine')
+    }
+    assert.equal(
+      warnings.some((warning) => warning.code === 'exportMachineTypeMismatch'),
+      false,
+      'and not the generic type mismatch, which would read as the wrong choice of machine',
+    )
+  })
+
+  await test('a plasma machine on a rotary project is posted, then refused as a family mismatch', async () => {
+    const project = barProject(QTPLASMAC)
+    const operationId = project.operations[0].id
+    const h = realService(project)
+    const token = createExportToken(1, h.context(), [operationId], QTPLASMAC, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, QTPLASMAC, OPTIONS)
+    assert.equal(prepared.status, 'ready', 'the program prepares so the reason is visible')
+    if (prepared.status !== 'ready') return
+    assert.equal(exportHasError(prepared.programs), true, 'a plasma table cannot run a rotary project')
+    const mismatch = prepared.programs
+      .flatMap((program) => program.result.warnings)
+      .find((warning) => warning.code === 'exportMachineTypeMismatch')
+    assert.ok(mismatch, 'the family mismatch is refused')
+    assert.deepEqual(mismatch.params, { machine: QTPLASMAC.name, expected: 'rotary' })
+  })
+
+  await test('a missing machine blocks the export before any work starts', async () => {
+    const project = barProject(null)
+    const operationId = project.operations[0].id
+    const h = realService(project)
+    const token = createExportToken(1, h.context(), [operationId], MATCHING, OPTIONS)
+    const prepared = await prepareExport(h.service, h.context(), token, null, OPTIONS)
+    assert.equal(prepared.status, 'blocked', 'no machine has nothing to post to')
+    if (prepared.status !== 'blocked') return
+    assert.equal(prepared.reason.kind, 'no-machine', 'and says exactly that')
+    assert.equal(h.calls(), 0, 'no generation is started for a refused export')
+  })
+
+  console.log(`\n${passed} passed, ${failed} failed`)
+  if (failed > 0) process.exit(1)
+}
+
+await main()

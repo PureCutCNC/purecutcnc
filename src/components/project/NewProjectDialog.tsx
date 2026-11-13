@@ -15,20 +15,37 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { ExampleProjectList } from './ExampleProjectList'
+import { Select } from '../Select'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
-import { defaultStock, getStockBounds, newProject } from '../../types/project'
-import type { Project } from '../../types/project'
+import { getStockBounds, newProject } from '../../types/project'
+import type { Project, ProjectType } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
+import { decodeProjectFormat } from '../../store/helpers/projectFormat'
+import { rescueMachinesToLibrary } from '../../machine/store'
+import {
+  blankTemplateProject,
+  defaultBlankStockDraft,
+  type BlankStockDraft,
+  type BlockStockDraft,
+} from './newProjectStock'
+import {
+  isBlankTemplateKind,
+  newProjectType,
+  setupOnlyTemplate,
+  templateChosenProject,
+  type TemplateKind,
+} from './newProjectTemplate'
+import { machineCandidates } from '../../machine/registry'
+import { useMachineLibrary } from '../../machine/useMachineLibrary'
+import { PROJECT_TYPES, projectTypeLabelKey } from '../feature-tree/projectTypeChoice'
+import { projectTypeKeyNav, projectTypeMetaKey } from './newProjectProjectType'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
-
-type TemplateKind = 'blank_metric' | 'blank_imperial' | 'current' | 'file'
 
 interface NewProjectDialogProps {
   onClose: () => void
@@ -62,38 +79,7 @@ function templateLabel(
   }
 }
 
-function setupOnlyTemplate(template: Project): Project {
-  const cloned = structuredClone(template)
-  // A template carries only the machine snapshot it selected — never a
-  // library. The picker always reads the current application library, so a
-  // template can't decide which bundled machines exist.
-  const machines = normalizeMachineDefinitions(cloned)
-  return {
-    ...cloned,
-    meta: {
-      ...cloned.meta,
-      machineDefinitions: machines.machineDefinitions,
-      selectedMachineId: machines.selectedMachineId,
-    },
-    dimensions: {},
-    features: [],
-    featureFolders: [],
-    featureTree: [],
-    global_constraints: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
-  }
-}
-
-interface StockDimensionsDraft {
-  width: string
-  height: string
-  thickness: string
-}
-
-function stockDimensionsDraft(template: Project): StockDimensionsDraft {
+function stockDimensionsDraft(template: Project): BlockStockDraft {
   const bounds = getStockBounds(template.stock)
   return {
     width: String(bounds.maxX - bounds.minX),
@@ -102,9 +88,31 @@ function stockDimensionsDraft(template: Project): StockDimensionsDraft {
   }
 }
 
-function positiveLength(value: string): number | null {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+interface StockNumberInputProps {
+  id: string
+  value: string
+  onChange: (value: string) => void
+}
+
+/**
+ * One length in the blank template's stock fields, typed as text: the same
+ * field the Properties panel uses for a length, with a decimal keyboard on
+ * touch and no native number spinner. Every numeric stock field in the dialog
+ * renders through it, so a block's width/height/thickness and a bar's
+ * size/length look and behave alike (#1046).
+ */
+function StockNumberInput({ id, value, onChange }: StockNumberInputProps) {
+  return (
+    <input
+      id={id}
+      type="text"
+      inputMode="decimal"
+      spellCheck={false}
+      data-numeric-entry="true"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  )
 }
 
 export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) {
@@ -121,42 +129,75 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   const [fileLabel, setFileLabel] = useState<string>(td('dialogs.newProject.templateFileNoFile'))
   const [fileError, setFileError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('Untitled')
+  const [projectTypeChoice, setProjectTypeChoice] = useState<ProjectType>('milling')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /** One ref per project type tile, so an arrow key can take focus with it. */
+  const projectTypeTilesRef = useRef<Array<HTMLButtonElement | null>>([])
+  const { library: machineLibrary } = useMachineLibrary()
 
   const metricTemplate = useMemo(() => newProject('Untitled', 'mm'), [])
   const imperialTemplate = useMemo(() => newProject('Untitled', 'inch'), [])
-  const [stockDraft, setStockDraft] = useState<StockDimensionsDraft>(() => stockDimensionsDraft(metricTemplate))
-  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project), [project])
-  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate) : null), [fileTemplate])
+  const [stockDraft, setStockDraft] = useState<BlockStockDraft>(() => stockDimensionsDraft(metricTemplate))
+  const [barDraft, setBarDraft] = useState<BlankStockDraft>(() => defaultBlankStockDraft(metricTemplate.meta.units))
+  const currentProjectTemplate = useMemo(() => setupOnlyTemplate(project).project, [project])
+  const fileProjectTemplate = useMemo(() => (fileTemplate ? setupOnlyTemplate(fileTemplate).project : null), [fileTemplate])
 
-  const isBlankTemplate = templateKind === 'blank_metric' || templateKind === 'blank_imperial'
+  const blankTemplate = isBlankTemplateKind(templateKind)
 
-  const activeTemplate = useMemo<Project | null>(() => {
-    let template: Project | null
+  /**
+   * The type the dialog will create (issue #1112, item 24): the template's own
+   * for the current project and a template file, the tiles' choice for a
+   * blank template. A template brings its type, so the tiles are shown locked
+   * on it rather than offering a choice that would be discarded.
+   */
+  const chosenType = newProjectType(
+    templateKind,
+    projectTypeChoice,
+    templateKind === 'current' ? currentProjectTemplate : fileProjectTemplate,
+  )
+  // The blank template's stock fields follow the type (issue #1046): rotary
+  // asks for the bar it machines, milling and plasma keep width × height ×
+  // thickness.
+  const usesBarStock = blankTemplate && chosenType === 'rotary'
+
+  /**
+   * The project the dialog will create. A blank template's stock is built as
+   * the shape its type machines (issue #1046) and the chosen type then sets
+   * the stored type and, when the template's machine does not suit it, the
+   * first matching machine from the picker's candidate list (issue #1028). A
+   * current or file template keeps its own type, stock, chuck and machine
+   * (issue #1112, item 24).
+   */
+  const chosenTemplate = useMemo<Project | null>(() => {
     switch (templateKind) {
       case 'blank_metric':
-        template = metricTemplate
-        break
       case 'blank_imperial':
-        template = imperialTemplate
-        break
+        return blankTemplateProject(
+          templateKind === 'blank_metric' ? metricTemplate : imperialTemplate,
+          projectTypeChoice,
+          machineCandidates(machineLibrary, null),
+          stockDraft,
+          barDraft,
+        )
       case 'current':
-        return currentProjectTemplate
+        return templateChosenProject('current', currentProjectTemplate, projectTypeChoice, machineLibrary)
       case 'file':
-        return fileProjectTemplate
+        if (!fileProjectTemplate) return null
+        return templateChosenProject('file', fileProjectTemplate, projectTypeChoice, machineLibrary)
     }
+  }, [
+    barDraft,
+    currentProjectTemplate,
+    fileProjectTemplate,
+    imperialTemplate,
+    machineLibrary,
+    metricTemplate,
+    projectTypeChoice,
+    stockDraft,
+    templateKind,
+  ])
 
-    const width = positiveLength(stockDraft.width)
-    const height = positiveLength(stockDraft.height)
-    const thickness = positiveLength(stockDraft.thickness)
-    if (!width || !height || !thickness) {
-      return null
-    }
-
-    return { ...template, stock: defaultStock(width, height, thickness) }
-  }, [currentProjectTemplate, fileProjectTemplate, imperialTemplate, metricTemplate, stockDraft, templateKind])
-
-  const previewTemplate = activeTemplate ?? (templateKind === 'blank_metric' ? metricTemplate : templateKind === 'blank_imperial' ? imperialTemplate : null)
+  const previewTemplate = chosenTemplate ?? (templateKind === 'blank_metric' ? metricTemplate : templateKind === 'blank_imperial' ? imperialTemplate : null)
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -200,22 +241,43 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   }, [languageTag, previewTemplate])
 
   function handleCreate() {
-    if (!activeTemplate) {
+    if (!chosenTemplate) {
       return
     }
 
-    createNewProject(activeTemplate, projectName.trim() || suggestedProjectName(templateKind, project, fileTemplate))
+    createNewProject(chosenTemplate, projectName.trim() || suggestedProjectName(templateKind, project, fileTemplate))
     onClose()
     onCreated?.()
   }
 
   function selectTemplate(kind: TemplateKind) {
     setTemplateKind(kind)
-    if (kind === 'blank_metric') {
-      setStockDraft(stockDimensionsDraft(metricTemplate))
-    } else if (kind === 'blank_imperial') {
-      setStockDraft(stockDimensionsDraft(imperialTemplate))
+    if (kind === 'blank_metric' || kind === 'blank_imperial') {
+      const template = kind === 'blank_metric' ? metricTemplate : imperialTemplate
+      setStockDraft(stockDimensionsDraft(template))
+      // The shape the user picked survives a units change; only the numbers
+      // follow the new template's units.
+      setBarDraft((draft) => defaultBlankStockDraft(template.meta.units, draft.shape))
     }
+  }
+
+  /**
+   * Arrow keys move the project type choice across the three tiles and take
+   * focus with them, wrapping at both ends (issue #1102, proposal 16). Tab
+   * enters the group once, on the checked tile. A template brings its own type
+   * (issue #1112, item 24), so the group is locked and the keys do nothing.
+   */
+  function handleProjectTypeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!blankTemplate) {
+      return
+    }
+    const next = projectTypeKeyNav(projectTypeChoice, event.key)
+    if (next === projectTypeChoice) {
+      return
+    }
+    event.preventDefault()
+    setProjectTypeChoice(next)
+    projectTypeTilesRef.current[PROJECT_TYPES.indexOf(next)]?.focus()
   }
 
   function handleTemplateFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -227,15 +289,25 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     const reader = new FileReader()
     reader.onload = (readerEvent) => {
       try {
-        const parsed = JSON.parse(readerEvent.target?.result as string) as Project
-        setFileTemplate(parsed)
+        const parsed = JSON.parse(readerEvent.target?.result as string) as unknown
+        // Decode now so a structurally unreadable machine refuses the template
+        // visibly instead of throwing while the dialog renders, and so the
+        // file's other machines reach My Machines rather than disappearing
+        // (#1119). The selected snapshot is kept, including a template-invalid
+        // one; export refuses it later.
+        const decoded = decodeProjectFormat(parsed, rescueMachinesToLibrary)
+        setFileTemplate(decoded.project)
         setFileLabel(file.name)
         setFileError(null)
         setTemplateKind('file')
-      } catch {
+      } catch (error) {
         setFileTemplate(null)
         setFileLabel(file.name)
-        setFileError(td('dialogs.newProject.templateFileParseError'))
+        setFileError(
+          error instanceof SyntaxError
+            ? td('dialogs.newProject.templateFileParseError')
+            : (error instanceof Error ? error.message : td('dialogs.newProject.templateFileParseError')),
+        )
       }
     }
     reader.readAsText(file)
@@ -256,6 +328,42 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         <div className="dialog-body">
           <div className="dialog-section">
             <div className="dialog-section-group">
+              <div className="dialog-section-title">{td('dialogs.newProject.projectType')}</div>
+              <div
+                className="project-template-list project-template-list--project-type"
+                role="radiogroup"
+                aria-label={td('dialogs.newProject.projectType')}
+                onKeyDown={handleProjectTypeKeyDown}
+              >
+                {PROJECT_TYPES.map((type, index) => {
+                  const selected = chosenType === type
+                  const label = t(projectTypeLabelKey(type))
+                  return (
+                    <button
+                      key={type}
+                      ref={(element) => { projectTypeTilesRef.current[index] = element }}
+                      className={`project-template-card ${selected ? 'project-template-card--active' : ''}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={label}
+                      aria-describedby={`new-project-type-${type}-meta`}
+                      tabIndex={selected ? 0 : -1}
+                      disabled={!blankTemplate}
+                      onClick={() => setProjectTypeChoice(type)}
+                    >
+                      <span className="project-template-card__title">{label}</span>
+                      <span className="project-template-card__meta" id={`new-project-type-${type}-meta`}>{td(projectTypeMetaKey(type))}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              {blankTemplate ? null : (
+                <div className="new-project-type-note">{td('dialogs.newProject.projectTypeLocked')}</div>
+              )}
+            </div>
+
+            <div className="dialog-section-group">
               <label className="dialog-section-title" htmlFor="new-project-name">{td('dialogs.newProject.projectName')}</label>
               <div className="properties-field">
                 <input
@@ -271,7 +379,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
             <div className="dialog-section-group">
               <label className="dialog-section-title">{td('dialogs.newProject.template')}</label>
-              <div className="project-template-list">
+              <div className="project-template-list project-template-list--template">
                 <button
                   className={`project-template-card ${templateKind === 'blank_metric' ? 'project-template-card--active' : ''}`}
                   type="button"
@@ -327,52 +435,89 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
                     <span>{td('dialogs.newProject.previewUnits')}</span>
                     <strong>{templateSummary.units}</strong>
                   </div>
-                  <div className={`project-template-preview__row ${isBlankTemplate ? 'project-template-preview__row--stock' : ''}`}>
+                  <div className={`project-template-preview__row ${blankTemplate ? 'project-template-preview__row--stock' : ''}`}>
                     <span>{td('dialogs.newProject.previewStock')}</span>
-                    {isBlankTemplate ? (
-                      <div className="new-project-stock-dimensions">
-                        <label className="properties-field">
-                          <span>{td('dialogs.newProject.stockWidth')}</span>
-                          <input
-                            id="new-project-stock-width"
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            step="any"
-                            value={stockDraft.width}
-                            onChange={(event) => setStockDraft((draft) => ({ ...draft, width: event.target.value }))}
-                          />
-                        </label>
-                        <label className="properties-field">
-                          <span>{td('dialogs.newProject.stockHeight')}</span>
-                          <input
-                            id="new-project-stock-height"
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            step="any"
-                            value={stockDraft.height}
-                            onChange={(event) => setStockDraft((draft) => ({ ...draft, height: event.target.value }))}
-                          />
-                        </label>
-                        <label className="properties-field">
-                          <span>{td('dialogs.newProject.stockThickness')}</span>
-                          <input
-                            id="new-project-stock-thickness"
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            step="any"
-                            value={stockDraft.thickness}
-                            onChange={(event) => setStockDraft((draft) => ({ ...draft, thickness: event.target.value }))}
-                          />
-                        </label>
+                    {blankTemplate ? (
+                      <div className={`new-project-stock-dimensions${usesBarStock ? ' new-project-stock-dimensions--bar' : ''}`}>
+                        {usesBarStock ? (
+                          <>
+                            <label className="properties-field properties-field--stock-shape">
+                              <span>{td('dialogs.newProject.stockShape')}</span>
+                              <Select
+                                value={barDraft.shape}
+                                options={[
+                                  { value: 'round', label: td('dialogs.newProject.shapeRound') },
+                                  { value: 'square', label: td('dialogs.newProject.shapeSquare') },
+                                ]}
+                                onChange={(shape) => setBarDraft((draft) => ({ ...draft, shape }))}
+                              />
+                            </label>
+                            <label className="properties-field">
+                              <span>
+                                {barDraft.shape === 'round'
+                                  ? td('dialogs.newProject.stockDiameter')
+                                  : td('dialogs.newProject.stockSide')}
+                              </span>
+                              <StockNumberInput
+                                id="new-project-stock-size"
+                                value={barDraft.size}
+                                onChange={(size) => setBarDraft((draft) => ({ ...draft, size }))}
+                              />
+                            </label>
+                            <label className="properties-field">
+                              <span>{td('dialogs.newProject.stockLength')}</span>
+                              <StockNumberInput
+                                id="new-project-stock-length"
+                                value={barDraft.length}
+                                onChange={(length) => setBarDraft((draft) => ({ ...draft, length }))}
+                              />
+                            </label>
+                            <label className="properties-field properties-field--stock-axis">
+                              <span>{td('dialogs.newProject.stockAxis')}</span>
+                              <Select
+                                value={barDraft.axis}
+                                options={[
+                                  { value: 'x', label: td('dialogs.newProject.stockAxisX') },
+                                  { value: 'y', label: td('dialogs.newProject.stockAxisY') },
+                                ]}
+                                onChange={(axis) => setBarDraft((draft) => ({ ...draft, axis }))}
+                              />
+                            </label>
+                          </>
+                        ) : (
+                          <>
+                            <label className="properties-field">
+                              <span>{td('dialogs.newProject.stockWidth')}</span>
+                              <StockNumberInput
+                                id="new-project-stock-width"
+                                value={stockDraft.width}
+                                onChange={(width) => setStockDraft((draft) => ({ ...draft, width }))}
+                              />
+                            </label>
+                            <label className="properties-field">
+                              <span>{td('dialogs.newProject.stockHeight')}</span>
+                              <StockNumberInput
+                                id="new-project-stock-height"
+                                value={stockDraft.height}
+                                onChange={(height) => setStockDraft((draft) => ({ ...draft, height }))}
+                              />
+                            </label>
+                            <label className="properties-field">
+                              <span>{td('dialogs.newProject.stockThickness')}</span>
+                              <StockNumberInput
+                                id="new-project-stock-thickness"
+                                value={stockDraft.thickness}
+                                onChange={(thickness) => setStockDraft((draft) => ({ ...draft, thickness }))}
+                              />
+                            </label>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <strong>{templateSummary.stock}</strong>
                     )}
                   </div>
-                  {isBlankTemplate && !activeTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
+                  {blankTemplate && !chosenTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
                   <div className="project-template-preview__row">
                     <span>{td('dialogs.newProject.previewFeatures')}</span>
                     <strong>{templateSummary.features}</strong>
@@ -411,7 +556,7 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
-          <button className="btn-primary" onClick={handleCreate} type="button" disabled={!activeTemplate}>
+          <button className="btn-primary" onClick={handleCreate} type="button" disabled={!chosenTemplate}>
             {td('dialogs.newProject.createProject')}
           </button>
         </div>

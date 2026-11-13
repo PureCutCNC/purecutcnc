@@ -40,6 +40,7 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.modeVisible': 'Sichtbar',
   'viewport.sim.detailLabel': 'Detail',
   'viewport.sim.detailTitle': 'Simulationsdetail',
+  'viewport.sim.freshStockNote': '{setup} wird auf frischem Rohmaterial simuliert: Material, das andere Aufspannungen abtragen, wird nicht angezeigt.',
   'viewport.sim.playTool': 'Werkzeug abspielen',
   'viewport.sim.playToolDisabledMode': 'Zum Modus „Ausgewählt" wechseln, um die Werkzeug-Wiedergabe zu nutzen',
   'viewport.sim.playToolDisabledNoOp': 'Operation mit gültigem Werkzeugweg zum Abspielen auswählen',

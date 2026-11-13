@@ -59,10 +59,22 @@ export interface PlaybackPose {
   /** feedScale of the current move (undefined when the move has none, i.e. 1×).
    *  Lets the readout show the reduced feed on slotting pocket cuts. */
   feedScale: number | undefined
+  /** The program's rotary angle in degrees, present only when the move carries
+   *  one (issue #395). Absent for every flat job. */
+  a?: number
 }
 
+/**
+ * Copy a grid for playback: the mutable `topZ` is duplicated, while every
+ * immutable field — including a square blank's `initialTopZ` baseline — rides
+ * along by reference. A square grid therefore needs no special state here; its
+ * playback is the round bar's clone, seek and reset (issue #1016 C2).
+ */
 export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
-  return { ...source, topZ: new Float32Array(source.topZ) }
+  return {
+    ...source,
+    topZ: new Float32Array(source.topZ),
+  }
 }
 
 function moveLength(move: ToolpathMove): number {
@@ -72,12 +84,18 @@ function moveLength(move: ToolpathMove): number {
   return Math.hypot(dx, dy, dz)
 }
 
-function interpolatePoint(move: ToolpathMove, fraction: number): { x: number; y: number; z: number } {
-  return {
+function interpolatePoint(move: ToolpathMove, fraction: number): { x: number; y: number; z: number; a?: number } {
+  const point: { x: number; y: number; z: number; a?: number } = {
     x: move.from.x + (move.to.x - move.from.x) * fraction,
     y: move.from.y + (move.to.y - move.from.y) * fraction,
     z: move.from.z + (move.to.z - move.from.z) * fraction,
   }
+  // A rotary coordinate interpolates linearly, but only when both ends carry
+  // one — a move with an angle at one end only is not partly rotary.
+  if (move.from.a !== undefined && move.to.a !== undefined) {
+    point.a = move.from.a + (move.to.a - move.from.a) * fraction
+  }
+  return point
 }
 
 function isCuttingMove(move: ToolpathMove): boolean {
@@ -85,20 +103,53 @@ function isCuttingMove(move: ToolpathMove): boolean {
 }
 
 /**
- * Split any move longer than `maxSegmentLength` into equal-length sub-segments.
- * Splitting is semantically safe because `applyMoveToGrid` removes material based on
- * distance-to-segment, and the sub-segments' swept volumes union to the original.
+ * How much of `parent` a playback piece has covered by its end. Every piece is
+ * a linear slice of the source move, so projecting the piece's end point onto
+ * the parent gives the elapsed fraction without remembering the split. A
+ * degenerate source, and a piece at (or within a rounding step of) the parent's
+ * end, count as fully played — the wrapped kernel then takes the batch path
+ * exactly, which is what keeps the finished playback bit-identical to it.
  */
-export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number): ToolpathMove[] {
+function elapsedFractionOf(piece: ToolpathMove, parent: ToolpathMove): number {
+  const dx = parent.to.x - parent.from.x
+  const dy = parent.to.y - parent.from.y
+  const dz = parent.to.z - parent.from.z
+  const lengthSq = dx * dx + dy * dy + dz * dz
+  if (!(lengthSq > 1e-18)) return 1
+  const fraction = (
+    (piece.to.x - parent.from.x) * dx
+    + (piece.to.y - parent.from.y) * dy
+    + (piece.to.z - parent.from.z) * dz
+  ) / lengthSq
+  if (!(fraction < 1 - 1e-9)) return 1
+  return fraction > 1e-9 ? fraction : 0
+}
+
+/** A playback piece and the source move it was cut from. */
+interface PlaybackSegment {
+  move: ToolpathMove
+  /** The move a piece of `moves` was subdivided from; the move itself otherwise. */
+  parent: ToolpathMove
+}
+
+/**
+ * Split any move longer than `maxSegmentLength` into equal-length sub-segments,
+ * remembering its source move. Splitting is semantically safe because
+ * `applyMoveToGrid` resolves every cell against the source move (`sweep`) with
+ * the piece's elapsed fraction: the cutter's reached position on the path does
+ * not change with the split, so the sub-segments' cuts union to exactly the
+ * source move's cut (F8, and issue #1048 for the elapsed pose).
+ */
+function subdivideSegments(moves: ToolpathMove[], maxSegmentLength: number): PlaybackSegment[] {
   if (!(maxSegmentLength > 0) || moves.length === 0) {
-    return moves.slice()
+    return moves.map((move) => ({ move, parent: move }))
   }
 
-  const out: ToolpathMove[] = []
+  const out: PlaybackSegment[] = []
   for (const move of moves) {
     const length = moveLength(move)
     if (length <= maxSegmentLength + 1e-9) {
-      out.push(move)
+      out.push({ move, parent: move })
       continue
     }
     const subdivisions = Math.ceil(length / maxSegmentLength)
@@ -109,13 +160,21 @@ export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number):
       // along to each sub-segment — otherwise the live feed readout loses the
       // reduced slot feed on subdivided cuts.
       out.push({
-        ...move,
-        from: interpolatePoint(move, t0),
-        to: interpolatePoint(move, t1),
+        move: {
+          ...move,
+          from: interpolatePoint(move, t0),
+          to: interpolatePoint(move, t1),
+        },
+        parent: move,
       })
     }
   }
   return out
+}
+
+/** Split any move longer than `maxSegmentLength` into equal-length sub-segments. */
+export function subdivideMoves(moves: ToolpathMove[], maxSegmentLength: number): ToolpathMove[] {
+  return subdivideSegments(moves, maxSegmentLength).map((segment) => segment.move)
 }
 
 export class PlaybackController {
@@ -125,6 +184,8 @@ export class PlaybackController {
   readonly tool: PlaybackToolInfo
   readonly totalPathLength: number
 
+  /** The source move behind each playback piece, for a split-independent cut. */
+  private readonly parents: ToolpathMove[]
   private moveIndex = 0
   private moveFraction = 0
   private distanceTraveled = 0
@@ -143,7 +204,9 @@ export class PlaybackController {
     this.baseGrid = baseGrid
     this.liveGrid = cloneSimulationGrid(baseGrid)
     const maxSegmentLength = options.maxSegmentLength ?? Math.max(tool.toolRadius * 1.5, 0.5)
-    this.moves = subdivideMoves(moves, maxSegmentLength)
+    const segments = subdivideSegments(moves, maxSegmentLength)
+    this.moves = segments.map((segment) => segment.move)
+    this.parents = segments.map((segment) => segment.parent)
     this.tool = tool
     this.totalPathLength = this.moves.reduce((sum, move) => sum + moveLength(move), 0)
     this.referenceFeedPerSecond = options.referenceFeedPerSecond && options.referenceFeedPerSecond > 0
@@ -244,12 +307,18 @@ export class PlaybackController {
 
     if (this.finished) {
       const last = this.moves[this.moves.length - 1]
-      return { x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind, feedScale: last.feedScale }
+      return {
+        x: last.to.x, y: last.to.y, z: last.to.z, moveKind: last.kind, feedScale: last.feedScale,
+        ...(last.to.a !== undefined ? { a: last.to.a } : {}),
+      }
     }
 
     const move = this.moves[this.moveIndex]
     const p = interpolatePoint(move, this.moveFraction)
-    return { x: p.x, y: p.y, z: p.z, moveKind: move.kind, feedScale: move.feedScale }
+    return {
+      x: p.x, y: p.y, z: p.z, moveKind: move.kind, feedScale: move.feedScale,
+      ...(p.a !== undefined ? { a: p.a } : {}),
+    }
   }
 
   /**
@@ -296,6 +365,8 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
+            elapsedFractionOf(move, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -314,7 +385,7 @@ export class PlaybackController {
       // move: slower moves (ratio < 1) cost more budget per unit of geometry.
       const budgetToFinish = available / ratio
 
-      if (remaining >= budgetToFinish) {
+      if (remaining >= budgetToFinish - 1e-9) {
         if (isCuttingMove(move) && this.lastMoveApplied !== this.moveIndex) {
           const result = applyMoveToGrid(
             this.liveGrid,
@@ -322,6 +393,8 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
+            elapsedFractionOf(move, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -351,6 +424,8 @@ export class PlaybackController {
             this.tool.toolRadius,
             this.tool.toolType,
             this.tool.vBitAngle,
+            this.parents[this.moveIndex],
+            elapsedFractionOf(partial, this.parents[this.moveIndex]),
           )
           if (result.changedCount > 0) {
             gridChanged = true
@@ -384,7 +459,9 @@ export class PlaybackController {
     const clampedTarget = Math.max(0, Math.min(this.totalPathLength, target))
     const delta = clampedTarget - this.distanceTraveled
 
-    if (delta > 1e-9 && !this.finished) {
+    if (delta > 0 && !this.finished) {
+      // A forward delta, however small, is remaining geometry: stepping it is
+      // what finishes a seek that lands within a rounding step of the end.
       return this.step(delta, false)
     }
     if (delta >= -1e-9) {

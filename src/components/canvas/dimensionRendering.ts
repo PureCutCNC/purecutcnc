@@ -34,7 +34,7 @@ import {
 import type { DimensionLayout } from '../../sketch/dimensions'
 import type { DimensionAnnotation, DimensionAnchor } from '../../types/project'
 import { drawMeasurementLabel } from './measurements'
-import { worldToCanvas } from './viewTransform'
+import { worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba } from './canvasPalette'
 import type { DrivingDimensionEdit } from '../../sketch/drivingDimensionResolver'
@@ -107,7 +107,7 @@ function drawLayout(
     while (delta <= -Math.PI) delta += Math.PI * 2
     while (delta > Math.PI) delta -= Math.PI * 2
     ctx.beginPath()
-    ctx.arc(vc.cx, vc.cy, radiusPx, layout.startAngle, layout.startAngle + delta, delta < 0)
+    ctx.arc(vc.cx, vc.cy, radiusPx, ...worldArcToCanvas(layout.startAngle, layout.startAngle + delta, delta < 0, vt))
     ctx.stroke()
   } else {
     lineTo(ctx, start, end)

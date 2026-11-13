@@ -504,15 +504,6 @@
   width: 300px;
 }
 
-/*
- * These options have no colour swatch — the shared three-column grid
- * (swatch / copy / check) would give the label a 38px column to wrap in. Two
- * columns instead, so the copy gets the width.
- */
-.cam-generation-menu .appearance-menu__option {
-  grid-template-columns: 1fr 20px;
-}
-
 .cam-generation-menu__status {
   padding: 2px 8px 8px;
   color: var(--text-dim);
@@ -523,6 +514,13 @@
   display: block;
   margin-top: 3px;
   color: var(--danger, var(--text-dim));
+}
+
+/* Not a failure: generation moved to the main thread and is still running. */
+.cam-generation-menu__fallback {
+  display: block;
+  margin-top: 3px;
+  color: var(--warning-text, var(--text-dim));
 }
 
 .cam-generation-menu__actions {
@@ -542,6 +540,81 @@
 .cam-generation-menu__actions svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * The renderer mode switch (issue #1102 slice D1). It moved here from the
+ * toolpath legend: the legend is about what is drawn, the gear is about how.
+ * Two plain buttons rather than the shared option grid — this is a mode, not a
+ * list of choices with a detail line each.
+ */
+.cam-generation-menu__renderer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 8px;
+}
+
+.cam-generation-menu__renderer-label {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.cam-generation-menu__renderer-options {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cam-generation-menu__renderer-options button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-translucent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cam-generation-menu__renderer-options button:hover {
+  border-color: var(--line-bright);
+}
+
+.cam-generation-menu__renderer-options button[aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+}
+
+.cam-generation-menu__renderer-note {
+  flex-basis: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Not a failure: Canvas is drawing the toolpaths, and Retry asks for GPU again. */
+.cam-generation-menu__renderer-note--fallback {
+  color: var(--warning-text, var(--text-dim));
+}
+
+.cam-generation-menu__renderer-note button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cam-generation-menu__renderer-note button:hover {
+  background: var(--surface-hover);
 }
 
 /* A menu hides its contents, so a stopped or failed pipeline marks the gear. */
@@ -858,6 +931,10 @@
 
 .panel-centre {
   min-height: 0;
+  /* A grid item's automatic minimum is its content: a wide header (the
+   * Bottom flip chip, issue #1102) would push the column under the CAM panel.
+   * The header shrinks instead, the chip's words first. */
+  min-width: 0;
   position: relative;
 }
 
@@ -1079,6 +1156,67 @@
   text-align: right;
   font-size: 11px;
   color: var(--text);
+}
+
+/* Fresh-stock limitation (issue #947; issue #1112 F3 moved it behind an info
+ * button at the end of the toolbar, so the row no longer grows a full-width
+ * line under the controls). */
+.simulation-setup-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.simulation-setup-info__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-hit-target);
+  height: var(--control-hit-target);
+  min-height: var(--control-hit-target);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-translucent);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.simulation-setup-info__button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.simulation-setup-info__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The tooltip's sentence, opened by a tap on touch (a `title` alone never
+ * shows there). Right-aligned with the button it belongs to. */
+.simulation-setup-info__text {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-popover);
+  box-shadow: 0 12px 28px var(--shadow-strong);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* Tablet shells keep a real tap target for the button too. */
+[data-shell-mode='tablet'] .simulation-setup-info__button,
+[data-shell-mode='tablet-compact'] .simulation-setup-info__button {
+  min-width: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
 }
 
 .simulation-mode-toggle {
@@ -1367,6 +1505,8 @@
 .panel-tabs-header {
   display: flex;
   align-items: flex-end;
+  /* See .panel-centre: the header gives way rather than widening the column. */
+  min-width: 0;
   gap: 2px;
   padding: 8px 6px 0;
   border-bottom: 1px solid var(--line);
@@ -1386,6 +1526,7 @@
   color: var(--text-dim);
   min-height: var(--control-hit-target);
   padding: 0 14px;
+  white-space: nowrap;
   cursor: pointer;
   margin-bottom: -1px;
   transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
@@ -1415,6 +1556,8 @@
   align-items: flex-end;
   gap: 2px;
   min-width: 0;
+  /* The tab names stay whole; the face switch's flip chip gives way first. */
+  flex-shrink: 0;
 }
 
 /* ── Panel pull-out handles (desktop) ──
@@ -1713,14 +1856,6 @@
 
 .feature-tree-panel {
   padding: 4px 6px 8px;
-}
-
-.tree-root-label {
-  margin-bottom: 10px;
-  color: var(--text-dim);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .tree-list {
@@ -2106,14 +2241,46 @@
   gap: 6px;
 }
 
+/* Read-only Identity text (issue #1102, proposal 10): Kind is a value, not an
+   input the user might try to edit. */
+.properties-field .properties-value {
+  color: var(--text);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* "+ Add note" starts an empty description as a compact link (issue #1102). */
+.properties-field .properties-add-note {
+  justify-self: start;
+  min-width: 0;
+  min-height: 24px;
+  height: auto;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.properties-field .properties-add-note:hover {
+  color: var(--accent-strong);
+}
+
 .properties-field > :not(span):not(.properties-field-label-row):not(.op-param-ref) {
   grid-column: 2;
 }
 
+/* A field's control fills its column. The Cuts list's remove × is a row control,
+ * not a field: left in this rule it takes the whole row's width and squeezes the
+ * target's icon and name out of sight (issue #1112 rt3-a, item 25). */
 .properties-field input,
 .properties-field select,
 .properties-field textarea,
-.properties-field button:not(.tree-action-btn):not(.feat-btn) {
+.properties-field button:not(.tree-action-btn):not(.feat-btn):not(.properties-add-note):not(.cam-cuts__remove) {
   background-color: var(--surface-panel);
   border: 1px solid var(--line-strong);
   color: var(--text);
@@ -2263,6 +2430,15 @@
   text-overflow: ellipsis;
 }
 
+.ui-select__group {
+  padding: 6px 8px 3px;
+  color: var(--text-dim);
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
 .ui-select--detailed .ui-select__dropdown {
   max-height: min(48vh, 520px);
   overflow-x: hidden;
@@ -2367,6 +2543,30 @@
    right-hand rail as the field icons. */
 .cam-operation-properties .properties-check .op-param-ref {
   margin-left: auto;
+}
+
+/* A reference picture that carries a note (e.g. "Walls are radial" on the
+   Around face) keeps the note in the same cell as the diagram, so the two move
+   together (#1112 decision 8.16). A span, not a div: `.properties-field`'s
+   grid-placement rule only re-columns non-span children. */
+.op-param-ref-block {
+  grid-column: 3;
+  justify-self: end;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 50px;
+}
+
+.op-param-ref-note {
+  color: var(--text-dim);
+  font-size: 8px;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* Action messages (e.g. "✓ Target updated") are plain <span> children, so the
@@ -2487,7 +2687,8 @@
     grid-template-columns: 1fr;
   }
 
-  .op-param-ref {
+  .op-param-ref,
+  .op-param-ref-block {
     display: none;
   }
 }
@@ -2866,14 +3067,6 @@
   white-space: nowrap;
 }
 
-.viewport-toolpath-renderer__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
 .toolpath-gpu-suggestion {
   position: absolute;
   top: calc(100% + 8px);
@@ -2926,46 +3119,9 @@
 }
 
 @media (pointer: coarse) {
-  .toolpath-gpu-suggestion__actions button {
-    min-height: 44px;
-  }
-}
-
-.viewport-toolpath-vis__swatch--gpu {
-  background: var(--accent);
-}
-
-.viewport-toolpath-renderer__loading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
-  box-sizing: border-box;
-  border: 1.5px solid var(--accent);
-  border-top-color: transparent;
-  border-radius: 50%;
-  background: transparent;
-  animation: toolpath-gpu-loading 0.8s linear infinite;
-}
-
-@keyframes toolpath-gpu-loading {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
-    animation: none;
-  }
-}
-
-@media (pointer: coarse) {
-  .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
-  .viewport-toolpath-renderer__status button {
+  .toolpath-gpu-suggestion__actions button,
+  .cam-generation-menu__renderer-options button,
+  .cam-generation-menu__renderer-note button {
     min-height: 44px;
   }
 
@@ -3102,6 +3258,10 @@
   position: fixed;
   z-index: 1000;
   min-width: 168px;
+  /* A disabled item's reason is visible text, so one long reason used to
+     stretch the menu across the viewport. The cap keeps it a menu: reasons
+     wrap inside it, labels stay on one line and truncate (#1112 F2). */
+  max-width: 280px;
   max-height: calc(100vh - 16px);
   max-height: calc(100dvh - 16px);
   padding: 4px;
@@ -3168,6 +3328,21 @@
   text-align: left;
   padding: 0 8px;
   cursor: pointer;
+  /* The label is one line and truncates at the menu's cap; a reason (below)
+     overrides this to wrap (#1112 F2). */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A reason sits in its own line under the label, so the label itself is what
+   has to truncate — a flex item does not inherit the button's ellipsis. */
+.feature-context-menu__item-label,
+.feature-context-menu__item-text > span:first-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .feature-context-menu__item:hover {
@@ -3186,10 +3361,71 @@
   background: transparent;
 }
 
+/* A refusal is read, not hovered: touch has no native title (#1112 A3). */
+.feature-context-menu__item--reason:disabled {
+  opacity: 1;
+}
+
+.feature-context-menu__item--reason:disabled .feature-context-menu__item-label,
+.feature-context-menu__item--reason:disabled .feature-context-menu__item-text > span:first-child {
+  opacity: 0.65;
+}
+
+.feature-context-menu__item--reason {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  height: auto;
+  min-height: 26px;
+  padding: 4px 8px;
+}
+
+.feature-context-menu__item--reason.feature-context-menu__item--submenu {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.feature-context-menu__item-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.feature-context-menu__item-reason {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: normal;
+}
+
 .feature-context-menu__item--danger:hover {
   border: 1px solid color-mix(in srgb, var(--danger-text) 75%, transparent);
   background: color-mix(in srgb, var(--danger-text) 12%, transparent);
   color: var(--danger-text);
+}
+
+.command-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 52px;
+  z-index: 40;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
+  font-size: 13px;
+  line-height: 1.35;
+  pointer-events: none;
 }
 
 .app-statusbar {
@@ -3526,6 +3762,29 @@
   gap: 8px;
 }
 
+/* The operations row (issue #1102, proposal 14). The text actions come first
+   in reading order; the eye and the gear are one flex item so a panel too
+   narrow for both rows wraps the icons together, never squeezing a label. */
+.cam-operations-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* One row at the default panel width (about 290px of content, issue #1102):
+ * the three text actions plus the eye and the gear. */
+.cam-operations-toolbar .cam-header-action {
+  padding: 0 8px;
+}
+
+.cam-operations-toolbar__icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .cam-header-action {
   min-height: 28px;
   padding: 0 10px;
@@ -3552,6 +3811,21 @@
   color: var(--danger-text);
   border-color: color-mix(in srgb, var(--danger-text) 60%, transparent);
   background: color-mix(in srgb, var(--danger-text) 42%, transparent);
+}
+
+/* The leading action (issue #1102, proposal 14): an accent tint marks where a
+   new operation starts. It stays a tint rather than a filled button so the
+   amber warn state below still reads when nothing is selected. */
+.cam-header-action--primary {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.cam-header-action--primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 /* P2: amber tint when no geometry is selected */
@@ -3729,6 +4003,11 @@
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.35;
+}
+
+/* #960: what the selected machine cannot cut, above the operation list. */
+.cam-operations-notice {
+  padding-top: 8px;
 }
 
 .cam-operation-tree {
@@ -4358,6 +4637,25 @@
 .tree-icon--link {
   width: 12px;
   height: 12px;
+}
+
+/* Warning glyphs after a row name, with the reason in the tooltip. Status
+   only, never an action: kept work the current stock cannot cut (#1112 K), and
+   a feature later features completely erase (#1112 N). */
+.tree-uncut-badge,
+.tree-no-effect-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  color: var(--warning-text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: default;
+}
+
+.cam-operation-tree .tree-row.cam-operation-row--uncut .tree-label {
+  color: var(--warning-text);
 }
 
 /* ── Operation popup menu in feature tree ─────────────────── */
@@ -5332,4 +5630,16 @@
 
 .example-project-list__status--error {
   color: var(--danger);
+}
+
+/* GPU fell back to Canvas (issue #1102, keeping #786): a small mark beside the
+ * sketch legend's toggle, visible whether the legend is expanded or not. The
+ * full notice and Retry GPU are in the generation gear menu. */
+.viewport-toolpath-vis__fallback {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--warning-text);
+  font-size: 13px;
+  cursor: help;
 }

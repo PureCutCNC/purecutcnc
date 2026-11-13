@@ -1,0 +1,381 @@
+{
+  "version": "3.3",
+  "meta": {
+    "name": "rotary-thread-01",
+    "created": "2026-10-15T12:27:37.429Z",
+    "modified": "2026-10-15T12:38:32.410Z",
+    "units": "inch",
+    "projectType": "rotary",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 2,
+    "operationClearanceZ": 0.2,
+    "clampClearanceXY": 0.08,
+    "clampClearanceZ": 0.2,
+    "machineDefinitions": [
+      {
+        "id": "mach3-copy",
+        "name": "Mach3 (copy)",
+        "description": "Mach3 — Windows-based CNC controller",
+        "builtin": false,
+        "fileExtension": "tap",
+        "rotary": {
+          "about": "x",
+          "drive": "own",
+          "reversed": false,
+          "inverseTimeFeed": {
+            "on": "G93",
+            "off": "G94"
+          }
+        },
+        "coordinateSystem": {
+          "xAxis": "X",
+          "yAxis": "Y",
+          "zAxis": "Z"
+        },
+        "numberFormat": {
+          "decimalPlaces": {
+            "mm": 3,
+            "inch": 4
+          },
+          "trailingZeros": true,
+          "leadingZero": true
+        },
+        "units": {
+          "mmCommand": "G21",
+          "inchCommand": "G20"
+        },
+        "program": {
+          "header": [
+            "%",
+            "O0001 ({programName})",
+            "G90 G94 G17 G40 G49 G80",
+            "{unitsCommand}",
+            "{wcsCommand}"
+          ],
+          "operationHeader": [
+            "( Operation {operationIndex}: {operationName} )",
+            "( Description: {operationDescription} )",
+            "( Tool {toolNumber}: {toolName} )"
+          ],
+          "footer": [],
+          "commentPrefix": "(",
+          "commentSuffix": ")",
+          "lineNumbers": true,
+          "lineNumberIncrement": 10
+        },
+        "workCoordinates": {
+          "selectCommand": "G54"
+        },
+        "motion": {
+          "rapidCommand": "G0",
+          "linearCommand": "G1",
+          "cwArcCommand": "G2",
+          "ccwArcCommand": "G3",
+          "arcFormat": "ij",
+          "modalMotion": true,
+          "arcInterpolation": true
+        },
+        "feedSpeed": {
+          "feedCommand": "F",
+          "rpmCommand": "S",
+          "spindleOnCW": "M3",
+          "spindleOnCCW": "M4",
+          "spindleOff": "M5",
+          "inlineWithMotion": true,
+          "modalFeedSpeed": true
+        },
+        "toolChange": {
+          "commands": [
+            "M5",
+            "M6 T{toolNumber}",
+            "G43 H{toolNumber}"
+          ],
+          "stopSpindleFirst": true,
+          "pauseAfterChange": false,
+          "pauseCommand": "M1"
+        },
+        "cannedCycles": {
+          "drillCommand": "G81",
+          "drillWithDwellCommand": "G82",
+          "peckDrillCommand": "G83",
+          "chipBreakDrillCommand": "G73",
+          "peckStepWord": "Q",
+          "retractMode": "G98",
+          "cancelCommand": "G80"
+        },
+        "coolant": {
+          "floodOnCommand": "M8",
+          "mistOnCommand": "M7",
+          "coolantOffCommand": "M9"
+        },
+        "stop": {
+          "programEndCommand": "M30"
+        }
+      }
+    ],
+    "selectedMachineId": "mach3-copy"
+  },
+  "grid": {
+    "extent": 8,
+    "majorSpacing": 1,
+    "minorSpacing": 0.25,
+    "snapEnabled": true,
+    "snapIncrement": 0.125,
+    "visible": true
+  },
+  "stock": {
+    "shape": "round",
+    "axis": "x",
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 4,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 4,
+            "y": 0.75
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0.75
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 0.75,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 0.375,
+    "z": 0.75,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "f-4108": {
+      "id": "f-4108",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 1,
+          "y": 0.375
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 4,
+              "y": 35.717917352885166
+            }
+          }
+        ],
+        "closed": false
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "line"
+    }
+  },
+  "features": [
+    {
+      "id": "f4107",
+      "name": "Thread Start 1",
+      "definitionId": "f-4108",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0.628,
+      "authoringFace": "around",
+      "folderId": "fd4106",
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [
+    {
+      "id": "fd4106",
+      "name": "Thread",
+      "collapsed": false,
+      "section": "features",
+      "grouped": false
+    }
+  ],
+  "featureTree": [
+    {
+      "type": "folder",
+      "folderId": "fd4106"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t4105",
+      "name": "1/4\" 30° V-Bit",
+      "units": "inch",
+      "type": "v_bit",
+      "diameter": 0.25,
+      "vBitAngle": 30,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 16000,
+      "defaultFeed": 20,
+      "defaultPlungeFeed": 6,
+      "defaultStepdown": 0.03,
+      "defaultStepover": 0.01,
+      "maxCutDepth": 0.48
+    },
+    {
+      "id": "t4111",
+      "name": "60° V-Bit",
+      "units": "inch",
+      "type": "v_bit",
+      "diameter": 0.5,
+      "vBitAngle": 60,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 16000,
+      "defaultFeed": 20,
+      "defaultPlungeFeed": 6,
+      "defaultStepdown": 0.03,
+      "defaultStepover": 0.01,
+      "maxCutDepth": 0.5,
+      "alreadyImported": false
+    }
+  ],
+  "operations": [
+    {
+      "id": "op4109",
+      "name": "Thread Engrave",
+      "description": "",
+      "kind": "follow_line",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f4107"
+        ]
+      },
+      "toolRef": "t4111",
+      "stepdown": 0.0625,
+      "stepover": 0.01,
+      "feed": 20,
+      "plungeFeed": 6,
+      "rpm": 16000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "carveStrategy": "direct",
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.122,
+      "maxCarveDepth": 0.122,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.0025,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
+      "setupId": "su4110"
+    }
+  ],
+  "setups": [
+    {
+      "id": "setup-top",
+      "name": "Top",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": []
+    },
+    {
+      "kind": "around",
+      "id": "su4110",
+      "name": "Around",
+      "orientation": {
+        "axis": "x",
+        "angleDeg": 0
+      },
+      "indexing": "manual",
+      "registration": [],
+      "notes": "",
+      "operationIds": [
+        "op4109"
+      ]
+    }
+  ],
+  "activeSetupId": "su4110",
+  "tabs": [],
+  "clamps": [
+    {
+      "id": "cl4092",
+      "name": "Chuck",
+      "type": "chuck",
+      "x": -1.5748031496062993,
+      "y": -0.609251968503937,
+      "w": 2.1653543307086616,
+      "h": 1.968503937007874,
+      "height": 1.359251968503937,
+      "visible": true
+    }
+  ],
+  "ai_history": []
+}

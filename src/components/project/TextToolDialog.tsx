@@ -20,6 +20,7 @@ import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { defaultFontIdForStyle, defaultTextToolConfig, getTextFontOptions, type TextToolConfig } from '../../text'
 import { useProjectStore } from '../../store/projectStore'
 import { Select } from '../Select'
+import { formHasChanges } from '../common/formDraft'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -27,12 +28,23 @@ import { useI18n } from '../../i18n/i18nContext'
 interface TextToolDialogProps {
   onClose: () => void
   onConfirm: (config: TextToolConfig) => void
+  /**
+   * Current values when Properties reopens the dialog to edit an existing run
+   * (issue #1112). Absent for creation, which starts from the defaults.
+   */
+  initial?: TextToolConfig
+  mode?: 'create' | 'edit'
 }
 
-export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
+/** The text a save stores: one line, with no surrounding whitespace. */
+function normalisedText(raw: string): string {
+  return raw.replace(/\s*\n+\s*/g, ' ').trim()
+}
+
+export function TextToolDialog({ onClose, onConfirm, initial, mode = 'create' }: TextToolDialogProps) {
   useRestoreCanvasFocus()
   const units = useProjectStore((state) => state.project.meta.units)
-  const defaults = defaultTextToolConfig(units)
+  const defaults = initial ?? defaultTextToolConfig(units)
   const [text, setText] = useState(defaults.text)
   const [style, setStyle] = useState<TextFontStyle>(defaults.style)
   const [fontId, setFontId] = useState(defaults.fontId)
@@ -40,6 +52,25 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
   const [operation, setOperation] = useState<FeatureOperation>(defaults.operation)
   const fontOptions = getTextFontOptions(style)
   const { t } = useI18n()
+  const isEdit = mode === 'edit'
+
+  // What this save would store, compared with the run the dialog opened on
+  // (issue #1112 F4). Reopening an existing run and applying without an edit
+  // used to rewrite identical text as an empty undo step; the button says so
+  // instead. Both sides are normalised the way a save stores them, so a height
+  // typed as "12.0" or a line break between the same words is not an edit.
+  // Only the fields this dialog edits are compared; a run's layout is not one.
+  const parsedSize = Number(size)
+  const valid = text.trim() !== '' && Number.isFinite(parsedSize) && parsedSize > 0
+  const draft = { text: normalisedText(text), style, fontId, size: parsedSize, operation }
+  const saved = {
+    text: defaults.text,
+    style: defaults.style,
+    fontId: defaults.fontId,
+    size: defaults.size,
+    operation: defaults.operation,
+  }
+  const canApply = valid && (!isEdit || formHasChanges(saved, draft))
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
     return t(key, params)
@@ -68,13 +99,9 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
   }, [onClose])
 
   function handleCreate() {
-    const parsedSize = Number(size)
-    if (!text.trim() || !Number.isFinite(parsedSize) || parsedSize <= 0) {
-      return
-    }
-
+    if (!canApply) return
     onConfirm({
-      text: text.replace(/\s*\n+\s*/g, ' ').trim(),
+      text: normalisedText(text),
       style,
       fontId,
       size: parsedSize,
@@ -86,7 +113,7 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog dialog--import dialog--no-clip" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">{td('dialogs.textTool.title')}</h2>
+          <h2 className="dialog-title">{td(isEdit ? 'dialogs.textTool.editTitle' : 'dialogs.textTool.title')}</h2>
           <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')} type="button">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -168,8 +195,11 @@ export function TextToolDialog({ onClose, onConfirm }: TextToolDialogProps) {
           <button className="feat-btn" type="button" onClick={onClose}>
             {td('dialogs.common.cancel')}
           </button>
-          <button className="feat-btn" type="button" onClick={handleCreate}>
-            {td('dialogs.textTool.placeText')}
+          {/* Creation has no saved state to compare against, so its button keeps
+              its own behaviour; reopening an existing run greys out an Apply
+              that would write nothing (issue #1112 F4). */}
+          <button className="feat-btn" type="button" onClick={handleCreate} disabled={isEdit && !canApply}>
+            {td(isEdit ? 'dialogs.common.apply' : 'dialogs.textTool.placeText')}
           </button>
         </div>
       </div>

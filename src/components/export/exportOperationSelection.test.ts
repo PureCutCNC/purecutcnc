@@ -22,10 +22,12 @@
  */
 
 import {
+  groupExportOperationOptions,
   listExportOperationOptions,
+  reusableExportPath,
   suggestGcodeFileName,
 } from './exportOperationSelection'
-import { newProject, type Operation, type Project } from '../../types/project'
+import { newProject, roundStock, type MachiningSetup, type Operation, type Project } from '../../types/project'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -130,8 +132,37 @@ function testOptionsPreserveExecutionOrder(): void {
   )
 }
 
-// ── suggestGcodeFileName ──────────────────────────────────────────
+function testOtherFamilyOperationStaysOnTheChecklist(): void {
+  const pocket = makeOperation('pocket-op')
+  const plasma = makeOperation('plasma-op', { kind: 'plasma_profile' })
 
+  // The other family's kind is not the project type's business here (issue
+  // #1028 correction): it stays listed, the postprocessor skips it and the
+  // dialog shows its warning (issue #960).
+  const millingProject = projectWith([pocket, plasma])
+  assert(
+    listExportOperationOptions(millingProject).map((option) => option.operation.id).join(',') === 'pocket-op,plasma-op',
+    'a plasma cut stays in the export options of a milling project',
+  )
+
+  // A milling operation in a plasma project stays in the export options too,
+  // with no tool of its own needed: the warning, not the checklist, reports it.
+  const plasmaProject: Project = {
+    ...projectWith([pocket, plasma]),
+    meta: { ...newProject('plasma', 'mm').meta, projectType: 'plasma' },
+  }
+  const plasmaOptions = listExportOperationOptions(plasmaProject)
+  assert(
+    plasmaOptions.map((option) => option.operation.id).join(',') === 'pocket-op,plasma-op',
+    'a milling operation in a plasma project stays in the export options',
+  )
+  assert(
+    plasmaOptions.every((option) => option.exportable),
+    'and every listed option is exportable (the postprocessor is what skips it)',
+  )
+}
+
+// ── suggestGcodeFileName ──────────────────────────────────────────
 function testFileNameUsesProjectNameForMultipleOperations(): void {
   assert(
     suggestGcodeFileName('My Part', ['Pocket 1', 'Profile 2']) === 'My_Part',
@@ -150,14 +181,81 @@ function testFileNameAppendsSingleOperationName(): void {
   )
 }
 
+// ── reusableExportPath ────────────────────────────────────────────
+
+function testExportPathIsReusedOnlyForTheSameKindOfFile(): void {
+  assert(reusableExportPath(null, 'nc') === null, 'no previous export: nothing to reuse')
+  assert(
+    reusableExportPath('/jobs/bracket.nc', 'nc') === '/jobs/bracket.nc',
+    'the same extension overwrites the previous export in place',
+  )
+  assert(
+    reusableExportPath('C:\\jobs\\BRACKET.NC', 'nc') === 'C:\\jobs\\BRACKET.NC',
+    'extension case does not matter',
+  )
+  // After switching to the ShopBot machine, a part file must not be written
+  // into the G-code file exported earlier (issue #953).
+  assert(reusableExportPath('/jobs/bracket.nc', 'sbp') === null, 'a different extension asks where to save')
+  assert(reusableExportPath('/jobs/bracket.sbp', 'nc') === null, 'and the other way round')
+  assert(reusableExportPath('/jobs/part.sbp.nc', 'sbp') === null, 'only the final extension counts')
+  assert(reusableExportPath('/jobs/nc', 'nc') === null, 'a name that merely ends in the letters is not that extension')
+}
+
+// ── groupExportOperationOptions (issues #946, #395) ───────────────
+
+function testAroundOnlySetupIsItsOwnGroup(): void {
+  const project = newProject('Around only', 'mm')
+  const aroundSetup: MachiningSetup = {
+    id: 'su-around', kind: 'around', name: 'Around',
+    orientation: { axis: 'x', angleDeg: 0 }, indexing: 'manual', registration: [], notes: '', operationIds: ['op1'],
+  }
+  const withAround: Project = {
+    ...project,
+    meta: { ...project.meta, projectType: 'rotary' },
+    stock: roundStock(25, 120, 'x'),
+    setups: [aroundSetup],
+    activeSetupId: aroundSetup.id,
+    tools: [{ ...project.tools[0], id: 'tool-1' }],
+    operations: [{ ...makeOperation('op1'), setupId: aroundSetup.id }],
+  }
+  const groups = groupExportOperationOptions(withAround, listExportOperationOptions(withAround))
+  assert(groups.length === 1 && groups[0].setup?.id === aroundSetup.id, 'an Around-only project gets its named group')
+  assert(groups[0].face === 'around', 'the group carries the around face')
+
+  // The same Around-only project in a non-rotary type cuts nothing there: the
+  // operation is kept in the project but left off the export checklist and out
+  // of the programs (issue #1028, rule (a)).
+  const aroundInMilling: Project = { ...withAround, meta: { ...withAround.meta, projectType: 'milling' } }
+  assert(
+    listExportOperationOptions(aroundInMilling).length === 0,
+    'an Around operation is not exported in a milling project',
+  )
+  assert(
+    groupExportOperationOptions(aroundInMilling, listExportOperationOptions(aroundInMilling)).length === 0,
+    'and its setup gets no export group',
+  )
+
+  // A single flat setup keeps the unlabelled legacy group.
+  const flat: Project = {
+    ...project,
+    tools: [{ ...project.tools[0], id: 'tool-1' }],
+    operations: [makeOperation('op1')],
+  }
+  const flatGroups = groupExportOperationOptions(flat, listExportOperationOptions(flat))
+  assert(flatGroups[0].setup === null && flatGroups[0].face === 'top', 'a single flat setup stays the unlabelled group')
+}
+
 const tests = [
   testHealthyVisibleOperationIsExportableAndDefaultSelected,
   testHiddenToolpathIsExportableButNotDefaultSelected,
   testDisabledOperationIsNotExportable,
   testMissingToolIsNotExportable,
   testOptionsPreserveExecutionOrder,
+  testOtherFamilyOperationStaysOnTheChecklist,
   testFileNameUsesProjectNameForMultipleOperations,
   testFileNameAppendsSingleOperationName,
+  testExportPathIsReusedOnlyForTheSameKindOfFile,
+  testAroundOnlySetupIsItsOwnGroup,
 ]
 
 for (const test of tests) {

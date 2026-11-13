@@ -32,8 +32,9 @@ import {
 } from '../helpers/normalize'
 import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
-import { decodeProjectFormat } from '../helpers/projectFormat'
-import { mergeCustomMachines } from '../../machine/store'
+import { decodeProjectFormat, type ProjectMigrationInfo } from '../helpers/projectFormat'
+import { rescueMachinesToLibrary } from '../../machine/store'
+import { machineLoadWarning } from '../../i18n/machineDiagnosticText'
 
 /** Combine the independent load warnings into one message, or null if silent. */
 function joinWarnings(...warnings: (string | null)[]): string | null {
@@ -43,7 +44,7 @@ function joinWarnings(...warnings: (string | null)[]): string | null {
 
 export interface ProjectLifecycleSliceDependencies {
   rawSet: Parameters<StateCreator<ProjectStore>>[0]
-  normalizeProject: (project: Project) => Project
+  normalizeProject: (project: Project, migrationInfo?: ProjectMigrationInfo) => Project
 }
 
 export type ProjectLifecycleSlice = Pick<
@@ -63,6 +64,17 @@ export type ProjectLifecycleSlice = Pick<
   | 'markModelExported'
 >
 
+function freshMigrationInfo(): ProjectMigrationInfo {
+  return {
+    retractHeightsReexpressed: 0,
+    edgeEntryStrategiesReset: 0,
+    machineDiagnostics: [],
+    rescuedMachineDefinitions: [],
+    // Compaction may proceed only once the library write is durable (#1119).
+    rescueMachineDefinitions: rescueMachinesToLibrary,
+  }
+}
+
 export function createProjectLifecycleSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -76,9 +88,11 @@ export function createProjectLifecycleSlice(
     createNewProject: (template, name) =>
       set((state) => {
         clearProjectMemoryCaches()
-        const nextProject = normalizeProject(instantiateProjectTemplate(template, name))
+        const info = freshMigrationInfo()
+        const nextProject = normalizeProject(instantiateProjectTemplate(template, name), info)
         return {
           project: nextProject,
+          machineLoadDiagnostics: info.machineDiagnostics,
           dirty: false,
           filePath: null,
           // A remembered export path belongs to the project it was exported
@@ -230,7 +244,8 @@ export function createProjectLifecycleSlice(
     loadProject: (p) =>
       set((state) => {
         clearProjectMemoryCaches()
-        const normalizedProject = normalizeProject(p)
+        const info = freshMigrationInfo()
+        const normalizedProject = normalizeProject(p, info)
         const stockDefaults = defaultStock(undefined, undefined, undefined, normalizedProject.meta.units)
         const gridDefaults = defaultGrid(normalizedProject.meta.units)
         const nextProject = {
@@ -250,6 +265,7 @@ export function createProjectLifecycleSlice(
         clearProjectMemoryCaches()
         return {
           project: nextProject,
+          machineLoadDiagnostics: info.machineDiagnostics,
           // Loading a document starts its export identity over, even though
           // the path it was loaded from is unrelated to any G-code file.
           lastExportPath: null,
@@ -271,8 +287,20 @@ export function createProjectLifecycleSlice(
 
     saveProject: () => {
       // Nest records are session state and stay out of the file (#889).
-      const { nests: _nests, ...p } = normalizeProject(pruneUnusedModelAssets(get().project))
+      const info = freshMigrationInfo()
+      const { nests: _nests, ...p } = normalizeProject(pruneUnusedModelAssets(get().project), info)
       void _nests
+      // Save normalization has the same rescue seam as a load: a machine the
+      // in-memory project still carries is added to My Machines rather than
+      // dropped from the saved file. If the library cannot store it, the
+      // machine stays in the serialized project and the reason is surfaced
+      // (#1119) — the returned JSON is never the place data is lost.
+      const keptDiagnostics = info.machineDiagnostics.filter(
+        (diagnostic) => diagnostic.kind === 'machine-kept-in-project',
+      )
+      if (keptDiagnostics.length > 0) {
+        deps.rawSet({ machineLoadDiagnostics: info.machineDiagnostics })
+      }
       const updated = {
         ...p,
         version: LATEST_PROJECT_VERSION,
@@ -292,16 +320,19 @@ export function createProjectLifecycleSlice(
       const versionWarning = isProjectVersionNewerThanSupported(rawVersion)
         ? `This project was created with a newer version of PureCutCNC (file format ${rawVersion}; this build supports up to ${LATEST_PROJECT_VERSION}). It will still open, but newer features may be missing or display incorrectly.`
         : null
-      const decoded = decodeProjectFormat(parsed)
+      // Decode owns the rescue seam: a legacy file's extra machines are stored
+      // in My Machines before the project is compacted, and stay in the project
+      // when that store cannot be made durable (#1119).
+      const decoded = decodeProjectFormat(parsed, rescueMachinesToLibrary)
       const normalized = decoded.project
-      // A legacy file carried a whole machine library; the project keeps only
-      // its selected snapshot, so rescue the user's custom definitions into
-      // the application library before the rest of the file is dropped.
-      mergeCustomMachines(decoded.machineMigration.customDefinitions)
-      const machineWarning = decoded.machineMigration.unresolvedSelectionId
-        ? `This project selected a machine ("${decoded.machineMigration.unresolvedSelectionId}") that is missing or invalid, so no machine is selected. Choose one in Project Properties before exporting G-code.`
-        : null
-      const migratedMachineLibrary = decoded.machineMigration.compacted
+      const machineDiagnostics = decoded.machineMigration.diagnostics
+      const machineWarning = machineLoadWarning(machineDiagnostics)
+      // Compaction can also drop unmodified bundled copies the build supplies,
+      // which is not a library move. Only a real move gets the library warning.
+      const machineMovedToLibrary = machineDiagnostics.some(
+        (diagnostic) => diagnostic.kind === 'machine-moved-to-library',
+      )
+      const migratedMachineLibrary = decoded.machineMigration.compacted || machineMovedToLibrary
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
       clearProjectMemoryCaches()
@@ -318,6 +349,7 @@ export function createProjectLifecycleSlice(
           origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
         },
         filePath: path,
+        machineLoadDiagnostics: machineDiagnostics,
         // The opened document has no G-code destination yet; a previous
         // project's export path must never authorize an overwrite (#1081).
         lastExportPath: null,
@@ -326,8 +358,8 @@ export function createProjectLifecycleSlice(
           versionWarning ?? (decoded.convertedLegacy
             ? `This legacy project was converted in memory to file format ${LATEST_PROJECT_VERSION}. The original file is unchanged until you save. Files saved in ${LATEST_PROJECT_VERSION} are not compatible with older PureCutCNC builds.`
             : null),
-          migratedMachineLibrary
-            ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it carried were added to My Machines. The original file is unchanged until you save.'
+          machineMovedToLibrary
+            ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it no longer stores were added to My Machines. The original file is unchanged until you save.'
             : null,
           decoded.retractHeightsReexpressed > 0
             ? `${decoded.retractHeightsReexpressed === 1 ? 'One drilling retract height was' : `${decoded.retractHeightsReexpressed} drilling retract heights were`} re-expressed relative to the material surface to match the current file format (issue #481). The original file is unchanged until you save.`
@@ -353,7 +385,7 @@ export function createProjectLifecycleSlice(
       }))
     },
 
-    clearLoadWarning: () => set({ loadWarning: null }),
+    clearLoadWarning: () => set({ loadWarning: null, machineLoadDiagnostics: [] }),
 
     markSaved: (path) =>
       deps.rawSet({ filePath: path, dirty: false }),

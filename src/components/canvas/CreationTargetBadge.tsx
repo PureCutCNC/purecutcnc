@@ -37,8 +37,8 @@ const TARGET_LABEL_KEYS: Record<CreationTarget, MessageKey> = {
 
 const TARGET_ICONS: Record<CreationTarget, string> = {
   feature: 'plus',
-  line: 'snap-line',
-  region: 'pocket',
+  line: 'line-target',
+  region: 'region',
   construction: 'construction',
 }
 

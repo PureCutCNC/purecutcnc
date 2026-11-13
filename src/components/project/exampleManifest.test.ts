@@ -22,12 +22,22 @@
  * path used by `openProjectFromText` — so a broken manifest fails the build
  * rather than 404ing at runtime in the empty-state / New Project flows.
  *
- * Run with: npx tsx src/components/project/exampleManifest.test.ts
+ * Every example must also be written by a current app, not only carry a current
+ * format stamp (#1192): `meta.projectType` and a non-empty `setups` array are
+ * what the save path adds, so a file without them predates the 0.6.0 model and
+ * would load through the migrations every time.
+ *
+ * Run with: npx tsx src/components/project/exampleManifest.test.ts [examplesDir]
+ *
+ * The optional directory runs the same assertions against copies, which is how
+ * the guard was proved to fail on the pre-#1192 files (`git show
+ * HEAD~:public/examples/...` into a temporary directory) as well as pass on the
+ * re-saved ones.
  */
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { normalizeProject } from '../../store/projectStore'
 import { LATEST_PROJECT_VERSION } from '../../types/project'
 import type { Project } from '../../types/project'
@@ -44,7 +54,9 @@ interface ManifestEntry {
   thumbnail?: string
 }
 
-const examplesDir = fileURLToPath(new URL('../../../public/examples/', import.meta.url))
+const examplesDir = process.argv[2]
+  ? resolve(process.argv[2])
+  : fileURLToPath(new URL('../../../public/examples/', import.meta.url))
 
 const manifest = JSON.parse(readFileSync(join(examplesDir, 'manifest.json'), 'utf8')) as ManifestEntry[]
 
@@ -70,6 +82,14 @@ for (const entry of manifest) {
   // #599's warning lands, show a conversion banner in the demos).
   assert(parsed.version === LATEST_PROJECT_VERSION,
     `example ${entry.file} ships at format ${parsed.version ?? '(none)'}; regenerate it at ${LATEST_PROJECT_VERSION} so loading never converts (#606)`)
+
+  // Written by a current app, not a pre-0.6.0 file carrying an updated stamp
+  // (#1192). These are asserted on the file, not on `normalizeProject`'s
+  // output: normalization would fill them in and hide exactly this defect.
+  assert(typeof parsed.meta.projectType === 'string' && parsed.meta.projectType.length > 0,
+    `example ${entry.file} must carry meta.projectType; re-save it with the current app (#1192)`)
+  assert(Array.isArray(parsed.setups) && parsed.setups.length > 0,
+    `example ${entry.file} must carry a non-empty setups array; re-save it with the current app (#1192)`)
 
   const normalized = normalizeProject(parsed)
 

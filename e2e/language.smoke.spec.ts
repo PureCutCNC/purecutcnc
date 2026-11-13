@@ -15,7 +15,7 @@
  */
 
 import { test, expect } from './fixtures'
-import { clickMenuItem, getProject, openRowContextMenu, seedProject } from './helpers'
+import { clickMenuItem, getProject, openRowContextMenu, seedProject, reloadWhenIdle } from './helpers'
 import { buildLinkedProjectJson } from './featureReferences.helpers'
 
 const STORAGE_KEY = 'purecutcnc.i18n.locale'
@@ -114,7 +114,7 @@ test('switches to Simplified Chinese, persists, and never touches the project', 
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
   // Survives a reload.
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('lang', 'zh-CN')
   await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', '语言：简体中文')
@@ -140,7 +140,7 @@ test('switches to French, persists, and renders representative workflow copy', a
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('fr')
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('lang', 'fr')
   await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Langue : Français')
@@ -161,7 +161,7 @@ test('switches to Spanish, persists, and never touches the project', async ({ ap
   expect(await app.page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('es')
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('lang', 'es')
   await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Idioma: Español')
@@ -191,7 +191,7 @@ test('switches to German, persists across reload, and never touches the project'
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
   // Survives a reload.
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('lang', 'de')
   await expect(ui.language.trigger(app.page)).toHaveAttribute('aria-label', 'Sprache: Deutsch')

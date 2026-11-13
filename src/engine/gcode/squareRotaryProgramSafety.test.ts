@@ -1,0 +1,845 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Square-blank program safety (#1016 C2 correction M1, third Codex pass).
+ *
+ * The planner's turn guard (`trackOperationAngle` + `rotaryTravelZ`) sees only
+ * the operation's moves. A supplied path can still carry an A word after a
+ * machine template has moved Z behind the emitter's back. That A is written by
+ * *two* emitters — a rapid and a turning feed — so the generator places a
+ * turning feed on a G1 as the first rotary motion of an operation a template
+ * has just moved Z in front of, not only a rapid. This file proves, on the
+ * **emitted text**, that it cannot turn a square blank below the generators'
+ * travel height. A closing unwind no longer exists (#1091), so there is no
+ * second A word to police.
+ *
+ * A seeded property test generates a few hundred square programs and posts each
+ * whole program through the real postprocessor. An independent modal
+ * interpreter written here — deliberately not a postprocessor helper — then
+ * replays the text it reads: G0/G1 modal motion, the machine's own rotary word
+ * (`A`, or a borrowed motor's X/Y), Z, units, absolute/incremental modes, and
+ * G20/G21. Every block that changes the rotary word must execute with Z at or
+ * above the emitted travel height (within half a printed decimal). A program
+ * the postprocessor refuses may carry no such motion and must name its refusal.
+ *
+ * Focused tests pin the three cases the property test is built to catch:
+ * the template Z-unknown rule, the restored whole-operation turning-feed
+ * precedence on a round bar, and the program ending where it ended with the
+ * operation's own retract as the final motion (#1091).
+ *
+ * Run with: npx tsx src/engine/gcode/squareRotaryProgramSafety.test.ts
+ */
+
+import assert from 'node:assert/strict'
+import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
+import { defaultTool, newProject, rectProfile } from '../../types/project'
+import type { Operation, Project, SquareStock, Tool } from '../../types/project'
+import { barCentre, barMaxRadius, barPivotZ, isBarStock, squareStock } from '../../types/barStock'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { defaultRoundWorkholding } from '../../store/helpers/roundWorkholding'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import { warningSeverity } from '../toolpaths/warningCodes'
+import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
+import { BUNDLED_DEFINITIONS } from './definitions'
+import { runPostProcessor } from './postprocessor'
+import { rotaryDirection, rotaryWord, validateMachineDefinition } from './types'
+import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
+import { convertLength, MM_PER_INCH } from '../../utils/units'
+import { formatGCodeNumber } from './utils'
+import { pinRotaryAxis } from './types'
+
+// ── fixtures ──────────────────────────────────────────────────
+
+type Axis = 'x' | 'y'
+type Units = 'mm' | 'inch'
+type MachineKind = 'own' | 'borrowed' | 'reversed'
+
+const GRBL = validateMachineDefinition(BUNDLED_DEFINITIONS.find((entry) => entry.id === 'grbl')!)
+
+function machine(kind: MachineKind, axis: Axis): MachineDefinition {
+  const rotary: RotaryDefinition = {
+    about: axis,
+    drive: kind === 'borrowed' ? 'borrowed' : 'own',
+    reversed: kind === 'reversed',
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  }
+  return validateMachineDefinition({ ...structuredClone(GRBL), id: `${kind}-${axis}`, rotary })
+}
+
+/** The same machine with Z-moving template variants layered on. */
+function machineWithTemplates(
+  kind: MachineKind,
+  axis: Axis,
+  templates: { header?: string[]; operationHeader?: string[]; toolChange?: string[]; footer?: string[] },
+): MachineDefinition {
+  const base = machine(kind, axis)
+  return {
+    ...base,
+    program: {
+      ...base.program,
+      header: [...(templates.header ?? []), ...base.program.header],
+      operationHeader: [...(templates.operationHeader ?? []), ...base.program.operationHeader],
+      footer: [...base.program.footer, ...(templates.footer ?? [])],
+    },
+    toolChange: templates.toolChange
+      ? { ...base.toolChange, commands: [...templates.toolChange, ...base.toolChange.commands] }
+      : base.toolChange,
+  }
+}
+
+/** The model prism from `rotaryOperationFixture`, scaled and re-centred. */
+function modelMesh(axis: Axis, centre: number, scale: number) {
+  const raw = [
+    3, -2, 4, 27, -2, 4, 27, 2, 4, 3, 2, 4,
+    3, -2, 8, 27, -2, 9, 27, 2, 9, 3, 2, 8,
+  ]
+  const positions = new Float32Array(raw.map((value) => value * scale))
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i + 1] += centre
+    if (axis === 'y') [positions[i], positions[i + 1]] = [positions[i + 1], positions[i]]
+  }
+  const index = new Uint32Array([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7])
+  return serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl')
+}
+
+interface Fixture {
+  project: Project
+  operation: Operation
+  stock: SquareStock
+  tool: Tool
+}
+
+/** A real square (or round) rotary project with an Around setup and a model. */
+function fixture(options: { axis: Axis; units: Units; round?: boolean }): Fixture {
+  const { axis, units, round = false } = options
+  const scale = units === 'mm' ? 1 : 1 / MM_PER_INCH
+  const square = squareStock(12 * scale, 30 * scale, axis, { x: 0, y: 0 })
+  const stock = round ? { ...square, shape: 'round' as const } : square
+  const base = newProject(`Square safety ${axis} ${units}`, units)
+  base.meta.created = base.meta.modified = '2026-01-01T00:00:00.000Z'
+  base.meta.projectType = 'rotary'
+  base.meta.maxTravelZ = 25 * scale
+  base.stock = stock
+  // A real Z origin on the blank's top, so the emitted frame and the project
+  // frame differ by exactly one documented offset.
+  base.origin = { name: 'Origin', x: 0, y: 0, z: stock.thickness, visible: true }
+  const tool: Tool = {
+    ...defaultTool(units, 1),
+    id: 't1',
+    name: 'Ball 2',
+    units,
+    type: 'ball_endmill',
+    diameter: 2 * scale,
+    defaultStepover: 0.8,
+    defaultStepdown: 1 * scale,
+  }
+  base.tools = [tool]
+  base.modelAssets = { asset: modelMesh(axis, barCentre(square), scale) }
+  const profile = axis === 'x'
+    ? rectProfile(3 * scale, 4 * scale, 24 * scale, 4 * scale)
+    : rectProfile(4 * scale, 3 * scale, 4 * scale, 24 * scale)
+  const model = {
+    id: 'model', name: 'Model', kind: 'stl' as const, operation: 'model' as const, authoringFace: 'top' as const,
+    folderId: null,
+    sketch: { profile, origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    stl: { format: 'stl' as const, meshAssetId: 'asset', scale: 1, axisSwap: 'none' as const },
+    z_top: 9 * scale, z_bottom: 4 * scale, visible: true, locked: false,
+  }
+  const project = projectWithFeatures(base, [model])
+  project.setups.push({ ...project.setups[0], id: 'around', name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 } })
+  project.activeSetupId = 'around'
+  project.clamps = [{ ...defaultRoundWorkholding('chuck', square, units), id: 'chuck', name: 'Chuck', visible: true }]
+  project.operations = [{
+    ...defaultOperationForTarget(project, 'rotary_finish', 'finish', { source: 'features', featureIds: ['model'] }, 0),
+    setupId: 'around',
+    stockToLeaveRadial: 0,
+  }]
+  return { project, operation: project.operations[0], stock: square, tool }
+}
+
+function toolpathOf(operation: Operation, moves: ToolpathMove[]): ToolpathResult {
+  return { operationId: operation.id, moves, warnings: [], bounds: null }
+}
+
+interface PostableOperation {
+  operation: Operation
+  tool: NormalizedTool
+  moves: ToolpathMove[]
+}
+
+/** Post a whole program, exactly as the export path would. */
+function post(
+  project: Project,
+  definition: MachineDefinition,
+  entries: PostableOperation[],
+  emitToolChanges = false,
+): PostProcessorResult {
+  return runPostProcessor({
+    project,
+    definition,
+    operations: entries.map(({ operation, tool, moves }) => ({
+      operation,
+      tool,
+      toolpath: toolpathOf(operation, moves),
+    })),
+    options: { emitToolChanges, emitCoolant: false, programName: project.meta.name },
+  })
+}
+
+function normalizedTool(project: Project, operation: Operation): NormalizedTool {
+  return normalizeToolForProject(
+    project.tools.find((entry) => entry.id === operation.toolRef)!,
+    project,
+  )
+}
+
+/** The emitted travel height for a square blank, independent of any helper. */
+function emittedTravelZ(stock: SquareStock, units: Units, definition: MachineDefinition, project: Project): number {
+  assert.equal(definition.coordinateSystem.zAxis, 'Z', 'fixture: the emitted Z runs up')
+  const projectTravel = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', units)
+  return projectTravel - project.origin.z
+}
+
+function emittedHalfStep(definition: MachineDefinition, units: Units): number {
+  return 0.5 * 10 ** -definition.numberFormat.decimalPlaces[units]
+}
+
+// ── independent modal interpreter ─────────────────────────────
+
+interface Audit {
+  blocks: number
+  turns: number
+  /** Every rotary change whose execution Z was not proven clear. */
+  violations: string[]
+  units: Units | null
+}
+
+/**
+ * Replay emitted G-code and prove every block that changes the machine's rotary
+ * word executes with Z at or above `safeZ - tolerance`. Nothing here imports a
+ * postprocessor or motion-planning helper: it reads the text only.
+ *
+ * A block that changes the rotary word at the same time it moves Z is judged on
+ * both ends of the move — the A word changes across the whole move, so a start
+ * below the height is just as unsafe as an end below it. A rotary change with
+ * no known Z at all is a violation (there is nothing to prove).
+ *
+ * A `G53` block is in machine coordinates (#1054 fix 3), so its Z is not a work
+ * height and is not compared with `safeZ`. It is taken as the top of travel, the
+ * documented assumption of `motion.machineSafeZ` (the machine is homed with Z at
+ * the top), so a later rotary change stays clear.
+ */
+function auditProgram(gcode: string, rotaryLetter: 'A' | 'X' | 'Y', safeZ: number, tolerance: number): Audit {
+  type Motion = 'G0' | 'G1' | 'G2' | 'G3'
+  let motion: Motion | null = null
+  let absolute = true
+  let units: Units | null = null
+  let z: number | null = null
+  let rotary: number | null = null
+  let blocks = 0
+  let turns = 0
+  const violations: string[] = []
+
+  for (const [lineIndex, raw] of gcode.split(/\r?\n/).entries()) {
+    let line = raw.replace(/\([^)]*\)/g, ' ')
+    const semicolon = line.indexOf(';')
+    if (semicolon >= 0) line = line.slice(0, semicolon)
+    line = line.trim()
+    if (line.length === 0 || line === '%') continue
+
+    const words: Array<{ letter: string; value: number | null }> = []
+    for (const match of line.matchAll(/([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))/g)) {
+      words.push({ letter: match[1].toUpperCase(), value: Number(match[2]) })
+    }
+    if (words.length === 0) continue
+
+    let blockMotion: Motion | null = motion
+    let blockZ: number | null = z
+    let blockRotary: number | null = rotary
+    let blockMachineCoordinate = false
+    let blockHasZ = false
+    let hasMotionWord = false
+    let hasAxisWord = false
+    for (const word of words) {
+      switch (word.letter) {
+        case 'G': {
+          const code = Math.trunc(word.value ?? -1)
+          if (code === 0 || code === 1 || code === 2 || code === 3) {
+            blockMotion = `G${code}` as Motion
+            hasMotionWord = true
+          } else if (code === 20) {
+            units = 'inch'
+          } else if (code === 21) {
+            units = 'mm'
+          } else if (code === 53) {
+            blockMachineCoordinate = true
+          } else if (code === 90) {
+            absolute = true
+          } else if (code === 91) {
+            absolute = false
+          }
+          break
+        }
+        case 'X':
+        case 'Y': {
+          // A borrowed motor's rotary word rides the X/Y letter; that word is
+          // an angle, not a linear coordinate, so it is handled here.
+          if (word.letter === rotaryLetter) {
+            hasAxisWord = true
+            blockRotary = absolute ? (word.value ?? 0) : (blockRotary ?? 0) + (word.value ?? 0)
+          }
+          break
+        }
+        case 'A': {
+          if (rotaryLetter === 'A') {
+            hasAxisWord = true
+            blockRotary = absolute ? (word.value ?? 0) : (blockRotary ?? 0) + (word.value ?? 0)
+          }
+          break
+        }
+        case 'Z': {
+          hasAxisWord = true
+          blockHasZ = true
+          blockZ = absolute ? (word.value ?? 0) : (blockZ ?? 0) + (word.value ?? 0)
+          break
+        }
+        default:
+          break
+      }
+    }
+
+    if (blockMachineCoordinate && blockHasZ) {
+      // G53 is a machine coordinate, so this Z is not a work height. Taken as
+      // the top of travel (the machineSafeZ assumption), it proves the next
+      // rotary change clear.
+      blockZ = Number.POSITIVE_INFINITY
+    }
+
+    if (blockMotion !== null && (hasMotionWord || hasAxisWord)) {
+      blocks += 1
+      const changesRotary = blockRotary !== rotary
+      if (changesRotary) {
+        turns += 1
+        const startZ = z
+        const endZ = blockZ
+        const low = startZ === null || endZ === null ? null : Math.min(startZ, endZ)
+        if (low === null) {
+          violations.push(`line ${lineIndex + 1}: rotary change with no known Z (${raw.trim()})`)
+        } else if (low < safeZ - tolerance) {
+          violations.push(
+            `line ${lineIndex + 1}: rotary ${String(rotary)} -> ${String(blockRotary)} at Z${low.toFixed(4)}`
+            + ` below ${safeZ.toFixed(4)} (${raw.trim()})`,
+          )
+        }
+      }
+    }
+
+    motion = blockMotion
+    z = blockZ
+    rotary = blockRotary
+  }
+
+  return { blocks, turns, violations, units }
+}
+
+/**
+ * The last value the machine's rotary word is given in the program text,
+ * ignoring comment-only lines. A borrowed letter carries the angle and never a
+ * linear coordinate on these machines, so every occurrence is an angle.
+ */
+function lastRotaryValue(gcode: string, letter: 'A' | 'X' | 'Y'): number | null {
+  const pattern = new RegExp(`(?:^|[\\s])${letter}(-?[0-9]+(?:\\.[0-9]+)?)`, 'g')
+  let last: number | null = null
+  for (const raw of gcode.split(/\r?\n/)) {
+    if (/^[;(%]/.test(raw.trim())) continue
+    for (const match of raw.matchAll(pattern)) last = Number(match[1])
+  }
+  return last
+}
+
+// ── seeded generator ─────────────────────────────────────────
+
+const SEED = 1016
+const PROGRAM_COUNT = 300
+
+function random(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Only a tool change or the footer may move Z in a definition the export guard
+// accepts (#1119): a program header cannot carry an axis word and an operation
+// header is inert. Those two valid seams still put a template Z move behind
+// the emitter's back, which is what this file proves the emitter repairs.
+type TemplateVariant = 'none' | 'toolChange' | 'footer' | 'all'
+
+interface Generated {
+  label: string
+  definition: MachineDefinition
+  entries: PostableOperation[]
+  project: Project
+  stock: SquareStock
+  units: Units
+  kind: MachineKind
+  unsafe: boolean
+  endsLow: boolean
+  template: TemplateVariant
+  /** True when some operation after a Z-moving template starts by turning on a G1. */
+  feedFirst: boolean
+  emitToolChanges: boolean
+}
+
+/**
+ * One seeded program. A path is built as a chain of moves in project
+ * coordinates: a safe turn, a constant-angle descent, an A-only rapid whose
+ * endpoints agree while the controller is at another angle, and the deliberate
+ * low turn an unsafe program ends on. The template variants put a Z move in the
+ * header, an operation header, a tool change or the footer.
+ */
+function generate(rand: () => number, index: number): Generated {
+  const axis: Axis = rand() < 0.5 ? 'x' : 'y'
+  const units: Units = rand() < 0.5 ? 'mm' : 'inch'
+  const kind: MachineKind = rand() < 0.5 ? 'own' : rand() < 0.5 ? 'borrowed' : 'reversed'
+  const unsafe = rand() < 0.28
+  const templateRoll = rand()
+  const template: TemplateVariant = templateRoll < 0.2 ? 'none'
+    : templateRoll < 0.6 ? 'toolChange'
+      : templateRoll < 0.8 ? 'footer'
+        : 'all'
+  const multiOperation = !unsafe && (template === 'toolChange' || template === 'all' || rand() < 0.3)
+  const { project, operation, stock, tool } = fixture({ axis, units })
+  const secondTool: Tool = { ...tool, id: 't2', name: 'Ball 2 second' }
+  project.tools = [tool, secondTool]
+
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', units)
+  const pivotZ = barPivotZ(stock)
+  const lowZ = pivotZ + convertLength(1, 'mm', units)
+  const halfStep = emittedHalfStep(machine(kind, axis), units)
+  const travelEmitted = emittedTravelZ(stock, units, machine(kind, axis), project)
+  const centre = barCentre(stock)
+  const alongMin = units === 'mm' ? 4 : 4 / MM_PER_INCH
+  const alongMax = units === 'mm' ? 26 : 26 / MM_PER_INCH
+  const lowTemplateZ = travelEmitted - convertLength(2, 'mm', units)
+
+  const templates = {
+    toolChange: template === 'toolChange' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
+    footer: template === 'footer' || template === 'all' ? [`G0 Z${lowTemplateZ.toFixed(6)}`] : undefined,
+  }
+  const definition = machineWithTemplates(kind, axis, templates)
+  assert.ok(halfStep > 0 && Number.isFinite(travelEmitted), 'fixture: a finite travel height')
+
+  type RotaryPoint = ToolpathPoint & { a: number }
+  const point = (along: number, z: number, a: number): RotaryPoint => axis === 'x'
+    ? { x: along, y: centre, z, a }
+    : { x: centre, y: along, z, a }
+
+  const operationsCount = multiOperation ? (template === 'none' ? 2 : 2 + Math.trunc(rand() * 2)) : 1
+  const entries: PostableOperation[] = []
+  let carryA = 0
+  let carryAlong = alongMin + rand() * (alongMax - alongMin)
+  let endsLow = false
+  let feedFirst = false
+
+  for (let opIndex = 0; opIndex < operationsCount; opIndex += 1) {
+    const op: Operation = opIndex === 0
+      ? operation
+      : { ...operation, id: `op${opIndex + 1}`, name: `Operation ${opIndex + 1}`, toolRef: 't2' }
+    const moves: ToolpathMove[] = []
+    let current: RotaryPoint = point(carryAlong, travelZ, carryA)
+    const push = (kind_: 'rapid' | 'cut', to: RotaryPoint) => {
+      moves.push({ kind: kind_, from: current, to })
+      current = to
+    }
+    const ensureTravel = () => {
+      if (current.z !== travelZ) push('rapid', { ...current, z: travelZ })
+    }
+    const ensureLow = () => {
+      if (current.z !== lowZ) push(rand() < 0.5 ? 'rapid' : 'cut', { ...current, z: lowZ })
+    }
+    const nextAlong = () => alongMin + rand() * (alongMax - alongMin)
+    const stepTurn = (delta: number, kind_: 'rapid' | 'cut') => {
+      ensureTravel()
+      push(kind_, point(nextAlong(), travelZ, current.a + delta))
+    }
+    const stepDescent = () => push(rand() < 0.5 ? 'rapid' : 'cut', point(current.x === centre ? nextAlong() : current.x, lowZ + rand() * (travelZ - lowZ), current.a))
+    const staleAOnly = (z: number, delta: number) => {
+      const to = point(current.x === centre ? nextAlong() : current.x, z, current.a + delta)
+      moves.push({ kind: 'rapid', from: { ...current, a: to.a }, to })
+      current = to
+    }
+
+    // Operation entry at travel height establishes the carried angle. With a
+    // Z-moving template before the second operation's moves, the first block
+    // that turns must not depend on the stale tracked Z. Half of those entries
+    // turn on a feed instead of a rapid, so the *feed* emitter's own unknown-Z
+    // repair is exercised too: the cut starts at the angle the previous
+    // operation ended on and changes it at travel height, which the planner
+    // admits because the turn itself is at the travel height.
+    if (opIndex > 0 && (template === 'toolChange' || template === 'all')) {
+      const angle = current.a + 17
+      const along = current.x === centre ? nextAlong() : current.x
+      if (rand() < 0.5) {
+        push('cut', point(nextAlong(), travelZ, angle))
+        feedFirst = true
+      } else {
+        push('rapid', point(along, travelZ, angle))
+      }
+    } else {
+      push('rapid', point(current.x === centre ? nextAlong() : current.x, travelZ, current.a))
+    }
+
+    const segments = 2 + Math.trunc(rand() * 5)
+    for (let segment = 0; segment < segments; segment += 1) {
+      const roll = rand()
+      if (roll < 0.4) {
+        stepTurn((rand() < 0.5 ? 1 : -1) * (10 + rand() * 50), rand() < 0.5 ? 'rapid' : 'cut')
+      } else if (roll < 0.62) {
+        stepDescent()
+      } else if (roll < 0.78) {
+        ensureTravel()
+        staleAOnly(travelZ, (rand() < 0.5 ? 1 : -1) * (10 + rand() * 50))
+      } else {
+        ensureTravel()
+        push(rand() < 0.5 ? 'rapid' : 'cut', point(nextAlong(), travelZ, current.a))
+      }
+    }
+
+    // The last operation may legitimately descend below the travel height: a
+    // constant-angle descent is not a turn. Like every real generator, the
+    // path then ends with the operation's own retract (#1091), so the program
+    // ends clear wherever the last cut was. Earlier operations end clear so
+    // the next template exposure starts from a known height.
+    const last = opIndex === operationsCount - 1
+    if (last && !unsafe && rand() < 0.55) {
+      ensureLow()
+      endsLow = true
+    }
+
+    if (unsafe && last) {
+      // Two deliberate violations, only one of which the old endpoint test
+      // also saw: a normal low turn (from.a !== to.a) and a rapid whose
+      // endpoints agree but whose controller angle is elsewhere.
+      ensureLow()
+      if (rand() < 0.5) {
+        push('rapid', point(current.x === centre ? nextAlong() : current.x, lowZ, current.a + 33))
+      } else {
+        staleAOnly(lowZ, current.a + 33)
+      }
+    }
+
+    ensureTravel()
+    carryA = current.a
+    carryAlong = current.x === centre ? nextAlong() : current.x
+    entries.push({ operation: op, tool: normalizedTool(project, op), moves })
+  }
+
+  // Warnings and labels carry only deterministic fixture facts.
+  const label = `#${index} ${axis}/${units}/${kind}/${template}${multiOperation ? '/multi' : ''}${unsafe ? '/unsafe' : ''}`
+  assert.ok(Number.isFinite(travelZ) && Number.isFinite(lowZ), `${label}: finite fixture heights`)
+  return {
+    label,
+    definition,
+    entries,
+    project,
+    stock,
+    units,
+    kind,
+    unsafe,
+    endsLow,
+    template,
+    feedFirst,
+    emitToolChanges: multiOperation && entries.length > 1,
+  }
+}
+
+// ── 1. seeded property: every emitted A change is clear ──────
+
+console.log(`Testing ${PROGRAM_COUNT} seeded square programs (seed ${SEED})...`)
+{
+  const rand = random(SEED)
+  let refused = 0
+  let audited = 0
+  let turns = 0
+  let lowEndings = 0
+  let templated = 0
+  let unsafePrograms = 0
+  let feedFirstAccepted = 0
+  const feedFirstCoverage = new Set<string>()
+
+  for (let index = 0; index < PROGRAM_COUNT; index += 1) {
+    const program = generate(rand, index)
+    const { project, stock, units, definition } = program
+    if (program.unsafe) unsafePrograms += 1
+    if (program.endsLow) lowEndings += 1
+    if (program.template !== 'none') templated += 1
+    const result = post(project, definition, program.entries, program.emitToolChanges)
+    const errors = result.warnings.filter((warning) => warningSeverity(warning.code) === 'error')
+    const refusedProgram = errors.length > 0
+    if (refusedProgram) {
+      refused += 1
+      assert.ok(result.warnings.length > 0, `${program.label}: a refused program carries a refusal code`)
+      continue
+    }
+
+    audited += 1
+    if (program.feedFirst) {
+      feedFirstAccepted += 1
+      feedFirstCoverage.add(`${program.kind}/${program.units}`)
+    }
+    const letter = rotaryWord(pinRotaryAxis(definition, null))
+    assert.ok(letter !== null, `${program.label}: an accepted program has a rotary word`)
+    if (letter === null) throw new Error('unreachable')
+    const safeZ = emittedTravelZ(stock, units, definition, project)
+    const audit = auditProgram(result.gcode, letter, safeZ, emittedHalfStep(definition, units))
+    assert.equal(audit.units, units, `${program.label}: the program declares its own unit system`)
+    assert.deepEqual(audit.violations, [], `${program.label}: every rotary change executes above the travel height`)
+    assert.ok(audit.turns > 0, `${program.label}: an accepted turning program actually turns`)
+    // #1091 forbids a closing *unwind*; #1103 slice ca-h still leaves the bar
+    // at a known orientation. The last angle in the text is the next whole
+    // turn at or ahead of the last toolpath move's angle — a forward turn to
+    // 0 up, never a rewind to it.
+    const lastMove = program.entries[program.entries.length - 1].moves.at(-1)
+    assert.ok(lastMove?.to.a !== undefined, `${program.label}: the last move carries an angle`)
+    if (lastMove?.to.a === undefined) throw new Error('unreachable')
+    const machineLast = lastMove.to.a * rotaryDirection(pinRotaryAxis(definition, null))
+    const endTurn = 360 * Math.ceil((machineLast - 1e-6) / 360)
+    assert.ok(endTurn >= machineLast, `${program.label}: the end turn never rewinds`)
+    assert.equal(
+      lastRotaryValue(result.gcode, letter),
+      Number(formatGCodeNumber(endTurn, definition, units)),
+      `${program.label}: the program ends at 0 up, on the next whole turn`,
+    )
+    turns += audit.turns
+  }
+
+  // The generator must actually exercise both hazards and both remedies.
+  assert.ok(audited > 120, `fixture: most programs are accepted (${audited})`)
+  assert.ok(refused > 40, `fixture: unsafe paths are refused (${refused})`)
+  assert.ok(unsafePrograms > 40, `fixture: deliberate low turns are generated (${unsafePrograms})`)
+  assert.ok(lowEndings > 50, `fixture: many accepted programs finish below travel height (${lowEndings})`)
+  assert.ok(templated > 80, `fixture: Z-moving templates are generated (${templated})`)
+  assert.ok(turns > 500, `fixture: the interpreter proves many rotary changes (${turns})`)
+  // The feed emitter's own repair is only load-bearing if accepted programs
+  // reach it: a turning feed that is the first motion after a template. Cover
+  // every drive/unit pair so a mutation of that call cannot pass on one
+  // machine configuration alone.
+  assert.ok(feedFirstAccepted > 20, `fixture: accepted programs turn on a feed first after a template (${feedFirstAccepted})`)
+  // A borrowed motor turns in millimetres only (#1153), so its inch programs
+  // are refused and borrowed/inch can never be accepted.
+  assert.deepEqual(
+    [...feedFirstCoverage].sort(),
+    ['borrowed/mm', 'own/inch', 'own/mm', 'reversed/inch', 'reversed/mm'],
+    `fixture: feed-first entries cover own/borrowed/reversed in mm and inch, borrowed in mm only (${[...feedFirstCoverage].sort().join(', ')})`,
+  )
+  console.log(`   ${audited} accepted, ${refused} refused, ${turns} rotary changes proven, ${lowEndings} low endings, ${templated} templated`)
+  console.log(`   ${feedFirstAccepted} accepted feed-first turns (${[...feedFirstCoverage].sort().join(', ')})`)
+}
+
+// ── 2. the program ends where it ended (#1091) ───────────────
+
+console.log('Testing the program keeps its last angle and its own retract...')
+{
+  const { project, operation, stock } = fixture({ axis: 'x', units: 'mm' })
+  const definition = machine('own', 'x')
+  const centre = barCentre(stock)
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', 'mm')
+  const lowZ = barPivotZ(stock) + 1
+  const point = (x: number, z: number, a: number): ToolpathPoint => ({ x, y: centre, z, a })
+  // A safe turn to A45, a constant-angle descent (not a turn), then the
+  // operation's own final retract — exactly what every generator emits.
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: point(15, travelZ, 0), to: point(15, travelZ, 0) },
+    { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 45) },
+    { kind: 'rapid', from: point(15, travelZ, 45), to: point(15, lowZ, 45) },
+    { kind: 'rapid', from: point(15, lowZ, 45), to: point(15, travelZ, 45) },
+  ]
+  const result = post(project, definition, [{ operation, tool: normalizedTool(project, operation), moves }])
+  assert.deepEqual(result.warnings, [], 'the safe turn, the descent and the retract are accepted')
+  const letter = rotaryWord(pinRotaryAxis(definition, null))!
+  const safeZ = emittedTravelZ(stock, 'mm', definition, project)
+  const audit = auditProgram(result.gcode, letter, safeZ, emittedHalfStep(definition, 'mm'))
+  assert.deepEqual(audit.violations, [], 'no rotary change runs below the travel height')
+  // The placement states A0, the cut turns to A45, and #1103 ca-h's end turn
+  // takes it forward to 360 (0 up): three rotary changes, none of them a
+  // rewind.
+  assert.equal(audit.turns, 3, 'the cut and the forward end turn are the only turns after the placement')
+  const angles = [...result.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.deepEqual(angles, [0, 45, 360], `the program writes the toolpath's angles and 0 up: ${JSON.stringify(angles)}`)
+  const lines = result.gcode.split('\n')
+  const end = lines.lastIndexOf('M30')
+  const retract = `Z${formatGCodeNumber(safeZ, definition, 'mm')}`
+  assert.equal(lines[end - 1], 'M5', 'the spindle stop is the last thing before the end')
+  assert.equal(lines[end - 2], '; A is at 360.000, 0 up. Zero A before the next operation.', 'then the instruction')
+  assert.equal(lines[end - 3], 'G0 A360.000', 'the final motion is the forward end turn')
+  assert.equal(lines[end - 4], 'G53 G0 Z0.000', 'preceded by the machine-coordinate retract')
+  assert.equal(lines[end - 5], retract, 'the operation retract at the travel height is still written')
+  assert.doesNotMatch(lines[end - 5], /A/, 'the retract does not turn the bar')
+
+  // The same program on a round bar: still no machine-coordinate retract and no
+  // unwind. Nothing here assumes the bar returns to A0.
+  const round = fixture({ axis: 'x', units: 'mm', round: true })
+  const roundResult = post(round.project, machine('own', 'x'), [{
+    operation: round.operation,
+    tool: normalizedTool(round.project, round.operation),
+    moves,
+  }])
+  assert.ok(isBarStock(round.project.stock), 'fixture: the round project has bar stock')
+  assert.match(roundResult.gcode, /G53 G0 Z/, 'a round bar takes the same machine-coordinate retract')
+  const roundAngles = [...roundResult.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.deepEqual(roundAngles, [0, 45, 360], 'the round program also ends at 0 up')
+
+  // A tool change whose macro may have moved the bar no longer owes an unwind:
+  // the second operation carries no angle, so the last stated angle is the only
+  // proof of where the bar is — and the program simply ends there.
+  const secondTool: Tool = { ...round.tool, id: 't2', name: 'Second' }
+  round.project.tools = [...round.project.tools, secondTool]
+  const secondOp: Operation = { ...round.operation, id: 'op2', name: 'Second', toolRef: 't2' }
+  const secondMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 16, y: centre, z: travelZ }, to: { x: 18, y: centre, z: travelZ } },
+    { kind: 'cut', from: { x: 18, y: centre, z: travelZ }, to: { x: 20, y: centre, z: lowZ } },
+    { kind: 'rapid', from: { x: 20, y: centre, z: lowZ }, to: { x: 20, y: centre, z: travelZ } },
+  ]
+  const multi = post(round.project, machine('own', 'x'), [
+    {
+      operation: round.operation,
+      tool: normalizedTool(round.project, round.operation),
+      moves: [
+        { kind: 'rapid', from: point(15, travelZ, 0), to: point(15, travelZ, 0) },
+        { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 90) },
+      ],
+    },
+    { operation: secondOp, tool: normalizeToolForProject(secondTool, round.project), moves: secondMoves },
+  ], true)
+  assert.deepEqual(multi.warnings, [], 'the two-operation program posts')
+  const multiAngles = [...multi.gcode.matchAll(/\bA(-?[0-9]+(?:\.[0-9]+)?)/g)].map((match) => Number(match[1]))
+  assert.equal(multiAngles[multiAngles.length - 1], 360,
+    'the bar leaves the last operation that turned it at 0 up')
+  assert.ok(!multi.gcode.split('\n').some((line) => line === 'G0 A0.000'),
+    'no closing unwind is written; the end turn goes forward')
+  assert.match(multi.gcode, /G53 G0 Z/, 'and it retracts in machine coordinates first')
+
+  // A footer template that lowers Z behind the emitter's back is written after
+  // the operation's retract. The footer is the one template class the export
+  // guard still lets move an axis; the emitter adds nothing after it, so the
+  // program ends exactly where the non-rotary one would (#1091).
+  const base = machine('own', 'x')
+  const dropping = {
+    ...base,
+    program: { ...base.program, footer: [...base.program.footer, 'G0 Z-2'] },
+  }
+  const droppingResult = post(round.project, dropping, [{
+    operation: round.operation,
+    tool: normalizedTool(round.project, round.operation),
+    moves,
+  }])
+  assert.match(droppingResult.gcode, /G0 Z-2\nM30/, 'the template line is the last motion, before the end')
+  const tail = droppingResult.gcode.split('\n')
+  const templateAt = tail.indexOf('G0 Z-2')
+  assert.ok(templateAt > 0, 'the template line is written')
+  assert.ok(!tail.slice(templateAt).some((line) => /\bA-?[0-9]/.test(line)), 'no A word is invented after it')
+}
+
+// ── 3. a Z-moving template cannot hide the cutter height ──────
+
+console.log('Testing the template Z-unknown rule...')
+{
+  const { project, operation, stock } = fixture({ axis: 'x', units: 'mm' })
+  const travelZ = barPivotZ(stock) + barMaxRadius(stock) + convertLength(1, 'mm', 'mm')
+  const emittedTravel = emittedTravelZ(stock, 'mm', machine('own', 'x'), project)
+  const centre = barCentre(stock)
+  const point = (along: number, z: number, a: number): ToolpathPoint => ({ x: along, y: centre, z, a })
+  const first: PostableOperation = {
+    operation,
+    tool: normalizedTool(project, operation),
+    moves: [
+      { kind: 'rapid', from: point(15, travelZ, 0), to: point(15, travelZ, 0) },
+      { kind: 'cut', from: point(15, travelZ, 0), to: point(15, travelZ, 30) },
+    ],
+  }
+  const secondTool: Tool = { ...project.tools[0], id: 't2', name: 'Ball 2 second' }
+  project.tools = [...project.tools, secondTool]
+  const secondOp: Operation = { ...operation, id: 'op2', name: 'Operation 2', toolRef: 't2' }
+  const second: PostableOperation = {
+    operation: secondOp,
+    tool: normalizeToolForProject(secondTool, project),
+    // The first block of the second operation turns with no Z word: under the
+    // stale-Z bug it executes at the tool change's low Z.
+    moves: [
+      { kind: 'rapid', from: point(15, travelZ, 30), to: point(15, travelZ, 60) },
+      { kind: 'cut', from: point(15, travelZ, 60), to: point(15, travelZ, 75) },
+    ],
+  }
+  // A tool-change template is the valid seam that still moves Z before the
+  // second operation's first block (#1119 guard: an operation header is inert).
+  const definition = machineWithTemplates('own', 'x', {
+    toolChange: [`G0 Z${(emittedTravel - 2).toFixed(6)}`],
+  })
+  const result = post(project, definition, [first, second], true)
+  assert.deepEqual(result.warnings, [], 'the program is recoverable, so it is not refused')
+  const audit = auditProgram(result.gcode, 'A', emittedTravel, emittedHalfStep(definition, 'mm'))
+  assert.deepEqual(audit.violations, [], 'the template Z move is repaired before the next A word')
+  assert.ok(audit.turns >= 3, 'the probe turns to A30, then establishes A60 and A75')
+  // The template line is still emitted: the program did not silently drop it.
+  assert.match(result.gcode, new RegExp(`G0 Z${(emittedTravel - 2).toFixed(6)}`), 'the template Z move is written')
+}
+
+// ── 4. restored round-bar turning-feed precedence ─────────────
+
+console.log('Testing round-bar refusal precedence with an unestablished feed...')
+{
+  const { project, operation, stock } = fixture({ axis: 'x', units: 'mm', round: true })
+  const definition = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    id: 'no-inverse',
+    rotary: {
+      about: 'x',
+      drive: 'own',
+      reversed: false,
+      inverseTimeFeed: null,
+    },
+  })
+  const centre = barCentre(stock)
+  const high = stock.thickness + 5
+  const at = (a: number): ToolpathPoint => ({ x: 15, y: centre, z: high, a })
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0), to: at(0) },
+    // A feed that starts before the controller is at A45: the tracker stops
+    // here. The later feed turns (A45 -> A90) and must still select the
+    // inverse-time refusal, not the unestablished-angle one.
+    { kind: 'cut', from: at(45), to: at(45) },
+    { kind: 'cut', from: at(45), to: at(90) },
+  ]
+  const result = post(project, definition, [{
+    operation,
+    tool: normalizedTool(project, operation),
+    moves,
+  }])
+  assert.deepEqual(
+    result.warnings.map((warning) => warning.code),
+    ['postRotaryNoInverseTime'],
+    'the later turning feed decides the round-bar refusal, as before M1G',
+  )
+}
+
+console.log('engine/gcode/squareRotaryProgramSafety.test.ts: all assertions passed')

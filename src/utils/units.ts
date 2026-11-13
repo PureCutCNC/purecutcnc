@@ -26,6 +26,7 @@ import type {
   GridSettings,
   LocalConstraint,
   LocalDimension,
+  MachiningSetup,
   NamedDimension,
   Operation,
   Point,
@@ -39,6 +40,7 @@ import type {
   TextFeatureData,
   Tool,
 } from '../types/project'
+import { convertCannedShapeData } from '../cannedShapes'
 
 export type Units = ProjectMeta['units']
 
@@ -233,13 +235,30 @@ function convertTextFeatureData(text: TextFeatureData | null | undefined, from: 
   return text ? { ...text, size: convertLength(text.size, from, to) } : text
 }
 
-function convertStlFeatureData(stl: STLFeatureData | null | undefined, from: Units, to: Units): STLFeatureData | null | undefined {
+/**
+ * Convert a definition's STL record.
+ *
+ * `convertScale` is false for a canned definition: its mesh is regenerated in
+ * the new units from the converted parameters by `rebuildCannedShapeModels`, so
+ * `stl.scale` is the dimensionless user factor applied to that mesh, not a
+ * bridge between two coordinate systems. Converting it too would apply the unit
+ * change twice and grow the model 25.4x on inch -> mm (issue #1157). An imported
+ * model's asset stays in its source coordinates, so its scale does convert.
+ */
+function convertStlFeatureData(
+  stl: STLFeatureData | null | undefined,
+  from: Units,
+  to: Units,
+  convertScale: boolean,
+): STLFeatureData | null | undefined {
   if (!stl) return stl
   return {
     ...stl,
-    // The persisted mesh asset remains in its source coordinate system. Its
-    // per-feature scale is the project-unit bridge and must change with units.
-    scale: convertLength(stl.scale, from, to),
+    ...(convertScale ? { scale: convertLength(stl.scale, from, to) } : {}),
+    // A canned definition has no silhouette of its own: nothing creates one, and
+    // the rebuild regenerates the mesh from the parameters and drops any stored
+    // paths. Converting a stale one is therefore harmless. An imported model's
+    // silhouette is real project-space geometry and must convert.
     silhouettePaths: stl.silhouettePaths?.map((path) =>
       path.map((point) => convertPoint(point, from, to))),
   }
@@ -255,7 +274,15 @@ function convertFeatureDefinition(
     profile: convertProfile(definition.profile, from, to),
     dimensions: definition.dimensions.map((dimension) => convertLocalDimension(dimension, from, to)),
     text: convertTextFeatureData(definition.text, from, to),
-    stl: convertStlFeatureData(definition.stl, from, to),
+    // Canned parameters are project-unit lengths. The generator owns which of
+    // its fields are lengths; a stored shape whose parameters kept the old unit
+    // would regenerate at the wrong size (issue #1112).
+    ...(definition.canned
+      ? { canned: convertCannedShapeData(definition.canned, (value) => convertLength(value, from, to)) }
+      : {}),
+    // A canned definition regenerates its mesh in the new units, so its scale
+    // must not be converted with it (issue #1157). Imported models keep theirs.
+    stl: convertStlFeatureData(definition.stl, from, to, !definition.canned),
   }
 }
 
@@ -308,6 +335,10 @@ function convertTool(tool: Tool, from: Units, to: Units): Tool {
     defaultPlungeFeed: convertLength(tool.defaultPlungeFeed, from, to),
     defaultStepdown: convertLength(tool.defaultStepdown, from, to),
     maxCutDepth: convertLength(tool.maxCutDepth, from, to),
+    ...(tool.type === 'plasma' ? {
+      pierceHeight: convertLength(tool.pierceHeight ?? 0, from, to),
+      cutHeight: convertLength(tool.cutHeight ?? 0, from, to),
+    } : {}),
   }
 }
 
@@ -318,9 +349,15 @@ export function convertToolUnits(tool: Tool, toUnits: Units): Tool {
 function convertOperation(operation: Operation, from: Units, to: Units): Operation {
   return {
     ...operation,
+    ...(operation.plasmaLeadInLength === undefined ? {} : { plasmaLeadInLength: convertLength(operation.plasmaLeadInLength, from, to) }),
+    ...(operation.plasmaLeadOutLength === undefined ? {} : { plasmaLeadOutLength: convertLength(operation.plasmaLeadOutLength, from, to) }),
+    ...(operation.plasmaStartPoint === undefined ? {} : { plasmaStartPoint: { x: convertLength(operation.plasmaStartPoint.x, from, to), y: convertLength(operation.plasmaStartPoint.y, from, to) } }),
+    ...(operation.plasmaStartPoints === undefined ? {} : { plasmaStartPoints: Object.fromEntries(Object.entries(operation.plasmaStartPoints).map(([id, point]) => [id, { x: convertLength(point.x, from, to), y: convertLength(point.y, from, to) }])) }),
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
     plungeFeed: convertLength(operation.plungeFeed, from, to),
+    ...(operation.rotaryChuckSupport === undefined ? {} : { rotaryChuckSupport: convertLength(operation.rotaryChuckSupport, from, to) }),
+    ...(operation.rotaryTailSupport === undefined ? {} : { rotaryTailSupport: convertLength(operation.rotaryTailSupport, from, to) }),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
     stockToLeaveAxial: convertLength(operation.stockToLeaveAxial, from, to),
     trochoidalCutWidth: operation.trochoidalCutWidth === undefined
@@ -384,6 +421,26 @@ function convertOrigin(origin: Project['origin'], from: Units, to: Units): Proje
   }
 }
 
+/** Registration points are stock-space lengths; everything else about a setup is unitless. */
+function convertSetup(setup: MachiningSetup, from: Units, to: Units): MachiningSetup {
+  return {
+    ...setup,
+    registration: setup.registration.map((reference) => {
+      const { target } = reference
+      if (target.type === 'point') {
+        return { ...reference, target: { ...target, point: convertPoint(target.point, from, to) } }
+      }
+      if (target.type === 'edge') {
+        return {
+          ...reference,
+          target: { ...target, start: convertPoint(target.start, from, to), end: convertPoint(target.end, from, to) },
+        }
+      }
+      return reference
+    }),
+  }
+}
+
 function convertBackdrop(backdrop: BackdropImage, from: Units, to: Units): BackdropImage {
   return {
     ...backdrop,
@@ -430,6 +487,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),
+    setups: (project.setups ?? []).map((setup) => convertSetup(setup, fromUnits, toUnits)),
     tabs: project.tabs.map((tab) => convertTab(tab, fromUnits, toUnits)),
     clamps: project.clamps.map((clamp) => convertClamp(clamp, fromUnits, toUnits)),
   }

@@ -16,7 +16,7 @@
 
 import { test as base, expect, type Page } from '@playwright/test'
 import * as ui from './selectors'
-import { seedToolpathVisProject } from './toolpathVisibility.helpers'
+import { openRendererMenu, rendererFallbackNotice, rendererGear, seedToolpathVisProject } from './toolpathVisibility.helpers'
 
 /**
  * WebGL-unavailable smoke test (issue #786).
@@ -69,10 +69,14 @@ test('opens into a usable Sketch and says each 3D view is unavailable', async ({
   await expect(sketchTab).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByText("PureCutCNC couldn't start on this device")).toHaveCount(0)
 
-  // Sketch does real work without WebGL: a project loads and its toolpaths draw with Canvas.
+  // Sketch does real work without WebGL. The GPU layer is the default since
+  // issue #1087, so a fresh profile here exercises the automatic fallback: a
+  // project loads, its toolpaths draw with Canvas, and the generation gear
+  // says why (the notice moved there from the legend, issue #1102).
   await seedToolpathVisProject(page)
   await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible()
-  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(rendererGear(page)).toHaveAttribute('aria-label', /GPU unavailable; using Canvas\./)
 
   await ui.viewMenu.tab3d(page).click()
   await expect(page.locator('#workspace-panel-preview3d').getByRole('status')
@@ -85,18 +89,24 @@ test('opens into a usable Sketch and says each 3D view is unavailable', async ({
   await expect(page.locator('canvas.sketch-canvas')).toBeVisible()
 })
 
-test('a GPU toolpath renderer falls back to Canvas and says so with the panel collapsed', async ({ page }) => {
+test('a GPU toolpath renderer falls back to Canvas and says so with the legend collapsed', async ({ page }) => {
   await openApp(page, '/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
 
-  const notice = page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })
+  // The notice lives on the generation gear since issue #1102, so collapsing
+  // the toolpath legend cannot hide it (the #786 rule, kept).
   const toggle = ui.toolpathVis.toggle(page)
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(notice).toHaveCount(1)
-
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(notice).toBeVisible()
-  await expect(notice.getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
+  // The sketch legend still marks it while collapsed: the gear can be hidden
+  // with the CAM panel (review of PR #1105).
+  const legendMark = page.locator('.viewport-toolpath-vis__fallback')
+  await expect(legendMark).toBeVisible()
+  await expect(legendMark).toHaveAttribute('title', 'GPU unavailable; using Canvas.')
+  await expect(rendererGear(page)).toHaveClass(/cam-generation-gear--flagged/)
+  await expect(rendererGear(page)).toHaveAttribute('aria-label', /GPU unavailable; using Canvas\./)
+  await openRendererMenu(page)
+  await expect(rendererFallbackNotice(page)).toContainText('GPU unavailable; using Canvas.')
+  await expect(rendererFallbackNotice(page).getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
 })

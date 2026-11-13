@@ -14,16 +14,29 @@
  * limitations under the License.
  */
 
+import { ChuckRangeWarning } from './ChuckProperties'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { FeatureOperation, RegionMaskMode } from '../../types/project'
+import type { DragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { CannedShapeData, FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
+import { barSeedsModel } from '../../store/helpers/projectType'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
+import { activeFace, aroundUnavailableReason, isBarModelFeature, isFaceEditInProgress, isGhostFeature, isModelFeature, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { switchWorkspaceFace } from '../../store/workspaceFace'
+import { FaceChip } from './FaceChip'
+import { referencePickIntent } from '../canvas/referencePickIntent'
+import { featureUncutWarnings } from '../cam/uncutWork'
+import { rotaryPatternSurfaceWarnings } from '../../store/helpers/rotarySurface'
+import { aroundSurfaceStarts } from '../../store/helpers/turnedSheet'
+import { aroundSurfaceStartText } from './aroundSurfaceStartText'
+import { UncutWorkBadge } from '../common/UncutWorkBadge'
+import { NoEffectBadge } from '../common/NoEffectBadge'
+import { useFeatureEffectWarnings } from '../../app/featureEffect/useFeatureEffectWarnings'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -80,7 +93,36 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     hoverFeature,
   } = useProjectStore()
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
+  // Kept work the current stock (or an operation that reaches the centreline)
+  // cannot cut, derived once per project rather than per row (issue #1112 K).
+  const uncutWarnings = useMemo(() => featureUncutWarnings(project, features), [project, features])
+  // Features erased by later opposite features (issue #1112 N). Analysed off
+  // the main thread after edits settle; this is the latest snapshot, never a
+  // stale answer for an earlier edit.
+  const noEffectWarnings = useFeatureEffectWarnings(project, features)
+  // A Thread/Flutes band over a model or across a diameter change warns on its
+  // own row (issue #1112 H, decision 10); the dialog shows the same rule.
+  const rotaryWarnings = useMemo(
+    () => rotaryPatternSurfaceWarnings(project, features.map((feature) => feature.id)),
+    [project, features],
+  )
+  // An Around shape that starts above the Turn it sits on, or across a Turn's
+  // diameter change (#1131); the marker is a status, like the no-effect one.
+  const surfaceStarts = useMemo(() => aroundSurfaceStarts(project), [project])
   const { t } = useI18n()
+  // A canned Turn or Polygon belongs to the bar, not to a face (issue #1112
+  // rt3-a, item 27). Its row lives in the Around section only, so that section
+  // has to exist wherever the model does — its own presence is enough, even on
+  // Top with no other Around work and no Around setup of its own yet.
+  const barModels = features.filter((feature) => isMachinable(feature) && isBarModelFeature(project, feature))
+  // Face layers, ghost rows and face chips exist only once the project uses
+  // both faces; a Top-only project renders the tree it always did (#945). A bar
+  // model is one more reason to show them: its row is in the Around layer.
+  const bothFaces = projectUsesBothFaces(project) || barModels.length > 0
+  const workspaceFace = activeFace(project)
+  // A face section heading switches face exactly as the header control does,
+  // and refuses the same way: an edit in progress belongs to its own face.
+  const faceEditInProgress = useProjectStore(isFaceEditInProgress)
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -144,16 +186,29 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   })
 
-  function handleFeatureDragStart(id: string) {
+  // WebKitGTK (the Linux desktop webview) will not complete an HTML5 drag whose
+  // data store is empty: `dragstart` and `dragover` fire, but `drop` never
+  // does, so tree rows dragged in the desktop build reordered nothing (#1178).
+  // Storing the row id keeps the drag non-empty; the local drag state below
+  // still decides what the drop means.
+  function beginReorderDrag(event: DragEvent, id: string) {
+    event.dataTransfer.setData('text/plain', id)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  function handleFeatureDragStart(event: DragEvent, id: string) {
+    beginReorderDrag(event, id)
     setDragItem({ kind: 'feature', id })
   }
 
-  function handleFolderDragStart(id: string) {
+  function handleFolderDragStart(event: DragEvent, id: string) {
+    beginReorderDrag(event, id)
     setDragItem({ kind: 'folder', id })
   }
 
   function handleDragOver(event: DragEvent, target: { kind: 'features' | 'folder' | 'feature'; id?: string }) {
     event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
     dragOverTarget.current = target
   }
 
@@ -306,6 +361,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   // project is valid with no warning. The store enforces this, but a loaded file
   // could be malformed.
   const machiningFeatures = features.filter(isMachinable)
+  // Around's layer appears when the project has Around content — a bar model
+  // counts — or the workspace is on it. A flat-only project keeps exactly the
+  // two layers it has today (issue #395).
+  const faceLayers: readonly SetupFace[] = workspaceFace === 'around'
+    || barModels.length > 0
+    || machiningFeatures.some((feature) => feature.authoringFace === 'around')
+    ? ['top', 'bottom', 'around']
+    : ['top', 'bottom']
   const solidFeatures = features.filter(isSolid)
   const regionFeatures = features.filter(isRegion)
   const constructionFeatures = features.filter(isConstruction)
@@ -313,8 +376,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   const regionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'regions')
   const constructionFolders = project.featureFolders.filter((folder) => (folder.section ?? 'features') === 'construction')
   const firstSolidFeature = solidFeatures[0] ?? null
+  // A rotary project's bar is already the material (#1054), so a leading
+  // Subtract is valid there; a block project keeps the base-add rule.
+  const barIsMaterial = barSeedsModel(project)
   const firstFeatureInvalid =
     !!firstSolidFeature
+    && !barIsMaterial
     && firstSolidFeature.operation !== 'add'
     && !(firstSolidFeature.kind === 'stl' && firstSolidFeature.operation === 'model')
 
@@ -345,10 +412,70 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return feature !== undefined && isConstruction(feature) && feature.folderId === null
   })
 
-  function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
+  function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number, layered = false) {
     const feature = features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
+    }
+
+    const through = bothFaces && isThroughFeature(project, feature)
+    const throughChip = through
+      ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
+      : null
+    // Kept work that the current stock can no longer cut (issue #1112 K). The
+    // reason is the engine's own rule, worded in `uncutWork.ts`; the row keeps
+    // every action it had — nothing is hidden or removed.
+    const uncutWarning = uncutWarnings.get(feature.id)
+    // Later features erase this row's contribution to the final shape
+    // (issue #1112 N). Status only: every action on the row stays as it was.
+    const noEffectWarning = noEffectWarnings.has(feature.id)
+      ? t('featureTree.treeRow.warning.noEffect')
+      : undefined
+    const surfaceStart = surfaceStarts.get(feature.id)
+    const surfaceStartWarning = surfaceStart ? aroundSurfaceStartText(t, surfaceStart, project.meta.units) : undefined
+    const rotaryWarning = rotaryWarnings.get(feature.id)
+    const rowWarning = uncutWarning
+      ?? (rotaryWarning ? t(rotaryWarning.key, rotaryWarning.values) : undefined)
+    if (isGhostFeature(project, feature)) {
+      // A ghost: listed for reference, with the way to its own face on the
+      // row menu. It cannot be selected, dragged or edited from here. A model
+      // is never a ghost; a through-feature is not one on either flat face.
+      const openGhostMenu = onFeatureContextMenu
+        ? (x: number, y: number) => onFeatureContextMenu(feature.id, x, y)
+        : undefined
+      return (
+        <TreeRow
+          key={feature.id}
+          label={feature.name}
+          kind="feature"
+          depth={depth}
+          ghost
+          title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : feature.authoringFace === 'around' ? 'featureTree.face.ghostRowAround' : 'featureTree.face.ghostRowTop')}
+          warning={rowWarning}
+          effectWarning={noEffectWarning}
+          surfaceStartWarning={surfaceStartWarning}
+          chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
+          isSelected={false}
+          isDragging={false}
+          dataFeatureId={feature.id}
+          visible={feature.visible}
+          operation={feature.operation}
+          profileClosed={feature.sketch.profile.closed}
+          regionMaskMode={feature.regionMaskMode ?? 'include'}
+          onClick={() => {
+            if (!feature.visible || !isConstruction(feature)) return
+            const state = useProjectStore.getState()
+            const intent = referencePickIntent(state)
+            if (intent === 'distribution-guide') state.setFeatureDistributionGuide(feature.id)
+            if (intent === 'text-guide') state.setTextLayoutGuide(feature.id)
+          }}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
+          onContextMenu={(event) => openGhostMenu?.(event.clientX, event.clientY)}
+          onMoreMenu={openGhostMenu}
+        />
+      )
     }
 
     const defId = getDefinitionId(feature)
@@ -373,9 +500,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         operation={feature.operation}
         profileClosed={feature.sketch.profile.closed}
         regionMaskMode={feature.regionMaskMode ?? 'include'}
-        isFirstFeature={feature.id === firstSolidFeature?.id}
-        subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id)}
+        isFirstFeature={feature.id === firstSolidFeature?.id && !barIsMaterial}
+        subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id, project)}
         linkedCount={linkedCount}
+        warning={rowWarning}
+        effectWarning={noEffectWarning}
+        surfaceStartWarning={surfaceStartWarning}
+        chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
@@ -401,12 +532,141 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onMoveUp={canMoveUp ? () => handleMoveFeature(feature.id, -1) : undefined}
         onMoveDown={canMoveDown ? () => handleMoveFeature(feature.id, 1) : undefined}
         draggable
-        onDragStart={() => handleFeatureDragStart(feature.id)}
+        onDragStart={(event) => handleFeatureDragStart(event, feature.id)}
         onDragEnd={() => setDragItem(null)}
         onDragOver={(event) => handleDragOver(event, { kind: 'feature', id: feature.id })}
         onDrop={handleDrop}
       />
     )
+  }
+
+  // Which face layer a feature row belongs to.
+  //
+  // A canned Turn or Polygon is a solid about the bar, not a shape on a face
+  // (issue #1112 rt3-a, item 27): it is listed once, in the Around section,
+  // whichever face it was created from and whichever face is being worked on.
+  // Storage authors it on Top for the persisted-model loader, so its authoring
+  // face cannot be the rule.
+  //
+  // Any other model — an imported mesh — is not tied to a face either
+  // (issue #1112 I), so it is listed once, in the layer being worked on; every
+  // other feature belongs to the face it was drawn on. Listing a model under
+  // its authoring face *and* the current one would duplicate one row.
+  function inFaceLayer(feature: { authoringFace?: SetupFace; definitionId?: string; kind?: string; canned?: CannedShapeData | null }, face: SetupFace): boolean {
+    if (isBarModelFeature(project, feature)) return face === 'around'
+    return isModelFeature(project, feature) ? face === workspaceFace : feature.authoringFace === face
+  }
+
+  /**
+   * The machining features and folders under "Features". `face` null lists
+   * them all (a Top-only project); a face lists only that face's, under its
+   * layer row. Rows keep the section's own depth either way: the layer row is
+   * a heading, not another level of indent the narrow panel cannot spare.
+   */
+  function renderMachiningEntries(face: SetupFace | null) {
+    const baseDepth = 1
+    return rootEntries.map((entry, rootIdx) => {
+              if (entry.type === 'feature') {
+                const entryFeature = features.find((item) => item.id === entry.featureId)
+                if (face !== null && (!entryFeature || !inFaceLayer(entryFeature, face))) return null
+                return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
+              }
+
+              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+              if (!folder) {
+                return null
+              }
+
+              const allFolderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
+              // A folder shows in each layer it has features on; an empty one
+              // belongs to the layer being worked on.
+              const folderFeatures = face === null
+                ? allFolderFeatures
+                : allFolderFeatures.filter((feature) => inFaceLayer(feature, face))
+              if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
+                return null
+              }
+              if (face !== null && face !== workspaceFace) {
+                return (
+                  <div key={folder.id}>
+                    <TreeRow
+                      label={folder.name}
+                      kind="folder"
+                      depth={baseDepth}
+                      ghost
+                      isSelected={false}
+                      isDragging={false}
+                      onClick={() => {}}
+                      collapsed={folder.collapsed}
+                      onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                      onMouseEnter={() => hoverFeature(null)}
+                      onMouseLeave={() => hoverFeature(null)}
+                    />
+                    {!folder.collapsed ? (
+                      <div className="tree-children">
+                        {folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, baseDepth + 1, fIdx, folderFeatures.length, true))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              }
+              const folderVisible = folderFeatures.some((f) => f.visible)
+              const canMoveFolderUp = tabletShell && rootIdx > 0
+              const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
+              return (
+                <div key={folder.id}>
+                  <TreeRow
+                    label={folder.name}
+                    kind="folder"
+                    depth={baseDepth}
+                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
+                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
+
+                    visible={folderVisible}
+                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                    onMouseEnter={() => hoverFeature(null)}
+                    onMouseLeave={() => hoverFeature(null)}
+                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
+                    onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
+                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
+                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
+                    draggable
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
+                    onDragEnd={() => setDragItem(null)}
+                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
+                    onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
+                  />
+                  {!folder.collapsed ? (
+                    <div className="tree-children">
+                      {folderFeatures.length === 0 ? (
+                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
+                      ) : (
+                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, baseDepth + 1, fIdx, folderFeatures.length))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })
   }
 
   return (
@@ -491,84 +751,77 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onDragOver={(event) => handleDragOver(event, { kind: 'features' })}
           onDrop={handleDrop}
         />
-        {featuresCollapsed ? null : machiningFeatures.length === 0 && featureFolders.length === 0 ? (
-          <div className="feature-tree-empty">{t('featureTree.tree.empty.features')}</div>
-        ) : (
+        {/* A project that uses faces shows its sections even before the first
+          * feature: the empty face being worked on is where the next one goes
+          * (issue #1112 slice B, as the provisional setup already did). */}
+        {featuresCollapsed ? null : bothFaces || machiningFeatures.length > 0 || featureFolders.length > 0 ? (
           <div className="tree-children">
             {firstFeatureInvalid && (
               <div className="feature-tree-warning" role="alert">
                 {t('featureTree.tree.warning.firstFeaturePrefix')}<strong>{t('featureTree.operation.add')}</strong>{t('featureTree.tree.warning.firstFeatureSuffix')}
               </div>
             )}
-            {rootEntries.map((entry, rootIdx) => {
-              if (entry.type === 'feature') {
-                return renderFeatureRow(entry.featureId, 1, rootIdx, rootEntries.length)
-              }
-
-              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
-              if (!folder) {
-                return null
-              }
-
-              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
-              const folderVisible = folderFeatures.some((f) => f.visible)
-              const canMoveFolderUp = tabletShell && rootIdx > 0
-              const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
-              return (
-                <div key={folder.id}>
-                  <TreeRow
-                    label={folder.name}
-                    kind="folder"
-                    depth={1}
-                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
-                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
-
-                    visible={folderVisible}
-                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
-                    collapsed={folder.collapsed}
-                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
-                    onMouseEnter={() => hoverFeature(null)}
-                    onMouseLeave={() => hoverFeature(null)}
-                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
-                    onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
-                    grouped={folder.grouped ?? false}
-                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
-                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
-                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
-                    draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
-                    onDragEnd={() => setDragItem(null)}
-                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
-                    onDrop={handleDrop}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      if (folder.grouped && folderFeatures.length > 0) {
-                        if (selection.groupFolderId !== folder.id) {
-                          selectFolderFeatures(folder.id)
-                        }
-                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
-                      }
-                    }}
-                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
-                      if (selection.groupFolderId !== folder.id) {
-                        selectFolderFeatures(folder.id)
-                      }
-                      onFeatureContextMenu(folderFeatures[0].id, x, y)
-                    } : undefined}
-                  />
-                  {!folder.collapsed ? (
-                    <div className="tree-children">
-                      {folderFeatures.length === 0 ? (
-                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
-                      ) : (
-                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
-                      )}
+            {bothFaces
+              ? faceLayers.map((face) => {
+                  const count = machiningFeatures.filter((feature) => inFaceLayer(feature, face)).length
+                  const active = face === workspaceFace
+                  const entries = renderMachiningEntries(face)
+                  // A face with nothing on it says so, once it is the face
+                  // being worked on: an empty layer is where the next feature
+                  // goes (issue #1112 slice B, the provisional setup).
+                  const emptySection = !entries.some((entry) => entry !== null)
+                  // An empty face's section is a place to start, not a permanent
+                  // row: it shows while that face is current, or once it has
+                  // something on it. Otherwise looking at an empty Bottom and
+                  // returning to Around would leave Bottom behind, because
+                  // Around already makes the project use both faces.
+                  if (!active && count === 0 && emptySection) return null
+                  // A heading switches face — the same action and the same
+                  // refusal as the header control. The ACTIVE/GHOST badges are
+                  // gone: the heading's own colour marks the current face, and
+                  // the one being worked on needs no tooltip to say so. Around
+                  // keeps its layer when its content exists but the stock is no
+                  // longer a bar; the heading says why it cannot be entered
+                  // instead of doing nothing (issue #1034's authoring guard).
+                  const aroundRefused = face === 'around' && aroundUnavailableReason(project) !== null
+                  const title = active
+                    ? undefined
+                    : aroundRefused
+                      ? t('dialogs.rotary.around.needsRoundBar')
+                      : faceEditInProgress
+                        ? t('appShell.face.busy')
+                        : t(face === 'top' ? 'appShell.face.switchToTop' : face === 'bottom' ? 'appShell.face.switchToBottom' : 'canvas.face.aroundTurnsBar')
+                  return (
+                    <div key={face} className="tree-face-group" data-face={face}>
+                      <button
+                        type="button"
+                        className={`tree-face-layer tree-face-layer--${face}${active ? ' tree-face-layer--active' : ''}`}
+                        data-face-layer={face}
+                        data-face-state={active ? 'active' : 'ghost'}
+                        aria-pressed={active}
+                        disabled={aroundRefused || (faceEditInProgress && !active)}
+                        title={title}
+                        onClick={() => switchWorkspaceFace(face)}
+                      >
+                        <Icon id={face === 'top' ? 'face-top' : face === 'bottom' ? 'face-bottom' : 'face-around'} size={16} />
+                        <span className="tree-face-layer__label">
+                          {t(face === 'top' ? 'featureTree.face.topFace' : face === 'bottom' ? 'featureTree.face.bottomFace' : 'featureTree.face.aroundLayer')}
+                        </span>
+                        <span className="tree-face-layer__count">{count}</span>
+                      </button>
+                      <div className="tree-face-children">
+                        {active && emptySection ? (
+                          <div className="feature-tree-empty">{t('featureTree.face.empty')}</div>
+                        ) : null}
+                        {entries}
+                      </div>
                     </div>
-                  ) : null}
-                </div>
-              )
-            })}
+                  )
+                })
+              : renderMachiningEntries(null)}
           </div>
+        ) : (
+          <div className="feature-tree-empty">{t('featureTree.tree.empty.features')}</div>
         )}
         <TreeRow
           label={t('featureTree.tree.regions')}
@@ -624,7 +877,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
@@ -712,7 +965,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                     onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
                     onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
                     draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragStart={(event) => handleFolderDragStart(event, folder.id)}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
                     onDrop={handleDrop}
@@ -757,6 +1010,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onAddTab={() => startAddTabPlacement()}
+          addTabDisabled={workspaceFace === 'around'}
           onShowAll={() => setAllTabsVisible(true)}
           onHideAll={() => setAllTabsVisible(false)}
           onSelectAll={() => selectAllTabs()}
@@ -819,6 +1073,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
               <TreeRow
                 key={clamp.id}
                 label={clamp.name}
+                chips={<ChuckRangeWarning clamp={clamp} stock={project.stock} units={project.meta.units} compact />}
                 kind="clamp"
                 depth={1}
                 isSelected={selection.selectedClampIds.includes(clamp.id)}
@@ -855,6 +1110,11 @@ interface TreeRowProps {
   label: string
   kind: 'project' | 'grid' | 'stock' | 'origin' | 'backdrop' | 'features' | 'regions' | 'constructions' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
+  /** A row from the face the workspace is not on: shown, never editable (issue #945). */
+  ghost?: boolean
+  /** Small tags after the label: the face a ghost is on, THRU. */
+  chips?: ReactNode
+  title?: string
   isSelected: boolean
   isDragging: boolean
   dataFeatureId?: string
@@ -865,6 +1125,12 @@ interface TreeRowProps {
   isFirstFeature?: boolean
   subtractDisabled?: boolean
   linkedCount?: number
+  /** Kept work the current stock cannot cut; the row shows a warning marker. */
+  warning?: string
+  /** Later features erase this row's contribution; the row shows a warning marker. */
+  effectWarning?: string
+  /** An Around shape that starts above its surface (#1131). */
+  surfaceStartWarning?: string
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -877,6 +1143,8 @@ interface TreeRowProps {
   onToggleOperation?: (operation: FeatureOperation) => void
   onAddFolder?: () => void
   onAddTab?: () => void
+  /** Around has no tabs: the Add tab button stays visible but disabled. */
+  addTabDisabled?: boolean
   onAddClamp?: () => void
   onShowAll?: () => void
   onHideAll?: () => void
@@ -888,7 +1156,7 @@ interface TreeRowProps {
   collapsed?: boolean
   onToggleCollapsed?: () => void
   draggable?: boolean
-  onDragStart?: () => void
+  onDragStart?: (event: DragEvent) => void
   onDragEnd?: () => void
   onDragOver?: (event: DragEvent) => void
   onDrop?: () => void
@@ -898,6 +1166,9 @@ function TreeRow({
   label,
   kind,
   depth = 0,
+  ghost = false,
+  chips,
+  title,
   isSelected,
   isDragging,
   dataFeatureId,
@@ -908,6 +1179,9 @@ function TreeRow({
   isFirstFeature = false,
   subtractDisabled = false,
   linkedCount,
+  warning,
+  effectWarning,
+  surfaceStartWarning,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -920,6 +1194,7 @@ function TreeRow({
   onToggleOperation,
   onAddFolder,
   onAddTab,
+  addTabDisabled = false,
   onAddClamp,
   onShowAll,
   onHideAll,
@@ -972,10 +1247,13 @@ function TreeRow({
         isSelected ? 'tree-row--selected' : '',
         isGroupSelected ? 'tree-row--group-selected' : '',
         isDragging ? 'tree-row--dragging' : '',
+        ghost ? 'tree-row--ghost' : '',
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
         kind === 'feature' && operation === 'construction' ? 'tree-row--construction' : '',
       ].join(' ')}
       data-feature-id={dataFeatureId}
+      data-ghost={ghost ? 'true' : undefined}
+      title={title}
       onClick={onClick}
       onMouseDown={(event) => {
         if (event.shiftKey) {
@@ -1116,6 +1394,10 @@ function TreeRow({
             <Icon id="link" className="tree-icon--link" />
           </span>
         ) : null}
+        {kind === 'feature' && warning ? <UncutWorkBadge text={warning} /> : null}
+        {kind === 'feature' && effectWarning ? <NoEffectBadge text={effectWarning} /> : null}
+        {kind === 'feature' && surfaceStartWarning ? <NoEffectBadge text={surfaceStartWarning} surfaceStart /> : null}
+        {chips}
       </div>
       <div className="tree-row-actions">
         {(kind === 'features' || kind === 'regions' || kind === 'constructions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (
@@ -1164,12 +1446,13 @@ function TreeRow({
           <button
             type="button"
             className="tree-action-btn"
+            disabled={addTabDisabled}
             onClick={(event) => {
               event.stopPropagation()
               onAddTab()
             }}
-            title={t('featureTree.treeRow.addEntry.tab')}
-            aria-label={t('featureTree.treeRow.addEntry.tab')}
+            title={t(addTabDisabled ? 'featureTree.treeRow.addEntry.tabAround' : 'featureTree.treeRow.addEntry.tab')}
+            aria-label={t(addTabDisabled ? 'featureTree.treeRow.addEntry.tabAround' : 'featureTree.treeRow.addEntry.tab')}
           >
             +
           </button>

@@ -19,6 +19,8 @@ import { createPortal } from 'react-dom'
 import { Icon } from '../Icon'
 import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { useProjectStore } from '../../store/projectStore'
+import { activeFace, aroundSketchAuthoringRefused } from '../../store/helpers/activeFace'
 import { TextToolDialog } from '../project/TextToolDialog'
 import type { TextToolConfig } from '../../text'
 import { useCreationShapeCommands, type CreationShape } from '../../commands/creationShapes'
@@ -26,6 +28,8 @@ import { useSketchCommands } from '../../commands/sketchCommands'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import type { CreationTarget } from '../../store/types'
+import { RotaryPatternActions } from './toolbar/RotaryPatternActions'
+import { RotarySolidActions } from './toolbar/RotarySolidActions'
 
 function RailButton({
   icon,
@@ -33,6 +37,7 @@ function RailButton({
   active = false,
   emphasized = false,
   disabled = false,
+  disabledReason,
   onClick,
 }: {
   icon: string
@@ -40,6 +45,7 @@ function RailButton({
   active?: boolean
   emphasized?: boolean
   disabled?: boolean
+  disabledReason?: string
   onClick: () => void
 }) {
   return (
@@ -49,6 +55,7 @@ function RailButton({
         type="button"
         aria-label={label}
         disabled={disabled}
+        title={disabled && disabledReason ? disabledReason : undefined}
         onClick={(e) => {
           onClick()
           e.currentTarget.blur()
@@ -56,7 +63,9 @@ function RailButton({
       >
         <Icon id={icon} />
       </button>
-      <span className="tool-rail__tooltip" role="tooltip">{label}</span>
+      <span className="tool-rail__tooltip" role="tooltip">
+        {disabled && disabledReason ? `${label} — ${disabledReason}` : label}
+      </span>
     </div>
   )
 }
@@ -144,7 +153,30 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
   const [showDistributePopover, setShowDistributePopover] = useState(false)
   const [lastCreationShape, setLastCreationShape] = useState<CreationShape>('rect')
   const { t } = useI18n()
+  const project = useProjectStore((state) => state.project)
+  // On a square blank's Around sheet the sheet is round-only, so the drawing
+  // rail is hidden there. The desktop creation block keeps the same entries
+  // listed and disabled with the reason (issue #1112 decision 17); the rail is
+  // left as #1016 C2-U1/U2 built it.
+  const sketchAuthoringRefused = aroundSketchAuthoringRefused(project, activeFace(project))
+  const aroundFace = activeFace(project) === 'around'
   const sketchCommands = useSketchCommands()
+  const cannedRefusal = sketchCommands.predicates.hasCannedSelectedFeatures
+    ? t('sketch.canned.actionRefused')
+    : undefined
+  // A rotary canned shape refuses the three transforms, and its Resize names
+  // its own editor — the same reasons the context menu shows (issue #1112
+  // rt7-f). The rail is a third door onto the same commands.
+  const rotaryTransformRefusal = sketchCommands.predicates.hasRotaryCannedSelectedFeatures
+    ? t('sketch.canned.actionRefused')
+    : undefined
+  const rotaryResizeRefusal = sketchCommands.predicates.rotaryCannedShapeLabelKey
+    ? t('featureTree.contextMenu.resizeCannedTooltip', {
+        edit: t('featureTree.properties.canned.edit', {
+          shape: t(sketchCommands.predicates.rotaryCannedShapeLabelKey as MessageKey),
+        }),
+      })
+    : rotaryTransformRefusal
   const creationCommands = useCreationShapeCommands({
     onRequestText: () => setShowTextDialog(true),
   })
@@ -199,6 +231,8 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     <>
       <nav className="tool-rail" aria-label={t('appShell.drawer.tools')}>
         {/* Creation target toggle */}
+        {sketchAuthoringRefused ? null : (
+        <>
         <div className="tool-rail__section">
           <div className="tool-rail__target-toggle">
             <button
@@ -217,7 +251,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               aria-pressed={creationCommands.creationTarget === 'line'}
               onClick={() => creationCommands.setCreationTarget('line')}
             >
-              <Icon id="snap-line" />
+              <Icon id="line-target" />
             </button>
             <button
               className={`tool-rail__target-btn tool-rail__target-btn--region ${creationCommands.creationTarget === 'region' ? 'tool-rail__target-btn--active' : ''}`}
@@ -226,7 +260,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               aria-pressed={creationCommands.creationTarget === 'region'}
               onClick={() => creationCommands.setCreationTarget('region')}
             >
-              <Icon id="pocket" />
+              <Icon id="region" />
             </button>
             <button
               className={`tool-rail__target-btn tool-rail__target-btn--construction ${creationCommands.creationTarget === 'construction' ? 'tool-rail__target-btn--active' : ''}`}
@@ -273,6 +307,19 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             onClick={lastCreationOption.onActivate}
           />
         </div>
+        </>
+        )}
+
+        {/* Turn and Polygon, and on a round bar Thread and Flutes. The solid
+            entries work on either bar shape; Thread and Flutes self-guard on a
+            round bar. The group renders only on Around, so no empty rail
+            section is left behind on a flat face. */}
+        {aroundFace && (
+          <div className="tool-rail__section">
+            <RotarySolidActions variant="rail" />
+            <RotaryPatternActions variant="rail" />
+          </div>
+        )}
 
         {/* Edit tools (visible when features selected) */}
         {sketchCommands.predicates.hasSelectedFeatures && (
@@ -280,13 +327,13 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             <RailButton icon="copy" label={t('appShell.toolRail.copy')} active={sketchCommands.transform.copy.active} onClick={sketchCommands.transform.copy.onActivate} />
             <RailButton icon="move" label={t('appShell.toolRail.move')} active={sketchCommands.transform.move.active} disabled={!sketchCommands.transform.move.enabled} onClick={sketchCommands.transform.move.onActivate} />
             <RailButton icon="trash" label={t('appShell.toolRail.delete')} onClick={sketchCommands.transform.delete.onActivate} />
-            <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} onClick={sketchCommands.transform.resize.onActivate} />
-            <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} onClick={sketchCommands.transform.rotate.onActivate} />
-            <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} onClick={sketchCommands.transform.mirror.onActivate} />
-            <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} onClick={sketchCommands.boolean.offset.onActivate} />
-            <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} onClick={sketchCommands.constraint.onActivate} />
-            <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} onClick={sketchCommands.boolean.join.onActivate} />
-            <RailButton icon="cut" label={t('appShell.toolRail.cut')} active={sketchCommands.boolean.cut.active} onClick={sketchCommands.boolean.cut.onActivate} />
+            <RailButton icon="resize" label={t('appShell.toolRail.resize')} active={sketchCommands.transform.resize.active} disabled={!sketchCommands.transform.resize.enabled} disabledReason={rotaryResizeRefusal} onClick={sketchCommands.transform.resize.onActivate} />
+            <RailButton icon="rotate" label={t('appShell.toolRail.rotate')} active={sketchCommands.transform.rotate.active} disabled={!sketchCommands.transform.rotate.enabled} disabledReason={rotaryTransformRefusal} onClick={sketchCommands.transform.rotate.onActivate} />
+            <RailButton icon="mirror" label={t('appShell.toolRail.mirror')} active={sketchCommands.transform.mirror.active} disabled={!sketchCommands.transform.mirror.enabled} disabledReason={rotaryTransformRefusal} onClick={sketchCommands.transform.mirror.onActivate} />
+            <RailButton icon="offset" label={t('appShell.toolRail.offset')} active={sketchCommands.boolean.offset.active} disabled={!sketchCommands.boolean.offset.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.offset.onActivate} />
+            <RailButton icon="constraint" label={t('appShell.toolRail.constraint')} active={sketchCommands.constraint.active} disabled={!sketchCommands.constraint.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.constraint.onActivate} />
+            <RailButton icon="merge" label={t('appShell.toolRail.join')} active={sketchCommands.boolean.join.active} disabled={!sketchCommands.boolean.join.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.join.onActivate} />
+            <RailButton icon="cut" label={t('appShell.toolRail.cut')} active={sketchCommands.boolean.cut.active} disabled={!sketchCommands.boolean.cut.enabled} disabledReason={cannedRefusal} onClick={sketchCommands.boolean.cut.onActivate} />
           </div>
         )}
 

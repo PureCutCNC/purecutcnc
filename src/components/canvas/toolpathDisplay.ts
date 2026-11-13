@@ -331,7 +331,14 @@ export function toolpathDisplayGeometry(
   return geometry
 }
 
-/** Return the pan-independent scaled-world rectangle currently covered by a canvas. */
+/**
+ * Return the pan-independent scaled-world rectangle currently covered by a
+ * canvas. A mirrored view (a Bottom setup, issue #945) shows the reflection
+ * of that rectangle: the canvas spans `mirror − w` rather than `w` on the
+ * mirrored axis, so the rectangle is reflected with it. Culling against the
+ * unreflected one drops whatever is on screen as soon as the view is not
+ * symmetric about the flip line.
+ */
 export function canvasDisplayViewport(
   canvas: { width: number; height: number } | undefined,
   vt: ViewTransform,
@@ -339,11 +346,13 @@ export function canvasDisplayViewport(
   if (!canvas || !Number.isFinite(canvas.width) || !Number.isFinite(canvas.height) || canvas.width <= 0 || canvas.height <= 0) {
     return null
   }
+  const reflectX = vt.mirrorX === undefined ? null : vt.mirrorX * vt.scale + vt.offsetX
+  const reflectY = vt.mirrorY === undefined ? null : vt.mirrorY * vt.scale + vt.offsetY
   return {
-    minX: -vt.offsetX,
-    minY: -vt.offsetY,
-    maxX: canvas.width - vt.offsetX,
-    maxY: canvas.height - vt.offsetY,
+    minX: reflectX === null ? -vt.offsetX : reflectX - canvas.width,
+    minY: reflectY === null ? -vt.offsetY : reflectY - canvas.height,
+    maxX: reflectX === null ? canvas.width - vt.offsetX : reflectX,
+    maxY: reflectY === null ? canvas.height - vt.offsetY : reflectY,
   }
 }
 

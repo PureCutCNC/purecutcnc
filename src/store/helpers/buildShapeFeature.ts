@@ -16,6 +16,7 @@
 
 import type { CreationTarget } from '../types'
 import type { FeatureOperation, Project, SketchFeature, SketchProfile } from '../../types/project'
+import { newFeatureSpan } from './activeFace'
 import { isConstruction, isRegion } from './featureRoles'
 import { nextUniqueGeneratedId } from './ids'
 import { inferLineTopZFromEnclosingFeature, inferManualFeatureOperation } from './manualFeatureOperation'
@@ -68,8 +69,8 @@ export function buildShapeFeature(
       constraints: [],
     },
     operation,
-    z_top: zTop,
-    z_bottom: 0,
+    // `zTop` is a height above the face being drawn on (issue #945).
+    ...newFeatureSpan(project, zTop),
     visible: true,
     locked: false,
   }

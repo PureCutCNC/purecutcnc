@@ -24,18 +24,28 @@
  * extracted verbatim from `CAMPanel.tsx` so the panel's hints are unchanged.
  */
 
+import { isRotaryOperationKind } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
+import { operationFace } from '../../engine/setupTargets'
+import { activeFace } from '../../store/helpers/activeFace'
 import type { SelectionState } from '../../store/types'
-import type { Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+import type { Operation, OperationKind, OperationPass, OperationTarget, Project, SetupFace } from '../../types/project'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
+import { featureReachableFromFace, judgeTargetsFromFace } from '../../engine/setupTargets'
+import { aroundFeaturesActive } from '../../store/helpers/projectType'
 import { camT } from './camI18n'
+import { machineMode, operationOffer } from './machineMode'
 
-type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
+/** Every resolved feature of one project, keyed by id — what the hint reads. */
+export type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return camT('cam.plasma.title')
     case 'pocket':
       return camT('cam.opLabel.pocket')
     case 'v_carve':
@@ -48,6 +58,10 @@ export function operationKindLabel(kind: OperationKind): string {
       return camT('cam.opLabel.edgeRouteOutside')
     case 'surface_clean':
       return camT('cam.opLabel.surfaceClean')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.opLabel.roughSurface')
     case 'finish_surface':
@@ -87,16 +101,126 @@ function emptySelectionHint(kind: OperationKind): string {
   }
 }
 
+/** The face the active setup turns up. A project without setups has only Top. */
+function activeSetupFace(project: Project): SetupFace {
+  return activeFace(project)
+}
+
+/**
+ * Why the active setup cannot cut a selection, or null when it can (issue
+ * #946). A new operation joins the active setup, so its targets have to be
+ * drawn on the face that setup turns up, or reach both stock faces. The rule
+ * is `setupTargets.ts`'s — the same one the store enforces — so a selection
+ * that passes here is never refused by `addOperation` for its face.
+ */
+export function activeSetupTargetHint(project: Project, featureIds: readonly string[]): string | null {
+  const face = activeSetupFace(project)
+  const rejected = judgeTargetsFromFace(project, { source: 'features', featureIds: [...featureIds] }, face)
+    .filter((verdict) => verdict.status === 'rejected')
+  if (rejected.length === 0) return null
+  return camT(
+    face === 'top' ? 'cam.hint.otherFaceFromTop' : face === 'bottom' ? 'cam.hint.otherFaceFromBottom' : 'cam.hint.otherFaceFromAround',
+    { features: rejected.map((verdict) => verdict.featureName).join(', ') },
+  )
+}
+
+function rotaryTargetHint(project: Project, operation: Operation): string | null {
+  const target = operation.target
+  // A rotary operation's target is the model itself, so "no target" and "no
+  // imported model in the project" are the same refusal: say which rotary kind
+  // needs the model, not the flat 3D-surface message (#1015).
+  if (target.source !== 'features' || target.featureIds.length === 0) return rotaryNoModelHint(operation.kind)
+  const features = resolveFeatureInstances(project, target.featureIds)
+  if (features.length !== target.featureIds.length) return camT('cam.hint.featuresNotFound')
+  const models = features.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+  // A closed Around region is a **filter** on a rotary target (#1096), exactly
+  // as on the other Around operations, so it belongs in the target beside the
+  // model rather than making the target wrong.
+  const regions = features.filter((feature) => isRegion(feature))
+  const onlyFilters = features.length === regions.length
+  if (models.length === 0) return onlyFilters ? rotaryNoModelHint(operation.kind) : camT('cam.rotary.modelOnly')
+  return regions.every((region) => region.authoringFace === 'around' && featureHasClosedGeometry(region))
+    && features.length === models.length + regions.length
+    ? null : camT('cam.rotary.modelOnly')
+}
+
+/**
+ * The imported models a rotary operation can machine, in project order. The
+ * model lives in the bar and only rotary operations target it, so the whole
+ * project is the candidate set regardless of what is selected (issue #1015).
+ */
+function importedModelFeatures(project: Project): ResolvedSketchFeature[] {
+  return resolveFeatureInstances(project)
+    .filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+}
+
+function importedModelFeatureIds(project: Project): string[] {
+  return importedModelFeatures(project).map((feature) => feature.id)
+}
+
+/** The per-kind hint for a rotary add-menu row when the project has no model. */
+function rotaryNoModelHint(kind: OperationKind): string {
+  return camT(kind === 'rotary_rough' ? 'cam.rotary.roughNoModel' : 'cam.rotary.finishNoModel')
+}
+
+/** Saved-operation refusals shown above the rotary operation's controls. */
+export function rotaryOperationHint(project: Project, operation: Operation): string | null {
+  if (!isRotaryOperationKind(operation.kind)) return null
+  // A rotary operation belongs to a rotary project (issue #1028); outside one
+  // it is kept, shown as what it is, and refused like a missing Around face.
+  if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
+  // A rotary model lives in the bar, round or square (issue #1016 C2-U1): the
+  // generated square-to-round target is a rotary model too. The string key is
+  // unchanged and now means "no bar at all" (a block).
+  if (!isBarStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+  if (operationFace(project, operation) !== 'around') return camT('cam.rotary.aroundRequired')
+  const targetHint = rotaryTargetHint(project, operation)
+  if (targetHint) return targetHint
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!tool) return camT('cam.operation.noTool')
+  return tool.type === 'ball_endmill' || tool.type === 'flat_endmill' ? null : camT('cam.rotary.toolRequired')
+}
+
 export function getOperationAddHint(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    if (!aroundFeaturesActive(project)) return camT('cam.rotary.aroundRequired')
+    if (!isBarStock(project.stock)) return camT('cam.rotary.roundStockRequired')
+    if (activeSetupFace(project) !== 'around') return camT('cam.rotary.aroundRequired')
+    // The model lives in the bar and only rotary operations touch it, so these
+    // rows do not depend on the selection (issue #1015): any imported model
+    // makes them available, and the selection only narrows what Add targets.
+    return importedModelFeatureIds(project).length > 0 ? null : rotaryNoModelHint(kind)
+  }
   if (selection.selectedFeatureIds.length === 0) {
     return emptySelectionHint(kind)
   }
 
-  return getOperationAddHintWithMap(selection, kind, resolvedFeatureMap(project))
+  // What the selection is comes first; which face it is on only matters for
+  // a selection the operation could otherwise take.
+  return operationSelectionHint(selection, kind, resolvedFeatureMap(project))
+    ?? activeSetupTargetHint(project, selection.selectedFeatureIds)
+}
+
+/**
+ * The selection half of {@link getOperationAddHint}: why `kind` cannot take
+ * this selection at all, or null when it can.
+ *
+ * Separate because the face half is `activeSetupTargetHint`, and a caller
+ * judging a feature from the face it was *not* authored on asks the two in a
+ * different order than the CAM panel does (issue #1112 F2): the rotary rows
+ * deliberately ignore the selection when Add creates them, so a feature list
+ * built for one feature must still check that this feature is a model.
+ */
+export function operationSelectionHint(
+  selection: SelectionState,
+  kind: OperationKind,
+  featureById: ResolvedFeatureMap,
+): string | null {
+  return getOperationAddHintWithMap(selection, kind, featureById)
 }
 
 function getOperationAddHintWithMap(
@@ -104,6 +228,11 @@ function getOperationAddHintWithMap(
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string | null {
+  if (isRotaryOperationKind(kind)) {
+    const features = selection.selectedFeatureIds.map((id) => featureById.get(id))
+    return features.length > 0 && features.every((feature) => feature?.kind === 'stl' && feature.operation === 'model')
+      ? null : camT('cam.rotary.modelOnly')
+  }
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target, so any selection containing it is rejected up front
   // with one clear message (issue #199).
@@ -112,6 +241,13 @@ function getOperationAddHintWithMap(
     return feature !== undefined && isConstruction(feature)
   })) {
     return camT('cam.hint.construction')
+  }
+
+  if (kind === 'plasma_profile') {
+    const features = selection.selectedFeatureIds.map((id) => featureById.get(id))
+    return features.length > 0 && features.every((feature) => feature !== undefined
+      && feature.kind !== 'stl' && ['add', 'subtract', 'line'].includes(feature.operation)
+      && featureHasClosedGeometry(feature)) ? null : camT('cam.plasma.closedOnly')
   }
 
   if (kind === 'drilling') {
@@ -279,12 +415,55 @@ function getOperationAddHintWithMap(
  * their own copy of these rules, which drifted from it (issue #861). On top of
  * the hint, every selected id must still resolve: a target never carries an id
  * that names no feature.
+ *
+ * `requireSelection` is for the **update** route (an existing operation's "Use
+ * current selection"): the rotary rows intentionally target every model with
+ * nothing selected, which is right when adding an operation and a silent
+ * target reset when editing one. The panel asks for a selection there, so a
+ * stray click can never drop a region filter or a narrowed model set.
+ *
+ * `currentTarget` is the operation being updated. A selection that names only a
+ * region has no model in it, and the rotary default would then add every
+ * imported model back -- including one the user had unchecked (#1096 review,
+ * P2). With the current target in hand the model half is kept instead.
  */
 export function operationTargetFromSelection(
   project: Project,
   selection: SelectionState,
   kind: OperationKind,
+  options: { requireSelection?: boolean; currentTarget?: OperationTarget } = {},
 ): OperationTarget | null {
+  if (isRotaryOperationKind(kind)) {
+    // The rotary rows do not depend on the selection (issue #1015): a selected
+    // model narrows the target, otherwise every imported model in the project
+    // is machined as one surface. A selected closed Around region is added as
+    // a filter (#1096), the same way a region joins the other Around
+    // operations' targets.
+    if (getOperationAddHint(project, selection, kind) !== null) {
+      return null
+    }
+    if (options.requireSelection && selection.selectedFeatureIds.length === 0) {
+      return null
+    }
+    const models = importedModelFeatureIds(project)
+    const selected = new Set(selection.selectedFeatureIds)
+    const chosen = models.filter((id) => selected.has(id))
+    // #1096 review (P2): adding a region must keep the current model choice.
+    // Only a newly selected model replaces it; a region-only selection keeps
+    // the model ids the operation already targets (filtered to models that
+    // still exist), and only an operation with no usable model falls back to
+    // every model.
+    const currentModels = options.currentTarget?.source === 'features'
+      ? options.currentTarget.featureIds.filter((id) => models.includes(id))
+      : []
+    const regionIds = resolveFeatureInstances(project, selection.selectedFeatureIds)
+      .filter((feature) => isRegion(feature) && feature.authoringFace === 'around' && featureHasClosedGeometry(feature))
+      .map((feature) => feature.id)
+      .sort()
+    const modelIds = chosen.length > 0 ? chosen : currentModels.length > 0 ? currentModels : models
+    return { source: 'features', featureIds: [...modelIds, ...regionIds] }
+  }
+
   if (selection.selectedFeatureIds.length === 0) {
     return null
   }
@@ -314,6 +493,7 @@ export type QuickOperationGroup = '2d' | '3d'
  * instead of silently defaulting into the 2D half of the menu.
  */
 const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
+  plasma_profile: '2d',
   pocket: '2d',
   edge_route_inside: '2d',
   edge_route_outside: '2d',
@@ -322,6 +502,8 @@ const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
   surface_clean: '2d',
   follow_line: '2d',
   drilling: '2d',
+  rotary_rough: '3d',
+  rotary_finish: '3d',
   rough_surface: '3d',
   finish_surface: '3d',
   finish_surface_cleanup: '3d',
@@ -354,6 +536,7 @@ const QUICK_OPERATION_KINDS: OperationKind[] = [
   'surface_clean',
   'follow_line',
   'drilling',
+  'plasma_profile',
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',
@@ -388,6 +571,12 @@ export function quickOperationLabel(kind: OperationKind): string {
       return camT('cam.quickOp.followLine')
     case 'drilling':
       return camT('cam.quickOp.drilling')
+    case 'plasma_profile':
+      return camT('cam.quickOp.plasmaProfile')
+    case 'rotary_rough':
+      return camT('cam.opLabel.rotaryRough')
+    case 'rotary_finish':
+      return camT('cam.opLabel.rotaryFinish')
     case 'rough_surface':
       return camT('cam.quickOp.roughSurface')
     case 'finish_surface':
@@ -404,7 +593,7 @@ export function quickOperationLabel(kind: OperationKind): string {
  * the tree/canvas produce when exactly that feature is selected. Used to run a
  * feature through `getOperationAddHint` without touching the live selection.
  */
-function singleFeatureSelection(featureId: string): SelectionState {
+export function singleFeatureSelection(featureId: string): SelectionState {
   return {
     mode: 'feature',
     selectedFeatureId: featureId,
@@ -434,8 +623,19 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
     return []
   }
 
+  // A feature the active setup cannot reach has no quick operation at all.
+  if (activeSetupTargetHint(project, [featureId]) !== null) {
+    return []
+  }
+
   const selection = singleFeatureSelection(featureId)
+  const mode = machineMode(project)
   return QUICK_OPERATION_KINDS
+    // The menu follows the machine exactly as the CAM panel's Add menu does:
+    // plasma mode offers only the plasma cut, router mode only the milling
+    // family. A kind the machine cannot add is dropped rather than shown
+    // disabled — the Add menu is where that explanation lives (issue #960).
+    .filter((kind) => operationOffer(mode, kind) === 'available')
     .filter((kind) => getOperationAddHintWithMap(selection, kind, featureById) === null)
     .map((kind) => ({
       kind,
@@ -445,17 +645,38 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
     }))
 }
 
+/**
+ * The rotary kinds "Add to <face>" offers for the setup face in view, before
+ * the machine filter and before validity. A model lives in the bar and only
+ * rotary operations target it, so they are offered on Around alone — never on
+ * Top or Bottom (issue #1015) — and only in a rotary project (issue #1028),
+ * which is the only type with an Around face to offer them on. Every other
+ * kind is offered on every face.
+ */
+export function rotaryAddKindsForFace(project: Project, face: SetupFace): OperationKind[] {
+  return aroundFeaturesActive(project) && face === 'around' ? ['rotary_rough', 'rotary_finish'] : []
+}
+
 function compatibleFeatureIdsForOperationWithMap(
   project: Project,
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string[] {
+  const face = activeSetupFace(project)
+  if (isRotaryOperationKind(kind)) {
+    // Every imported model is a candidate whatever is selected: the model
+    // lives in the bar, not on a face (issue #1015).
+    return importedModelFeatureIds(project)
+  }
   return project.features
     .filter((feature) => getOperationAddHintWithMap(
       singleFeatureSelection(feature.id),
       kind,
       featureById,
     ) === null)
+    // Only what the active setup may target: the highlight and "Select all"
+    // must not offer a feature the store would refuse (issue #946).
+    .filter((feature) => featureReachableFromFace(project, feature, face))
     .map((feature) => feature.id)
 }
 

@@ -26,7 +26,9 @@ import type {
   Tool,
 } from '../../types/project'
 import { sampleProfilePoints } from '../../types/project'
+import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import { convertToolUnits } from '../../utils/units'
+import { DEFAULT_CLIPPER_SCALE } from '../clipperScale'
 import type {
   ClipperPath,
   FlattenedPath,
@@ -35,7 +37,10 @@ import type {
   ResolvedToolpathOperation,
 } from './types'
 
-export const DEFAULT_CLIPPER_SCALE = 10_000
+// Re-exported for the many callers that already read it from this module; the
+// value lives in `clipperScale.ts` so a Clipper-only analysis can avoid this
+// module's store/Three.js-reaching import graph.
+export { DEFAULT_CLIPPER_SCALE } from '../clipperScale'
 
 // Default curve-flattening parameters used when sampling profiles into
 // polylines for Clipper. These are exported (rather than left as inline
@@ -152,6 +157,7 @@ export function resolveFeatureZSpan(project: Pick<Project, 'dimensions'>, featur
 
 export function normalizeToolForProject(tool: Tool, project: Project): NormalizedTool {
   const normalizedTool = tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units)
+  const milling = normalizedTool.type !== 'plasma'
   return {
     id: tool.id,
     name: tool.name,
@@ -160,15 +166,25 @@ export function normalizeToolForProject(tool: Tool, project: Project): Normalize
     type: normalizedTool.type,
     diameter: normalizedTool.diameter,
     radius: normalizedTool.diameter / 2,
+    ...(!milling ? {
+      pierceHeight: normalizedTool.pierceHeight ?? 0, cutHeight: normalizedTool.cutHeight ?? 0,
+      pierceDelay: normalizedTool.pierceDelay ?? 0, qtplasmacMaterialNumber: normalizedTool.qtplasmacMaterialNumber,
+    } : {}),
     vBitAngle: normalizedTool.type === 'v_bit' ? normalizedTool.vBitAngle ?? 60 : null,
-    flutes: normalizedTool.flutes,
+    flutes: milling ? normalizedTool.flutes : 0,
     material: normalizedTool.material,
-    defaultRpm: normalizedTool.defaultRpm,
+    defaultRpm: milling ? normalizedTool.defaultRpm : 0,
     defaultFeed: normalizedTool.defaultFeed,
+    // A plasma tool's plunge feed is its drop feed: G-code piercing drops from
+    // pierce height to cut height at it (#983). It is a consumable value the
+    // operator configures, so it survives normalization (converted to project
+    // units with the rest of the tool) instead of being zeroed like the
+    // milling-only fields below. Zero stays zero: an unconfigured tool blocks
+    // the export rather than inventing a physical feed.
     defaultPlungeFeed: normalizedTool.defaultPlungeFeed,
-    defaultStepdown: normalizedTool.defaultStepdown,
-    defaultStepover: normalizedTool.defaultStepover,
-    maxCutDepth: normalizedTool.maxCutDepth,
+    defaultStepdown: milling ? normalizedTool.defaultStepdown : 0,
+    defaultStepover: milling ? normalizedTool.defaultStepover : 0,
+    maxCutDepth: milling ? normalizedTool.maxCutDepth : 0,
   }
 }
 
@@ -176,7 +192,7 @@ export function resolveOperationTool(project: Project, operation: Operation): Re
   const tool = operation.toolRef ? project.tools.find((c) => c.id === operation.toolRef) ?? null : null
   return {
     operation,
-    tool: tool ? normalizeToolForProject(tool, project) : null,
+    tool: tool && isToolCompatibleWithOperation(tool, operation.kind) ? normalizeToolForProject(tool, project) : null,
     units: project.meta.units,
   }
 }

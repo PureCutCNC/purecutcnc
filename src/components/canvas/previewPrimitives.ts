@@ -20,7 +20,7 @@ import {
   buildToolpathOverlayLayers,
 } from '../viewport3d/toolpathOverlay'
 import { toolpathArrowPlacements } from './toolpathArrows'
-import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
+import { toolpathCollisionAlpha, toolpathLayerStyles, toolpathStrokeAlpha, toolpathStrokeWidth } from './toolpathStyles'
 import {
   canvasDisplayViewport,
   expandDisplayViewport,
@@ -29,8 +29,11 @@ import {
   visiblePackedSegmentOffsets,
   type DisplaySegment,
 } from './toolpathDisplay'
-import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
+import { getFeatureGeometryBounds } from '../../text'
+import { featureDisplayProfiles } from './aroundFeatureDisplay'
+import type { AroundWrapWindow } from './aroundDisplayWrap'
 import {
+  circleProfile,
   getProfileBounds,
   splineProfile,
   slotProfile,
@@ -46,8 +49,9 @@ import {
 import { appendSplineDraftSegment } from './draftGeometry'
 import { pointsEqual } from './hitTest'
 import { appendProfilePath, traceProfilePath } from './profilePrimitives'
-import { worldToCanvas } from './viewTransform'
+import { worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import { flippedZRange } from '../../store/helpers/activeFace'
 import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
 import { canvasFeedColour, feedColourStep } from '../../theme/palette'
 import { zMatchesToolpathLevel } from '../toolpathLevels'
@@ -60,6 +64,7 @@ export function drawLineFeatureBatch(
   ctx: CanvasRenderingContext2D,
   features: SketchFeature[],
   vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
 ): void {
   if (features.length === 0) return
   const batchSize = 128
@@ -70,7 +75,7 @@ export function drawLineFeatureBatch(
     ctx.beginPath()
     const end = Math.min(start + batchSize, features.length)
     for (let index = start; index < end; index += 1) {
-      for (const profile of getFeatureGeometryProfiles(features[index])) {
+      for (const profile of featureDisplayProfiles(features[index], sheet)) {
         appendProfilePath(ctx, profile, vt)
       }
     }
@@ -83,9 +88,17 @@ export function drawFeatureInfo(
   feature: SketchFeature,
   vt: ViewTransform,
   units: 'mm' | 'inch',
+  stockThickness?: number,
 ): void {
-  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
-  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  const stockTop = typeof feature.z_top === 'number' ? feature.z_top : 5
+  const stockBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  // A Bottom feature is labelled the way its Z range is edited: as the stock
+  // sits flipped, so it reads like the same feature on Top (issue #945).
+  const flipped = feature.authoringFace === 'bottom' && stockThickness !== undefined
+    ? flippedZRange({ z_top: stockTop, z_bottom: stockBottom }, { thickness: stockThickness })
+    : null
+  const zTop = flipped ? flipped.top : stockTop
+  const zBottom = flipped ? flipped.bottom : stockBottom
   const bounds = getFeatureGeometryBounds(feature)
   const center = worldToCanvas(
     { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
@@ -142,6 +155,8 @@ export function drawFeature(
   hovered: boolean,
   editing: boolean,
   groupSelected: boolean,
+  stockThickness?: number,
+  sheet?: AroundWrapWindow | null,
 ): void {
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
@@ -205,7 +220,7 @@ export function drawFeature(
     fill = `rgba(${base.r}, ${g}, ${b}, 0.44)`
   }
 
-  const profiles = getFeatureGeometryProfiles(feature)
+  const profiles = featureDisplayProfiles(feature, sheet)
   for (const profile of profiles) {
     traceProfilePath(ctx, profile, vt)
     if (profile.closed && featureUsesSketchFill(feature.operation)) {
@@ -223,7 +238,7 @@ export function drawFeature(
   }
 
   if (showInfo) {
-    drawFeatureInfo(ctx, feature, vt, units)
+    drawFeatureInfo(ctx, feature, vt, units, stockThickness)
   }
 }
 
@@ -360,10 +375,10 @@ export function traceDraftSegments(
     const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
     if (segment.type === 'circle') {
-      ctx.arc(center.cx, center.cy, radius, startAngle, startAngle + Math.PI * 2, segment.clockwise)
+      ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, startAngle + Math.PI * 2, segment.clockwise, vt))
     } else {
       const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
-      ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+      ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, segment.clockwise, vt))
     }
     current = segment.to
   }
@@ -599,6 +614,8 @@ export interface ToolpathDisplayRenderOptions {
   simplifyForDisplay?: boolean
   /** Selected planar Z level, or All when null. Display-only (issue #752). */
   selectedLevel?: number | null
+  /** Cut in a setup the workspace is not on: drawn faint (issue #947). */
+  muted?: boolean
 }
 
 export function drawToolpath(
@@ -611,7 +628,7 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
-  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null }: ToolpathDisplayRenderOptions = {},
+  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null, muted = false }: ToolpathDisplayRenderOptions = {},
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -652,7 +669,7 @@ export function drawToolpath(
         ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
       }
       ctx.strokeStyle = stroke
-      ctx.globalAlpha = emphasized ? 1 : 0.34
+      ctx.globalAlpha = toolpathStrokeAlpha(emphasized, muted)
       ctx.lineWidth = toolpathStrokeWidth(layer.lineWidth, emphasized)
       ctx.setLineDash(layer.dash)
       ctx.stroke()
@@ -692,7 +709,7 @@ export function drawToolpath(
       ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
     }
     ctx.strokeStyle = canvasColors().toolpathCollision
-    ctx.globalAlpha = emphasized ? 1 : 0.55
+    ctx.globalAlpha = toolpathCollisionAlpha(emphasized, muted)
     ctx.lineWidth = emphasized ? 3 : 2.2
     ctx.setLineDash([])
     ctx.stroke()
@@ -894,10 +911,34 @@ export function drawPendingGear(
       outsideRadius,
     })
     drawPreviewProfile(ctx, profile, vt, `OD R = ${formatLength(outsideRadius, units)}`)
+    // The bore is never part of the outline `buildGearProfile` returns — the
+    // canned gear emits it as its own nested Subtract outline — so the pending
+    // preview has to draw it here. Without this a bore typed while creating the
+    // gear could not show up on the canvas at all (issue #1112 R2 item 12).
+    if (Number.isFinite(params.boreDiameter) && params.boreDiameter > 0) {
+      drawPreviewHole(ctx, circleProfile(anchor.x, anchor.y, params.boreDiameter / 2), vt)
+    }
   } catch {
     // Invalid parameter combinations are surfaced in the workflow panel.
   }
   drawLineLengthMeasurement(ctx, anchor, cursorPoint, vt, units)
+}
+
+/**
+ * A hole inside a draft profile: filled with the canvas background so the draft
+ * wash around it reads as material, then outlined in the same dashed draft
+ * stroke as the shape itself. Mirrors how a nested Subtract child is painted
+ * rather than erasing what is already on the canvas.
+ */
+function drawPreviewHole(ctx: CanvasRenderingContext2D, profile: SketchProfile, vt: ViewTransform): void {
+  traceProfilePath(ctx, profile, vt)
+  ctx.fillStyle = canvasRgba('background', 1)
+  ctx.fill()
+  ctx.setLineDash([8, 5])
+  ctx.strokeStyle = canvasColors().draft
+  ctx.lineWidth = 2
+  ctx.stroke()
+  ctx.setLineDash([])
 }
 
 export function drawPendingRoundRect(

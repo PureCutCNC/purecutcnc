@@ -16,9 +16,12 @@
 
 import { z } from 'zod'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import type { Project, Operation } from '../../types/project'
+import type { Project, Operation, Stock } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import type { ToolpathResult, NormalizedTool, ToolpathMove } from '../toolpaths/types'
 import type { FittedMoveDescriptor } from './arcFitting'
+import { machineTemplateDiagnostics, templateRuleViolations } from './templateRules'
+import type { MachineTemplateDiagnostic, TemplateRuleDefinition } from './templateRules'
 
 /**
  * Per-operation machine-coordinate motion trace captured by the postprocessor
@@ -47,13 +50,208 @@ const DecimalPlacesSchema = z.union([
     : value
 ))
 
-export const MachineDefinitionSchema = z.object({
+/**
+ * The program language a machine definition exports (issue #953).
+ *
+ * - `gcode` — RS-274 word syntax, driven by the definition's command words
+ *   and templates. This is every definition that predates the field.
+ * - `opensbp` — ShopBot part files (`.sbp`), written by `opensbpEmitter.ts`.
+ *   The definition's G-code command words and templates are not read; only
+ *   the dialect-neutral fields are (`coordinateSystem`, `numberFormat`,
+ *   `fileExtension`, `motion.arcInterpolation`).
+ */
+export const OUTPUT_DIALECTS = ['gcode', 'opensbp'] as const
+export type OutputDialect = (typeof OUTPUT_DIALECTS)[number]
+
+/** Machine kind is optional: legacy snapshots retain their original keys. */
+export const MACHINE_KINDS = ['router', 'plasma'] as const
+export type MachineKind = (typeof MACHINE_KINDS)[number]
+
+const PlasmaCommandSchema = z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.')
+const OptionalPlasmaCommandSchema = z.preprocess(
+  (value) => typeof value === 'string' && !value.trim() ? undefined : value,
+  PlasmaCommandSchema.optional(),
+)
+
+/**
+ * Per-cut touch-off for G-code-owned piercing (#983). Lengths are millimetres
+ * and feeds millimetres per minute whatever the project units; the exporter
+ * converts them. Before each pierce the program probes `probeDepth` below the
+ * current Z zero, then sets Z zero at the trigger point plus `switchOffset`
+ * (the travel a floating head makes before its switch trips; 0 for ohmic).
+ * An absent `switchOffset` means 0 and stays absent: validation injects no
+ * default, so a definition saved without it is stored without it.
+ */
+const PlasmaTouchOffSchema = z.object({
+  probeCommand: PlasmaCommandSchema,
+  probeDepth: z.number().finite().positive(),
+  probeFeed: z.number().finite().positive(),
+  /** Written before ` Z<-switchOffset>`, so it carries no Z word itself. */
+  setZeroCommand: PlasmaCommandSchema,
+  switchOffset: z.number().finite().min(0).optional(),
+})
+export type PlasmaTouchOff = z.infer<typeof PlasmaTouchOffSchema>
+
+const MATERIAL_COMMAND_KEYS = ['materialSelectCommand', 'materialWaitCommand', 'materialFeedCommand'] as const
+
+// `controller`: the controller's material table owns pierce and height
+// (QtPlasmaC), so the material sequence is required and touch-off is absent.
+// `gcode`: the program owns pierce and height (Grbl), so touch-off is required
+// and the material sequence, which nothing would consume, is absent.
+const PlasmaDefinitionSchema = z.object({
+  torchOnCommand: PlasmaCommandSchema,
+  torchOffCommand: PlasmaCommandSchema,
+  materialSelectCommand: OptionalPlasmaCommandSchema,
+  materialWaitCommand: OptionalPlasmaCommandSchema,
+  materialFeedCommand: OptionalPlasmaCommandSchema,
+  thcOnCommand: OptionalPlasmaCommandSchema,
+  thcOffCommand: OptionalPlasmaCommandSchema,
+  pierceMode: z.enum(['controller', 'gcode']),
+  touchOff: PlasmaTouchOffSchema.optional(),
+}).superRefine((block, context) => {
+  for (const key of MATERIAL_COMMAND_KEYS) {
+    if (block.pierceMode === 'controller' && block[key] === undefined) {
+      context.addIssue({ code: 'custom', path: [key], message: 'Controller piercing requires the material sequence.' })
+    }
+    if (block.pierceMode === 'gcode' && block[key] !== undefined) {
+      context.addIssue({ code: 'custom', path: [key], message: 'G-code piercing has no material sequence.' })
+    }
+  }
+  if (block.pierceMode === 'gcode' && !block.touchOff) {
+    context.addIssue({ code: 'custom', path: ['touchOff'], message: 'G-code piercing requires touch-off settings.' })
+  }
+  if (block.pierceMode === 'controller' && block.touchOff) {
+    context.addIssue({ code: 'custom', path: ['touchOff'], message: 'Controller piercing owns touch-off; remove the touch-off block.' })
+  }
+}).transform(({ thcOnCommand, thcOffCommand, touchOff, ...block }) => Object.fromEntries(
+  // Blank optional commands parse as absent, so the saved block never grows an
+  // empty key. THC stays after pierce mode, where #956 wrote it, so existing
+  // snapshots serialize byte-for-byte as before.
+  Object.entries({ ...block, thcOnCommand, thcOffCommand, touchOff }).filter(([, value]) => value !== undefined),
+) as typeof block & { thcOnCommand?: string, thcOffCommand?: string, touchOff?: PlasmaTouchOff })
+
+/**
+ * How a machine turns a round bar (issue #393). The block is optional: a
+ * definition without it is exactly what it was before the field existed, and
+ * only the bundled rotary machines (#1153) carry one.
+ *
+ * - `about` — the PROJECT axis the bar lies along and turns about. Absent means
+ *   the machine follows the project's bar (#1153): the bundled rotary machines
+ *   leave it unset so one machine serves a bar along X and a bar along Y. Read
+ *   it only through `pinRotaryAxis`, which resolves it against the stock.
+ * - `drive` — `own` means the controller has a fourth axis and the program
+ *   uses the word `A`; `borrowed` means the rotary is plugged into the output
+ *   of the other horizontal axis, so the program uses that axis's letter and
+ *   that linear travel is gone.
+ * - `reversed` — a positive angle turns the other way.
+ * - `inverseTimeFeed` — the commands that switch inverse-time feed on and off;
+ *   `null` means the controller has none.
+ * - `zeroA` — the optional "Zero A" program line (issue #1103 slice ca-h), e.g.
+ *   `G10 L20 P1 A0` on grbl/grblHAL/LinuxCNC. It is empty on every bundled
+ *   definition and by default; when it is filled, each rotary operation opens
+ *   with it (after a clearance retract, before its first turn) so the
+ *   operation starts reading A0 wherever the bar is. An empty field is what
+ *   makes the emitter pause between rotary operations for the operator to
+ *   zero A by hand. Allowed forms are the ones that set the A coordinate to
+ *   zero and move no axis (`templateRules.ts` refuses anything else).
+ * - `angleScalesWithUnits` — the controller converts its A word like a length
+ *   under G20 (#1153): a Grbl 1.1 fork with a fourth axis turns `A10` by 254°
+ *   in an inch program. Read it through `rotaryEnforcesMm`, which also covers
+ *   a borrowed motor, whose angle is a linear word on every controller.
+ */
+export const RotaryDefinitionSchema = z.object({
+  about: z.enum(['x', 'y']).optional(),
+  drive: z.enum(['own', 'borrowed']),
+  reversed: z.boolean().default(false),
+  inverseTimeFeed: z.object({
+    on: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
+    off: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.'),
+  }).nullable().default({ on: 'G93', off: 'G94' }),
+  // Optional, like an absent key elsewhere in the schema: a definition saved
+  // before the field existed reads as "not configured", so no format version
+  // changes and no migration runs (#1103 slice ca-h). Written only when set,
+  // which is also why every bundled definition stays byte-identical.
+  zeroA: z.string().optional(),
+  // Optional for the same reason as `zeroA`: absent means false, and it is
+  // written only when true, so a definition without it keeps its bytes.
+  angleScalesWithUnits: z.boolean().optional(),
+})
+export type RotaryDefinition = z.infer<typeof RotaryDefinitionSchema>
+
+/** A rotary block whose bar axis has been resolved (#1153). */
+export type PinnedRotaryDefinition = RotaryDefinition & { about: 'x' | 'y' }
+
+/**
+ * A machine definition whose rotary block, if any, names its bar axis. The
+ * rotary helpers below take only this type, so a definition that follows the
+ * bar cannot reach them without passing through `pinRotaryAxis` first.
+ */
+export type PinnedMachineDefinition = Omit<MachineDefinition, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+
+/**
+ * Resolve a definition's bar axis against the stock it will cut (#1153). An
+ * explicit `about` wins; a machine that follows the bar takes the bar's own
+ * axis, and stock that is not a bar reads as X. This is the only place an
+ * absent `about` is read.
+ */
+export function pinRotaryAxis<T extends Pick<MachineDefinition, 'rotary'>>(
+  definition: T,
+  stock: Stock | null | undefined,
+): Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition } {
+  const rotary = definition.rotary
+  if (!rotary) return definition as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+  if (rotary.about !== undefined) return definition as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+  const about = stock && isBarStock(stock) ? stock.axis : 'x'
+  // Keep the key order a definition with an explicit axis has, so a pinned
+  // copy serializes exactly as a hand-made one would.
+  return { ...definition, rotary: { about, ...rotary } } as Omit<T, 'rotary'> & { rotary?: PinnedRotaryDefinition }
+}
+
+/** True when the machine leaves its bar axis to the project's stock (#1153). */
+export function rotaryFollowsStock(definition: Pick<MachineDefinition, 'rotary'> | null | undefined): boolean {
+  return definition?.rotary != null && definition.rotary.about === undefined
+}
+
+/**
+ * True when a rotary program for this machine must be in millimetres (#1153):
+ * a borrowed motor writes the angle under a linear axis word, which every
+ * controller converts like a length under G20, and an own axis flagged
+ * `angleScalesWithUnits` does the same to `A`.
+ */
+export function rotaryEnforcesMm(definition: Pick<MachineDefinition, 'rotary'> | null | undefined): boolean {
+  const rotary = definition?.rotary
+  if (!rotary) return false
+  return rotary.drive === 'borrowed' || rotary.angleScalesWithUnits === true
+}
+
+/**
+ * The schema every persisted definition must satisfy, minus the #1057 template
+ * rules (#1119).
+ *
+ * A 0.5.x project can carry a machine whose templates break a rule the current
+ * build enforces. Refusing it structurally would drop the user's machine the
+ * moment they open the file, so the structural reader — capability checks and
+ * defaults only — is what project snapshots and the custom-machine library are
+ * read through. Template rules are still enforced at the schema boundary for
+ * anything the application *writes* (`MachineDefinitionSchema`), and export
+ * eligibility is derived from `machineTemplateDiagnostics`, never persisted as
+ * a flag on the definition.
+ */
+const MachineDefinitionBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
   vendor: z.string().optional(),
   builtin: z.boolean().default(false),
   fileExtension: z.string(),
+  // Optional rather than defaulted: an absent key means G-code, so parsing an
+  // existing definition adds nothing to it and a saved project's embedded
+  // snapshot stays byte-for-byte what it was. Read it through
+  // `resolveOutputDialect`, never directly.
+  outputDialect: z.enum(OUTPUT_DIALECTS).optional(),
+  machineKind: z.enum(MACHINE_KINDS).optional(),
+  plasma: PlasmaDefinitionSchema.optional(),
+  rotary: RotaryDefinitionSchema.optional(),
   coordinateSystem: z.object({
     xAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
     yAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
@@ -88,6 +286,34 @@ export const MachineDefinitionSchema = z.object({
     arcFormat: z.enum(['ij', 'r']),
     modalMotion: z.boolean(),
     arcInterpolation: z.boolean().default(false),
+    /**
+     * The block prefix that moves an axis in machine coordinates, e.g.
+     * `G53 G0` (issue #1054). Every bar-clearance retract the emitter writes
+     * uses it (#1054 fix 2), because only the machine frame is independent of
+     * any work offset or tool-length compensation. Absent means the G-code
+     * dialect's standard move — `G53` followed by the definition's own
+     * `rapidCommand`; `null` means this machine has none, and a turn that needs
+     * one is refused rather than written.
+     */
+    machineCoordinateCommand: z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.').nullable().optional(),
+    /**
+     * The machine-coordinate Z a bar-clearance retract rapids to with
+     * `machineCoordinateCommand` (issue #1054 fix 3), in **millimetres**
+     * (#1054 fix 4). It is a *machine* coordinate: `G53` is measured from the
+     * machine's own zero, which PureCutCNC knows nothing about, so this must
+     * never be derived from a project origin or the project's Safe Z, and the
+     * project's units conversion does not touch it. The emitter converts it to
+     * the program's output units when it writes the block.
+     *
+     * The default 0 is the top of travel, the convention the bundled grblHAL
+     * footer already uses (`G0 G53 Z0`). It assumes the machine is homed with Z
+     * at the top of travel, so Z0 is the highest reachable point and every
+     * working height is negative below it. A machine homed elsewhere must state
+     * the machine Z it can safely rapid to here: a positive value on a
+     * top-homed machine asks for travel above the limit, which a soft-limit
+     * check rejects or a hard limit crashes into.
+     */
+    machineSafeZ: z.number().finite().default(0),
   }),
   feedSpeed: z.object({
     feedCommand: z.string(),
@@ -123,10 +349,156 @@ export const MachineDefinitionSchema = z.object({
   }),
 })
 
+/**
+ * Capability checks only: a plasma block requires the plasma kind, a rotary
+ * axis cannot ride an `opensbp` dialect or a plasma table, and a borrowed
+ * motor cannot be Z. These are structural — the emitter would have no way to
+ * post such a definition at all — so they stay part of the reader that loads
+ * persisted snapshots and library entries.
+ */
+export const MachineDefinitionStructureSchema = MachineDefinitionBaseSchema.superRefine((definition, context) => {
+  if (definition.plasma && definition.machineKind !== 'plasma') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'A plasma block requires machineKind: plasma.' })
+  }
+  if (definition.machineKind === 'plasma' && definition.outputDialect === 'opensbp') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'Plasma machines require the G-code output dialect.' })
+  }
+  if (definition.machineKind === 'plasma' && !definition.plasma) {
+    context.addIssue({ code: 'custom', path: ['plasma'], message: 'A plasma machine requires a plasma block.' })
+  }
+  if (definition.rotary) {
+    if (resolveOutputDialect(definition) === 'opensbp') {
+      context.addIssue({ code: 'custom', path: ['rotary'], message: 'A rotary axis requires the G-code output dialect.' })
+    }
+    if (definition.machineKind === 'plasma') {
+      context.addIssue({ code: 'custom', path: ['rotary'], message: 'A plasma machine cannot have a rotary axis.' })
+    }
+    if (definition.rotary.drive === 'borrowed') {
+      // A machine that follows the bar (#1153) may borrow either horizontal
+      // motor, so both must be able to carry the rotary.
+      const about = definition.rotary.about
+      const candidates = about === undefined
+        ? [definition.coordinateSystem.yAxis, definition.coordinateSystem.xAxis]
+        : [about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis]
+      if (candidates.some((borrowed) => borrowed === 'Z' || borrowed === '-Z')) {
+        context.addIssue({ code: 'custom', path: ['rotary', 'drive'], message: 'The rotary cannot borrow the Z motor.' })
+      }
+    }
+  }
+})
+
+/**
+ * The strict schema: structure plus the #1057 template rules. Every definition
+ * the application creates, imports or writes must pass this. Machine templates
+ * are restricted by class (#1057 slice F): a program header may only set up
+ * modals, the tool change and the footer may do anything, and every template
+ * that runs inside the program is inert. The emitter no longer recovers from a
+ * template that moves, so a definition that could break that promise is
+ * refused here, naming the field, the line and the offending word.
+ */
+export const MachineDefinitionSchema = MachineDefinitionStructureSchema.superRefine((definition, context) => {
+  for (const violation of templateRuleViolations(definition)) {
+    context.addIssue({ code: 'custom', path: violation.path, message: violation.message })
+  }
+})
+
 export type MachineDefinition = z.infer<typeof MachineDefinitionSchema>
 
+/** Strict parse: structure and the template rules. */
 export function validateMachineDefinition(data: unknown): MachineDefinition {
   return MachineDefinitionSchema.parse(data)
+}
+
+/**
+ * Structural parse: capability checks and defaults, no template rules. Used for
+ * persisted project snapshots and the custom-machine library so a definition
+ * that still breaks a #1057 rule is kept unchanged instead of being dropped on
+ * load (#1119). Export eligibility is decided separately by
+ * `machineTemplateDiagnostics`.
+ */
+export function readMachineDefinitionStructure(data: unknown): MachineDefinition {
+  return MachineDefinitionStructureSchema.parse(data)
+}
+
+/**
+ * The template-rule diagnostics that keep this definition from being exported.
+ * A pure function of the definition: no persisted "invalid" flag, and the same
+ * list is what the editor, the load warning and the export guard show.
+ */
+export function machineExportDiagnostics(definition: TemplateRuleDefinition): MachineTemplateDiagnostic[] {
+  return machineTemplateDiagnostics(definition)
+}
+
+/** An absent kind means router without adding a field to old snapshots. */
+export function resolveMachineKind(definition: Pick<MachineDefinition, 'machineKind'>): MachineKind {
+  return definition.machineKind ?? 'router'
+}
+
+/** The dialect a definition exports; a definition without the field is G-code. */
+export function resolveOutputDialect(definition: Pick<MachineDefinition, 'outputDialect'>): OutputDialect {
+  return definition.outputDialect ?? 'gcode'
+}
+
+/**
+ * The block prefix for a rapid in machine coordinates, or null when this
+ * machine has no such move (issue #1054). G-code's non-modal machine-
+ * coordinate move is `G53`, and every bundled G-code definition supports it;
+ * an explicit `motion.machineCoordinateCommand` overrides that, and `null`
+ * declares the dialect has none. ShopBot part files are not G-code and have no
+ * equivalent, which is why an `opensbp` definition never gets one.
+ */
+export function machineCoordinateRapidCommand(
+  definition: Pick<MachineDefinition, 'motion' | 'outputDialect'>,
+): string | null {
+  if (definition.motion.machineCoordinateCommand !== undefined) {
+    return definition.motion.machineCoordinateCommand
+  }
+  return resolveOutputDialect(definition) === 'gcode'
+    ? `G53 ${definition.motion.rapidCommand}`
+    : null
+}
+
+/**
+ * The coordinate-system entry a borrowed rotary motor drives: the other
+ * horizontal project axis from the one the bar lies along.
+ */
+function borrowedMotorEntry(
+  definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>,
+): PinnedMachineDefinition['coordinateSystem']['xAxis'] | null {
+  const rotary = definition.rotary
+  if (!rotary || rotary.drive !== 'borrowed') return null
+  return rotary.about === 'x' ? definition.coordinateSystem.yAxis : definition.coordinateSystem.xAxis
+}
+
+/** The letter the program uses for rotation, or null when the machine has no rotary axis. */
+export function rotaryWord(definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>): 'A' | 'X' | 'Y' | null {
+  const rotary = definition.rotary
+  if (!rotary) return null
+  if (rotary.drive === 'own') return 'A'
+  const entry = borrowedMotorEntry(definition)
+  // A borrowed Z motor is refused by validation; bailing here keeps the helper
+  // total and never invents a rotary word for a definition that cannot run.
+  return entry === 'X' || entry === '-X' ? 'X' : entry === 'Y' || entry === '-Y' ? 'Y' : null
+}
+
+/** The PROJECT axis whose linear travel is gone because its motor drives the rotary, or null. */
+export function rotaryBorrowedAxis(definition: Pick<PinnedMachineDefinition, 'rotary'>): 'x' | 'y' | null {
+  const rotary = definition.rotary
+  if (!rotary || rotary.drive !== 'borrowed') return null
+  return rotary.about === 'x' ? 'y' : 'x'
+}
+
+/** +1 or -1: what a positive angle is multiplied by on its way into the program. */
+export function rotaryDirection(definition: Pick<PinnedMachineDefinition, 'rotary' | 'coordinateSystem'>): 1 | -1 {
+  const rotary = definition.rotary
+  if (!rotary) return 1
+  let direction: 1 | -1 = rotary.reversed ? -1 : 1
+  // A borrowed motor rides an output that may already run backwards.
+  const entry = borrowedMotorEntry(definition)
+  if (entry !== null && entry.startsWith('-')) {
+    direction = direction === 1 ? -1 : 1
+  }
+  return direction
 }
 
 export interface PostProcessorInput {
@@ -147,19 +519,21 @@ export interface PostProcessorOptions {
   emitCoolant: boolean       // emit coolant commands if definition supports them
   programName?: string       // overrides project.meta.name in header
   /** When true, the postprocessor also returns a per-operation machine-coordinate
-   *  motion trace (see OperationMotionTrace) alongside the G-code text. Debug-only
+   *  motion trace (see OperationMotionTrace) alongside the program text. Debug-only
    *  (issue #356); defaults to false so the normal export path pays no cost. */
   captureMotionTrace?: boolean
 }
 
 export interface PostProcessorResult {
+  /** The program text in the definition's output dialect. The name predates
+   *  dialects (issue #953): for a ShopBot definition this holds SBP, not G-code. */
   gcode: string
   warnings: ToolpathWarning[]
   stats: {
-    /** Physical G-code lines, including setup, comments, and footer. */
+    /** Physical program lines, including setup, comments, and footer. */
     lineCount: number
     operationCount: number
-    /** Motion blocks actually emitted into the G-code after export fitting. */
+    /** Motion blocks actually emitted into the program after export fitting. */
     moveCount: number
   }
   /** Present only when `options.captureMotionTrace` was set. One entry per

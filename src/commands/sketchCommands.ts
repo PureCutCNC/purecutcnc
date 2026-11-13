@@ -33,7 +33,10 @@ import type {
 import type { FeatureDistributionMode } from '../sketch/featureDistribution'
 import type { TextLayoutKind } from '../sketch/textPlacement'
 import { featureHasClosedGeometry } from '../text'
+import { cannedShapeLabelKey, isCannedFeature } from '../cannedShapes'
+import { useNoticeStore } from '../store/noticeStore'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
+import { hasRotaryCannedFeature, isRotaryCannedFeature } from '../store/helpers/cannedShapeActions'
 
 export interface CommandDescriptor {
   id: string
@@ -58,6 +61,21 @@ export interface SketchCommandPredicates {
   hasLockedSelectedFeatures: boolean
   hasClosedSelectedFeatures: boolean
   hasOffsetEligibleSelectedFeatures: boolean
+  /** True when any selected row is a generated (canned) shape or model. */
+  hasCannedSelectedFeatures: boolean
+  /**
+   * True when any selected row is a rotary canned shape (Turn, Polygon,
+   * Thread, Flutes), whose size and orientation live in its parameters. The
+   * three transforms refuse such a selection, exactly as the context menu does
+   * (issue #1112 rt7-f).
+   */
+  hasRotaryCannedSelectedFeatures: boolean
+  /**
+   * The label key of the rotary canned shape a refusal names — the primary
+   * selected row when it is one — or `null`. The toolbar's Resize reason points
+   * at that shape's editor, the way the menu's does.
+   */
+  rotaryCannedShapeLabelKey: string | null
   alignableFeatureIds: string[]
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
@@ -123,8 +141,19 @@ export function deriveSketchCommandPredicates({
   const hasLockedSelectedFeatures = selectedFeatures.some((feature) => feature.locked)
   const hasClosedSelectedFeatures =
     selectedFeatures.length > 0 && selectedFeatures.every((feature) => featureHasClosedGeometry(feature))
+  const hasCannedSelectedFeatures = selectedFeatures.some(isCannedFeature)
+  const hasRotaryCannedSelectedFeatures = hasRotaryCannedFeature(selectedFeatures)
+  // The primary row leads, so the Resize reason names the shape the user
+  // right-clicked rather than the first one in selection order.
+  const rotaryCannedRows = [
+    ...selectedFeatures.filter((feature) => feature.id === primarySelectedFeatureId),
+    ...selectedFeatures.filter((feature) => feature.id !== primarySelectedFeatureId),
+  ].filter(isRotaryCannedFeature)
+  const rotaryCannedShapeLabelKey = rotaryCannedRows.length > 0
+    ? cannedShapeLabelKey(rotaryCannedRows[0].canned)
+    : null
   const hasOffsetEligibleSelectedFeatures =
-    hasClosedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
+    hasClosedSelectedFeatures && !hasCannedSelectedFeatures && selectedFeatures.every((feature) => feature.kind !== 'text')
   const alignableFeatureIds = selectedFeatures
     .filter((feature) => !feature.locked)
     .map((feature) => feature.id)
@@ -150,6 +179,9 @@ export function deriveSketchCommandPredicates({
     hasLockedSelectedFeatures,
     hasClosedSelectedFeatures,
     hasOffsetEligibleSelectedFeatures,
+    hasCannedSelectedFeatures,
+    hasRotaryCannedSelectedFeatures,
+    rotaryCannedShapeLabelKey,
     alignableFeatureIds,
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
@@ -191,25 +223,28 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         active: false,
       },
       resize: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'resize',
       },
       rotate: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'rotate',
       },
       mirror: {
-        enabled: featureTransformAvailable,
+        enabled: featureTransformAvailable && !predicates.hasRotaryCannedSelectedFeatures,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'mirror',
       },
     },
     boolean: {
+      // A generated shape refuses join/cut/offset until it is expanded to
+      // features, so the button is disabled with the reason rather than
+      // opening a workflow that would silently do nothing (#1112 A2).
       join: {
-        enabled: true,
+        enabled: !predicates.hasCannedSelectedFeatures,
         active: input.pendingShapeAction?.kind === 'join',
       },
       cut: {
-        enabled: true,
+        enabled: !predicates.hasCannedSelectedFeatures,
         active: input.pendingShapeAction?.kind === 'cut',
       },
       offset: {
@@ -262,7 +297,9 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
       },
     },
     constraint: {
-      enabled: predicates.hasSelectedFeatures && !predicates.hasLockedSelectedFeatures,
+      enabled: predicates.hasSelectedFeatures
+        && !predicates.hasLockedSelectedFeatures
+        && !predicates.hasCannedSelectedFeatures,
       active: input.pendingConstraint !== null,
     },
     dimension: {
@@ -398,6 +435,10 @@ export function useSketchCommands(): SketchCommandState & {
     if (!state.predicates.selectedConstraintFeatureId) {
       return
     }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+      return
+    }
     if (state.predicates.featureSketchEditActive) {
       store.setSketchEditTool(null)
     }
@@ -407,6 +448,10 @@ export function useSketchCommands(): SketchCommandState & {
   function toggleShapeAction(kind: 'join' | 'cut') {
     if (store.pendingShapeAction?.kind === kind) {
       store.cancelPendingShapeAction()
+      return
+    }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     if (kind === 'join') {
@@ -419,6 +464,10 @@ export function useSketchCommands(): SketchCommandState & {
   function toggleOffset() {
     if (store.pendingOffset) {
       store.cancelPendingOffset()
+      return
+    }
+    if (state.predicates.hasCannedSelectedFeatures) {
+      useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
       return
     }
     store.startOffsetSelectedFeatures()

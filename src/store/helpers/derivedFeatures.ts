@@ -470,6 +470,8 @@ export function createDerivedFeature(
     operation,
     z_top: baseFeature.z_top,
     z_bottom: baseFeature.z_bottom,
+    // Geometry derived from a feature stays on that feature's face (#944).
+    authoringFace: baseFeature.authoringFace,
     visible: true,
     locked: false,
   })

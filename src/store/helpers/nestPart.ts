@@ -17,6 +17,7 @@
 // Sheet nesting, project side (issue #846, step 2 of #741): turns a selection
 // into one rigid part and a packer request. Pure — the store slice commits.
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import {
   flattenProfileWithin,
@@ -41,7 +42,7 @@ import {
 import { normalizeToolForProject, resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
 import { CLAMP_KEEPOUT_EPSILON } from '../../engine/toolpaths/modelProtection'
 import type { ClipperPath } from '../../engine/toolpaths/types'
-import { getFeatureGeometryProfiles, isTextFeature, resolveTextFeatureShapes } from '../../text'
+import { getFeatureGeometryProfiles, resolveFeatureGeometryShapes } from '../../text'
 import {
   getStockBounds,
   type FeatureOperation,
@@ -325,9 +326,9 @@ interface PartShape {
 export function nestPartHoles(project: Project, features: ResolvedSketchFeature[], tolerance: number): NestRing[] {
   const shapes: PartShape[] = features.filter(isMachinable).flatMap((feature) => {
     const span = resolveFeatureZSpan(project, feature)
-    const own = isTextFeature(feature)
-      ? resolveTextFeatureShapes(feature)
-      : [{ operation: feature.operation, profile: feature.sketch.profile }]
+    // Text and canned shapes resolve into several pieces; a hole carries the
+    // inverse operation. A plain feature is its own single shape.
+    const own = resolveFeatureGeometryShapes(feature)
     return own.map((shape) => ({ featureId: feature.id, operation: shape.operation, profile: shape.profile, min: span.min, max: span.max }))
   })
   const adds = shapes.filter((shape) => shape.operation === 'add' && shape.profile.closed)
@@ -398,7 +399,7 @@ function outlineCutters(project: Project, featureIds: string[]): { diameter: num
   return project.operations.flatMap((operation) => {
     if (operation.kind !== 'edge_route_outside' || operation.target.source !== 'features') return []
     if (!operation.target.featureIds.some((id) => ids.has(id))) return []
-    const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+    const tool = findMillingOperationTool(project, operation)
     if (!tool) return []
     return [{ diameter: normalizeToolForProject(tool, project).diameter, leave: Math.max(0, operation.stockToLeaveRadial) }]
   })

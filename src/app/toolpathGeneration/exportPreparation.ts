@@ -32,6 +32,13 @@
  * whole export and says which one; nothing is ever filtered out to make the
  * remainder postable.
  *
+ * ## One program per setup
+ *
+ * The operator turns the part by hand between machining setups, so an export
+ * of a project with more than one setup is a *set* of programs, one per setup
+ * (issue #946). The rule above scales with it: the export is all of its
+ * programs or it is nothing — an error in one program blocks every file.
+ *
  * ## The token
  *
  * A prepared program is bound to the inputs it was built from. Generation is
@@ -43,11 +50,15 @@
  */
 
 import { runPostProcessor } from '../../engine/gcode/postprocessor'
+import { planSetupPrograms } from '../../engine/gcode/setupPrograms'
+import { machineExportDiagnostics } from '../../engine/gcode/types'
 import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/types'
+import type { MachineTemplateDiagnostic } from '../../engine/gcode/templateRules'
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
-import type { Operation, Project } from '../../types/project'
+import { projectMachineMismatch, operationHiddenByProjectType } from '../../store/helpers/projectType'
+import type { Operation, Project, SetupFace } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
 export interface ExportPostOptions {
@@ -62,6 +73,22 @@ export interface PreparedOperation {
   operation: Operation
   tool: NormalizedTool
   toolpath: ToolpathResult
+}
+
+/** One program of an export: the operations of one setup, posted. */
+export interface PreparedProgram {
+  /** The setup the program is for; null for a project without setups. */
+  setupId: string | null
+  /** The setup's name, for labelling the program; null with `setupId`. */
+  setupName: string | null
+  /** 1-based program number: the setup's position in the project. */
+  programNumber: number
+  face: SetupFace
+  /** Suggested file name, without the extension. */
+  fileStem: string
+  result: PostProcessorResult
+  /** This program's operations, in the order they are cut. */
+  operations: PreparedOperation[]
 }
 
 /**
@@ -81,6 +108,9 @@ export interface ExportPreparationToken {
 
 export type ExportBlockReason =
   | { kind: 'no-machine' }
+  /** The selected machine's templates still break a #1057 rule (#1119). The
+   *  list is what the export dialog shows; no program is generated at all. */
+  | { kind: 'machine-invalid'; diagnostics: MachineTemplateDiagnostic[] }
   | { kind: 'no-operations' }
   | { kind: 'generation-failed'; operationId: string; message: string }
   | { kind: 'generation-cancelled'; operationId: string }
@@ -90,7 +120,8 @@ export type ExportBlockReason =
 
 export type ExportPreparation =
   | { status: 'preparing'; token: ExportPreparationToken }
-  | { status: 'ready'; token: ExportPreparationToken; result: PostProcessorResult; operations: PreparedOperation[] }
+  /** One program per setup that has a selected operation, in setup order; never empty. */
+  | { status: 'ready'; token: ExportPreparationToken; programs: PreparedProgram[] }
   | { status: 'blocked'; token: ExportPreparationToken; reason: ExportBlockReason }
 
 /**
@@ -104,6 +135,11 @@ export type ExportPreparation =
  */
 export function programHasError(warnings: readonly ToolpathWarning[]): boolean {
   return warnings.some((warning) => warningSeverity(warning.code) === 'error')
+}
+
+/** An export is every one of its programs: an error in any of them blocks them all. */
+export function exportHasError(programs: readonly PreparedProgram[]): boolean {
+  return programs.some((program) => programHasError(program.result.warnings))
 }
 
 /** Stable key for the postprocessor options, so an option change invalidates a token. */
@@ -174,7 +210,31 @@ export async function prepareExport(
   if (!definition) {
     return { status: 'blocked', token, reason: { kind: 'no-machine' } }
   }
-  if (token.operationIds.length === 0) {
+
+  // A machine that still breaks a template rule is refused before any toolpath
+  // is requested (#1119). Deciding it here means the dialog names the exact
+  // lines and no generation work is spent on a program that cannot be written;
+  // `runPostProcessor` and the save path re-check the same pure list, so this
+  // cannot be bypassed by a stale preview or a direct call.
+  const machineDiagnostics = machineExportDiagnostics(definition)
+  if (machineDiagnostics.length > 0) {
+    return { status: 'blocked', token, reason: { kind: 'machine-invalid', diagnostics: machineDiagnostics } }
+  }
+
+  // Only an operation in an Around setup of a non-rotary project is left out:
+  // that setup's face does not exist for the type (issue #1028, rule (a)), so
+  // it is not requested, not posted, and in no program's operation list. An
+  // operation of the other family stays in, so the postprocessor skips it and
+  // the dialog shows its warning (issue #960). `planSetupPrograms` sees the
+  // same filtered set, so the "every prepared operation is in a program" check
+  // still balances. An id that names no operation is left in, so the existing
+  // missing-operation block still reports it.
+  const cutOperationIds = token.operationIds.filter((operationId) => {
+    const operation = token.project.operations.find((candidate) => candidate.id === operationId)
+    return operation === undefined || !operationHiddenByProjectType(token.project, operation)
+  })
+
+  if (cutOperationIds.length === 0) {
     return { status: 'blocked', token, reason: { kind: 'no-operations' } }
   }
 
@@ -183,7 +243,7 @@ export async function prepareExport(
   // rows below are put back into project order regardless, because the order
   // operations are posted in is the order they will be cut.
   const outcomes = await Promise.all(
-    token.operationIds.map(async (operationId) => ({
+    cutOperationIds.map(async (operationId) => ({
       operationId,
       outcome: await service.request(context, operationId, { purpose: 'export', signal }),
     })),
@@ -220,19 +280,61 @@ export async function prepareExport(
     })
   }
 
-  // The postprocessor sees the captured project, not the live one: origin,
-  // units, names and tools have to come from the same revision as the paths.
-  const result = runPostProcessor({
-    project: token.project,
-    operations: prepared,
-    definition,
-    options: {
-      emitToolChanges: options.emitToolChanges,
-      emitCoolant: options.emitCoolant,
-      programName: options.programName,
-      captureMotionTrace: options.captureMotionTrace,
-    },
+  // A project whose type and machine disagree cannot be exported (issue
+  // #1028). Every program of it carries the refusal as an **error** warning, so
+  // the dialog names the machine and disables Save through the same
+  // `exportHasError` path any other refusing code takes — the postprocessor
+  // and the emitters stay untouched. The two mismatch reasons get their own
+  // code: a router on a rotary project is the right family of machine missing
+  // its rotary axis, and saying so is the difference between a message the
+  // operator can act on and one that reads as "wrong machine" (issue #1112,
+  // item 35).
+  const mismatch = projectMachineMismatch(token.project)
+  const mismatchWarning: ToolpathWarning | null = mismatch === null
+    ? null
+    : mismatch.reason === 'missing-rotary'
+      ? { code: 'exportMachineMissingRotaryAxis', params: { machine: mismatch.machineName } }
+      : { code: 'exportMachineTypeMismatch', params: { machine: mismatch.machineName, expected: mismatch.expected } }
+
+  // One program per setup. The postprocessor sees the captured project, not
+  // the live one: origin, units, names, tools and setups have to come from the
+  // same revision as the paths.
+  const preparedById = new Map(prepared.map((row) => [row.operation.id, row]))
+  const programs: PreparedProgram[] = planSetupPrograms(token.project, cutOperationIds).map((program) => {
+    const operations = program.operationIds.flatMap((operationId) => {
+      const row = preparedById.get(operationId)
+      return row ? [row] : []
+    })
+    const result = runPostProcessor({
+      project: token.project,
+      operations,
+      definition,
+      options: {
+        emitToolChanges: options.emitToolChanges,
+        emitCoolant: options.emitCoolant,
+        programName: options.programName,
+        captureMotionTrace: options.captureMotionTrace,
+      },
+    })
+    return {
+      setupId: program.setup?.id ?? null,
+      setupName: program.setup?.name ?? null,
+      programNumber: program.programNumber,
+      face: program.face,
+      fileStem: program.fileStem,
+      operations,
+      result: mismatchWarning
+        ? { ...result, warnings: [...result.warnings, mismatchWarning] }
+        : result,
+    }
   })
 
-  return { status: 'ready', token, result, operations: prepared }
+  // Every prepared operation is in exactly one program. One that fell between
+  // them would be a pass missing from every file.
+  const posted = programs.reduce((count, program) => count + program.operations.length, 0)
+  if (posted !== prepared.length) {
+    return { status: 'blocked', token, reason: { kind: 'stale' } }
+  }
+
+  return { status: 'ready', token, programs }
 }

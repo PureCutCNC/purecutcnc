@@ -37,6 +37,7 @@
  */
 
 import type { Project } from '../../types/project'
+import { isCannedFeature } from '../../cannedShapes'
 import { featuresFormConnectedOverlapGroup } from './clipping'
 import { resolveFeatureInstances } from './resolveFeatures'
 
@@ -73,7 +74,11 @@ export function selectionQualifiesForImmediateJoin(project: Project, featureIds:
     return false
   }
 
-  if (features.some((feature) => feature.kind === 'text' || feature.operation === 'model')) {
+  if (features.some((feature) => (
+    feature.kind === 'text'
+    || feature.operation === 'model'
+    || isCannedFeature(feature)
+  ))) {
     return false
   }
 

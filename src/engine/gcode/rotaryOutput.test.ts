@@ -1,0 +1,2215 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Slice B of #393: an angle on a toolpath point, and exporting it.
+ *
+ * `ToolpathPoint.a` is the degrees the stock is turned to, about the bar's
+ * axis, when the tool is at that point. No generator produces one yet (#395);
+ * these tests build the projects, machines and toolpaths by hand and assert on
+ * the emitted program, line by line.
+ *
+ * Run with: npx tsx src/engine/gcode/rotaryOutput.test.ts
+ */
+
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { defaultTool, getStockBounds, newProject, roundStock, rectProfile } from '../../types/project'
+import { barPivotZ, squareStock } from '../../types/barStock'
+import type { BlockStock, MachineOrigin, Operation, Project, RoundStock, Stock } from '../../types/project'
+import { BUNDLED_DEFINITIONS } from './definitions'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import { runPostProcessor } from './postprocessor'
+import { parseGcodeMotion } from './gcodeMotionParser'
+import { rotaryDirection, validateMachineDefinition } from './types'
+import type { MachineDefinition, PostProcessorResult, RotaryDefinition } from './types'
+import { warningSeverity } from '../toolpaths/warningCodes'
+import {
+  createArcEmitOptions,
+  inverseTimeFeedValue,
+  planOperationMotion,
+  planRotaryRefusals,
+  planStepFeeds,
+  rotaryCentreline,
+} from './motionPipeline'
+import type { LinearMoveDescriptor } from './arcFitting'
+import type { DrillCycle, NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
+import { exportGeometryTolerance } from '../../utils/units'
+import { stockSpacePoint } from '../rotaryFrame'
+import { generateRotaryFinish, generateRotaryRough } from '../toolpaths/rotaryModel'
+import type { RotaryModelMesh } from '../toolpaths/rotaryModel'
+import { formatGCodeNumber } from './utils'
+import { pinRotaryAxis } from './types'
+
+// ── fixtures ──────────────────────────────────────────────────
+
+const byId = (id: string): MachineDefinition => {
+  const raw = BUNDLED_DEFINITIONS.find((definition) => definition.id === id)
+  assert.ok(raw, `bundled definition ${id} exists`)
+  return validateMachineDefinition(raw)
+}
+
+const GRBL = byId('grbl')
+const LINUXCNC = byId('linuxcnc')
+
+/** The bundled grbl definition plus a rotary block. */
+function rotaryMachine(
+  rotary: RotaryDefinition,
+  coordinateSystem: MachineDefinition['coordinateSystem'] = GRBL.coordinateSystem,
+): MachineDefinition {
+  return validateMachineDefinition({ ...structuredClone(GRBL), rotary, coordinateSystem })
+}
+
+/** Any bundled definition plus a rotary block. */
+function rotaryOn(base: MachineDefinition, rotary: RotaryDefinition): MachineDefinition {
+  return validateMachineDefinition({ ...structuredClone(base), rotary })
+}
+
+const OWN_AXIS: RotaryDefinition = {
+  about: 'x',
+  drive: 'own',
+  reversed: false,
+  inverseTimeFeed: { on: 'G93', off: 'G94' },
+}
+
+const BORROWED_Y: RotaryDefinition = {
+  about: 'x',
+  drive: 'borrowed',
+  reversed: false,
+  inverseTimeFeed: { on: 'G93', off: 'G94' },
+}
+
+/** A round bar 20 mm across, 100 mm long, along project X, at the origin. */
+function bar(): RoundStock {
+  return roundStock(20, 100, 'x')
+}
+
+/** A plain rectangular block of stock. */
+function block(): BlockStock {
+  return {
+    profile: rectProfile(0, 0, 100, 20),
+    thickness: 20,
+    material: 'aluminum_6061',
+    color: '#b9a83c',
+    visible: true,
+    origin: { x: 0, y: 0 },
+  }
+}
+
+function projectWith(stock: Stock, name = 'Rotary Test'): Project {
+  const project = newProject(name, 'mm')
+  project.stock = stock
+  project.origin = originFor(stock)
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: 'Test End Mill' }
+  project.tools = [toolRecord]
+  return project
+}
+
+/** The origin a round bar puts on its centreline, as `defaultOrigin` does. */
+function originFor(stock: Stock): MachineOrigin {
+  const bounds = getStockBounds(stock)
+  if (stock.shape === 'round') {
+    const centre = stock.axis === 'x'
+      ? (bounds.minY + bounds.maxY) / 2
+      : (bounds.minX + bounds.maxX) / 2
+    return {
+      name: 'Origin',
+      x: stock.axis === 'x' ? bounds.minX : centre,
+      y: stock.axis === 'x' ? centre : bounds.maxY,
+      z: stock.thickness,
+      visible: true,
+    }
+  }
+  return { name: 'Origin', x: bounds.minX, y: bounds.maxY, z: stock.thickness, visible: true }
+}
+
+function operation(name: string, overrides: Partial<Operation> = {}): Operation {
+  return {
+    id: name.toLowerCase().replace(/\W+/g, '-'),
+    name,
+    description: '',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    ...overrides,
+  }
+}
+
+function toolpathOf(op: Operation, moves: ToolpathMove[]): ToolpathResult {
+  return { operationId: op.id, warnings: [], bounds: null, moves }
+}
+
+/** Export a list of operations through the real postprocessor. */
+function exportProgram(
+  project: Project,
+  definition: MachineDefinition,
+  entries: Array<{ operation: Operation; moves: ToolpathMove[]; drillCycles?: DrillCycle[] }>,
+): PostProcessorResult {
+  const tools = new Map(project.tools.map((tool) => [tool.id, normalizeToolForProject(tool, project)]))
+  return runPostProcessor({
+    project,
+    definition,
+    operations: entries.map(({ operation: op, moves, drillCycles }) => {
+      const tool = tools.get(op.toolRef ?? '')
+      assert.ok(tool, `tool ${op.toolRef} exists in the project`)
+      return {
+        operation: op,
+        tool,
+        toolpath: drillCycles ? { ...toolpathOf(op, moves), drillCycles } : toolpathOf(op, moves),
+      }
+    }),
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
+  })
+}
+
+/**
+ * Emitted motion blocks: a setup line (`G90`, `G21`, `G93`…) or a block
+ * carrying an axis word. Later blocks are modal and carry no motion word of
+ * their own, so a `^G` filter would miss exactly the turning moves here.
+ */
+function motionLines(program: string): string[] {
+  return program
+    .split('\n')
+    .filter((line) => line.length > 0 && !/^[;(%]/.test(line))
+    .filter((line) => line.startsWith('G') || /[XYZA]/.test(line))
+}
+
+/** The one line whose motion word is `word`, or undefined. */
+function lineWithWord(program: string, word: RegExp): string | undefined {
+  return motionLines(program).find((line) => word.test(line))
+}
+
+/** `pt` with a rotary angle: a project point at height `z`, turned to `a`. */
+function at(x: number, y: number, z: number, a?: number): ToolpathPoint {
+  return a === undefined ? { x, y, z } : { x, y, z, a }
+}
+
+/**
+ * `moves` prefixed with the rapid that establishes the bar's starting angle
+ * (issue #393, rule 2): a feed move may only begin at the angle the controller
+ * is already at, and the angle is unknown at program start. The rapid ends
+ * where the first move begins, so the motion itself is unchanged.
+ */
+function established(moves: ToolpathMove[]): ToolpathMove[] {
+  const first = moves[0]
+  if (!first || first.from.a === undefined) return moves
+  return [{ kind: 'rapid', from: { ...first.from }, to: { ...first.from } }, ...moves]
+}
+
+/**
+ * The true length of the tip's path in the stock's own frame, by brute force: a
+ * polyline of `chords` chords whose points are
+ * `stockSpacePoint(lerp(from, to, t))` (`rotaryFrame.ts`). Independent of the
+ * exporter's quadrature — the oracle the path-length checks compare against.
+ */
+function bruteForceStockPathLength(
+  from: ToolpathPoint,
+  to: ToolpathPoint,
+  stock: RoundStock,
+  chords = 100_000,
+): number {
+  const lerp = (t: number): ToolpathPoint => ({
+    x: from.x + (to.x - from.x) * t,
+    y: from.y + (to.y - from.y) * t,
+    z: from.z + (to.z - from.z) * t,
+    a: (from.a ?? 0) + ((to.a ?? 0) - (from.a ?? 0)) * t,
+  })
+  let previous = stockSpacePoint(lerp(0), stock)
+  let length = 0
+  for (let index = 1; index <= chords; index++) {
+    const point = stockSpacePoint(lerp(index / chords), stock)
+    length += Math.hypot(point.x - previous.x, point.y - previous.y, point.z - previous.z)
+    previous = point
+  }
+  return length
+}
+
+// ── 1. unchanged: a toolpath with no angle ────────────────────
+//
+// The rotary code path must be invisible when nothing turns. Each bundled
+// definition exports the same text with a rotary block present as with it
+// absent, and the whole output text is compared, not just the motion lines.
+
+{
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30), to: at(10, 10, 30) },
+    { kind: 'plunge', from: at(10, 10, 30), to: at(10, 10, 20) },
+    { kind: 'cut', from: at(10, 10, 20), to: at(30, 10, 20) },
+  ]
+  // The machines that ship without a rotary block; the bundled rotary machines
+  // (#1153) carry their own and are covered in `bundledRotaryMachines.test.ts`.
+  for (const raw of BUNDLED_DEFINITIONS.filter((candidate) => candidate.rotary === undefined)) {
+    const definition = validateMachineDefinition(raw)
+    const project = projectWith(definition.machineKind === 'plasma' ? block() : bar())
+    const op = operation('Plain')
+    const plain = exportProgram(project, definition, [{ operation: op, moves }]).gcode
+    const withBlock = { ...structuredClone(definition), rotary: OWN_AXIS }
+    if (definition.machineKind === 'plasma' || definition.outputDialect === 'opensbp') {
+      // Slice A refuses a rotary block on these dialects; that is its own test.
+      assert.throws(() => validateMachineDefinition(withBlock),
+        `${definition.id}: validation refuses a rotary block on this dialect`)
+      continue
+    }
+    const rotated = validateMachineDefinition(withBlock)
+    const rotatedProgram = exportProgram(project, rotated, [{ operation: op, moves }]).gcode
+    assert.equal(rotatedProgram, plain,
+      `${definition.id}: a toolpath with no angle exports identically with a rotary block`)
+  }
+}
+
+// ── 2. own axis: the words, the sign, the modal behaviour ─────
+
+{
+  const project = projectWith(bar())
+  const op = operation('Turn')
+  // Each move turns the stock and also travels, so no two blocks are the same
+  // and the emitted words can be read one move at a time.
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30, 0), to: at(10, 10, 30, 0) },
+    { kind: 'plunge', from: at(10, 10, 30, 0), to: at(10, 10, 20, 0) },
+    { kind: 'cut', from: at(10, 10, 20, 0), to: at(10, 10, 20, 90) },
+    { kind: 'cut', from: at(10, 10, 20, 90), to: at(10, 10, 20, 350) },
+    { kind: 'cut', from: at(10, 10, 20, 350), to: at(10, 10, 20, 370) },
+  ]
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves }])
+  const lines = motionLines(result.gcode)
+  const turning = lines.filter((line) => /A-?[0-9]/.test(line))
+
+  // The first point with an angle emits the word (on the rapid); later moves at
+  // the same angle do not (modal, like X/Y/Z), and each angle change writes its
+  // own value.
+  assert.equal(turning.length, 5, `one A word per angle change, got:\n${lines.join('\n')}`)
+  assert.match(turning[0], /A0\b/, 'the first turning block writes A0')
+  assert.match(turning[1], /A90\b/, 'the next angle change writes A90')
+  assert.match(turning[2], /A350\b/, 'the next writes A350')
+  // 350 -> 370 is 20 degrees, not a wrap back to 10.
+  assert.match(turning[3], /A370\b/, 'the angle is never reduced to 0-360')
+  // #1103 ca-h: the operation closes on the next whole turn, then says so.
+  assert.match(turning[4], /A720\b/, 'the end turn goes forward to the next whole turn')
+  assert.doesNotMatch(result.gcode, /A10\b/, 'no wrapped angle is written')
+
+  // `reversed` flips the sign on the way out.
+  const reversed = exportProgram(project, rotaryMachine({ ...OWN_AXIS, reversed: true }), [{ operation: op, moves }])
+  const reversedTurning = motionLines(reversed.gcode).filter((line) => /A-?[0-9]/.test(line))
+  assert.equal(reversedTurning.length, 5, 'the same blocks carry an angle reversed')
+  // Zero negated is still zero, and prints as `0.000`, not `-0.000`.
+  assert.match(reversedTurning[0], /A-?0\b/, 'reversed writes the negated angle')
+  assert.match(reversedTurning[1], /A-90\b/, 'reversed writes the negated angle')
+  assert.match(reversedTurning[3], /A-370\b/, 'reversed does not wrap either')
+  // -370 is already past a whole turn, so the forward end turn is -360 (0 up).
+  assert.match(reversedTurning[4], /A-360\b/, 'the reversed end turn goes forward to the next whole turn')
+}
+
+// ── 3. borrowed motor ─────────────────────────────────────────
+
+{
+  const project = projectWith(bar())
+  const op = operation('Borrowed')
+  // The bar lies along project X, so the borrowed motor is project Y: it never
+  // changes here, and its letter carries the angle instead. The leading rapid
+  // establishes the starting angle (rule 2).
+  const moves: ToolpathMove[] = established([
+    { kind: 'cut', from: at(0, 10, 30, 0), to: at(20, 10, 30, 45) },
+  ])
+  const result = exportProgram(project, rotaryMachine(BORROWED_Y), [{ operation: op, moves }])
+  const lines = motionLines(result.gcode)
+  const turning = lines.filter((line) => /Y-?[0-9]/.test(line))
+  assert.deepEqual(turning, ['X0.000 Y0.000', 'G1 X20.000 Z10.000 Y45.000 F23.593', 'G0 Y360.000'],
+    `the borrowed letter carries the angle and never a linear value:\n${lines.join('\n')}`)
+  assert.equal((turning[1].match(/Y-?[0-9.]+/g) ?? []).length, 1,
+    'the borrowed letter is written once, as the angle — never twice as a linear value')
+
+  // A negative borrowed output reverses the rotation, exactly as `reversed`
+  // does on its own axis.
+  const mirrored = rotaryMachine(BORROWED_Y, { ...GRBL.coordinateSystem, yAxis: '-Y' })
+  const mirroredResult = exportProgram(project, mirrored, [{ operation: op, moves }])
+  const mirroredTurning = motionLines(mirroredResult.gcode).filter((line) => /Y-?[0-9]/.test(line))
+  assert.deepEqual(mirroredTurning, ['X0.000 Y0.000', 'G1 X20.000 Z10.000 Y-45.000 F23.593', 'G0 Y0.000'],
+    'a mirrored borrowed output flips the sign, and its end turn goes forward to 0')
+}
+
+// ── 3b. a feed move must carry its angle on both ends or on neither (rule 2) ─
+//
+// With an angle on one end only, feed planning reads the absent angle as zero
+// and the emitter writes no angle word: the bar would stay where it is while
+// the cut ran at the speed planned for a turn.
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(OWN_AXIS)
+  // The establishing rapid leaves the controller at A90.
+  const establishing: ToolpathMove = { kind: 'rapid', from: at(0, 10, 20, 90), to: at(0, 10, 20, 90) }
+  const arrangements: Array<[string, ToolpathMove[]]> = [
+    ['ends without an angle', [
+      establishing,
+      { kind: 'cut', from: at(0, 10, 20, 90), to: at(0, 10, 15) },
+    ]],
+    ['starts without an angle', [
+      establishing,
+      { kind: 'cut', from: at(0, 10, 15), to: at(0, 10, 20, 90) },
+    ]],
+  ]
+  for (const [name, moves] of arrangements) {
+    // With inverse-time feed and without it: the refusal names the angle rule,
+    // not the missing feed mode.
+    for (const machine of [definition, rotaryMachine({ ...OWN_AXIS, inverseTimeFeed: null })]) {
+      const result = exportProgram(project, machine, [{ operation: operation('Partial'), moves }])
+      assert.deepEqual(result.warnings, [{
+        code: 'postRotaryAngleNotEstablished',
+        params: { operation: 'Partial' },
+      }], `a feed move that ${name} is refused`)
+      assert.doesNotMatch(result.gcode, /A(15|90)\b/, `${name}: the refused operation emits no motion`)
+    }
+  }
+
+  // A rapid may still carry the angle on one end: that is how the first angle
+  // is established, and the same move with a whole feed pair still exports.
+  const control = exportProgram(project, definition, [{
+    operation: operation('Whole'),
+    moves: [{ kind: 'rapid', from: at(0, 10, 30), to: at(0, 10, 30, 90) }, {
+      kind: 'cut', from: at(0, 10, 30, 90), to: at(0, 10, 20, 90),
+    }],
+  }])
+  assert.deepEqual(control.warnings, [], 'a rapid may establish an angle at one end of its own move')
+  assert.match(control.gcode, /A90\b/, 'and the established angle is written')
+}
+
+// ── 4. no arc across a turning move ───────────────────────────
+
+/** A circle of radius `r` about (cx, cy) at height `z`, as `count` chords. */
+function circleMoves(
+  cx: number,
+  cy: number,
+  r: number,
+  z: number,
+  count: number,
+  angleAt: (index: number) => number | undefined,
+): ToolpathMove[] {
+  const point = (index: number): ToolpathPoint => {
+    const angle = (index / count) * Math.PI * 2
+    return at(cx + r * Math.cos(angle), cy + r * Math.sin(angle), z, angleAt(index))
+  }
+  const moves: ToolpathMove[] = []
+  for (let index = 0; index < count; index++) {
+    moves.push({ kind: 'cut', from: point(index), to: point(index + 1) })
+  }
+  return moves
+}
+
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(OWN_AXIS)
+  // Arc interpolation on, arc fitting on: every point lies exactly on a circle
+  // in XY, so the fitter would join the run if the angle did not move.
+  assert.equal(definition.motion.arcInterpolation, true, 'grbl interpolates arcs')
+
+  const turning = exportProgram(project, definition, [{
+    operation: operation('Turns', { arcFittingEnabled: true }),
+    moves: established(circleMoves(0, 10, 5, 20, 16, (index) => index * 10)),
+  }]).gcode
+  // `G[23]\b` and not `G2|G3`: the units command `G21` also starts with `G2`.
+  assert.doesNotMatch(turning, /G[23]\b/, 'a turning move is never merged into an arc')
+  assert.match(turning, /G1 /, 'the turning moves are still emitted as linear motion')
+
+  const constant = exportProgram(project, definition, [{
+    operation: operation('Flat', { arcFittingEnabled: true }),
+    // The angle is 45 throughout, so the establishing rapid writes it once and
+    // the arcs that follow need no angle word of their own (rules 1 and 2).
+    moves: established(circleMoves(0, 10, 5, 20, 16, () => 45)),
+  }]).gcode
+  assert.match(constant, /G[23]\b/, 'the same points at a constant angle still fit an arc')
+  // The arcs are only correct because the establishing rapid wrote the angle
+  // first: the emitter keeps the angle modal, so an arc carries no A word of
+  // its own. Dropping that word from the rapid would leave the whole run at the
+  // controller's previous angle.
+  const constantLines = motionLines(constant)
+  const firstArc = constantLines.findIndex((line) => /G[23]\b/.test(line))
+  const writtenAngle = constantLines.findIndex((line) => /A45\b/.test(line))
+  assert.ok(writtenAngle >= 0 && writtenAngle < firstArc,
+    `the A45 rapid is written before the first arc:\n${constantLines.join('\n')}`)
+  const constantParse = parseGcodeMotion(constant, 'ij', ';', '', {
+    word: 'A',
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  })
+  const constantArcs = constantParse.moves.filter((move) => move.kind === 'arc')
+  assert.ok(constantArcs.length > 0, 'the constant-angle run reads back as arcs')
+  assert.ok(constantArcs.every((arc) => arc.from.a === 45 && arc.to.a === 45),
+    'every arc read back is at 45°, established by the rapid before it')
+
+  // A turning move must not seed a run either: the first move is never a
+  // candidate for its own run, so it would otherwise join the arc the
+  // constant-angle moves after it fit. It stays a linear step; the constant
+  // run after it can still fit.
+  const seeded = circleMoves(0, 10, 5, 20, 4, () => 10)
+  seeded[0] = { ...seeded[0], from: { ...seeded[0].from, a: 0 } }
+  const plan = planOperationMotion({
+    project,
+    definition,
+    operation: operation('Seeded', { arcFittingEnabled: true }),
+    toolpath: toolpathOf(operation('Seeded'), seeded),
+    arcEmitOptions: createArcEmitOptions(definition, 'mm', 'ij'),
+    startPosition: null,
+    captureTrace: false,
+  })
+  assert.equal(plan.steps[0].kind, 'linear',
+    'a turning move that starts a run is never merged into an arc')
+  assert.ok(plan.steps.some((step) => step.kind === 'arc'),
+    'the constant-angle moves after it still fit an arc')
+}
+
+// ── 5. inverse-time feed ──────────────────────────────────────
+//
+// A pure rotation with the tip 10 mm from the centreline: the arc the stock
+// sweeps is `r * Δθ`, so a 90 degree turn travels `10 * (π/2)` mm and the
+// inverse-time word is `feed / length`. Computed here from first principles,
+// never from the implementation.
+
+const FEED = 600
+const NINETY = Math.PI / 2
+
+{
+  const project = projectWith(bar())
+  const op = operation('Rotate')
+  // The bar's centreline sits at Z = 10 for a 20 mm bar, so Z = 20 puts the tip
+  // exactly 10 mm from it. The leading rapid establishes the 0° start.
+  const moves: ToolpathMove[] = established([
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+  ])
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves }])
+  const lines = motionLines(result.gcode)
+  const rotateIndex = lines.findIndex((line) => /A90\b/.test(line))
+
+  assert.equal(lines.filter((line) => line.startsWith('G93')).length, 1, 'G93 is emitted once, before the first turning feed move')
+  assert.ok(rotateIndex > 0 && lines[rotateIndex - 1] === 'G93', `G93 directly precedes the turning move:\n${lines.join('\n')}`)
+  const expected = FEED / (10 * NINETY)
+  const fWord = lines[rotateIndex].match(/F([-0-9.]+)/)
+  assert.ok(fWord, 'the turning move carries its own F word')
+  assert.equal(Number(fWord[1]), Number(expected.toFixed(3)), `the word is feed / (r x angle), got ${fWord[1]}`)
+}
+
+// The same at 5 mm from the centreline: the swept arc is half as long, so the
+// word is twice as large.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = established([{ kind: 'cut', from: at(0, 10, 15, 0), to: at(0, 10, 15, 90) }])
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('RotateHalf'), moves,
+  }])
+  const line = lineWithWord(result.gcode, /A90\b/)
+  assert.ok(line, 'the turning move is emitted')
+  const expected = FEED / (5 * NINETY)
+  assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), Number(expected.toFixed(3)), 'half the radius doubles the word')
+}
+
+// A mixed move: rotation plus a straight-line distance over the linear axes
+// that move. The path length is the hypotenuse of the two. The move runs along
+// the bar (X), so the radius stays 10 mm at both ends.
+{
+  const project = projectWith(bar())
+  const from = at(0, 10, 20, 0)
+  const to = at(3, 10, 20, 90)
+  const moves: ToolpathMove[] = established([{ kind: 'cut', from, to }])
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('Mixed'), moves,
+  }])
+  const line = lineWithWord(result.gcode, /A90\b/)
+  assert.ok(line, 'the mixed move is emitted')
+  const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
+  const expected = FEED / Math.hypot(linear, 10 * NINETY)
+  assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), Number(expected.toFixed(3)), 'the word is feed / sqrt(linear^2 + (r x angle)^2)')
+}
+
+// A turning move whose two ends are at different distances from the
+// centreline. It plunges while it turns, so the tip traces a spiral in the
+// stock's frame and the path length is its arc length, not the mean-radius
+// approximation. The bar's centreline sits at Z = 10 for a 20 mm bar, so the
+// move runs from 10 mm above it to 5 mm above it.
+//
+// The expected word is derived independently (a 4,000,000-interval Simpson
+// quadrature of the analytic tip speed, not this exporter): the true length is
+// 12.830215525281 mm, so the word is 600 / 12.830215525281 = 46.764608...,
+// written as `46.765` at grbl's three decimals.
+{
+  const project = projectWith(bar())
+  const from = at(0, 10, 20, 0)
+  const to = at(0, 10, 15, 90)
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('PlungingTurn'), moves: established([{ kind: 'cut', from, to }]),
+  }])
+  const line = lineWithWord(result.gcode, /A90\b/)
+  assert.ok(line, `the plunging turning move is emitted:\n${motionLines(result.gcode).join('\n')}`)
+  assert.equal(Number(line.match(/F([-0-9.]+)/)?.[1]), 46.765,
+    'the emitted F is feed / (the true spiral length)')
+  // The mean-of-the-two-end-radii approximation gives 46.877, and neither end's
+  // radius alone gives the right word either.
+  const linear = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z)
+  const meanRadius = (10 + 5) / 2
+  const meanRadiusWord = FEED / Math.hypot(linear, meanRadius * NINETY)
+  assert.notEqual(Number(meanRadiusWord.toFixed(3)), 46.765,
+    'the mean radius would give a different word')
+  assert.notEqual(Number(line.match(/F([-0-9.]+)/)?.[1]), Number((FEED / Math.hypot(linear, 5 * NINETY)).toFixed(3)),
+    'the end radius alone would give a different word')
+}
+
+// Two turning moves with the same sweep and radius carry the same inverse-time
+// word. grbl's `modalFeedSpeed` would drop the second F as modal; rule 4 says
+// every inverse-time move writes its own, so it must appear twice.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = established([
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+    { kind: 'cut', from: at(0, 10, 20, 90), to: at(0, 10, 20, 180) },
+  ])
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('SameFeed'), moves,
+  }])
+  const turning = motionLines(result.gcode).filter((line) => /A(90|180)\b/.test(line))
+  assert.equal(turning.length, 2, `two turning moves:\n${motionLines(result.gcode).join('\n')}`)
+  const expected = (FEED / (10 * NINETY)).toFixed(3)
+  for (const line of turning) {
+    assert.match(line, new RegExp(`F${expected}\\b`), 'every inverse-time move restates its F, even when it is unchanged')
+  }
+}
+
+// Mode discipline: every turning move carries its own F, G94 and the ordinary
+// feed come back before a non-turning feed move *and before a rapid*, a rapid
+// carries no F, and the program ends out of inverse time.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30, 0), to: at(0, 10, 30, 45) },
+    { kind: 'cut', from: at(0, 10, 30, 45), to: at(0, 10, 30, 90) },
+    // A rapid after a turning cut must not inherit G93 (rule 4).
+    { kind: 'rapid', from: at(0, 10, 30, 90), to: at(5, 10, 30, 90) },
+    { kind: 'cut', from: at(5, 10, 30, 90), to: at(0, 10, 30, 180) },
+    { kind: 'cut', from: at(0, 10, 30, 180), to: at(5, 10, 30, 180) },
+  ]
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('Discipline'), moves,
+  }])
+  const lines = motionLines(result.gcode)
+
+  // The establishing rapid carries the angle but no feed word.
+  const establishing = lines.find((line) => /A45\b/.test(line))
+  assert.ok(establishing, `the rapid is a turning move:\n${lines.join('\n')}`)
+  assert.doesNotMatch(establishing, /F[-0-9]/, 'a rapid turning move has no F word')
+
+  // Both turning feed moves carry their own F, even though the second changes
+  // the angle from the first. The block spells the motion word, its axis words
+  // and the angle word together.
+  const turning = lines.filter((line) => /A(90|180)\b/.test(line))
+  assert.equal(turning.length, 2, `two turning feed moves:\n${lines.join('\n')}`)
+  for (const line of turning) assert.match(line, /F[-0-9]/, 'every inverse-time move carries its own F')
+  assert.match(lines.find((line) => /^G1 /.test(line)) ?? '', /X\S.*A/, 'a turning feed writes G1 with an axis and the angle')
+
+  // The rapid after the first turning cut is written in ordinary mode: G94
+  // directly precedes it, and the rapid carries no feed word.
+  const rapidAfterCut = lines.findIndex((line) => /^G0\b/.test(line) && /X5\b/.test(line))
+  assert.ok(rapidAfterCut > 0, `the rapid after the cut is emitted:\n${lines.join('\n')}`)
+  assert.equal(lines[rapidAfterCut - 1], 'G94', `G94 restores ordinary feed before the rapid:\n${lines.join('\n')}`)
+  assert.doesNotMatch(lines[rapidAfterCut], /F[-0-9]/, 'the rapid carries no feed word')
+
+  // G94 and the ordinary feed come back before the straight move too. The
+  // motion word stays modal, so the block carries only its axes.
+  const straight = lines.find((line) => /X5\b/.test(line) && !/^G0\b/.test(line))
+  assert.ok(straight, `the straight feed move is emitted:\n${lines.join('\n')}`)
+  assert.match(straight, /F600\b/, 'the ordinary feed is restated after inverse time')
+
+  // The straight move left inverse-time mode, so the only turning block after
+  // the final G94 is the end turn itself (a rapid, never inverse time).
+  const last = lines.lastIndexOf('G94')
+  assert.ok(lines.slice(last + 1).every((line) => !/A-?[0-9]/.test(line) || /^G0 A/.test(line)),
+    `no turning feed move follows the final G94:\n${lines.join('\n')}`)
+}
+
+// A program whose last feed move turns switches inverse time off *before* the
+// spindle stop and the footer (rule 4: the program never ends in inverse-time
+// mode, and an `M5` is not a turning move).
+{
+  const project = projectWith(bar())
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('EndsTurning'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
+  }])
+  // Since #1091 nothing sits between the spindle stop and the footer, and the
+  // end turn (#1103 ca-h) runs before them, in ordinary feed mode.
+  const raw = result.gcode.split('\n')
+  const restored = raw.indexOf('G94')
+  const spindleOff = raw.indexOf('M5')
+  const end = raw.indexOf('M30')
+  assert.ok(restored > 0 && spindleOff > restored && end > spindleOff,
+    `G94 comes before the spindle stop and the program end:\n${result.gcode}`)
+  assert.equal(raw[end - 1], 'M5', 'the spindle stop is the last thing before the program end')
+  assert.ok(raw.slice(spindleOff, end).every((line) => !/A-?[0-9]/.test(line)),
+    'and the end turn is entirely before it')
+}
+
+// ── 6. inverseTimeFeedValue alone ─────────────────────────────
+
+{
+  const centre = rotaryCentreline(bar())
+  assert.ok(centre, 'a round bar has a centreline')
+  const tolerance = exportGeometryTolerance('mm')
+
+  // Zero rotation is the ordinary feed divided by the linear distance.
+  const flat = inverseTimeFeedValue(at(0, 10, 30), at(4, 10, 30), 600, centre, tolerance)
+  assert.equal(flat, 600 / 4, 'no rotation is feed / linear')
+
+  // Zero linear travel and zero radius is finite: the tolerance floors it.
+  const degenerate = inverseTimeFeedValue(at(0, 0, 10), at(0, 0, 10), 600, centre, tolerance)
+  assert.ok(Number.isFinite(degenerate), 'a degenerate move yields a finite word')
+  assert.equal(degenerate, 600 / tolerance, 'the tolerance is the floor')
+
+  // The across-axis offset counts, not just the height: the corner (0, 0, 20)
+  // is hypot(10, 10) from the centreline, while a point straight above it at
+  // the same height (0, 10, 20) is exactly 10 mm out. Both ends carry the angle
+  // (rule 2): the length is never asked to guess an absent one.
+  const atRadius = inverseTimeFeedValue(at(0, 0, 20, 0), at(0, 0, 20, 90), 600, centre, tolerance)
+  assert.equal(atRadius, 600 / (Math.hypot(10, 10) * NINETY), 'the across-axis offset is measured')
+  const heightOnly = inverseTimeFeedValue(at(0, 10, 20, 0), at(0, 10, 20, 90), 600, centre, tolerance)
+  assert.equal(heightOnly, 600 / (10 * NINETY), 'a point above the centreline is 10 mm out')
+  assert.notEqual(atRadius, heightOnly, 'ignoring the across-axis offset would give the wrong word')
+}
+
+// The path the tip draws in the stock's own frame, when it plunges while it
+// turns, is a spiral — not `sqrt(linear² + (meanRadius × Δθ)²)`. The functions
+// below are checked against an independent brute-force polyline of 100,000
+// chords through `stockSpacePoint` (issue #393, rule 4).
+{
+  const centre = rotaryCentreline(bar())
+  assert.ok(centre, 'a round bar has a centreline')
+  const tolerance = exportGeometryTolerance('mm')
+  const stock = bar()
+
+  // The review's worked case: centreline at Y10/Z10, bar along X, from 10 mm
+  // above the centreline to the centreline itself over a 90° turn. The true
+  // length is 13.236523505131 mm, so the word is 600 / 13.236523505131 =
+  // 45.3291228… — `45.329` at three decimals. The mean-radius approximation
+  // gives 47.186 instead.
+  const workedFrom = at(0, 10, 20, 0)
+  const workedTo = at(0, 10, 10, 90)
+  const worked = inverseTimeFeedValue(workedFrom, workedTo, 600, centre, tolerance)
+  assert.equal(Number(worked.toFixed(3)), 45.329, 'the worked case is the true spiral length')
+  assert.notEqual(Number(worked.toFixed(3)), 47.186, 'the mean radius would give a different word')
+
+  // The quadrature agrees with a 100,000-chord polyline of `stockSpacePoint`
+  // for the worked case, a constant-radius helix, a tool off the centreline,
+  // both bar axes, and a negative sweep.
+  const cases: Array<[string, ToolpathPoint, ToolpathPoint, RoundStock]> = [
+    ['the worked plunge', workedFrom, workedTo, stock],
+    ['a constant-radius helix', at(0, 10, 20, 0), at(10, 10, 20, 270), stock],
+    ['a tool off the centreline', at(0, 0, 20, 0), at(0, 0, 20, 90), stock],
+    ['a bar along Y', at(0, 0, 20, 0), at(0, 0, 10, 90), roundStock(20, 100, 'y')],
+    ['a negative sweep', at(0, 10, 20, 0), at(0, 10, 10, -90), stock],
+  ]
+  for (const [name, from, to, caseStock] of cases) {
+    const caseCentre = rotaryCentreline(caseStock)
+    assert.ok(caseCentre, `${name}: a round bar has a centreline`)
+    const expectedLength = bruteForceStockPathLength(from, to, caseStock)
+    const value = inverseTimeFeedValue(from, to, 600, caseCentre, tolerance)
+    const relativeError = Math.abs(600 / value - expectedLength) / expectedLength
+    assert.ok(relativeError < 1e-9,
+      `${name}: quadrature and the polyline agree (relative error ${relativeError.toExponential(2)})`)
+  }
+
+  // A move that starts off the centreline and changes its across coordinate
+  // *and* its height while the angle changes, with travel along the bar as
+  // well: every term of the squared speed contributes, on both bar axes and
+  // for both signs of sweep. The start is off the centreline on both counts,
+  // and each case carries its own numbers, so a sign flip in `c1`, `c2` or
+  // `beta`, a dropped `Δacross²` in `alpha`, or reading across/up from the
+  // wrong axis on a bar along Y all change the length.
+  const offCentreline: Array<[string, ToolpathPoint, ToolpathPoint, RoundStock]> = [
+    ['a bar along X, positive sweep', at(0, 13, 21, 15), at(7, 6, 14, 140), stock],
+    ['a bar along X, negative sweep', at(2, 5, 18, 20), at(12, 14, 13, -110), stock],
+    ['a bar along Y, positive sweep', at(14, 2, 22, 15), at(5, 12, 16, 140), roundStock(20, 100, 'y')],
+    ['a bar along Y, negative sweep', at(7, 1, 19, 20), at(15, 10, 12, -110), roundStock(20, 100, 'y')],
+  ]
+  for (const [name, from, to, caseStock] of offCentreline) {
+    const caseCentre = rotaryCentreline(caseStock)
+    assert.ok(caseCentre, `${name}: a round bar has a centreline`)
+    const expectedLength = bruteForceStockPathLength(from, to, caseStock)
+    const value = inverseTimeFeedValue(from, to, 600, caseCentre, tolerance)
+    const relativeError = Math.abs(600 / value - expectedLength) / expectedLength
+    assert.ok(relativeError < 1e-9,
+      `${name}: quadrature and the polyline agree (relative error ${relativeError.toExponential(2)})`)
+  }
+
+  // A constant-radius move keeps exactly the word it had before: a pure turn is
+  // `r × Δθ`, and a turn that travels along the bar over the centreline is
+  // `|Δalong|`.
+  const pureTurn = inverseTimeFeedValue(at(0, 10, 20, 0), at(0, 10, 20, 90), 600, centre, tolerance)
+  assert.equal(pureTurn, 600 / (10 * NINETY), 'a constant-radius turn keeps its word')
+  const overCentre = inverseTimeFeedValue(at(0, 10, 10, 0), at(7, 10, 10, 90), 600, centre, tolerance)
+  assert.equal(overCentre, 600 / 7, 'a turn over the centreline keeps its word')
+
+  // ── the tip speed touching zero ─────────────────────────────
+  //
+  // The squared speed is a sum of squares, so it can touch zero *inside* a move
+  // and the integrand acquires a corner. A fixed Gauss-Legendre rule is not
+  // enough there: the case below is a perfect square, the rule was off by 8e-4,
+  // and the program wrote F19.084 where the true word is F19.099.
+  //
+  // Bar along X, centreline at Y10 / Z10, feed 600: from 20 mm across the bar
+  // to 20 mm the other side over a full turn, each end 10/π below the
+  // centreline. The speed is 40π·|t − ½| and the length is exactly 10π.
+  const cuspFrom = at(0, 0, 10 - 10 / Math.PI, 0)
+  const cuspTo = at(0, 20, 10 - 10 / Math.PI, 360)
+  const cusp = inverseTimeFeedValue(cuspFrom, cuspTo, 600, centre, tolerance)
+  assert.equal(Number(cusp.toFixed(3)), 19.099, 'the cusp writes F19.099, not the 32-point rule\'s F19.084')
+  const cuspLength = 600 / cusp
+  assert.ok(Math.abs(cuspLength - 10 * Math.PI) / (10 * Math.PI) < 1e-12,
+    `the cusp length is the exact 10π (got ${cuspLength})`)
+
+  // The same geometry with the double zero just outside each end: the minimum
+  // sits at `t* = -ε` and at `t* = 1 + ε`, so the corner is off the interval.
+  // The length is `40π·(½ + ε)` exactly.
+  const epsilon = 1e-3
+  const outsideLength = 20 * Math.PI + 40 * Math.PI * epsilon
+  const outsideCases: Array<[string, ToolpathPoint, ToolpathPoint]> = [
+    ['the zero just before the start', at(0, 10 + 20 * epsilon, 10 - 10 / Math.PI, 0),
+      at(0, 30 + 20 * epsilon, 10 - 10 / Math.PI, 360)],
+    ['the zero just after the end', at(0, -10 - 20 * epsilon, 10 - 10 / Math.PI, 0),
+      at(0, 10 - 20 * epsilon, 10 - 10 / Math.PI, 360)],
+  ]
+  for (const [name, from, to] of outsideCases) {
+    const value = inverseTimeFeedValue(from, to, 600, centre, tolerance)
+    const length = 600 / value
+    assert.ok(Math.abs(length - outsideLength) / outsideLength < 1e-12,
+      `${name}: the closed form is exact (got ${length}, expected ${outsideLength})`)
+    const expectedLength = bruteForceStockPathLength(from, to, stock)
+    assert.ok(Math.abs(length - expectedLength) / expectedLength < 1e-9,
+      `${name}: the polyline agrees (relative error ${(Math.abs(length - expectedLength) / expectedLength).toExponential(2)})`)
+  }
+
+  // A near miss: the minimum speed is ~1e-6 of the maximum, so the corner is
+  // present but shallow — the case a split-interval quadrature would still
+  // strain on.
+  const nearMissFrom = at(0, 0, 10 - 10 / Math.PI, 0)
+  const nearMissTo = at(0, 20 + 6.32e-5, 10 - 10 / Math.PI, 360)
+  let minSpeed = Infinity
+  let maxSpeed = 0
+  const speedChords = 200_000
+  for (let index = 0; index < speedChords; index++) {
+    const previous = stockSpacePoint({
+      x: 0,
+      y: 0 + (20 + 6.32e-5) * (index / speedChords),
+      z: 10 - 10 / Math.PI,
+      a: 360 * (index / speedChords),
+    }, stock)
+    const next = stockSpacePoint({
+      x: 0,
+      y: 0 + (20 + 6.32e-5) * ((index + 1) / speedChords),
+      z: 10 - 10 / Math.PI,
+      a: 360 * ((index + 1) / speedChords),
+    }, stock)
+    const speed = Math.hypot(next.x - previous.x, next.y - previous.y, next.z - previous.z)
+    if (speed < minSpeed) minSpeed = speed
+    if (speed > maxSpeed) maxSpeed = speed
+  }
+  assert.ok(minSpeed / maxSpeed < 1e-5, `the near miss really is a near miss (ratio ${minSpeed / maxSpeed})`)
+  const nearMiss = inverseTimeFeedValue(nearMissFrom, nearMissTo, 600, centre, tolerance)
+  const nearMissExpected = bruteForceStockPathLength(nearMissFrom, nearMissTo, stock)
+  assert.ok(Math.abs(600 / nearMiss - nearMissExpected) / nearMissExpected < 1e-9,
+    `the near miss agrees with the polyline (relative error ${(Math.abs(600 / nearMiss - nearMissExpected) / nearMissExpected).toExponential(2)})`)
+
+  // A long move: ten full turns while the tool drops from 10 mm above the
+  // centreline to 5 mm above it. A 100,000-chord polyline is not enough here
+  // (the chord error is ~1.6e-8), so this one uses a million.
+  const longFrom = at(0, 10, 20, 0)
+  const longTo = at(0, 10, 15, 3600)
+  const longValue = inverseTimeFeedValue(longFrom, longTo, 600, centre, tolerance)
+  const longExpected = bruteForceStockPathLength(longFrom, longTo, stock, 1_000_000)
+  assert.ok(Math.abs(600 / longValue - longExpected) / longExpected < 1e-9,
+    `the 3600° move agrees with the polyline (relative error ${(Math.abs(600 / longValue - longExpected) / longExpected).toExponential(2)})`)
+}
+
+// The review's cancelling case: the quadratic's minimum sits ~5e14 moves
+// outside, so the closed form's two antiderivative terms swallow the length and
+// it planned 18.000 mm for a true 18.6870947749 (F33.333 instead of F32.108).
+{
+  const centre = rotaryCentreline(bar())
+  assert.ok(centre, 'a round bar has a centreline')
+  const from = at(0, 11, 20, 0)
+  const to = at(10, 11 + 1e-14, 20 + 1e-14, 90)
+  const value = inverseTimeFeedValue(from, to, 600, centre, exportGeometryTolerance('mm'))
+  const length = 600 / value
+  assert.ok(Math.abs(length - 18.6870947749) / 18.6870947749 < 1e-9,
+    `the cancelling move keeps its length (got ${length})`)
+  assert.equal(Number(value.toFixed(3)), 32.108, 'the cancelling move writes F32.108, not the closed form\'s F33.333')
+}
+
+// The closed form cancels when the quadratic's minimum lies far outside the
+// move, so the length switches to a 32-point Gauss-Legendre rule there. One
+// narrow case at a time kept missing the boundary; 3000 seeded moves sweep both
+// branches and both bar axes against an independent reference instead.
+//
+// The reference integrates the same speed written from raw geometry (a sum of
+// squares, so it cannot cancel), by composite 32-point Gauss-Legendre over 64
+// panels, split at the quadratic's vertex when it lies inside. No Math.random:
+// a small deterministic LCG keeps a failure reproducible from the seed.
+{
+  const GL_NODES = [
+    0.048307665687738310378, 0.14447196158279648759, 0.23928736225213706468,
+    0.33186860228212766710, 0.42135127613063533270, 0.50689990893222935942,
+    0.58771575724076230429, 0.66304426693021523143, 0.73218211874028971131,
+    0.79448379596794238555, 0.84936761373256997043, 0.89632115576605209117,
+    0.93490607593773966677, 0.96476225558750638989, 0.98561151154526838170,
+    0.99726386184948156988,
+  ]
+  const GL_WEIGHTS = [
+    0.096540088514727853686, 0.095638720079274847086, 0.093844399080804538626,
+    0.091173878695763904689, 0.087652093004403741627, 0.083311924226946720839,
+    0.078193895787070435976, 0.072345794108848615611, 0.065822222776361946628,
+    0.058684093478535578892, 0.050998059262376153888, 0.042835898022226703841,
+    0.034273862913021410637, 0.025392065309262138589, 0.016274394730905708539,
+    0.0070186100094701362601,
+  ]
+  const panel = (lo: number, hi: number, f: (t: number) => number): number => {
+    const half = (hi - lo) / 2
+    const mid = (lo + hi) / 2
+    let sum = 0
+    for (let index = 0; index < GL_NODES.length; index++) {
+      const weight = GL_WEIGHTS[index]
+      const node = GL_NODES[index]
+      sum += weight * (f(mid + half * node) + f(mid - half * node))
+    }
+    return half * sum
+  }
+  /**
+   * The tip's path length in the stock frame, from the raw across/up/along
+   * geometry — not from the exporter's `alpha`/`beta`/`gamma` arrangement.
+   */
+  const referenceStockPathLength = (
+    from: ToolpathPoint,
+    to: ToolpathPoint,
+    centre: { axis: 'x' | 'y'; point: ToolpathPoint },
+  ): number => {
+    const acrossAt = (point: ToolpathPoint): number =>
+      (centre.axis === 'x' ? point.y : point.x) - (centre.axis === 'x' ? centre.point.y : centre.point.x)
+    const upAt = (point: ToolpathPoint): number => point.z - centre.point.z
+    const alongAt = (point: ToolpathPoint): number => (centre.axis === 'x' ? point.x : point.y)
+    const a0 = acrossAt(from)
+    const u0 = upAt(from)
+    const dAcross = acrossAt(to) - a0
+    const dUp = upAt(to) - u0
+    const dAlong = alongAt(to) - alongAt(from)
+    const omega = (((to.a ?? 0) - (from.a ?? 0)) * Math.PI) / 180
+    const speed = (t: number): number => {
+      const across = a0 + dAcross * t
+      const up = u0 + dUp * t
+      return Math.sqrt(
+        dAlong * dAlong + (dAcross + omega * up) ** 2 + (dUp - omega * across) ** 2,
+      )
+    }
+    // The vertex of the squared speed, from the raw coefficients, decides where
+    // to split; an exact split is what makes the corner case integrable.
+    const p = dAcross + omega * u0
+    const q = omega * dUp
+    const r = dUp - omega * a0
+    const s = -omega * dAcross
+    const alpha = q * q + s * s
+    const beta = 2 * (p * q + r * s)
+    const vertex = alpha > 0 ? -beta / (2 * alpha) : Number.NaN
+    const breaks = Number.isFinite(vertex) && vertex > 0 && vertex < 1 ? [0, vertex, 1] : [0, 1]
+    const panels = 64
+    let total = 0
+    for (let index = 0; index < breaks.length - 1; index++) {
+      const lo = breaks[index]
+      const hi = breaks[index + 1]
+      const step = (hi - lo) / panels
+      for (let panelIndex = 0; panelIndex < panels; panelIndex++) {
+        total += panel(lo + panelIndex * step, lo + (panelIndex + 1) * step, speed)
+      }
+    }
+    return total
+  }
+
+  // Draw a signed magnitude as `sign * 10^k`, sometimes exactly zero.
+  let seed = 0x2f6e2b1
+  const random = (): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+  const offset = (): number => (random() * 2 - 1) * 20
+  const delta = (): number => {
+    if (random() < 0.08) return 0
+    const sign = random() < 0.5 ? -1 : 1
+    return sign * 10 ** (-15 + random() * 17)
+  }
+  const sweepDegrees = (): number => {
+    if (random() < 0.08) return 0
+    const sign = random() < 0.5 ? -1 : 1
+    return sign * 10 ** (-12 + random() * 16.5)
+  }
+
+  let worstError = 0
+  let worstCase = ''
+  for (let index = 0; index < 3000; index++) {
+    const stock = roundStock(20, 100, random() < 0.5 ? 'x' : 'y')
+    const centre = rotaryCentreline(stock)
+    assert.ok(centre, `${index}: a round bar has a centreline`)
+    const startAcross = offset()
+    const startUp = offset()
+    const dAcross = delta()
+    const dUp = delta()
+    const dAlong = delta()
+    const sweep = sweepDegrees()
+    const from: ToolpathPoint = centre.axis === 'x'
+      ? at(0, centre.point.y + startAcross, centre.point.z + startUp, 0)
+      : at(centre.point.x + startAcross, 0, centre.point.z + startUp, 0)
+    const to: ToolpathPoint = centre.axis === 'x'
+      ? at(dAlong, from.y + dAcross, from.z + dUp, sweep)
+      : at(from.x + dAcross, dAlong, from.z + dUp, sweep)
+    const expected = referenceStockPathLength(from, to, centre)
+    // Tolerance 0 bypasses the emitter's floor, so the length itself is judged
+    // even for the sub-micron moves the random draw produces.
+    const value = inverseTimeFeedValue(from, to, 600, centre, 0)
+    const computed = Number.isFinite(value) ? 600 / value : 0
+    if (expected === 0) {
+      assert.equal(computed, 0, `case ${index}: a zero-length move stays zero`)
+      continue
+    }
+    const absolute = Math.abs(computed - expected)
+    const error = expected < 1e-3 ? absolute : absolute / expected
+    if (error > worstError) {
+      worstError = error
+      worstCase = `#${index} axis ${centre.axis} from ${JSON.stringify(from)} to ${JSON.stringify(to)}`
+    }
+    const bound = expected < 1e-3 ? 1e-12 : 1e-9
+    assert.ok(error < bound,
+      `${worstCase}: the length is the quadrature (error ${error.toExponential(2)})`)
+  }
+  // The reference and the emitter are different code, so the worst case is a
+  // real number to report rather than a pass/fail only.
+  console.log(`   worst path-length error ${worstError.toExponential(2)} (${worstCase})`)
+}
+
+// A rapid that turns: the angle word is never written on a block that also
+// carries Z. Turning the bar while Z moves turns it while the tool is still
+// near the work, so the turn happens at the higher of the rapid's two Z values.
+// The bar's centreline is at Z = 10 and the stock top at Z = 20, so the emitted
+// Z values are (project Z - 20).
+{
+  const project = projectWith(bar())
+
+  // Z rises: the Z block comes first, with no angle, and the XY block that
+  // follows carries it.
+  const rising = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('RiseTurn'),
+    moves: [
+      { kind: 'rapid', from: at(0, 10, 20, 0), to: at(0, 10, 30, 20) },
+      { kind: 'cut', from: at(0, 10, 30, 20), to: at(10, 10, 30, 20) },
+    ],
+  }])
+  assert.deepEqual(motionLines(rising.gcode).filter((line) => line.startsWith('G0') || /A20\b/.test(line)),
+    ['G0 Z10.000', 'X0.000 A20.000', 'G0 A360.000'],
+    `a rising rapid writes Z first, then the XY block with the angle:\n${motionLines(rising.gcode).join('\n')}`)
+
+  // Z falls: the XY block carrying the angle comes first, then the Z block. A
+  // leading rapid establishes the starting height.
+  const falling = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('FallTurn'),
+    moves: [
+      { kind: 'rapid', from: at(100, 10, 30, 0), to: at(0, 10, 30, 0) },
+      { kind: 'rapid', from: at(0, 10, 30, 0), to: at(10, 10, 20, 30) },
+      { kind: 'cut', from: at(10, 10, 20, 30), to: at(20, 10, 20, 30) },
+    ],
+  }])
+  assert.deepEqual(motionLines(falling.gcode).filter((line) => line.startsWith('G0')
+    || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A30\b/.test(line)),
+    ['G0 Z10.000', 'X0.000 A0.000', 'X10.000 A30.000', 'Z0.000', 'G0 A360.000'],
+    `a falling rapid turns across first, then drops:\n${motionLines(falling.gcode).join('\n')}`)
+
+  // Z rises and XY moves in the same rapid: still Z first, angle on the XY
+  // block. The next rapid falls back: XY (with the angle) first, then Z.
+  const both = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('BothWays'),
+    moves: [
+      { kind: 'rapid', from: at(10, 10, 30, 0), to: at(30, 10, 40, 15) },
+      { kind: 'rapid', from: at(30, 10, 40, 15), to: at(10, 10, 30, 0) },
+      { kind: 'cut', from: at(10, 10, 30, 0), to: at(20, 10, 30, 0) },
+    ],
+  }])
+  assert.deepEqual(motionLines(both.gcode).filter((line) => line.startsWith('G0')
+    || line.startsWith('X') || line.startsWith('Y') || line.startsWith('Z') || /A(15|0)\./.test(line)),
+    ['G0 Z20.000', 'X30.000 A15.000', 'X10.000 A0.000', 'Z10.000'],
+    `a rising rapid puts the angle on the XY block, a falling one turns first:\n${motionLines(both.gcode).join('\n')}`)
+
+  // No Z change at all: one XY block, angle and all; and a rotation-only rapid
+  // (the tool is already there) still writes the angle, on a block of its own.
+  const flatTurn = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('FlatTurn'),
+    moves: [
+      { kind: 'rapid', from: at(0, 10, 30, 0), to: at(10, 10, 30, 25) },
+      { kind: 'rapid', from: at(10, 10, 30, 25), to: at(10, 10, 30, 40) },
+      { kind: 'cut', from: at(10, 10, 30, 40), to: at(20, 10, 30, 40) },
+    ],
+  }])
+  assert.deepEqual(motionLines(flatTurn.gcode).filter((line) => /A(25|40)\./.test(line)),
+    ['X10.000 A25.000', 'A40.000'],
+    `an XY-only rapid carries the angle, and a rotation-only rapid writes it alone:\n${motionLines(flatTurn.gcode).join('\n')}`)
+}
+
+// ── 7. refusals ───────────────────────────────────────────────
+
+{
+  const project = projectWith(bar())
+  const turning: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30, 0), to: at(0, 10, 30, 90) }]
+  const flat: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(5, 10, 30) }]
+
+  // (a) an angle on a machine with no rotary block.
+  {
+    const result = exportProgram(project, GRBL, [
+      { operation: operation('Refused'), moves: turning },
+      { operation: operation('Kept'), moves: flat },
+    ])
+    assert.deepEqual(result.warnings, [{ code: 'postRotaryNoAxis', params: { operation: 'Refused' } }],
+      'the turning operation is refused with the operation name')
+    assert.doesNotMatch(result.gcode, /A90\b/, 'none of its motion is emitted')
+    assert.match(result.gcode, /X5\b/, 'the other operation is still emitted')
+  }
+
+  // (b) a turning feed move on a controller with no inverse-time feed.
+  {
+    const noInverse = rotaryMachine({ ...OWN_AXIS, inverseTimeFeed: null })
+    const result = exportProgram(project, noInverse, [
+      { operation: operation('NoInverse'), moves: turning },
+      { operation: operation('Kept'), moves: flat },
+    ])
+    assert.deepEqual(result.warnings, [{ code: 'postRotaryNoInverseTime', params: { operation: 'NoInverse' } }])
+    assert.doesNotMatch(result.gcode, /A90\b/, 'the refused operation emits no motion')
+    assert.match(result.gcode, /X5\b/, 'the other operation is still emitted')
+  }
+
+  // (c) travel along the borrowed motor's axis.
+  {
+    const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 0, 30, 0), to: at(0, 20, 30, 90) }]
+    const result = exportProgram(project, rotaryMachine(BORROWED_Y), [
+      { operation: operation('BorrowedTravel'), moves },
+      { operation: operation('Kept'), moves: flat },
+    ])
+    assert.deepEqual(result.warnings, [{
+      code: 'postRotaryBorrowedAxisTravel',
+      params: { operation: 'BorrowedTravel', axis: 'Y' },
+    }])
+    // The exact kept program: the refused operation writes no motion, and the
+    // borrowed letter is never written as a linear coordinate. `A90` alone
+    // would also be satisfied by a wrong `Y90`, so compare the lines.
+    assert.deepEqual(motionLines(result.gcode),
+      ['G90', 'G17', 'G21', 'G1 X5.000 Z10.000 F600.000'],
+      `the refused operation emits no motion and the borrowed axis no linear word:\n${motionLines(result.gcode).join('\n')}`)
+  }
+
+  // (d) a turning cut on something that is not a round bar.
+  {
+    const notRound = projectWith(block())
+    const result = exportProgram(notRound, rotaryMachine(OWN_AXIS), [
+      { operation: operation('Block'), moves: turning },
+      { operation: operation('Kept'), moves: flat },
+    ])
+    assert.deepEqual(result.warnings, [{ code: 'postRotaryNeedsRoundStock', params: { operation: 'Block' } }])
+    assert.doesNotMatch(result.gcode, /A90\b/, 'the refused operation emits no motion')
+  }
+
+  // (e) a square blank turns about the true pivot, and the axis rule applies to
+  // it exactly as to a round bar (#1016 C2-S4): the centreline is mid-side, not
+  // the corner radius.
+  {
+    const square = squareStock(20, 100, 'x')
+    assert.deepEqual(
+      rotaryCentreline(square),
+      { axis: 'x', point: { x: 0, y: 10, z: 10 } },
+      'the square centreline is the true pivot at the stock rectangle\'s centreline',
+    )
+    const result = exportProgram(projectWith(square), rotaryMachine({ ...OWN_AXIS, about: 'y' }), [
+      { operation: operation('Square'), moves: turning },
+    ])
+    assert.deepEqual(result.warnings, [{
+      code: 'postRotaryAxisMismatch',
+      params: { operation: 'Square', machineAxis: 'Y', stockAxis: 'X' },
+    }], 'a square blank on the wrong machine axis is refused')
+    assert.doesNotMatch(result.gcode, /A90\b/, 'and emits no motion')
+  }
+
+  // Every refusal blocks a save, not merely annotates one.
+  for (const code of [
+    'postRotaryNoAxis', 'postRotaryNoInverseTime', 'postRotaryBorrowedAxisTravel',
+    'postRotaryNeedsRoundStock', 'postRotaryAngleNotEstablished', 'postRotaryTemplateUsesBorrowedAxis',
+    'postRotaryDrillNotExpanded',
+  ] as const) {
+    assert.equal(warningSeverity(code), 'error', `${code} blocks the export`)
+  }
+}
+
+// ── 8. a flat operation on a borrowed-motor machine ───────────
+
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(BORROWED_Y)
+  // Along the bar, never touching the borrowed project axis: allowed.
+  const along: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  const allowed = exportProgram(project, definition, [{ operation: operation('Along'), moves: along }])
+  assert.deepEqual(allowed.warnings, [], 'a move that leaves the borrowed axis alone is allowed')
+  assert.match(allowed.gcode, /X20\b/, 'the along-bar travel is emitted')
+  assert.doesNotMatch(allowed.gcode, /Y[-0-9]/, 'a borrowed axis is still never written as a linear coordinate')
+
+  // Moving on the borrowed axis: refused however flat the operation is.
+  const across: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(0, 12, 30) }]
+  const refused = exportProgram(project, definition, [{ operation: operation('Across'), moves: across }])
+  assert.deepEqual(refused.warnings, [{
+    code: 'postRotaryBorrowedAxisTravel',
+    params: { operation: 'Across', axis: 'Y' },
+  }], 'travel on the borrowed axis is refused')
+  assert.doesNotMatch(refused.gcode, /X0|Y12/, 'the refused operation emits no motion')
+}
+
+// ── 9. a mispaired move fails loudly, not silently ─────────────
+//
+// `planStepFeeds` pairs the emitted steps with the operation's project moves by
+// position. A drift between the two would otherwise give a turning move the
+// ordinary feed, or measure its path length from another move's endpoints, so a
+// linear step whose angle disagrees with the move it was paired with is an
+// error rather than a wrong program.
+{
+  const project = projectWith(bar())
+  const op = operation('Mispaired')
+  const definition = rotaryMachine(OWN_AXIS)
+  // The step was planned from a turning toolpath move, but the project move it
+  // is paired with has no angle at all — the drift the check exists to catch.
+  const mispaired: ToolpathMove[] = [
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15) },
+  ]
+  const plannedFrom: ToolpathMove[] = [
+    { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) },
+  ]
+  const plan = planOperationMotion({
+    project,
+    definition,
+    operation: op,
+    toolpath: toolpathOf(op, plannedFrom),
+    arcEmitOptions: createArcEmitOptions(definition, 'mm', 'ij'),
+    startPosition: null,
+    captureTrace: false,
+  })
+  assert.throws(
+    () => planStepFeeds({
+      projectMoves: mispaired,
+      steps: plan.steps,
+      centre: rotaryCentreline(bar()),
+      tolerance: exportGeometryTolerance('mm'),
+      operationName: op.name,
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
+      effectiveFeed: () => 600,
+    }),
+    /Mispaired/,
+    'a step whose angle disagrees with its paired move throws, naming the operation',
+  )
+
+  // A step with no paired move at all throws too. The first two steps are
+  // angle-less and match the first two moves; the third has no move left.
+  const flatStep = (): LinearMoveDescriptor => ({
+    kind: 'linear',
+    point: { x: 0, y: 0, z: -5 },
+    moveKind: 'cut',
+  })
+  assert.throws(
+    () => planStepFeeds({
+      projectMoves: [
+        { kind: 'cut', from: at(0, 10, 20), to: at(0, 10, 15) },
+        { kind: 'cut', from: at(0, 10, 15), to: at(0, 10, 10) },
+      ],
+      steps: [flatStep(), flatStep(), flatStep()],
+      centre: rotaryCentreline(bar()),
+      tolerance: exportGeometryTolerance('mm'),
+      operationName: 'Mispaired',
+      direction: rotaryDirection(pinRotaryAxis(definition, null)),
+      effectiveFeed: () => 600,
+    }),
+    /Mispaired/,
+    'a step with no paired move throws',
+  )
+
+  // The check is narrowed to the plan a caller actually has: a normal export
+  // goes through the same function and does not throw.
+  const normal = exportProgram(project, definition, [{
+    operation: operation('Normal'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }]),
+  }])
+  assert.match(normal.gcode, /A90\b/, 'a well-paired export still emits its angle')
+}
+
+// ── 10. the borrowed coordinate is one value for the program (1a) ─
+
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(BORROWED_Y)
+  const along = (y: number, from: number, to: number): ToolpathMove[] => [
+    { kind: 'cut', from: at(from, y, 30), to: at(to, y, 30) },
+  ]
+
+  // The first exported operation fixes the borrowed coordinate; a later one at
+  // another value would silently drop the travel between them (rule 3a).
+  const moved = exportProgram(project, definition, [
+    { operation: operation('First'), moves: along(10, 0, 5) },
+    { operation: operation('Moved'), moves: along(20, 5, 10) },
+    { operation: operation('Back'), moves: along(10, 10, 15) },
+  ])
+  assert.deepEqual(moved.warnings, [{
+    code: 'postRotaryBorrowedAxisTravel',
+    params: { operation: 'Moved', axis: 'Y' },
+  }], 'a later operation at another borrowed value is refused')
+  assert.deepEqual(motionLines(moved.gcode),
+    ['G90', 'G17', 'G21', 'G1 X5.000 Z10.000 F600.000', 'X15.000 Z10.000'],
+    `only the operations at the established value are exported:\n${motionLines(moved.gcode).join('\n')}`)
+
+  // The same value throughout is allowed.
+  const same = exportProgram(project, definition, [
+    { operation: operation('One'), moves: along(10, 0, 5) },
+    { operation: operation('Two'), moves: along(10, 5, 10) },
+  ])
+  assert.deepEqual(same.warnings, [], 'operations at the same borrowed value are all exported')
+  assert.match(same.gcode, /X10\b/, 'the second operation is emitted')
+}
+
+// ── 11. canned cycles are not written on a rotary program (1b) ─
+
+{
+  const project = projectWith(bar())
+  const op = operation('Drill', { kind: 'drilling' })
+  const cycles: DrillCycle[] = [
+    { x: 0, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+    { x: 20, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+  ]
+  // The expanded G0/G1 the same operation carries besides its cycles.
+  const angled: ToolpathMove[] = established([
+    { kind: 'plunge', from: at(0, 10, 30, 0), to: at(0, 10, 20, 0) },
+    { kind: 'rapid', from: at(0, 10, 20, 0), to: at(0, 10, 30, 0) },
+    { kind: 'rapid', from: at(0, 10, 30, 0), to: at(20, 10, 30, 0) },
+    { kind: 'plunge', from: at(20, 10, 30, 0), to: at(20, 10, 20, 0) },
+    { kind: 'rapid', from: at(20, 10, 20, 0), to: at(20, 10, 30, 0) },
+  ])
+  const flat: ToolpathMove[] = [
+    { kind: 'plunge', from: at(0, 10, 30), to: at(0, 10, 20) },
+    { kind: 'rapid', from: at(0, 10, 20), to: at(0, 10, 30) },
+    { kind: 'rapid', from: at(0, 10, 30), to: at(20, 10, 30) },
+    { kind: 'plunge', from: at(20, 10, 30), to: at(20, 10, 20) },
+    { kind: 'rapid', from: at(20, 10, 20), to: at(20, 10, 30) },
+  ]
+
+  // A borrowed-motor machine never writes G81: the letter carries the angle and
+  // the cycle's positioning would write it as a linear coordinate, so the
+  // expanded moves are used instead — where it is suppressed. The moves carry
+  // no angle, so the borrowed motor is the only thing that can disable it.
+  const borrowed = exportProgram(project, rotaryOn(LINUXCNC, BORROWED_Y), [
+    { operation: op, moves: flat, drillCycles: cycles },
+  ])
+  assert.deepEqual(borrowed.warnings, [], 'the borrowed drilling operation still exports')
+  assert.doesNotMatch(borrowed.gcode, /G8[13]\b/, 'a borrowed-motor machine writes no canned cycle')
+  assert.match(borrowed.gcode, /G0 |G1 /, 'its expanded moves are written instead')
+
+  // A toolpath that carries an angle anywhere also loses the canned cycle, even
+  // on an own-axis machine.
+  const ownAxis = exportProgram(project, rotaryOn(LINUXCNC, OWN_AXIS), [
+    { operation: op, moves: angled, drillCycles: cycles },
+  ])
+  assert.deepEqual(ownAxis.warnings, [], 'the own-axis drilling operation exports')
+  assert.doesNotMatch(ownAxis.gcode, /G8[13]\b/, 'a toolpath carrying an angle writes no canned cycle')
+  assert.match(ownAxis.gcode, /G1 /, 'its expanded moves are written instead')
+
+  // The control: no borrowed motor and no angle anywhere keeps today's G81.
+  const control = exportProgram(project, LINUXCNC, [{ operation: op, moves: flat, drillCycles: cycles }])
+  assert.deepEqual(control.warnings, [])
+  assert.match(control.gcode, /G81\b/, 'a plain machine still writes its canned cycle')
+
+  // A borrowed-motor machine whose operation has drill holes but no expanded
+  // moves would be silently dropped: it is refused instead, with a warning that
+  // names the real reason (rule 3b) rather than travel it does not have.
+  const empty = exportProgram(project, rotaryOn(LINUXCNC, BORROWED_Y), [
+    { operation: op, moves: [], drillCycles: cycles },
+  ])
+  assert.deepEqual(empty.warnings, [{
+    code: 'postRotaryDrillNotExpanded',
+    params: { operation: 'Drill' },
+  }], 'drill holes with no moves to expand are refused')
+  assert.doesNotMatch(empty.gcode, /G8[13]\b/, 'no canned cycle is written for the refused operation')
+}
+
+// ── 12. the machine's own templates may not drive the borrowed motor (1c) ─
+//
+// #1057 slice F restricts every template except the tool-change block and the
+// footer; those two may still write anything, so they are the ones this check
+// has to catch. A definition that put a motion word in a header or an operation
+// header is refused by the schema before it reaches the emitter.
+
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  // The footer is the other template that may write anything and is always
+  // emitted, so every spelling below is judged on the program it appears in.
+  const withFooter = (footer: string[]): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: BORROWED_Y,
+    program: { ...structuredClone(GRBL.program), footer },
+  })
+
+  for (const line of ['G0 X0 Y0', 'G53 G0 Y0', 'G92 Y0']) {
+    const result = exportProgram(project, withFooter([line]), [
+      { operation: operation('One'), moves },
+      { operation: operation('Two'), moves },
+    ])
+    assert.deepEqual(result.warnings, [{
+      code: 'postRotaryTemplateUsesBorrowedAxis',
+      params: { axis: 'Y' },
+    }], `${line}: a template that drives the borrowed motor refuses the program once`)
+    assert.doesNotMatch(result.gcode, /X20\b/, `${line}: no operation's motion is emitted`)
+  }
+
+  // A comment is not a template line: the letter there drives nothing.
+  const commented = exportProgram(project, withFooter(['; G0 Y0']), [{ operation: operation('One'), moves }])
+  assert.deepEqual(commented.warnings, [], 'a comment mentioning the letter does not refuse the program')
+  assert.match(commented.gcode, /X20\b/, 'and the operation is exported')
+
+  // The other axis is not the borrowed letter.
+  const otherAxis = exportProgram(project, withFooter(['G0 X0']), [{ operation: operation('One'), moves }])
+  assert.deepEqual(otherAxis.warnings, [], 'an X word on a machine that borrows Y is harmless')
+
+  // The three spellings a raw-template scan missed. `G0 Y{feed}` is only a word
+  // once rendered; whitespace between the letter and its value is still a word;
+  // and a line that starts with a parenthesised comment still carries code.
+  // `{feed}` is only a word once the tool-change context renders it, so this
+  // one is written by a real tool change.
+  const one = operation('One')
+  const renderedText = 'G0 X0 Y{feed}'
+  // Slice H: a feed value may not become an axis coordinate, so the schema
+  // refuses the placeholder position outright.
+  assert.throws(
+    () => validateMachineDefinition({
+      ...structuredClone(GRBL),
+      rotary: BORROWED_Y,
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
+    }),
+    (error: unknown) => error instanceof Error && error.message.includes('{feed}'),
+    'the schema refuses a feed placeholder in an axis word',
+  )
+  const rendered = runPostProcessor({
+    project,
+    // #1119 retains this old snapshot structurally but refuses it at export,
+    // so the emitter never sees it: the template-rule diagnostics are the
+    // refusal, and no program is produced.
+    definition: {
+      ...structuredClone(GRBL),
+      rotary: BORROWED_Y,
+      toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, renderedText] },
+    } as MachineDefinition,
+    operations: [{
+      operation: one,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: toolpathOf(one, moves),
+    }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.equal(rendered.gcode, '', 'an invalid machine produces no program')
+  assert.ok(
+    rendered.warnings.some((warning) => warning.code === 'exportMachineTemplateInvalid'),
+    'the template-rule refusal replaces the emitter-level refusal',
+  )
+
+  const spaced = exportProgram(project, withFooter(['Y 0']), [{ operation: operation('One'), moves }])
+  assert.deepEqual(spaced.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'whitespace between the letter and its value is still a word')
+
+  // LINUXCNC writes `( … )` comments; a naive scan skipped such a line whole
+  // even though the code after the comment is code.
+  const parenMachine = validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: BORROWED_Y,
+    program: { ...structuredClone(LINUXCNC.program), footer: ['(position) G0 Y0'] },
+  })
+  const paren = exportProgram(project, parenMachine, [{ operation: operation('One'), moves }])
+  assert.deepEqual(paren.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'code after a leading parenthesised comment still counts')
+}
+
+// A machine with its own axis: a template that writes A turns the bar behind
+// the planner's back. Operation one ends at A90, the tool change runs `G0 A0`,
+// and operation two's opening rapid to A90 writes no angle word because the
+// emitter still believes it is at A90 — so the second operation would cut at
+// the wrong angle. Such a program is refused; an angle-free one is untouched.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  const ownAxisChange = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    toolChange: { ...structuredClone(GRBL.toolChange), commands: [...GRBL.toolChange.commands, 'G0 A0'] },
+  })
+  const secondTool = { ...defaultTool('mm', 2), id: 't2', name: 'Second Tool' }
+  project.tools = [...project.tools, secondTool]
+  const tools = new Map(project.tools.map((tool) => [tool.id, normalizeToolForProject(tool, project)]))
+  const turnOp = operation('Turn')
+  const nextOp = operation('Next', { toolRef: 't2' })
+  const turned = runPostProcessor({
+    project,
+    definition: ownAxisChange,
+    operations: [
+      {
+        operation: turnOp,
+        tool: tools.get('t1')!,
+        toolpath: toolpathOf(turnOp, established([
+          { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+        ])),
+      },
+      {
+        operation: nextOp,
+        tool: tools.get('t2')!,
+        toolpath: toolpathOf(nextOp, [{ kind: 'cut', from: at(0, 10, 20), to: at(5, 10, 20) }]),
+      },
+    ],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  assert.deepEqual(turned.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'A' },
+  }], 'an own-axis tool-change template that writes A refuses the turning program')
+  assert.equal(turned.gcode, '', 'the refused program carries no program text')
+
+  // The same template on a program that never turns is harmless: nothing is
+  // rotated, so the extra `A` word cannot contradict the planner. The footer is
+  // the other template that may write anything.
+  const angleFree = exportProgram(project, validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    program: { ...structuredClone(GRBL.program), footer: ['G0 A0'] },
+  }), [{ operation: operation('Flat'), moves }])
+  assert.deepEqual(angleFree.warnings, [], 'an own-axis template that writes A is harmless while nothing turns')
+  assert.match(angleFree.gcode, /G0 A0/, 'and the template is written unchanged')
+}
+
+// The canned-cycle command words are cycle selectors by schema now (#1057
+// slice F), so the only canned-cycle output that reaches the axis-word check is
+// a legal cycle. The control pins that it still exports on an own-axis machine
+// with a turning operation elsewhere in the program — and, since #1156, that a
+// program holding its cross axis by touch-off expands it instead.
+{
+  const project = projectWith(bar())
+  const drillOp = operation('Drill', { kind: 'drilling' })
+  const cycles: DrillCycle[] = [
+    { x: 0, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+    { x: 20, y: 10, clearZ: 30, retractZ: 30, bottomZ: 20, drillType: 'simple' },
+  ]
+  const flat: ToolpathMove[] = [
+    { kind: 'plunge', from: at(0, 10, 30), to: at(0, 10, 20) },
+    { kind: 'rapid', from: at(0, 10, 20), to: at(0, 10, 30) },
+    { kind: 'rapid', from: at(0, 10, 30), to: at(20, 10, 30) },
+    { kind: 'plunge', from: at(20, 10, 30), to: at(20, 10, 20) },
+    { kind: 'rapid', from: at(20, 10, 20), to: at(20, 10, 30) },
+  ]
+  const turnOp = operation('Turn')
+  const entries = [
+    { operation: drillOp, moves: flat, drillCycles: cycles },
+    {
+      operation: turnOp,
+      moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 15, 90) }]),
+    },
+  ]
+  const definition = validateMachineDefinition({
+    ...structuredClone(LINUXCNC),
+    rotary: OWN_AXIS,
+    cannedCycles: structuredClone(LINUXCNC.cannedCycles),
+  })
+  const control = exportProgram(project, definition, entries)
+  assert.deepEqual(control.warnings, [], 'an ordinary canned cycle does not refuse the program')
+  // #1156: a cycle writes its hole position as X and Y whatever the axis does,
+  // and this program holds its cross axis by touch-off, so the cycle's own
+  // moves are written instead — exactly as on a borrowed-motor machine.
+  assert.doesNotMatch(control.gcode, /G81\b/, 'the cycle is expanded, not written, when the cross axis is held')
+  assert.match(control.gcode, /G0 |G1 /, 'its expanded moves are written instead')
+
+  // The guarantee this block was added for still holds where the rule does not:
+  // an origin off the centreline is real cross travel the program must state,
+  // so the cycle is written as before.
+  const offCentre = exportProgram({
+    ...project,
+    origin: { ...project.origin, y: 0 },
+  }, definition, entries)
+  assert.match(offCentre.gcode, /G81\b/, 'an off-centreline program still writes the cycle')
+}
+
+// A definition template holding several physical lines is judged line by line
+// (issue #393, rule 3c): the axis-word scan stops at a line's comment marker, so
+// scanning the joined text dropped the code on every later line.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [{ kind: 'cut', from: at(0, 10, 30), to: at(20, 10, 30) }]
+  const withFooter = (footer: string[]): MachineDefinition => validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: BORROWED_Y,
+    program: { ...structuredClone(GRBL.program), footer },
+  })
+
+  const multiLine = exportProgram(project, withFooter(['; note\nG0 Y0']), [
+    { operation: operation('One'), moves },
+  ])
+  assert.deepEqual(multiLine.warnings, [{
+    code: 'postRotaryTemplateUsesBorrowedAxis',
+    params: { axis: 'Y' },
+  }], 'code on the second physical line of a template still counts')
+  assert.equal(multiLine.gcode, '', 'the refused program carries no text')
+
+  // The comment line alone is still prose and drives nothing.
+  const commentOnly = exportProgram(project, withFooter(['; note\n; G0 Y0']), [
+    { operation: operation('One'), moves },
+  ])
+  assert.deepEqual(commentOnly.warnings, [], 'a multi-line comment does not refuse the program')
+  assert.match(commentOnly.gcode, /X20\b/, 'and the operation is exported')
+}
+
+// ── 13. the angle the controller is at is reconciled (2) ──────
+
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine(OWN_AXIS)
+
+  // A constant-angle arc run at 45° with no rapid before it: the controller has
+  // never been turned to 45, so the operation is refused, not cut.
+  const unestablished = exportProgram(project, definition, [{
+    operation: operation('Unestablished', { arcFittingEnabled: true }),
+    moves: circleMoves(0, 10, 5, 20, 16, () => 45),
+  }])
+  assert.deepEqual(unestablished.warnings, [{
+    code: 'postRotaryAngleNotEstablished',
+    params: { operation: 'Unestablished' },
+  }], 'a feed move at an unestablished angle is refused')
+  assert.doesNotMatch(unestablished.gcode, /G[23]\b/, 'no arc is emitted for it')
+
+  // The establishing rapid makes the same operation run.
+  const establishedRun = exportProgram(project, definition, [{
+    operation: operation('Established', { arcFittingEnabled: true }),
+    moves: established(circleMoves(0, 10, 5, 20, 16, () => 45)),
+  }])
+  assert.deepEqual(establishedRun.warnings, [])
+  assert.match(establishedRun.gcode, /G[23]\b/, 'the arcs are emitted once the angle is established')
+  // Accepted is not enough: the rapid must actually write the angle before the
+  // run, and reading the program back must show every arc at 45°.
+  const establishedLines = motionLines(establishedRun.gcode)
+  const establishedFirstArc = establishedLines.findIndex((line) => /G[23]\b/.test(line))
+  const establishedAngle = establishedLines.findIndex((line) => /A45\b/.test(line))
+  assert.ok(establishedAngle >= 0 && establishedAngle < establishedFirstArc,
+    `the A45 rapid precedes the first arc:\n${establishedLines.join('\n')}`)
+  const establishedParse = parseGcodeMotion(establishedRun.gcode, 'ij', ';', '', {
+    word: 'A',
+    inverseTimeFeed: { on: 'G93', off: 'G94' },
+  })
+  const establishedArcs = establishedParse.moves.filter((move) => move.kind === 'arc')
+  assert.ok(establishedArcs.length > 0, 'the run reads back as arcs')
+  assert.ok(establishedArcs.every((arc) => arc.from.a === 45 && arc.to.a === 45),
+    'every arc read back is at 45°')
+}
+
+// A feed move that starts and ends at 90 after the program left the bar at 0
+// would turn the bar inside an ordinary `G94` cut, and a machine with no
+// inverse-time feed would otherwise not notice it.
+{
+  const project = projectWith(bar())
+  const definition = rotaryMachine({ ...OWN_AXIS, inverseTimeFeed: null })
+  const result = exportProgram(project, definition, [
+    {
+      operation: operation('Zero'),
+      moves: established([{ kind: 'cut', from: at(0, 10, 30, 0), to: at(5, 10, 30, 0) }]),
+    },
+    {
+      operation: operation('Ninety'),
+      moves: [{ kind: 'cut', from: at(5, 10, 30, 90), to: at(10, 10, 30, 90) }],
+    },
+  ])
+  assert.deepEqual(result.warnings, [{
+    code: 'postRotaryAngleNotEstablished',
+    params: { operation: 'Ninety' },
+  }], 'a constant-angle cut at another angle would turn the bar inside an ordinary move')
+  assert.doesNotMatch(result.gcode, /A90\b/, 'the refused operation emits no motion')
+}
+
+// An operation with no angle anywhere after one that left the bar at a non-zero
+// angle is fine: it writes no angle word and the bar stays put.
+{
+  const project = projectWith(bar())
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [
+    {
+      operation: operation('Turned'),
+      moves: established([{ kind: 'cut', from: at(0, 10, 30, 0), to: at(0, 10, 30, 45) }]),
+    },
+    {
+      operation: operation('FlatAfter'),
+      moves: [{ kind: 'cut', from: at(0, 10, 30), to: at(5, 10, 30) }],
+    },
+  ])
+  assert.deepEqual(result.warnings, [], 'an angle-less operation after a turn is fine')
+  const lines = motionLines(result.gcode)
+  const turned = lines.findIndex((line) => /A45\b/.test(line))
+  assert.ok(turned >= 0, `the turn is written:\n${lines.join('\n')}`)
+  assert.ok(lines.slice(turned + 1).every((line) => !/A-?[0-9]/.test(line) || line === 'G0 A360.000'),
+    `the flat operation writes no angle; the only later turn is the first operation's end turn:\n${lines.join('\n')}`)
+}
+
+// A program that begins with a feed move has no established angle yet.
+{
+  const project = projectWith(bar())
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('StartsCutting'),
+    moves: [{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }],
+  }])
+  assert.deepEqual(result.warnings, [{
+    code: 'postRotaryAngleNotEstablished',
+    params: { operation: 'StartsCutting' },
+  }], 'the bar angle is unknown at program start, so a feed move may not begin there')
+}
+
+// ── 14. the inverse-time F is on the motion block (3) ─────────
+
+{
+  const project = projectWith(bar())
+  // A definition that writes ordinary feeds on their own line must not do that
+  // with an inverse-time feed: LinuxCNC requires the F on every G1 in G93.
+  const nonInline = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    feedSpeed: { ...GRBL.feedSpeed, inlineWithMotion: false },
+  })
+  const result = exportProgram(project, nonInline, [{
+    operation: operation('NonInline'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
+  }])
+  const lines = motionLines(result.gcode)
+  const turning = lines.findIndex((line) => /A90\b/.test(line))
+  assert.ok(turning > 0, `the turning move is emitted:\n${lines.join('\n')}`)
+  assert.equal(lines[turning - 1], 'G93', `G93 directly precedes it:\n${lines.join('\n')}`)
+  // 600 / (10 × π/2) = 38.197.
+  assert.match(lines[turning], /F38\.197\b/, 'the inverse-time F is on the motion block itself')
+  // And nowhere on a line of its own: `motionLines` drops a bare F line, so
+  // check the raw program.
+  assert.ok(!result.gcode.split('\n').includes('F38.197'),
+    'the inverse-time F is not written on a line of its own')
+}
+
+// ── 15. G94 is restored before non-turning output (5) ─────────
+
+{
+  const project = projectWith(bar())
+  // A machine whose operation header carries a dwell (an operation's own
+  // template) and a positioning move.
+  const withDwellHeader = validateMachineDefinition({
+    ...structuredClone(GRBL),
+    rotary: OWN_AXIS,
+    // A dwell is an inert operation-header template (#1057 slice F); a
+    // positioning word there is refused by the schema.
+    program: { ...structuredClone(GRBL.program), operationHeader: ['G4 P1'] },
+  })
+  const result = exportProgram(project, withDwellHeader, [
+    {
+      operation: operation('Turn'),
+      moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
+    },
+    {
+      operation: operation('Header'),
+      moves: [{ kind: 'cut', from: at(0, 10, 20), to: at(5, 10, 20) }],
+    },
+  ])
+  const lines = motionLines(result.gcode)
+  const dwell = lines.lastIndexOf('G4 P1')
+  assert.ok(dwell > 0, `the header dwell is emitted:\n${lines.join('\n')}`)
+  // Since #1103 ca-h the first operation's own end turn already restored
+  // ordinary feed, so the G94 may sit a few blocks before the dwell; what
+  // matters is that inverse time is off by then.
+  assert.ok(lines.slice(0, dwell).lastIndexOf('G94') > lines.slice(0, dwell).lastIndexOf('G93'),
+    `G94 is restored before the next operation's dwell template:\n${lines.join('\n')}`)
+  // Nothing in the second operation's header turns the bar.
+  assert.ok(lines.slice(dwell).every((line) => !/A-?[0-9]/.test(line)),
+    'no turning move follows the restored mode')
+}
+
+// A tool change after a turning cut is written in ordinary mode too.
+{
+  const project = projectWith(bar())
+  const secondTool = { ...defaultTool('mm', 2), id: 't2', name: 'Second Tool' }
+  project.tools = [...project.tools, secondTool]
+  const definition = rotaryMachine(OWN_AXIS)
+  const tools = new Map(project.tools.map((tool) => [tool.id, normalizeToolForProject(tool, project)]))
+  const turn = operation('Turn')
+  const change = operation('Change', { toolRef: 't2' })
+  const result = runPostProcessor({
+    project,
+    definition,
+    operations: [
+      {
+        operation: turn,
+        tool: tools.get('t1')!,
+        toolpath: toolpathOf(turn, established([
+          { kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) },
+        ])),
+      },
+      {
+        operation: change,
+        tool: tools.get('t2')!,
+        toolpath: toolpathOf(change, [{ kind: 'cut', from: at(0, 10, 20), to: at(5, 10, 20) }]),
+      },
+    ],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  const raw = result.gcode.split('\n')
+  // The first operation loads its tool too, so the change under test is the
+  // last one.
+  const changeIndex = raw.reduce((found, line, index) => /Tool change/.test(line) ? index : found, -1)
+  assert.ok(changeIndex > 0, `the tool change is emitted:\n${raw.join('\n')}`)
+  const restored = raw.lastIndexOf('G94', changeIndex)
+  assert.ok(restored > -1 && restored < changeIndex, 'G94 is restored before the tool change')
+  assert.ok(raw.slice(restored, changeIndex).every((line) => !/A-?[0-9]/.test(line) || /^G0 A/.test(line)),
+    'no turning feed move runs between the restored mode and the tool change; only the end turn rapid')
+
+  // The spindle stop that ends the turning operation is itself output: it must
+  // be written in ordinary mode, before the tool change, not inside `G93`.
+  const turningIndex = raw.findIndex((line) => /A90\b/.test(line))
+  const stopIndex = raw.findIndex((line, index) => index > turningIndex && line === 'M5')
+  const modeBeforeStop = raw.lastIndexOf('G94', stopIndex)
+  assert.ok(turningIndex > 0 && stopIndex > turningIndex && modeBeforeStop > turningIndex
+    && modeBeforeStop < stopIndex && changeIndex > stopIndex,
+    `G94 comes before the spindle stop, which comes before the tool change:\n${raw.join('\n')}`)
+}
+
+// ── the planner in isolation ──────────────────────────────────
+
+{
+  const project = projectWith(bar())
+  const op = operation('Isolated')
+  const plan = planRotaryRefusals({
+    project,
+    definition: GRBL,
+    operations: [{
+      operation: op,
+      tool: normalizeToolForProject(project.tools[0], project),
+      toolpath: toolpathOf(op, [{ kind: 'cut', from: at(0, 10, 30), to: at(0, 10, 30, 90) }]),
+    }],
+  })
+  assert.equal(plan.operations.length, 0, 'the refused operation is dropped')
+  assert.equal(plan.warnings.length, 1, 'and reported once')
+}
+
+// ── 16. every rotary program ends facing 0 up (#1091 + #1103 ca-h) ──
+//
+// #1091 forbids a closing *unwind*: the bar is never turned back to 0 by a
+// rewind. #1103 slice ca-h still leaves it at a known orientation: after the
+// operation's own retract the emitter proves clearance in machine coordinates
+// and turns the stock **forward** to the next whole turn (0 up), then says so.
+{
+  const project = projectWith(bar())
+  const result = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('EndsAt90'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
+  }])
+  const raw = result.gcode.split('\n')
+  assert.equal(raw[raw.length - 1], 'M30', 'the program end is the last line')
+  assert.equal(raw[raw.length - 2], 'M5', 'nothing is written after the spindle stop')
+  assert.ok(!/^G0 [AXY]0\.000$/.test(raw[raw.length - 2]), 'no closing unwind runs before the footer')
+  // The forward end turn is real motion: a machine-coordinate retract, then the
+  // next whole turn, then the operator's instruction.
+  const g53At = raw.findIndex((line) => line.startsWith('G53'))
+  assert(g53At > 0, `the end turn retracts in machine coordinates:\n${raw.slice(-8).join('\n')}`)
+  assert.equal(raw[g53At + 1], 'G0 A360.000', 'and then turns forward to the next whole turn')
+  assert.equal(raw[g53At + 2], '; A is at 360.000, 0 up. Zero A before the next operation.',
+    'the operator is told where A is and what to do')
+  const written = motionLines(result.gcode)
+    .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  assert.equal(written[written.length - 1], 360, 'the program ends on a whole turn, ahead of the last angle')
+  assert.ok(written[written.length - 1] > 90, 'and never behind it')
+
+  // The borrowed letter is turned to 0 up with the same rule.
+  const borrowed = exportProgram(project, rotaryMachine(BORROWED_Y), [{
+    operation: operation('EndsAt90'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(0, 10, 20, 90) }]),
+  }])
+  const borrowedWritten = motionLines(borrowed.gcode)
+    .flatMap((block) => [...block.matchAll(/Y(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  assert.equal(borrowedWritten[borrowedWritten.length - 1], 360, 'the borrowed letter ends at 0 up too')
+
+  // A program that already ends at 0 writes no end-turn move — only the
+  // machine-coordinate retract and the instruction.
+  const zero = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('Zero'),
+    moves: established([{ kind: 'cut', from: at(0, 10, 20, 0), to: at(5, 10, 20, 0) }]),
+  }])
+  assert.ok(!/\nG0 [AXY]0\.000\n/.test(zero.gcode), 'a program that ends at 0 writes no extra A rapid')
+  assert.ok(!zero.gcode.includes('G53'), 'no retract is written for a turn that needs no motion')
+  assert.match(zero.gcode, /A is at 0\.000, 0 up/, 'and the program still says where A is')
+}
+
+// ── 17. the last toolpath motion is the retract a non-rotary program uses ─
+//
+// #1091: removing the closing unwind must not remove or move the last
+// operation's retract. The same toolpath, angle-free and at a constant angle,
+// has the identical last toolpath motion — and the rotary program then adds
+// #1103 ca-h's forward end turn after it (a machine-coordinate retract and an
+// angle-only rapid), which is checked separately.
+{
+  const project = projectWith(bar())
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30), to: at(10, 10, 30) },
+    { kind: 'cut', from: at(10, 10, 30), to: at(10, 10, 20) },
+    { kind: 'rapid', from: at(10, 10, 20), to: at(10, 10, 30) },
+  ]
+  const flat = exportProgram(project, GRBL, [{ operation: operation('Retract'), moves }])
+  const turned = exportProgram(project, rotaryMachine(OWN_AXIS), [{
+    operation: operation('Retract'),
+    moves: established(moves.map((move) => ({
+      ...move,
+      from: { ...move.from, a: 45 },
+      to: { ...move.to, a: 45 },
+    }))),
+  }])
+  // The last work-coordinate motion of each program. The rotary one's
+  // machine-coordinate retract is excluded: G53 is a machine frame, not the
+  // operation's retract.
+  const lastMotion = (program: string): string => {
+    const axis = motionLines(program)
+      .filter((line) => /[XYZ]/.test(line) && !/^G53\b/.test(line))
+    assert.ok(axis.length > 0, 'the program has axis motion')
+    return axis[axis.length - 1]
+  }
+  assert.equal(lastMotion(turned.gcode), lastMotion(flat.gcode),
+    'the rotary program ends its own motion with the identical retract a non-rotary program uses')
+  const retractZ = Number(lastMotion(turned.gcode).match(/Z(-?[0-9.]+)/)![1])
+  assert.ok(retractZ > 0, `the retract is above the cut depth, got Z${retractZ}`)
+  assert.doesNotMatch(lastMotion(turned.gcode), /A/, 'and the retract carries no angle word')
+  // After it, #1103 ca-h turns forward to the next whole turn (45 -> 360).
+  const turning = motionLines(turned.gcode)
+  assert.equal(turning[turning.length - 1], 'G0 A360.000',
+    'the operation closes with the forward end turn to 0 up')
+}
+
+// ── 18. the continuous helix exports as long straight G1 moves (#1103 ca-e) ──
+//
+// The around-the-bar path this branch generates is a forward helix: A advances
+// through the whole operation, a merged segment can span several revolutions,
+// and every turning block is a straight G1 in inverse time. The posting rules
+// that matter are all checked against the generator's own output rather than a
+// hand-built path:
+//
+//   - at least one turning **cut** spans more than a full revolution, and A
+//     never decreases anywhere in the path (no modulo wrap, no closing unwind);
+//   - the program has no G2/G3 (arc fitting is on and a turning move is never
+//     fitted), and every G1 block in G93 mode carries a positive F;
+//   - each of those F words is `feed / length` for an **independent** numerical
+//     integration of the tip path in the stock's own frame, including the
+//     multi-turn move;
+//   - the own, borrowed and reversed machines write the same growing angle
+//     (never a wrapped value), and the program ends on the last angle.
+//
+// The along-the-bar controls below are pinned: that path is byte-identical to
+// the pre-slice commit (moves and posted text, only the date normalised).
+
+const CONTINUOUS_STOCK = roundStock(20, 40, 'x')
+const CONTINUOUS_BASE = {
+  stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 12, alongEnd: 28,
+  safeRadius: 30, requestedCellSize: 0.1,
+}
+const CONTINUOUS_TOOL: NormalizedTool = {
+  id: 'ball-2', name: '2 mm ball nose', sourceUnits: 'mm', units: 'mm',
+  type: 'ball_endmill', diameter: 2, radius: 1, vBitAngle: null,
+  flutes: 2, material: 'carbide', defaultRpm: 0, defaultFeed: 0,
+  defaultPlungeFeed: 0, defaultStepdown: 0, defaultStepover: 0, maxCutDepth: 0,
+}
+
+/** A coaxial cylinder surface inside the bar, as a lathe-turned mesh. */
+function continuousCylinder(radius: number, from: number, to: number, segments = 96): RotaryModelMesh {
+  const centre = CONTINUOUS_STOCK.thickness / 2
+  const pivot = barPivotZ(CONTINUOUS_STOCK)
+  const positions: number[] = []
+  const index: number[] = []
+  for (const along of [from, to]) {
+    for (let j = 0; j < segments; j++) {
+      const t = 2 * Math.PI * j / segments
+      positions.push(along, centre + radius * Math.cos(t), pivot + radius * Math.sin(t))
+    }
+  }
+  for (let j = 0; j < segments; j++) {
+    const j2 = (j + 1) % segments
+    index.push(j, j2, segments + j2, j, segments + j2, segments + j)
+  }
+  return { positions: new Float32Array(positions), index: new Uint32Array(index) }
+}
+
+const CONTINUOUS_MESH = continuousCylinder(5, 12, 28)
+const CONTINUOUS_ROUGH = generateRotaryRough('continuous-rough', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
+  ...CONTINUOUS_BASE, passDirection: 'around', stepdown: 2,
+}, {})
+const CONTINUOUS_FINISH = generateRotaryFinish('continuous-finish', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
+  ...CONTINUOUS_BASE, passDirection: 'around',
+}, {})
+
+/** Every feed move that changes the commanded angle. */
+function turningCuts(moves: readonly ToolpathMove[]): ToolpathMove[] {
+  return moves.filter((move) => move.kind !== 'rapid'
+    && move.from.a !== undefined && move.to.a !== undefined && move.from.a !== move.to.a)
+}
+
+/** Sign changes between consecutive turning cuts. */
+function aReversals(moves: readonly ToolpathMove[]): number {
+  let reversals = 0
+  let lastSign = 0
+  for (const move of turningCuts(moves)) {
+    const sign = Math.sign((move.to.a ?? 0) - (move.from.a ?? 0))
+    if (lastSign !== 0 && sign !== lastSign) reversals += 1
+    lastSign = sign
+  }
+  return reversals
+}
+
+const aWord = (line: string): number | undefined => {
+  const match = /A(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+  return match ? Number(match[1]) : undefined
+}
+const fWord = (line: string): number | undefined => {
+  const match = /F(-?[0-9]+(?:\.[0-9]+)?)/.exec(line)
+  return match ? Number(match[1]) : undefined
+}
+
+/**
+ * Post one generated around path and return the blocks emitted in inverse-time
+ * mode that carry an angle: one per turning feed move, in path order. G0 blocks
+ * are excluded — a rapid never carries F, and only the establishing rapid turns.
+ */
+function inverseTurningBlocks(program: string): string[] {
+  const blocks: string[] = []
+  let inverse = false
+  for (const line of motionLines(program)) {
+    if (line === 'G93') { inverse = true; continue }
+    if (line === 'G94') { inverse = false; continue }
+    if (inverse && /A-?[0-9]/.test(line) && !/^G0\b/.test(line)) blocks.push(line)
+  }
+  return blocks
+}
+
+console.log('Testing that the generated helix posts as long forward G1 moves...')
+{
+  // Generator contract first: no reversal, no wrap, a multi-turn segment, and a
+  // last pose that is the largest angle rather than a closing unwind.
+  for (const [name, result] of [['rough', CONTINUOUS_ROUGH], ['finish', CONTINUOUS_FINISH]] as const) {
+    const cuts = turningCuts(result.moves)
+    assert.ok(cuts.length > 0, `${name}: the around path turns A`)
+    assert.equal(aReversals(result.moves), 0, `${name}: no turning cut reverses A`)
+    let previous = -Infinity
+    for (const move of result.moves) {
+      const angle = move.from.a ?? 0
+      assert.ok(angle >= previous - 1e-9, `${name}: commanded A never decreases (${angle} after ${previous})`)
+      previous = angle
+    }
+    let maxSpan = 0
+    for (const move of cuts) maxSpan = Math.max(maxSpan, (move.to.a ?? 0) - (move.from.a ?? 0))
+    if (name === 'rough') {
+      assert.ok(maxSpan > 360, `the rough has a turning cut longer than one revolution (${maxSpan} deg)`)
+    }
+    const last = result.moves[result.moves.length - 1]
+    assert.equal(last.kind, 'rapid', `${name}: the path ends with a retract`)
+    assert.equal(last.from.a, last.to.a, `${name}: the retract holds the last angle`)
+    assert.ok((last.to.a ?? 0) > 360, `${name}: the program ends well past one revolution (${last.to.a} deg)`)
+    console.log(`  ${name}: ${result.moves.length} moves, ${cuts.length} turning cuts, `
+      + `A 0 -> ${last.to.a}, longest cut ${maxSpan.toFixed(0)} deg`)
+  }
+
+  const project = projectWith(CONTINUOUS_STOCK)
+  const op = operation('Continuous')
+  const turning = turningCuts(CONTINUOUS_ROUGH.moves)
+
+  // Own axis: one inverse-time block per turning move, all G1, each F is the
+  // feed divided by an independent integration of the tip's combined
+  // axial/radial/rotary path, and the longest block is the multi-turn one.
+  const own = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves: CONTINUOUS_ROUGH.moves }])
+  assert.deepEqual(own.warnings, [], 'the generated around path posts with no refusal')
+  assert.doesNotMatch(own.gcode, /G[23]\b/, 'a turning move is never fitted into a G2/G3')
+  const blocks = inverseTurningBlocks(own.gcode)
+  assert.equal(blocks.length, turning.length, 'one inverse-time block per turning feed move')
+
+  let longest: { move: ToolpathMove; line: string; feed: number } | null = null
+  for (let index = 0; index < blocks.length; index++) {
+    const move = turning[index]
+    const line = blocks[index]
+    assert.match(line, /A-?[0-9]/, `block ${index}: carries its angle`)
+    assert.match(line, /G1 |^[XYZ]/, `block ${index}: is a straight motion block, got ${line}`)
+    const feed = fWord(line)
+    assert.ok(feed !== undefined && feed > 0, `block ${index}: inverse-time F is present and positive (${line})`)
+    const expected = 600 / bruteForceStockPathLength(move.from, move.to, CONTINUOUS_STOCK, 4000)
+    assert.ok(Math.abs(feed! - expected) <= 0.0011,
+      `block ${index}: F${feed} is feed / the integrated path length (${expected.toFixed(3)})`)
+    const angle = aWord(line)
+    assert.ok(angle !== undefined, `block ${index}: has an angle word`)
+    assert.ok(Math.abs(angle! - Number(formatGCodeNumber(move.to.a!, GRBL, 'mm'))) < 1e-9,
+      `block ${index}: writes the move's own growing angle (${angle} vs ${move.to.a})`)
+    if (longest === null || Math.abs((move.to.a ?? 0) - (move.from.a ?? 0)) > Math.abs((longest.move.to.a ?? 0) - (longest.move.from.a ?? 0))) {
+      longest = { move, line, feed: feed! }
+    }
+  }
+  assert.ok(longest !== null, 'a longest turning block was found')
+  const longestSpan = Math.abs((longest!.move.to.a ?? 0) - (longest!.move.from.a ?? 0))
+  assert.ok(longestSpan > 360, `the longest turning block spans more than a revolution (${longestSpan} deg)`)
+  assert.ok((longest!.move.to.a ?? 0) > 2000, `its A word is the unwrapped, growing value (${longest!.move.to.a})`)
+  const longestLength = bruteForceStockPathLength(longest!.move.from, longest!.move.to, CONTINUOUS_STOCK, 4000)
+  assert.ok(Math.abs(longest!.feed - 600 / longestLength) <= 0.0011,
+    `the multi-turn block's F is feed / its integrated length (${longest!.feed} vs ${(600 / longestLength).toFixed(3)})`)
+  console.log(`  own: ${blocks.length} inverse-time blocks, longest ${longestSpan.toFixed(0)} deg `
+    + `(A${longest!.move.from.a} -> A${longest!.move.to.a}, F${longest!.feed}, ${longestLength.toFixed(2)} mm)`)
+
+  // No closing unwind: the last angle written is the last move's, and it is not
+  // 0. The final motion is the path's own retract.
+  const written = motionLines(own.gcode)
+    .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  const lastMove = CONTINUOUS_ROUGH.moves[CONTINUOUS_ROUGH.moves.length - 1]
+  assert.equal(written[written.length - 1], Number(formatGCodeNumber(lastMove.to.a!, GRBL, 'mm')),
+    'the program ends on the last pose angle, with no closing unwind')
+  assert.ok(written[written.length - 1] > 360, 'and that angle is the accumulated one')
+
+  // Two complete boundary rings of the generator's shape, at one radius and one
+  // along position: their inverse-time F is identical, and the emitter must
+  // still write it on both blocks (LinuxCNC requires F on every G1 in G93). The
+  // mutation that suppresses a repeated F fails right here.
+  const ringTip = barPivotZ(CONTINUOUS_STOCK) + 6
+  const ringFrom = { x: 12, y: CONTINUOUS_STOCK.thickness / 2, z: ringTip, a: 0 }
+  const ringMoves: ToolpathMove[] = [
+    { kind: 'rapid', from: { ...ringFrom }, to: { ...ringFrom } },
+    { kind: 'cut', from: { ...ringFrom }, to: { ...ringFrom, a: 360 } },
+    { kind: 'cut', from: { ...ringFrom, a: 360 }, to: { ...ringFrom, a: 720 } },
+  ]
+  const repeated = exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves: ringMoves }])
+  const repeatedBlocks = inverseTurningBlocks(repeated.gcode)
+  assert.equal(repeatedBlocks.length, 2, `two identical ring blocks post (${repeatedBlocks.length})`)
+  const repeatedFeeds = repeatedBlocks.map((line) => fWord(line))
+  assert.ok(repeatedFeeds.every((feed) => feed !== undefined && feed > 0),
+    `both repeated-F blocks carry a positive F (${repeatedBlocks.join(' | ')})`)
+  assert.equal(repeatedFeeds[0], repeatedFeeds[1], 'the two rings really do repeat the same F')
+  assert.match(repeatedBlocks[1], /A720\b/, 'the second ring keeps the growing, unwrapped angle')
+
+  // Reversed: the same blocks with the negated, still unwrapped angle and the
+  // same positive F (the path length is direction independent).
+  const reversed = exportProgram(project, rotaryMachine({ ...OWN_AXIS, reversed: true }), [{
+    operation: op, moves: CONTINUOUS_ROUGH.moves,
+  }])
+  const reversedBlocks = inverseTurningBlocks(reversed.gcode)
+  assert.equal(reversedBlocks.length, turning.length, 'the reversed program has the same turning blocks')
+  for (let index = 0; index < reversedBlocks.length; index++) {
+    const line = reversedBlocks[index]
+    const angle = aWord(line.replace(/[XYZ]-?[0-9.]+/g, ''))
+    assert.ok(angle !== undefined && angle <= 0, `reversed block ${index}: writes the negated angle (${line})`)
+    assert.equal(angle, -Number(formatGCodeNumber(turning[index].to.a!, GRBL, 'mm')),
+      `reversed block ${index}: is the exact negation, never wrapped`)
+    const feed = fWord(line)
+    assert.ok(feed !== undefined && feed > 0, `reversed block ${index}: F stays positive`)
+    assert.ok(Math.abs(feed! - (600 / bruteForceStockPathLength(turning[index].from, turning[index].to, CONTINUOUS_STOCK, 4000))) <= 0.0011,
+      `reversed block ${index}: F is the same feed / length`)
+  }
+  const reversedWritten = motionLines(reversed.gcode)
+    .flatMap((block) => [...block.matchAll(/A(-?[0-9.]+)/g)].map((match) => Number(match[1])))
+  assert.equal(reversedWritten[reversedWritten.length - 1], -Number(formatGCodeNumber(lastMove.to.a!, GRBL, 'mm')),
+    'the reversed program ends on the negated last angle')
+
+  // Borrowed: the angle rides on the borrowed letter (project Y for a bar along
+  // X), one value per block, and the A letter is never written.
+  const borrowed = exportProgram(project, rotaryMachine(BORROWED_Y), [{
+    operation: op, moves: CONTINUOUS_ROUGH.moves,
+  }])
+  assert.doesNotMatch(borrowed.gcode, /A-?[0-9]/, 'a borrowed machine writes no A word')
+  const borrowedBlocks: string[] = []
+  {
+    let inverse = false
+    for (const line of motionLines(borrowed.gcode)) {
+      if (line === 'G93') { inverse = true; continue }
+      if (line === 'G94') { inverse = false; continue }
+      if (inverse && /F-?[0-9]/.test(line)) borrowedBlocks.push(line)
+    }
+  }
+  assert.equal(borrowedBlocks.length, turning.length, 'one borrowed turning block per turning move')
+  for (let index = 0; index < borrowedBlocks.length; index++) {
+    const line = borrowedBlocks[index]
+    const ys = [...line.matchAll(/Y(-?[0-9.]+)/g)].map((match) => Number(match[1]))
+    assert.equal(ys.length, 1, `borrowed block ${index}: the borrowed letter is written once (${line})`)
+    assert.equal(ys[0], Number(formatGCodeNumber(turning[index].to.a!, GRBL, 'mm')),
+      `borrowed block ${index}: the borrowed letter carries the growing angle`)
+  }
+  assert.ok(borrowedBlocks.some((line) => (line.match(/Y([0-9.]+)/)?.[1] ?? '0') !== '0' && Number(line.match(/Y([0-9.]+)/)![1]) > 360),
+    'the borrowed angle grows past one revolution too')
+
+  // #1155 rn-e re-recorded both along digests: this fixture's cylinder runs
+  // 12..28, exactly the cut band, so both band ends are the **model's** own
+  // ends. The approved rule now lets the centre reach them (the one-radius pull
+  // is gone) and the plain bar beyond them be cut (no retained stub), so the
+  // pass positions and the end passes move. Nothing else about the program
+  // changed: the same emitter, the same word set.
+  //
+  // The along-the-bar path was the untouched control before that: its **motion**
+  // was the pre-slice bytes, captured at 8fd5b18f (the post-#1117 base of this
+  // branch).
+  // Its posted text gained only #1103 ca-h's end turn and instruction, which
+  // every rotary program now carries — and, for #1156, lost only its `Y0.000`
+  // words (verified by diffing both posts: same line count, and the old text
+  // with every Y word removed equals the new one byte for byte). The motion
+  // hash below still pins the path itself.
+  const alongRough = generateRotaryRough('along-rough', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
+    ...CONTINUOUS_BASE, stepdown: 2,
+  }, {})
+  const alongFinish = generateRotaryFinish('along-finish', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, CONTINUOUS_BASE, {})
+  const movesDigest = (moves: readonly ToolpathMove[]): string => createHash('sha256').update(JSON.stringify(moves)).digest('hex')
+  const postedDigest = (moves: readonly ToolpathMove[]): string => createHash('sha256')
+    .update(exportProgram(project, rotaryMachine(OWN_AXIS), [{ operation: op, moves: [...moves] }]).gcode
+      .replace(/(Generated by PureCutCNC on )\d{4}-\d{2}-\d{2}/, '$1<date>'))
+    .digest('hex')
+  // #1177 recaptured all four: the tool is a ball, which reads the exact
+  // sphere drop on a round bar, so the tips move. Both programs keep their
+  // move counts (384 rough, 128 finish).
+  assert.equal(movesDigest(alongRough.moves), '9aa86a0ad41e93b81133b087101bb7a0c2c4dd8d98936dc466df79c6c1346558', 'the along rough motion is the #1155 rn-e program')
+  assert.equal(postedDigest(alongRough.moves), '283488896aa34f4b2d7e503fdbe2c77797c70b3a04ddde982a7dd1f947fbc3e1', 'the along rough program is the #1155 rn-e program')
+  assert.equal(movesDigest(alongFinish.moves), '4ea413ab2fe2e1764077c74a54de22d0ef4c7767d568a0d4a62f78a41264def1', 'the along finish motion is the #1155 rn-e program')
+  assert.equal(postedDigest(alongFinish.moves), 'd1990687ac215ca33f28771b32c087fa3d16e7be547632d047f8bcbcaca405ec', 'the along finish program is the #1155 rn-e program')
+  // A non-rotary operation never sees the rotary emitter: its bytes are pinned
+  // with no rotary block at all, so a change to the rotary path cannot reach it.
+  const flat: ToolpathMove[] = [
+    { kind: 'rapid', from: at(0, 10, 30), to: at(5, 10, 30) },
+    { kind: 'cut', from: at(5, 10, 30), to: at(25, 10, 20) },
+    { kind: 'rapid', from: at(25, 10, 20), to: at(0, 10, 30) },
+  ]
+  const flatProgram = exportProgram(project, GRBL, [{ operation: operation('Flat'), moves: flat }]).gcode
+  assert.equal(createHash('sha256').update(flatProgram.replace(/(Generated by PureCutCNC on )\d{4}-\d{2}-\d{2}/, '$1<date>')).digest('hex'),
+    'cff98e4c551fbc9f898c57885ec7ec0836d847b721affe2c337366a5ca3a9981', 'the non-rotary program is byte-identical')
+  console.log(`  along controls: rough ${alongRough.moves.length} moves, finish ${alongFinish.moves.length} moves, unchanged`)
+}
+
+console.log('engine/gcode/rotaryOutput.test.ts: all assertions passed')

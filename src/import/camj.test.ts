@@ -23,19 +23,26 @@
 import {
   IDENTITY_MATRIX,
   type FeatureFolder,
+  type MachiningSetup,
   type Matrix2D,
   type NamedDimension,
   type Operation,
   type PersistedImportedMesh,
   type Project,
   type SketchFeature,
+  type TextLayout,
   type Tool,
   newProject,
   rectProfile,
+  roundStock,
   stockFromFeature,
 } from '../types/project'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
-import { projectWithFeatures, replaceProjectFeatures } from '../test/projectFixtures'
+import { squareStock } from '../types/barStock'
+import { projectWithFeatures, replaceProjectFeatures, withBottomSetup } from '../test/projectFixtures'
+import { camjImportWarnings } from '../components/project/camjImportWarnings'
+import { rotarySolidCannedData } from '../store/helpers/rotarySolids'
+import { normalizeTurnCannedParams } from '../cannedShapes/generators/turn'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -76,6 +83,7 @@ function makeFeature(
     stl: overrides.stl ?? null,
     ...(overrides.definitionId ? { definitionId: overrides.definitionId } : {}),
     ...(overrides.transform ? { transform: overrides.transform } : {}),
+    ...(overrides.canned ? { canned: overrides.canned } : {}),
   }
 }
 
@@ -320,6 +328,94 @@ function testMergeImportsToolAndOperation(): void {
   assert(op.toolRef === newTools[0].id, 'operation toolRef should be remapped to new tool id')
   // The unused tool should not be imported.
   assert(!result.project.tools.some((t) => t.name === 'Unused'), 'unused tool should not be imported')
+}
+
+function testMergeKeepsOperationTurn(): void {
+  // Setup ids are per project (issue #944). An imported operation keeps the
+  // turn it was made for: it joins the setup here that is turned the same way,
+  // and when there is none that setup is added. It never lands on another face.
+  const bottomSource = (axis: 'x' | 'y') => {
+    const source = withBottomSetup({
+      ...makeSourceProject('mm'),
+      tools: [makeTool('t-src-1', 'Endmill')],
+      operations: [
+        makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'),
+        makeOperation('op-bottom', 'Bottom pocket', ['f-src-2'], 't-src-1'),
+      ],
+    }, { axis, operationIds: ['op-bottom'] })
+    return {
+      ...source,
+      features: source.features.map((feature) => (
+        feature.id === 'f-src-2' ? { ...feature, authoringFace: 'bottom' as const } : feature
+      )),
+    }
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] }).project
+  const setupOf = (project: Project, operationName: string) => {
+    const operation = project.operations.find((entry) => entry.name === operationName)
+    return project.setups.find((setup) => setup.id === operation?.setupId)
+  }
+  const turns = (project: Project) => project.setups.map((setup) => `${setup.orientation.angleDeg}${setup.orientation.axis}`)
+
+  // A setup turned the same way exists under another id: the operation joins it.
+  const twoSided = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'target-bottom' } })
+  const mapped = merge(twoSided, bottomSource('y'))
+  assert(setupOf(mapped, 'Top pocket')?.id === twoSided.setups[0].id, 'a Top operation joins the target Top setup')
+  assert(setupOf(mapped, 'Bottom pocket')?.id === 'target-bottom', 'a Bottom operation joins the target Bottom setup, not the source id')
+  assert(mapped.setups.length === 2, 'no setup is added when the turns match')
+  assert(mapped.setups[1].operationIds.length === 1, 'the target setup lists the imported operation')
+
+  // Top-only target: the Bottom operation must not become a Top operation.
+  const topOnly = newProject('Top only', 'mm')
+  const added = merge(topOnly, bottomSource('x'))
+  const addedSetup = setupOf(added, 'Bottom pocket')
+  assert(added.setups.length === 2, `a Bottom setup is added to a Top-only project, got ${turns(added).join(',')}`)
+  assert(addedSetup?.orientation.angleDeg === 180 && addedSetup?.orientation.axis === 'x', 'the added setup keeps the source turn')
+  assert(addedSetup?.id !== topOnly.activeSetupId, 'the Bottom operation does not join the active Top setup')
+  assert(addedSetup?.operationIds.length === 1, 'the added setup lists the operation')
+  assert(setupOf(added, 'Top pocket')?.id === topOnly.setups[0].id, 'the Top operation still joins Top')
+  assert(added.activeSetupId === topOnly.activeSetupId, 'importing does not switch the workspace')
+  const importedBottomFeature = added.features.find((feature) => feature.name === 'Slot')
+  assert(importedBottomFeature?.authoringFace === 'bottom', 'the imported feature stays authored on Bottom')
+
+  // A Bottom setup flipped about the other axis is a different turn: the
+  // operation gets its own setup rather than the target's.
+  const otherAxis = merge(twoSided, bottomSource('x'))
+  const otherAxisSetup = setupOf(otherAxis, 'Bottom pocket')
+  assert(otherAxisSetup?.orientation.axis === 'x', 'a different flip axis is not silently replaced')
+  assert(otherAxisSetup?.id !== 'target-bottom', 'the operation does not join a setup flipped about another axis')
+  assert(turns(otherAxis).join(',') === '0x,180y,180x', `expected a third setup, got ${turns(otherAxis).join(',')}`)
+  assert(new Set(otherAxis.setups.map((setup) => setup.name)).size === 3, 'the added setup has a distinct name')
+  // The added setup's id is new even when the target already uses the first id the generator would hand out.
+  const idTaken = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'su0001' } })
+  const distinctIds = merge(idTaken, bottomSource('x')).setups.map((setup) => setup.id)
+  assert(new Set(distinctIds).size === 3, `the added setup must not reuse a setup id, got ${distinctIds.join(',')}`)
+
+  // A source saved before setups existed was made for Top — whichever face
+  // the target is on, and even when the target has no Top setup at all.
+  const preSetup = bottomSource('x')
+  const legacySource = {
+    ...preSetup,
+    operations: preSetup.operations.map(({ setupId: _setupId, ...operation }) => { void _setupId; return operation }),
+  }
+  const onBottom = { ...twoSided, activeSetupId: 'target-bottom' }
+  const legacy = merge(onBottom, legacySource)
+  assert(setupOf(legacy, 'Top pocket')?.id === twoSided.setups[0].id, 'a pre-setup operation joins Top')
+  assert(setupOf(legacy, 'Bottom pocket')?.id === twoSided.setups[0].id, 'a pre-setup operation joins Top, not the active Bottom setup')
+  const bottomOnly = { ...onBottom, setups: [onBottom.setups[1]] }
+  const legacyNoTop = merge(bottomOnly, legacySource)
+  assert(setupOf(legacyNoTop, 'Top pocket')?.orientation.angleDeg === 0, 'a Top setup is added when the target has none')
+
+  // An operation whose setup its own project does not define is not imported.
+  const dangling = {
+    ...preSetup,
+    operations: preSetup.operations.map((operation) => (operation.id === 'op-bottom' ? { ...operation, setupId: 'gone' } : operation)),
+  }
+  const refused = mergeCamjFolders({ currentProject: topOnly, sourceProject: dangling, selectedFolderIds: ['fd-src-a'] })
+  assert(!refused.project.operations.some((operation) => operation.name === 'Bottom pocket'), 'an operation with an unknown setup is not imported')
+  assert(refused.warnings.some((warning) => warning.includes('Bottom pocket')), 'and the import says so')
+  assert(refused.project.setups.length === 1, 'and no setup is added for it')
 }
 
 function testMergeSkipsOperationsTargetingNonImportedFeatures(): void {
@@ -718,6 +814,120 @@ function testMergeRemapsIntersectionConstraintReferences(): void {
   assert(targetB.source === 'feature' && targetB.featureId === importedVertical!.id, 'intersection target B should be remapped')
 }
 
+const IMPORTED_PATH_LAYOUT: TextLayout = {
+  kind: 'path',
+  path: rectProfile(0, 0, 20, 10),
+  startOffset: 0,
+  endOffset: 60,
+  anchor: 'center',
+  fit: 'natural',
+  reversed: false,
+  orientation: 'follow',
+}
+
+function testMergeRemapsTextPathSource(): void {
+  const source = makeSourceProject('mm')
+  source.features = source.features.map((feature) => (
+    feature.id === 'f-src-1'
+      ? { ...feature, textLayout: { ...IMPORTED_PATH_LAYOUT, sourceFeatureId: 'f-src-2' } }
+      : feature
+  ))
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: source,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const imported = result.project.features.find((feature) => feature.textLayout?.kind === 'path')
+  const layout = imported?.textLayout
+  assert(layout?.kind === 'path', 'the path run should import')
+  if (layout?.kind !== 'path') throw new Error('unreachable')
+  assert(layout.sourceFeatureId !== 'f-src-2', 'the source id must not be the source project id')
+  assert(
+    layout.sourceFeatureId !== undefined
+      && result.createdFeatureIds.includes(layout.sourceFeatureId),
+    'the source id should point at the imported copy',
+  )
+}
+
+function testMergeRemapsTurnProfileSource(): void {
+  const source = makeSourceProject('mm')
+  const frame = { axis: 'x' as const, thickness: 40, alongMin: 0, alongMax: 200, acrossCentre: 50 }
+  const canned = rotarySolidCannedData(frame, {
+    kind: 'turn',
+    start: 20,
+    length: 40,
+    diameter: 10,
+    profile: {
+      sourceFeatureId: 'f-src-2',
+      sourceName: 'Slot',
+      contours: [{
+        closed: false,
+        points: [{ along: 20, radius: 5 }, { along: 60, radius: 5 }],
+      }],
+    },
+  }, 'mm')
+  assert(canned !== null, 'the Turn fixture has usable canned data')
+  const withTurn = projectWithFeatures(source, [
+    ...source.features,
+    makeFeature({
+      id: 'f-src-turn',
+      name: 'Turn',
+      folderId: 'fd-src-a',
+      kind: 'stl',
+      operation: 'model',
+      canned,
+    }),
+  ])
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: withTurn,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const importedTurn = result.project.features.find((feature) => feature.name === 'Turn')
+  const importedSource = result.project.features.find((feature) => feature.name === 'Slot')
+  assert(importedTurn !== undefined, 'the Turn imports')
+  assert(importedSource !== undefined, 'the profile source imports with it')
+  const definition = result.project.featureDefinitions[importedTurn!.definitionId]
+  const params = normalizeTurnCannedParams(definition?.canned?.params ?? {})
+  if (!params?.profile) throw new Error('FAIL: the copied profile survives the import')
+  assert(
+    params.profile.sourceFeatureId !== 'f-src-2',
+    'the profile source id must not keep the source project id',
+  )
+  assert(
+    params.profile.sourceFeatureId === importedSource!.id,
+    'the profile source id must point at the imported copy so Refresh stays available',
+  )
+}
+
+function testMergeClearsTextPathSourceOutsideTheImport(): void {
+  const source = makeSourceProject('mm')
+  source.features = source.features.map((feature) => (
+    feature.id === 'f-src-1'
+      // f-src-3 lives in fd-src-b, which is not selected, so the run's source
+      // is not part of this import and has no row to point at.
+      ? { ...feature, textLayout: { ...IMPORTED_PATH_LAYOUT, sourceFeatureId: 'f-src-3' } }
+      : feature
+  ))
+  const result = mergeCamjFolders({
+    currentProject: newProject('Target', 'mm'),
+    sourceProject: source,
+    selectedFolderIds: ['fd-src-a'],
+  })
+  const imported = result.project.features.find((feature) => feature.textLayout?.kind === 'path')
+  const layout = imported?.textLayout
+  assert(layout?.kind === 'path', 'the path run should import')
+  if (layout?.kind !== 'path') throw new Error('unreachable')
+  assert(
+    layout.sourceFeatureId === undefined,
+    'a source outside the import must be cleared, not left dangling',
+  )
+  assert(
+    !('sourceFeatureId' in layout),
+    'the serialized instance must not carry a cleared source key',
+  )
+}
+
 testInspectListsFoldersWithFeatures()
 testInspectHidesEmptyFolders()
 testInspectRejectsBadJson()
@@ -727,6 +937,7 @@ testMergeRenamesOnNameCollision()
 testMergeCopiesReferencedMeshAssets()
 testMergeCopiesReferencedDimensions()
 testMergeImportsToolAndOperation()
+testMergeKeepsOperationTurn()
 testMergeSkipsOperationsTargetingNonImportedFeatures()
 testMergeSkipsStockTargetedOperations()
 testMergeScalesUnitsMmToInch()
@@ -741,4 +952,184 @@ testMergeImportsStockMmToInchScales()
 testMergeStockImportNoOpWhenSourceNotFeatureBased()
 testMergePreservesLinkedInstanceTransform()
 testMergeRemapsIntersectionConstraintReferences()
+testMergeRemapsTextPathSource()
+testMergeClearsTextPathSourceOutsideTheImport()
+testMergeRemapsTurnProfileSource()
 console.log('camj import tests passed')
+
+function testMergeAroundKind(): void {
+  // Around content is imported only onto a bar it can be cut on (issue #395):
+  // its features keep the unrolled sheet's coordinates, so re-axing them onto
+  // another bar would silently turn along-the-bar travel into rotation. X into
+  // X imports; anything else leaves the Around content out and says so.
+  const X_BAR = roundStock(40, 200, 'x', { x: 10, y: 30 })
+  const Y_BAR = roundStock(40, 200, 'y', { x: 10, y: 30 })
+  const aroundSetup = (id: string, axis: 'x' | 'y'): MachiningSetup => ({
+    id, name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
+    indexing: 'manual', registration: [], notes: '', operationIds: [],
+  })
+  const barTarget = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Target', 'mm')
+    return {
+      ...base,
+      stock: axis === 'x' ? X_BAR : Y_BAR,
+      setups: [...base.setups, aroundSetup('target-around', axis)],
+      activeSetupId: base.setups[0].id,
+    }
+  }
+  const aroundSource = (axis: 'x' | 'y'): Project => {
+    const source = makeSourceProject('mm')
+    source.stock = axis === 'x' ? X_BAR : Y_BAR
+    source.tools = [makeTool('t-src-1', 'Endmill')]
+    const top = source.setups[0]
+    const around = aroundSetup('src-around', axis)
+    source.setups = [top, around]
+    source.features = source.features.map((feature) => (
+      feature.id === 'f-src-2' ? { ...feature, authoringFace: 'around' as const } : feature
+    ))
+    source.operations = [
+      { ...makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'), setupId: top.id },
+      { ...makeOperation('op-around', 'Around pocket', ['f-src-2'], 't-src-1'), setupId: around.id },
+    ]
+    return source
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] })
+
+  // X into X: imported, and the target's own Around setup is reused.
+  const imported = merge(barTarget('x'), aroundSource('x'))
+  const importedAround = imported.project.setups.filter((setup) => setup.kind === 'around')
+  assert(importedAround.length === 1 && importedAround[0].id === 'target-around', 'X into X reuses the target Around setup')
+  const aroundFeature = imported.project.features.find((feature) => feature.name === 'Slot')
+  assert(aroundFeature?.authoringFace === 'around', 'an importable Around feature keeps its authoring face')
+  const aroundOperation = imported.project.operations.find((entry) => entry.name === 'Around pocket')
+  assert(aroundOperation?.setupId === 'target-around', 'its operation joins the reused Around setup')
+  assert(imported.project.operations.some((entry) => entry.name === 'Top pocket'), 'the rest of the source comes too')
+  assert(!imported.warnings.some((warning) => warning.includes('Around content was not imported')), 'X into X warns about nothing Around')
+  const twice = merge(imported.project, aroundSource('x'))
+  assert(twice.project.setups.filter((setup) => setup.kind === 'around').length === 1, 'a second X import still reuses one Around setup')
+
+  // Y into X, X into Y and an Around source into a block: left out, warned,
+  // and nothing else lost.
+  for (const [label, target, source, missingAxis] of [
+    ['Y into X', barTarget('x'), aroundSource('y'), 'Y'],
+    ['X into Y', barTarget('y'), aroundSource('x'), 'X'],
+    ['Around into a block', newProject('Target', 'mm'), aroundSource('x'), 'X'],
+  ] as const) {
+    const result = merge(target, source)
+    assert(!result.project.features.some((feature) => feature.authoringFace === 'around'),
+      `${label}: no Around feature is imported`)
+    assert(!result.project.operations.some((entry) => entry.name === 'Around pocket'),
+      `${label}: no Around operation is imported`)
+    assert(result.project.features.some((feature) => feature.name === 'Outline'), `${label}: the Top features still import`)
+    assert(result.project.operations.some((entry) => entry.name === 'Top pocket'), `${label}: the Top operations still import`)
+    assert(result.project.setups.every((setup) => setup.kind !== 'around' || setup.id === 'target-around'),
+      `${label}: no Around setup is created for the left-out work`)
+    assert(result.warnings.some((warning) => warning.includes('Around content was not imported') && warning.includes(`along ${missingAxis}`)),
+      `${label}: and the import says which bar it needed (${result.warnings.join(' | ')})`)
+  }
+}
+testMergeAroundKind()
+
+function testMergeSquareRotaryModel(): void {
+  // #1016 C2-U1: a matching-axis square blank admits the generated-model
+  // rotary pair (an ordinary Top-authored STL plus its rotary rough/finish),
+  // while hand-drawn Around sheet geometry stays round-bar only. The matched
+  // axis is part of the contract: a mismatch refuses the pair, never re-axes
+  // it.
+  const aroundSetup = (id: string, axis: 'x' | 'y'): MachiningSetup => ({
+    id, name: 'Around', kind: 'around', orientation: { axis, angleDeg: 0 },
+    indexing: 'manual', registration: [], notes: '', operationIds: [],
+  })
+  const squareTarget = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Square target', 'mm')
+    return { ...base, stock: squareStock(40, 200, axis, { x: 10, y: 30 }) }
+  }
+  const modelSource = (axis: 'x' | 'y'): Project => {
+    const base = newProject('Source', 'mm')
+    const source = projectWithFeatures({
+      ...base,
+      featureFolders: [makeFolder('fd-src-a', 'Bracket')],
+      featureTree: [{ type: 'folder', folderId: 'fd-src-a' }],
+    }, [
+      makeFeature({ id: 'f-src-1', name: 'Outline', folderId: 'fd-src-a' }),
+      makeFeature({ id: 'f-src-2', name: 'Slot', folderId: 'fd-src-a' }),
+      makeFeature({ id: 'f-src-model', name: 'Square to round Model', folderId: 'fd-src-a' }),
+    ])
+    source.stock = squareStock(40, 200, axis, { x: 10, y: 30 })
+    source.tools = [makeTool('t-src-1', 'Endmill')]
+    source.modelAssets = { 'mesh-model': makeMesh() }
+    const modelInstance = source.features.find((feature) => feature.id === 'f-src-model')!
+    source.featureDefinitions[modelInstance.definitionId] = {
+      ...source.featureDefinitions[modelInstance.definitionId],
+      kind: 'stl',
+      operation: 'model',
+      stl: { meshAssetId: 'mesh-model', scale: 1 },
+    }
+    source.features = source.features.map((feature) => (
+      feature.id === 'f-src-2' ? { ...feature, authoringFace: 'around' as const } : feature
+    ))
+    const top = source.setups[0]
+    const around = aroundSetup('src-around', axis)
+    source.setups = [top, around]
+    source.operations = [
+      { ...makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'), setupId: top.id },
+      { ...makeOperation('op-rough', 'Rotary rough', ['f-src-model'], 't-src-1'), kind: 'rotary_rough', pass: 'rough', setupId: around.id },
+      { ...makeOperation('op-finish', 'Rotary finish', ['f-src-model'], 't-src-1'), kind: 'rotary_finish', pass: 'finish', setupId: around.id },
+      { ...makeOperation('op-around-line', 'Around line', ['f-src-2'], 't-src-1'), kind: 'follow_line', setupId: around.id },
+    ]
+    return source
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] })
+
+  // Matching square axis: the model, its asset and the rotary pair import; the
+  // hand-drawn Around line is left out with an accurate warning.
+  const imported = merge(squareTarget('x'), modelSource('x'))
+  assert(imported.project.features.some((feature) => feature.name === 'Outline'), 'the ordinary Top feature imports')
+  const model = imported.project.features.find((feature) => feature.name === 'Square to round Model')
+  assert(model !== undefined, 'the generated model imports')
+  const modelDefinition = model && imported.project.featureDefinitions[model.definitionId]
+  assert(modelDefinition?.kind === 'stl' && modelDefinition.operation === 'model', 'the model keeps its ordinary definition')
+  const meshAssetId = modelDefinition?.stl?.meshAssetId
+  assert(meshAssetId !== undefined && imported.project.modelAssets[meshAssetId] !== undefined, 'and its mesh asset comes too')
+  assert(imported.project.operations.some((entry) => entry.name === 'Top pocket'), 'the Top operation imports')
+  assert(imported.project.operations.some((entry) => entry.name === 'Rotary rough'), 'rotary rough imports')
+  assert(imported.project.operations.some((entry) => entry.name === 'Rotary finish'), 'rotary finish imports')
+  assert(!imported.project.operations.some((entry) => entry.name === 'Around line'), 'the hand-drawn Around operation is left out')
+  assert(!imported.project.features.some((feature) => feature.authoringFace === 'around'), 'and its feature too')
+  const importedAround = imported.project.setups.filter((setup) => setup.kind === 'around')
+  assert(importedAround.length === 1, 'exactly one Around setup carries the pair')
+  assert(importedAround[0].orientation.axis === 'x', 'on the target blank axis')
+  for (const name of ['Rotary rough', 'Rotary finish']) {
+    assert(
+      imported.project.operations.find((entry) => entry.name === name)?.setupId === importedAround[0].id,
+      `${name} joins the imported Around setup`,
+    )
+  }
+  assert(
+    imported.warnings.some((warning) => warning.includes('Around content was not imported') && warning.includes('square')),
+    `the warning is accurate for a square blank (${imported.warnings.join(' | ')})`,
+  )
+  assert(
+    JSON.stringify(camjImportWarnings({
+      currentProject: squareTarget('x'),
+      sourceProject: modelSource('x'),
+      selectedFolderIds: ['fd-src-a'],
+    })) === JSON.stringify(imported.warnings),
+    'camjImportWarnings shares the merge planner',
+  )
+
+  // Source mismatch: a Y source into an X blank refuses the Around work — the
+  // hand-drawn feature and the rotary pair — and creates no Around setup.
+  const mismatched = merge(squareTarget('x'), modelSource('y'))
+  assert(!mismatched.project.features.some((feature) => feature.authoringFace === 'around'), 'no Around feature on a mismatch')
+  assert(
+    !mismatched.project.operations.some((entry) => entry.name === 'Rotary rough' || entry.name === 'Rotary finish'),
+    'the rotary pair is refused on a mismatch, never transposed',
+  )
+  assert(mismatched.project.setups.every((setup) => setup.kind !== 'around'), 'and no Around setup is created')
+  assert(mismatched.warnings.some((warning) => warning.includes('Around content was not imported')), 'with a warning')
+  assert(mismatched.project.features.some((feature) => feature.name === 'Outline'), 'the rest of the folder still imports')
+}
+testMergeSquareRotaryModel()

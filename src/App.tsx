@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CAMPanel } from './components/cam/CAMPanel'
+import { operationOnActiveSetup } from './components/cam/setupSections'
 import { SketchCanvas, type SketchCanvasHandle } from './components/canvas/SketchCanvas'
 import type { OperationKind } from './types/project'
 import { FeatureContextMenu } from './components/feature-tree/FeatureContextMenu'
@@ -37,7 +38,7 @@ import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
 import { MachineUpdateNotice } from './components/machine/MachineUpdateNotice'
 import { toolpathGenerationDeferred, useProjectStore } from './store/projectStore'
-import { useDesktopIntegration } from './platform/useDesktopIntegration'
+import { useAppDesktopIntegration } from './app/useAppDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
 import { StatusBarExtras } from './components/layout/StatusBarExtras'
@@ -48,6 +49,7 @@ import { useFeatureTreeActions } from './app/useFeatureTreeActions'
 import { useSnapSettings } from './app/useSnapSettings'
 import { useZoomWindow } from './app/useZoomWindow'
 import { useEmptyStateEngagement } from './app/useEmptyStateEngagement'
+import { useOperationSelection } from './app/useOperationSelection'
 
 const DEPTH_LEGEND_COLLAPSED_STORAGE_KEY = 'camcam.depthLegendCollapsed'
 
@@ -63,9 +65,10 @@ function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
   const tabletShell = isTabletMode(useShellMode())
-  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+  // The selection and its one write: selecting an operation of another face
+  // turns the workspace over to that face (issue #1112 F3).
+  const { selectedOperationId, selectOperation } = useOperationSelection()
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
-  const [isSimulationPending, startSimulationTransition] = useTransition()
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
   // Non-null opens the Export G-code dialog; operationIds narrows the
   // pre-checked set to specific operations (per-operation export, issue #274).
@@ -92,7 +95,7 @@ function App() {
 
   const handleExportGcode = useCallback(() => setExportDialogRequest({}), [])
   const handlePrintDesign = useCallback(() => setShowPrintDialog(true), [])
-  useDesktopIntegration({
+  useAppDesktopIntegration({
     onExportGcode: handleExportGcode,
     onPrintDesign: handlePrintDesign,
     onShowAbout: () => setShowAboutDialog(true),
@@ -101,7 +104,10 @@ function App() {
   const { zoomWindowActive, onZoomWindow, onZoomWindowComplete } = useZoomWindow()
   const [depthLegendCollapsed, setDepthLegendCollapsed] = useLocalStorageState<boolean>(
     DEPTH_LEGEND_COLLAPSED_STORAGE_KEY,
-    false,
+    // The feature-colour legend starts collapsed: it is a reference, not a
+    // control, and it was taking the corner of the sketch (issue #1102 slice
+    // D1). A stored choice from either direction is still honoured.
+    true,
     { codec: DEPTH_LEGEND_CODEC },
   )
   const sketchCanvasRef = useRef<SketchCanvasHandle>(null)
@@ -127,6 +133,7 @@ function App() {
     menuTab,
     menuClamp,
     menuQuickOperations,
+    menuFeatureTargetableFromFace,
     quickOpsSubmenu,
     setQuickOpsSubmenu,
     addToFolderSubmenu,
@@ -155,9 +162,14 @@ function App() {
     openRemoveFromOperationSubmenu,
   } = useTreeContextMenu({ project })
 
+  // Selection follows the face (issue #1102): an operation of the setup the
+  // workspace is not on is selected nowhere — not in the CAM list, the sketch
+  // toolpaths or the simulation. The stored id is kept, so switching back to
+  // its face restores the selection; only what reads it is derived.
+  const selectedOperationForSetup = project.operations.find((operation) => operation.id === selectedOperationId)
   const effectiveSelectedOperationId =
-    selectedOperationId && project.operations.some((operation) => operation.id === selectedOperationId)
-      ? selectedOperationId
+    selectedOperationForSetup && operationOnActiveSetup(project, selectedOperationForSetup)
+      ? selectedOperationForSetup.id
       : null
 
   const selectedOperation = useMemo(
@@ -165,32 +177,20 @@ function App() {
     [effectiveSelectedOperationId, project.operations]
   )
 
-  const visibleClamps = useMemo(
-    () => project.clamps.filter((clamp) => clamp.visible),
-    [project.clamps]
-  )
-
   const selectedClampId = selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null
 
   const handleCenterTabChange = useCallback((tab: 'sketch' | 'preview3d' | 'simulation') => {
-    if (tab === 'simulation') {
-      startSimulationTransition(() => setCenterTab(tab))
-      return
-    }
+    // The tab update is deliberately urgent: the simulation hook commits the
+    // panel with a loading state and builds its heightfield afterwards, so a
+    // transition here would only keep the panel aria-hidden for no benefit
+    // (issue #1112 review P1).
     setCenterTab(tab)
-  }, [startSimulationTransition])
+  }, [])
 
-  // Selecting a different operation while the simulation tab is active drives
-  // the heavy simulationResult/playbackInput recompute. Wrapping in a
-  // transition shows the existing isComputing spinner; in other views the
-  // selection is cheap so we don't pay the transition overhead.
-  const handleSelectedOperationIdChange = useCallback((id: string | null) => {
-    if (centerTab === 'simulation') {
-      startSimulationTransition(() => setSelectedOperationId(id))
-      return
-    }
-    setSelectedOperationId(id)
-  }, [centerTab, startSimulationTransition])
+  // Selecting another operation while the simulation panel is open is the
+  // hook's input changing; it drops the old build and shows the overlay until
+  // the new one lands. The selection itself stays cheap in every view.
+  const handleSelectedOperationIdChange = selectOperation
 
   const featureActions = useFeatureTreeActions({
     setCenterTab,
@@ -249,7 +249,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationPlaybackInput } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationInputPending, simulationPlaybackInput, simulationSetup, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -446,15 +446,18 @@ function App() {
             simulation={simulationResult}
             isActive={centerTab === 'simulation'}
             detailCells={simulationDetailCells}
-            onDetailCellsChange={(cells: number) => startSimulationTransition(() => setSimulationDetailCells(cells))}
-            isComputing={isSimulationPending}
+            onDetailCellsChange={setSimulationDetailCells}
+            isComputing={simulationInputPending}
             mode={simulationMode}
-            onModeChange={(mode) => startSimulationTransition(() => setSimulationMode(mode))}
+            onModeChange={setSimulationMode}
             operationCount={simulationOperationCount}
-            clamps={visibleClamps}
+            clamps={simulationClamps}
+            bar={simulationBar}
+            flatRoundBar={simulationFlatRoundBar}
+            setup={simulationSetup}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
-            origin={project.origin} units={project.meta.units}
+            origin={project.origin} units={project.meta.units} stock={simulationStock}
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
@@ -470,17 +473,17 @@ function App() {
             mode={rightTab === 'tools' ? 'tools' : 'operations'}
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
-            onExport={() => setExportDialogRequest({})}
+            onExport={(operationIds) => setExportDialogRequest({ operationIds })}
             onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
             requestToolpath={requestToolpath}
             documentKey={projectKey}
             generationPaused={generationStatus.automaticPaused}
             generationSettings={{
               status: generationStatus,
-              executor: generationBackend.preference,
-              onExecutorChange: generationBackend.setPreference,
-              workerAvailable: generationBackend.workerAvailable,
-              canStop: generationBackend.canStop,
+              // Read from the service, not the preference: a worker that could
+              // not start falls back to the main thread mid-session, and Stop
+              // must stop being offered at the same moment (issue #1087).
+              canStop: generationBackend.canStop && generationStatus.executorKind === 'worker',
               onStop: stopGeneration,
               onResume: resumeGeneration,
               onRetry: retryGeneration,
@@ -584,6 +587,7 @@ function App() {
         menuHasLockedSelection={menuHasLockedSelection}
         menuFeatureHasLinkedInstances={menuFeatureHasLinkedInstances}
         menuQuickOperations={menuQuickOperations}
+        menuFeatureTargetableFromFace={menuFeatureTargetableFromFace}
         quickOpsSubmenu={quickOpsSubmenu}
         menuFeatureFolders={menuFeatureFolders}
         menuAddToOperationCandidates={menuAddToOperationCandidates}

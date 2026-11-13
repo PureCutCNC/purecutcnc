@@ -21,7 +21,9 @@ import { selectedClosedFeaturesFromIds } from '../helpers/derivedFeatures'
 import { nextPlacementSession } from '../helpers/ids'
 import { selectionQualifiesAsCutCutter, selectionQualifiesForImmediateJoin } from '../helpers/shapeActionEligibility'
 import type { ProjectStore } from '../types'
-import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
+import { resolveFeatureInstance, resolveFeatureInstances, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
+import { cannedShapeTransformRefusal } from '../helpers/cannedShapeActions'
 
 export type PendingActionsSlice = Pick<
   ProjectStore,
@@ -152,6 +154,13 @@ export function createPendingActionsSlice(
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'resize')) {
+          return {}
+        }
 
         return {
           pendingAdd: null,
@@ -183,6 +192,13 @@ export function createPendingActionsSlice(
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
           return {}
         }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'rotate')) {
+          return {}
+        }
 
         return {
           pendingAdd: null,
@@ -212,6 +228,13 @@ export function createPendingActionsSlice(
           .map((id) => featureById(s.project, id))
           .filter((feature): feature is ResolvedSketchFeature => feature !== null)
         if (features.length !== featureIds.length || features.some((feature) => feature.locked)) {
+          return {}
+        }
+        // A rotary canned shape's size and orientation live in its parameters,
+        // not in a 2D transform, so the action is refused here as well as in
+        // the menu and the toolbar: no entry point can start a transform the
+        // menu would not offer (issue #1112 rt7-f).
+        if (cannedShapeTransformRefusal(features, 'mirror')) {
           return {}
         }
 
@@ -315,6 +338,12 @@ export function createPendingActionsSlice(
     // grouping below would quietly drop the members that don't fit.
     startJoinSelectedFeatures: () => {
       const state = get()
+      // A union would freeze generated outlines and lose the parameters. The
+      // panel would only be a dead end, so refuse the whole interactive start
+      // here, exactly as `mergeSelectedFeatures` refuses the write (#1112 A2).
+      if (resolveFeatureInstances(state.project, state.selection.selectedFeatureIds).some(isCannedFeature)) {
+        return
+      }
       if (selectionQualifiesForImmediateJoin(state.project, state.selection.selectedFeatureIds)) {
         set({ pendingAdd: null, sketchEditSession: null })
         // mergeSelectedFeatures returns [] *before* it touches state when the
@@ -355,6 +384,12 @@ export function createPendingActionsSlice(
     // never skipped — targets can't be inferred from the cutter's selection.
     startCutSelectedFeatures: () =>
       set((s) => {
+        // A cut would freeze the cutter's generated outlines into a plain
+        // result. Refuse the interactive start, like `cutSelectedFeatures`
+        // refuses the direct write (#1112 A2).
+        if (resolveFeatureInstances(s.project, s.selection.selectedFeatureIds).some(isCannedFeature)) {
+          return {}
+        }
         const cutterIds = s.selection.selectedFeatureIds
           .filter((id) => s.project.features.some((f) => f.id === id))
         const phase = selectionQualifiesAsCutCutter(s.project, cutterIds) ? 'targets' : 'cutters'
@@ -382,7 +417,11 @@ export function createPendingActionsSlice(
       set((s) => {
         const featureIds = s.selection.selectedFeatureIds
         const features = selectedClosedFeaturesFromIds(s.project, featureIds)
-        if (features.length === 0 || features.some((feature) => feature.locked || feature.kind === 'text')) {
+        // An offset would freeze generated outlines into a plain shape. The
+        // direct action refuses the same selection (#1112 A2).
+        if (features.length === 0 || features.some((feature) => (
+          feature.locked || feature.kind === 'text' || isCannedFeature(feature)
+        ))) {
           return {}
         }
 

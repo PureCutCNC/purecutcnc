@@ -17,9 +17,11 @@
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { profileVertices, rectProfile } from '../../types/project'
 import type { AnchorTarget, ConstraintIntersectionReference, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { activeOriginInStock, editableProjectFeatures } from '../../store/helpers/activeFace'
+import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import { segmentIntersections } from '../../store/helpers/segmentIntersection'
+import { aroundSheet } from './aroundSheet'
 import { distance2 } from './hitTest'
 import {
   nearestPointOnPolyline,
@@ -407,6 +409,7 @@ export function resolveSketchSnap(input: {
   snapSettings: SnapSettings
   project: Project
   referencePoint: Point | null
+  referenceFeatures?: readonly ResolvedSketchFeature[]
   excludeFeatureId?: string | null
   excludeTabId?: string | null
   excludeClampId?: string | null
@@ -439,10 +442,16 @@ export function resolveSketchSnap(input: {
     pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'grid', gridPoint)
   }
 
-  snapProfiles.push({ profile: project.stock.profile, source: { source: 'stock' } })
-  addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
+  // On Around the geometry, the clamps and the rotary zero are all read on the
+  // unrolled sheet, not on the bar's rectangle (issue #395).
+  const sheet = aroundSheet(project)
+  const stockProfile = sheet
+    ? rectProfile(sheet.rect.minX, sheet.rect.minY, sheet.rect.maxX - sheet.rect.minX, sheet.rect.maxY - sheet.rect.minY)
+    : project.stock.profile
+  snapProfiles.push({ profile: stockProfile, source: { source: 'stock' } })
+  addProfileSnapCandidates(candidates, stockProfile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
 
-  for (const feature of resolvedProjectFeatures(project)) {
+  for (const feature of input.referenceFeatures ?? editableProjectFeatures(project)) {
     if (!feature.visible || feature.id === excludeFeatureId) {
       continue
     }
@@ -450,7 +459,9 @@ export function resolveSketchSnap(input: {
     addProfileSnapCandidates(candidates, feature.sketch.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'feature', featureId: feature.id })
   }
 
-  for (const tab of project.tabs) {
+  // Tabs are flat-stock devices and are not drawn on the sheet, so they are not
+  // snapped to there; the clamps that hold a bar are its bands.
+  for (const tab of sheet ? [] : project.tabs) {
     if (!tab.visible || tab.id === excludeTabId) {
       continue
     }
@@ -459,7 +470,7 @@ export function resolveSketchSnap(input: {
     addProfileSnapCandidates(candidates, profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint)
   }
 
-  for (const clamp of project.clamps) {
+  for (const clamp of sheet ? sheet.clampBands : project.clamps) {
     if (!clamp.visible || clamp.id === excludeClampId) {
       continue
     }
@@ -469,7 +480,8 @@ export function resolveSketchSnap(input: {
   }
 
   if (activeModes.has('point') && project.origin.visible) {
-    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y }, undefined, undefined, { kind: 'origin' })
+    const origin = sheet ? sheet.origin : activeOriginInStock(project)
+    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: origin.x, y: origin.y }, undefined, undefined, { kind: 'origin' })
   }
 
   if (activeModes.has('intersection')) {

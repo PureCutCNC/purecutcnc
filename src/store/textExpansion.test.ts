@@ -202,6 +202,19 @@ function runTests() {
     }
   })
 
+  test('should keep the expanded shapes on the text feature\'s face', () => {
+    const project = createProject()
+    const textFeature = createTextFeature('TEST', 'skeleton')
+    textFeature.authoringFace = 'bottom'
+
+    const result = expandTextFeature(project, textFeature)
+
+    assertGreaterThan(result.features.length, 0, 'features')
+    for (const feature of result.features) {
+      assertEqual(feature.authoringFace, 'bottom', 'authoringFace should follow the text feature')
+    }
+  })
+
   test('should preserve feature lock state', () => {
     const project = createProject()
     const textFeature = createTextFeature('TEST', 'skeleton')

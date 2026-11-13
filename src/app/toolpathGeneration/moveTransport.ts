@@ -47,6 +47,13 @@
  * 249,663 moves — so they are carried as index/value pairs rather than
  * full-length arrays. Encoding them densely would have added 4 MB of mostly
  * padding to every transfer.
+ *
+ * The rotary angle (issue #393) is sparse for a stronger reason: on a toolpath
+ * that never turns, its every point has no `a`, and a packed payload for such a
+ * toolpath must be **exactly** the buffers it always was. So the angle buffers
+ * are added only when at least one point carries one, and a `from`/`to` pair is
+ * kept apart — a move whose ends differ in angle is a turning move, and an
+ * absent angle is not zero.
  */
 
 import type { ToolpathMove, ToolpathMoveKind, ToolpathResult } from '../../engine/toolpaths/types'
@@ -73,6 +80,23 @@ const KIND_INDEX = new Map<ToolpathMoveKind, number>(
 /** Six doubles per move: from x/y/z then to x/y/z. */
 const COORDS_PER_MOVE = 6
 
+/**
+ * The sparse angle index encodes the move index and the end together:
+ * `moveIndex * 2` is `from.a` and `moveIndex * 2 + 1` is `to.a`. Keeping both
+ * ends independent is what lets a move with an angle at one end only survive.
+ */
+function angleSlot(moveIndex: number, end: 'from' | 'to'): number {
+  return moveIndex * 2 + (end === 'to' ? 1 : 0)
+}
+
+/**
+ * The most moves whose angle slots fit a `Uint32`: the last slot of the last
+ * move is `2·count - 1`, so `count` may not exceed `2^31`. The bound is stated
+ * as `2^31 - 1` so the refusal is a whole-move margin rather than a one-slot
+ * edge, and it is only reached by a payload that actually carries an angle.
+ */
+const MAX_ANGLED_MOVE_COUNT = 2 ** 31 - 1
+
 export interface PackedMoves {
   count: number
   /** Index into `TRANSPORT_MOVE_KINDS`, one per move. */
@@ -87,6 +111,11 @@ export interface PackedMoves {
   /** Tags, parallel to `sourceIndices`. Strings cannot live in a typed array,
    *  so these clone normally — there are few, and they repeat. */
   sourceValues: string[]
+  /** Sparse rotary angles, ascending by {@link angleSlot}. Present only when at
+   *  least one point has an angle, so an all-linear toolpath packs to exactly
+   *  the bytes and layout it did before the rotary axis existed. */
+  angleIndices?: Uint32Array
+  angleValues?: Float64Array
 }
 
 /** A result whose moves have been lifted out into buffers. */
@@ -96,6 +125,16 @@ export interface TransportedResult extends Omit<ToolpathResult, 'moves'> {
 
 export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
   const count = moves.length
+  // A slot is `moveIndex * 2 + end`, so a payload of more than `2^31 - 1` moves
+  // carrying an angle would no longer fit a `Uint32` and the index would wrap.
+  // Refuse loudly rather than pack an angle onto the wrong move.
+  if (count > MAX_ANGLED_MOVE_COUNT
+    && moves.some((move) => move.from.a !== undefined || move.to.a !== undefined)) {
+    throw new Error(
+      `packMoves: ${count} moves with a rotary angle exceed the `
+      + `${MAX_ANGLED_MOVE_COUNT}-move limit of the angle index`,
+    )
+  }
   const kinds = new Uint8Array(count)
   const coords = new Float64Array(count * COORDS_PER_MOVE)
 
@@ -103,6 +142,8 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
   const feedScaleValues: number[] = []
   const sourceIndices: number[] = []
   const sourceValues: string[] = []
+  const angleIndices: number[] = []
+  const angleValues: number[] = []
 
   for (let index = 0; index < count; index += 1) {
     const move = moves[index]
@@ -130,6 +171,16 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
       sourceIndices.push(index)
       sourceValues.push(move.source)
     }
+    // The angle is pushed with its exact value — never narrowed, never
+    // defaulted — and only when it is actually there.
+    if (move.from.a !== undefined) {
+      angleIndices.push(angleSlot(index, 'from'))
+      angleValues.push(move.from.a)
+    }
+    if (move.to.a !== undefined) {
+      angleIndices.push(angleSlot(index, 'to'))
+      angleValues.push(move.to.a)
+    }
   }
 
   return {
@@ -140,17 +191,23 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
     feedScaleValues: Float64Array.from(feedScaleValues),
     sourceIndices: Uint32Array.from(sourceIndices),
     sourceValues,
+    // Absent when the toolpath never turns: the packed shape is then identical
+    // to the pre-rotary one, transfer list and all.
+    ...(angleIndices.length > 0
+      ? { angleIndices: Uint32Array.from(angleIndices), angleValues: Float64Array.from(angleValues) }
+      : {}),
   }
 }
 
 export function unpackMoves(packed: PackedMoves): ToolpathMove[] {
-  const { count, kinds, coords, feedScaleIndices, feedScaleValues, sourceIndices, sourceValues } = packed
+  const { count, kinds, coords, feedScaleIndices, feedScaleValues, sourceIndices, sourceValues, angleIndices, angleValues } = packed
   const moves: ToolpathMove[] = new Array<ToolpathMove>(count)
 
   // Sparse fields are walked with cursors rather than looked up per move, so
   // the hot loop stays a linear scan over the buffers.
   let feedCursor = 0
   let sourceCursor = 0
+  let angleCursor = 0
 
   for (let index = 0; index < count; index += 1) {
     const offset = index * COORDS_PER_MOVE
@@ -158,6 +215,16 @@ export function unpackMoves(packed: PackedMoves): ToolpathMove[] {
       kind: TRANSPORT_MOVE_KINDS[kinds[index]],
       from: { x: coords[offset], y: coords[offset + 1], z: coords[offset + 2] },
       to: { x: coords[offset + 3], y: coords[offset + 4], z: coords[offset + 5] },
+    }
+    if (angleIndices !== undefined && angleValues !== undefined) {
+      if (angleCursor < angleIndices.length && angleIndices[angleCursor] === angleSlot(index, 'from')) {
+        move.from.a = angleValues[angleCursor]
+        angleCursor += 1
+      }
+      if (angleCursor < angleIndices.length && angleIndices[angleCursor] === angleSlot(index, 'to')) {
+        move.to.a = angleValues[angleCursor]
+        angleCursor += 1
+      }
     }
     // Assigned in declaration order (feedScale before source) so a reconstructed
     // move has the same key order as a generated one.
@@ -196,26 +263,62 @@ export function unpackResult(transported: TransportedResult): ToolpathResult {
  */
 export function transferablesOf(transported: TransportedResult): ArrayBuffer[] {
   const { packedMoves } = transported
-  return [
+  const buffers: ArrayBuffer[] = [
     packedMoves.kinds.buffer as ArrayBuffer,
     packedMoves.coords.buffer as ArrayBuffer,
     packedMoves.feedScaleIndices.buffer as ArrayBuffer,
     packedMoves.feedScaleValues.buffer as ArrayBuffer,
     packedMoves.sourceIndices.buffer as ArrayBuffer,
   ]
+  // A toolpath with no angle transfers exactly the buffers it always did.
+  if (packedMoves.angleIndices !== undefined && packedMoves.angleValues !== undefined) {
+    buffers.push(packedMoves.angleIndices.buffer as ArrayBuffer)
+    buffers.push(packedMoves.angleValues.buffer as ArrayBuffer)
+  }
+  return buffers
+}
+
+/**
+ * True when a sparse angle pair is well formed for a payload of `count` moves
+ * (issue #393): the slots strictly increase, each names a real `from`/`to` slot
+ * (`0 … count·2 - 1`), and every value is finite. A slot that repeats, goes
+ * backwards or points past the payload would otherwise leave `unpackMoves`
+ * silently dropping angles.
+ */
+function angleSlotsAreValid(indices: Uint32Array, values: Float64Array, count: number): boolean {
+  const limit = count * 2
+  let previous = -1
+  for (let index = 0; index < indices.length; index += 1) {
+    const slot = indices[index]
+    if (slot <= previous || slot >= limit) return false
+    if (!Number.isFinite(values[index])) return false
+    previous = slot
+  }
+  return true
 }
 
 /** Shape check for a packed payload arriving over the wire. */
 export function isPackedMoves(value: unknown): value is PackedMoves {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as Partial<PackedMoves>
-  return typeof candidate.count === 'number'
-    && candidate.kinds instanceof Uint8Array
+  if (!Number.isInteger(candidate.count) || (candidate.count as number) < 0) return false
+  const count = candidate.count as number
+  // The angle pair is optional, but it is all-or-nothing, its slots must be
+  // parallel, strictly increasing, in range and finite — a lone, mismatched,
+  // repeated or out-of-range entry would silently drop or misplace a rotation.
+  const anglesValid = (candidate.angleIndices === undefined && candidate.angleValues === undefined)
+    || (candidate.angleIndices instanceof Uint32Array
+      && candidate.angleValues instanceof Float64Array
+      && candidate.angleIndices.length === candidate.angleValues.length
+      && candidate.angleIndices.length <= count * 2
+      && angleSlotsAreValid(candidate.angleIndices, candidate.angleValues, count))
+  return candidate.kinds instanceof Uint8Array
     && candidate.coords instanceof Float64Array
     && candidate.feedScaleIndices instanceof Uint32Array
     && candidate.feedScaleValues instanceof Float64Array
     && candidate.sourceIndices instanceof Uint32Array
     && Array.isArray(candidate.sourceValues)
-    && candidate.coords.length === candidate.count * COORDS_PER_MOVE
-    && candidate.kinds.length === candidate.count
+    && anglesValid
+    && candidate.coords.length === count * COORDS_PER_MOVE
+    && candidate.kinds.length === count
 }

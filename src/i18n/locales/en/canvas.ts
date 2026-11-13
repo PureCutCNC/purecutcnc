@@ -320,6 +320,8 @@ export const canvasEn = {
 
   // ── Gear parameter panel ──
   'canvas.gear.summary': 'Outside radius {length}',
+  'canvas.gear.outsideRadius': 'Outside radius',
+  'canvas.gear.editTitle': 'Edit gear',
   'canvas.gear.toothCount': 'Tooth count',
   'canvas.gear.wholeDepth': 'Whole depth',
   'canvas.gear.flankProfile': 'Tooth flank profile',
@@ -337,6 +339,7 @@ export const canvasEn = {
   'canvas.gear.crest.flat': 'Flat crest',
   'canvas.gear.crest.rounded': 'Rounded crest',
   // Gear reference diagram aria-labels
+  'canvas.gear.ref.outsideRadius': 'Outside radius reference',
   'canvas.gear.ref.teeth': 'Tooth count reference',
   'canvas.gear.ref.wholeDepth': 'Whole depth reference',
   'canvas.gear.ref.flankProfile': 'Tooth flank profile reference',
@@ -354,6 +357,15 @@ export const canvasEn = {
   'canvas.param.ref.ngonSides': 'Polygon side count reference',
   'canvas.param.ref.roundRectCorner': 'Rounded rectangle corner radius reference',
   'canvas.param.ref.chamferRectCorner': 'Chamfered rectangle corner reference',
+  'canvas.field.radiusX': 'Radius X',
+  'canvas.field.radiusY': 'Radius Y',
+  'canvas.field.size': 'Size',
+  'canvas.field.rotation': 'Rotation °',
+  'canvas.param.ref.ellipse': 'Ellipse radii reference',
+  'canvas.param.ref.slot': 'Slot length and width reference',
+  'canvas.cannedEdit.title': 'Edit {shape}',
+  'canvas.cannedEdit.save': 'Save',
+  'canvas.cannedEdit.invalid': 'Check the values — this shape cannot be built from them.',
 
   // ── Warnings ──
   'canvas.warning.selfIntersect': 'This profile self-intersects. 3D/CAM results may be invalid.',
@@ -537,4 +549,12 @@ export const canvasEn = {
   'canvas.nest.improve.took': 'Searched for {elapsed}.',
   'canvas.nest.improve.stalled': 'Stopped: no better layout turned up for a while.',
   'canvas.nest.improve.changed': 'Stopped because the design changed.',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': 'THRU',
+  'canvas.face.topOriginLanding': 'Top origin lands here after the flip',
+  'canvas.face.aroundTurnsBar': 'The bar turns in the rotary. This view is its surface unrolled: along the bar, and around it.',
+
+  // ── The Around sheet's model bands (issue #1015 slice K) ──
+  'canvas.around.modelBand': '{name}',
 } as const satisfies Record<string, string>

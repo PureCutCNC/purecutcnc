@@ -10,9 +10,9 @@ converted by the layout.
 ## Files
 
 - `types.ts` — print options (paper preset, orientation, margins, print area, scale mode, content toggles, color mode), the resolved `DesignPrintLayout`, SVG-export options (`DesignSvgExportOptions`), and per-project defaults.
-- `layout.ts` — pure page math: paper presets, printable/drawable area, print-bounds resolution (visible extents / stock extents / current view), fit/actual/custom scale, custom-scale parsing, centering + registration offsets, clipping detection.
+- `layout.ts` — pure page math: paper presets, printable/drawable area, print-bounds resolution (visible extents / stock extents / current view), fit/actual/custom scale, custom-scale parsing, centering + registration offsets, clipping detection. `flatFaceProject` drops Around features (#395) so the page is never scaled to the unrolled sheet's coordinates.
 - `printPalette.ts` — central colour definitions for all document-output renderers (SVG, PDF, PNG snapshot, HTML wrapper). These are deliberately theme-independent — printed paper has no dark mode. Every entry is named by its semantic role.
-- `svg.ts` — converts project geometry (stock, features with text resolved, imported-model silhouettes, tabs/clamps, origin, dimensions, grid, backdrop, toolpath overlays, localized footer/title block) into a self-contained SVG string in physical mm. `buildDesignPrintSvg` renders the full print page; `buildDesignSvgExport` renders the shared world content as a standalone editable SVG at true 1:1 (tight viewBox, per-feature groups, outlines only, no page scaffolding).
+- `svg.ts` — converts project geometry (stock, features with text resolved, imported-model silhouettes, tabs/clamps, origin, dimensions, grid, backdrop, toolpath overlays, localized footer/title block) into a self-contained SVG string in physical mm. Around features are left out of both outputs (#395). `buildDesignPrintSvg` renders the full print page; `buildDesignSvgExport` renders the shared world content as a standalone editable SVG at true 1:1 (tight viewBox, per-feature groups, outlines only, no page scaffolding).
 - `html.ts` — wraps the SVG in a printable HTML document (`@page` sizing, white background, no app CSS).
 - `index.ts` — public exports.
 

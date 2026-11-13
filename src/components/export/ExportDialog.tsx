@@ -14,30 +14,40 @@
  * limitations under the License.
  */
 
-import { useState, useMemo } from 'react'
+import { Fragment, useState, useMemo } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { platform } from '../../platform'
 import {
+  formatProgramNumber,
   getActiveMachineDefinition,
-  getExportedMotionEligibility,
+  machineExportDiagnostics,
+  projectExportsPerSetup,
 } from '../../engine/gcode'
 import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from '../../app/toolpathGeneration/service'
-import { programHasError, type ExportPostOptions } from '../../app/toolpathGeneration/exportPreparation'
+import { exportHasError, type ExportPostOptions, type PreparedProgram } from '../../app/toolpathGeneration/exportPreparation'
 import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
 import {
+  groupExportOperationOptions,
   listExportOperationOptions,
-  suggestGcodeFileName,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
+import { planInspectMotion, type InspectMotionPlan } from './inspectMotionPlan'
+import { exportDialectLabels } from './exportDialectLabels'
+import { shouldShowRotaryZeroNotice } from './rotaryZeroNotice'
+import { rotaryFollowsStockNote, rotaryProjectNeedsMm } from './rotaryUnitsNotice'
+import { setupFace } from '../../engine/setupOrientation'
+import { Icon } from '../Icon'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 import { toolpathWarningText } from '../../i18n/warningText'
 import { warningSeverity } from '../../engine/toolpaths/warningCodes'
 import { exportBlockReasonMessage } from './exportBlockReason'
+import { exportPreviewMessageKey, type ExportMachineState } from './exportPreviewText'
+import { MachineDiagnosticList } from '../machine/MachineDiagnosticList'
 
 interface ExportDialogProps {
   onClose: () => void
@@ -70,6 +80,23 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
   })
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
+  // The two ways a project can have no machine are different problems: nothing
+  // selected (the honest "select one" state) and a selection this build cannot
+  // resolve, which means the project's embedded snapshot is gone (issue #1112,
+  // item 35). Saying "select a machine" to someone who has one selected is what
+  // made a broken snapshot read as a bug in the dialog.
+  const machineState = useMemo<ExportMachineState>(() => {
+    if (activeDefinition) return 'resolved'
+    return project.meta.selectedMachineId ? 'missing' : 'none'
+  }, [activeDefinition, project.meta.selectedMachineId])
+  const dialectLabels = exportDialectLabels(activeDefinition)
+  // The same list the manager and the editor show (#1119). The preparation is
+  // blocked before generation, so this is the explanation, not a warning after
+  // a failed save.
+  const machineDiagnostics = useMemo(
+    () => (activeDefinition ? machineExportDiagnostics(activeDefinition) : []),
+    [activeDefinition],
+  )
 
   const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
 
@@ -101,20 +128,60 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     revision: project,
   })
 
-  const previewResult = preparation?.status === 'ready' ? preparation.result : null
-  const activeOperations = useMemo(
-    () => (preparation?.status === 'ready' ? preparation.operations : []),
+  // One program per setup (issue #946). A project with a single setup has
+  // exactly one, and the dialog then looks as it always did.
+  const programs = useMemo<PreparedProgram[]>(
+    () => (preparation?.status === 'ready' ? preparation.programs : []),
     [preparation],
   )
+  const perSetup = projectExportsPerSetup(project)
+  // An Around-only project still gets its named program card (issue #395),
+  // even though a single flat setup keeps the unlabelled list it always had.
+  const showPrograms = perSetup || project.setups.some((setup) => setupFace(setup) === 'around')
+  const [previewProgramNumber, setPreviewProgramNumber] = useState<number | null>(null)
+  const previewProgram = programs.find((program) => program.programNumber === previewProgramNumber) ?? programs[0] ?? null
+  const previewResult = previewProgram?.result ?? null
+  const activeOperations = useMemo(() => programs.flatMap((program) => program.operations), [programs])
+  // #1103 slice ca-h: a program that turns the bar on a machine with no Zero A
+  // line ends at 0 up and pauses between rotary operations for the operator to
+  // zero A. The note is the only place they are told to start with A zeroed.
+  // Each program brings its setup's face, because a Top/Bottom program turns
+  // the bar through its setup rather than through a toolpath move (#1152
+  // correction round 1, finding 4).
+  const rotaryZeroNotice = useMemo(
+    () => shouldShowRotaryZeroNotice(programs, activeDefinition, project),
+    [programs, activeDefinition, project],
+  )
+  // #1153: a rotary project in inch on a machine that turns the rotary in
+  // millimetres only, and the axis a bundled rotary machine follows.
+  const rotaryMmNotice = rotaryProjectNeedsMm(project, activeDefinition)
+  const rotaryAxisNote = rotaryFollowsStockNote(project, activeDefinition)
+  // Files already written from the programs on screen. A browser may refuse a
+  // second save dialog from one click, so an export can take more than one
+  // press; this keeps a later press from writing a file twice.
+  const [saved, setSaved] = useState<{ tokenId: number; programNumbers: number[] } | null>(null)
+  const preparedTokenId = preparation?.status === 'ready' ? preparation.token.id : null
+  const savedProgramNumbers = saved !== null && saved.tokenId === preparedTokenId ? saved.programNumbers : []
+  const [saveFailedFile, setSaveFailedFile] = useState<string | null>(null)
+
+  function programLabel(program: Pick<PreparedProgram, 'programNumber' | 'setupName'>): string {
+    return td('dialogs.export.programLabel', {
+      number: formatProgramNumber(program.programNumber),
+      setup: program.setupName ?? '',
+    })
+  }
 
   type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
   const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
 
-  // The exported-motion debug view is gated on exactly one eligible operation.
-  // Eligibility is derived from the generated motion, not an operation-name list.
-  const inspectEligible = useMemo(() => {
-    if (activeOperations.length !== 1) return false
-    return getExportedMotionEligibility(activeOperations[0].toolpath).eligible
+  // The exported-motion debug view is offered for exactly one operation. The
+  // plan view's eligibility refuses variable-Z cutting, which every rotary
+  // rough/finish has by design; a motion carrying rotary angles is offered
+  // through the wrapped view instead (issue #1179 correction round 3), so the
+  // dialog can be reached for the operations it exists for.
+  const inspectPlan = useMemo<InspectMotionPlan>(() => {
+    if (activeOperations.length !== 1) return { offer: false, wrapped: false, reason: null }
+    return planInspectMotion(activeOperations[0].toolpath)
   }, [activeOperations])
 
   // The engine's codes carry their own severity, so one code lands in the same
@@ -124,10 +191,19 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     const errors: string[] = []
     const warnings: string[] = []
 
-    for (const warning of previewResult?.warnings ?? []) {
-      const text = toolpathWarningText(warning)
-      if (warningSeverity(warning.code) === 'error') errors.push(text)
-      else warnings.push(text)
+    // Every program's findings, not only the previewed one's: an error in
+    // any of them blocks the whole export, so it has to be on screen.
+    for (const program of programs) {
+      for (const warning of program.result.warnings) {
+        const text = programs.length > 1
+          ? `${programLabel(program)}: ${toolpathWarningText(warning)}`
+          : toolpathWarningText(warning)
+        if (warningSeverity(warning.code) === 'error') errors.push(text)
+        else warnings.push(text)
+      }
+    }
+    if (saveFailedFile !== null) {
+      errors.push(td('dialogs.export.error.saveFailed', { file: saveFailedFile }))
     }
 
     // A blocked preparation used to just disable Export. The reason is the only
@@ -142,7 +218,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     }
 
     if (!activeDefinition) {
-      errors.push(td('dialogs.export.warning.noMachine'))
+      errors.push(td(machineState === 'missing' ? 'dialogs.export.warning.machineMissing' : 'dialogs.export.warning.noMachine'))
     }
     if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
       errors.push(td('dialogs.export.warning.noOperations'))
@@ -150,11 +226,11 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
     return { errors, warnings }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [activeDefinition, operationOptions, preparation, previewResult, project, selectedOperationIds, languageTag])
+  }, [activeDefinition, machineState, operationOptions, preparation, programs, project, selectedOperationIds, saveFailedFile, languageTag])
 
   // The same predicate the save path re-checks, so the button and the bytes
-  // cannot disagree about whether this program may be written.
-  const hasProgramError = previewResult !== null && programHasError(previewResult.warnings)
+  // cannot disagree about whether these programs may be written.
+  const hasProgramError = exportHasError(programs)
 
   function toggleOperationSelected(operationId: string, selected: boolean) {
     setSelectedOperationIds((current) => {
@@ -167,6 +243,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
       return next
     })
   }
+
+  // Operations under the setup that cuts them; one unlabelled group for a
+  // project with a single setup.
+  const operationGroups = useMemo(() => groupExportOperationOptions(project, operationOptions), [project, operationOptions])
 
   const exportableOperationIds = useMemo(() => (
     operationOptions
@@ -188,25 +268,46 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     // rendered: an edit between the two would otherwise write a file describing
     // a project that no longer exists.
     const exportable = takeExportable()
-    if (!exportable) return
+    if (!exportable || preparedTokenId === null) return
 
-    const suggestedName = suggestGcodeFileName(project.meta.name, exportable.operationNames)
     const ext = activeDefinition.fileExtension
-    // `exportable.gcode` was copied out above and is not re-read from state; the
-    // bytes are frozen for this file action even if the preview moves on.
-    // A previous export path is never permission to overwrite it (issue #1081):
-    // every G-code export asks for a destination, even for the same project.
-    const exportedPath = await platform.saveTextFile(suggestedName, exportable.gcode, ext, null)
-    if (!exportedPath) return
+    setSaveFailedFile(null)
+    // `exportable` was copied out above and is not re-read from state; the
+    // bytes are frozen for these file actions even if the preview moves on.
+    const written = [...savedProgramNumbers]
+    let lastPath: string | null = null
+    for (const program of exportable.programs) {
+      if (written.includes(program.programNumber)) continue
+      let exportedPath: string | null
+      try {
+        exportedPath = await platform.saveTextFile(
+          program.fileStem,
+          program.gcode,
+          ext,
+          // A previous export path is never permission to overwrite it (issue
+          // #1081): every G-code export asks for a destination, per file.
+          null,
+        )
+      } catch {
+        // The files written so far stay recorded, so pressing Export again
+        // carries on with the rest.
+        setSaveFailedFile(`${program.fileStem}.${ext}`)
+        return
+      }
+      if (!exportedPath) return
 
-    // The platform dialog is asynchronous, and another document can be opened
-    // while it is up. Marking *that* document exported would attribute this
-    // file to a project it did not come from.
-    if (contextRef.current.documentKey !== exportable.documentKey) {
-      onClose()
-      return
+      // The platform dialog is asynchronous, and another document can be opened
+      // while it is up. Marking *that* document exported would attribute this
+      // file to a project it did not come from.
+      if (contextRef.current.documentKey !== exportable.documentKey) {
+        onClose()
+        return
+      }
+      written.push(program.programNumber)
+      setSaved({ tokenId: preparedTokenId, programNumbers: [...written] })
+      lastPath = exportedPath
     }
-    markExported(exportedPath)
+    if (lastPath && !perSetup) markExported(lastPath)
     onClose()
   }
 
@@ -215,15 +316,26 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     onClose()
   }
 
+  const remainingPrograms = programs.filter((program) => !savedProgramNumbers.includes(program.programNumber)).length
+
+  // What the pane says when there is no program to show. It names the state
+  // instead of assuming "no machine", so a refusal for any other reason — or a
+  // project whose selected machine is gone — can no longer read as one
+  // (issue #1112, item 35).
+  const previewMessageKey = exportPreviewMessageKey({
+    hasPreview: previewResult !== null,
+    machine: machineState,
+    blockReason: preparation?.status === 'blocked' ? preparation.reason.kind : null,
+  })
   const previewLines = previewResult
     ? previewResult.gcode.split('\n').slice(0, 30).join('\n')
-    : td('dialogs.export.previewPlaceholder')
+    : previewMessageKey === null ? '' : td(previewMessageKey)
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">{td('dialogs.export.title')}</h2>
+          <h2 className="dialog-title">{t(dialectLabels.title)}</h2>
           <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -236,7 +348,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
             <div className="dialog-section-group">
               <label className="dialog-section-title">{td('dialogs.export.machine')}</label>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                <div style={{ fontSize: '13px', color: 'var(--text)' }}>
+                <div data-testid="export-machine-name" style={{ fontSize: '13px', color: 'var(--text)' }}>
                   {activeDefinition?.name ?? td('dialogs.export.machineNone')}
                 </div>
                 <button className="btn-secondary" onClick={handleChangeMachine} type="button" style={{ padding: '0 12px' }}>
@@ -281,20 +393,30 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               ) : (
                 <div className="export-option-group export-operation-list">
-                  {operationOptions.map(({ operation, exportable, reasonKey }) => (
-                    <label
-                      key={operation.id}
-                      className={`export-option${exportable ? '' : ' export-option--disabled'}`}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={!exportable}
-                        checked={exportable && selectedOperationIds.has(operation.id)}
-                        onChange={(event) => toggleOperationSelected(operation.id, event.target.checked)}
-                      />
-                      <span className="export-option-label">{operation.name}</span>
-                      {reasonKey ? <span className="export-option-note">{td(reasonKey)}</span> : null}
-                    </label>
+                  {operationGroups.map((group) => (
+                    <Fragment key={group.setup?.id ?? 'all'}>
+                      {group.setup ? (
+                        <div className="export-setup-heading" data-setup-face={group.face}>
+                          {group.face === 'around' ? <Icon id="face-around" size={14} /> : null}
+                          {programLabel({ programNumber: group.programNumber, setupName: group.setup.name })}
+                        </div>
+                      ) : null}
+                      {group.options.map(({ operation, exportable, reasonKey }) => (
+                        <label
+                          key={operation.id}
+                          className={`export-option${exportable ? '' : ' export-option--disabled'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!exportable}
+                            checked={exportable && selectedOperationIds.has(operation.id)}
+                            onChange={(event) => toggleOperationSelected(operation.id, event.target.checked)}
+                          />
+                          <span className="export-option-label">{operation.name}</span>
+                          {reasonKey ? <span className="export-option-note">{td(reasonKey)}</span> : null}
+                        </label>
+                      ))}
+                    </Fragment>
                   ))}
                 </div>
               )}
@@ -309,7 +431,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                     checked={emitToolChanges}
                     onChange={(event) => setEmitToolChanges(event.target.checked)}
                   />
-                  {td('dialogs.export.emitToolChanges')}
+                  {t(dialectLabels.emitToolChanges)}
                 </label>
                 <label className="export-option">
                   <input
@@ -325,6 +447,13 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           </div>
 
           <div className="dialog-preview-container">
+            {machineDiagnostics.length > 0 ? (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">{td('dialogs.export.machineDiagnostics')}</label>
+                <p className="machine-manager-hint">{td('dialogs.export.machineDiagnosticsHint')}</p>
+                <MachineDiagnosticList diagnostics={machineDiagnostics} />
+              </div>
+            ) : null}
             {previewMessages.errors.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">{td('dialogs.export.errors')}</label>
@@ -345,6 +474,77 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               </div>
             )}
+            {/* The dialect's warning is the first export note (issue #1191). A
+                ShopBot export can also show the per-setup note below the
+                program list's heading, so this one renders ahead of it rather
+                than after: the operator reads what the file is before how many
+                programs it writes. */}
+            {dialectLabels.experimentalNote ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-experimental-note"
+              >
+                {t(dialectLabels.experimentalNote)}
+              </div>
+            ) : null}
+            {showPrograms && programs.length > 0 ? (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">{td('dialogs.export.programs')}</label>
+                {perSetup ? <div className="export-setup-note">{td('dialogs.export.perSetupNote')}</div> : null}
+                <div className="export-program-list" role="group" aria-label={td('dialogs.export.programs')}>
+                  {programs.map((program) => (
+                    <button
+                      key={program.programNumber}
+                      type="button"
+                      className={`export-program${program === previewProgram ? ' export-program--active' : ''}`}
+                      data-setup-face={program.face}
+                      aria-pressed={program === previewProgram}
+                      onClick={() => setPreviewProgramNumber(program.programNumber)}
+                    >
+                      <span className="export-program-title">
+                        {program.face === 'around' ? <Icon id="face-around" size={14} /> : null}
+                        {programLabel(program)}
+                      </span>
+                      <span className="export-program-file">{`${program.fileStem}.${activeDefinition?.fileExtension ?? ''}`}</span>
+                      <span className="export-program-meta">
+                        {td(
+                          program.operations.length === 1 ? 'dialogs.export.programOperations.one' : 'dialogs.export.programOperations.other',
+                          { count: program.operations.length },
+                        )}
+                        {savedProgramNumbers.includes(program.programNumber) ? ` · ${td('dialogs.export.programSaved')}` : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {rotaryMmNotice && activeDefinition ? (
+              <div
+                className="export-setup-note"
+                role="alert"
+                data-testid="export-rotary-mm-notice"
+              >
+                {td('dialogs.export.rotaryMmNotice', { machine: activeDefinition.name })}
+              </div>
+            ) : null}
+            {rotaryAxisNote ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-rotary-axis-note"
+              >
+                {rotaryAxisNote.kind === 'own'
+                  ? td('dialogs.export.rotaryFollowsStockOwn', { axis: rotaryAxisNote.axis })
+                  : td('dialogs.export.rotaryFollowsStockBorrowed', { axis: rotaryAxisNote.axis, motor: rotaryAxisNote.motor })}
+              </div>
+            ) : null}
+            {rotaryZeroNotice ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-rotary-zero-notice"
+              >
+                {td('dialogs.export.rotaryZeroNotice')}
+              </div>
+            ) : null}
             <label className="dialog-section-title">{td('dialogs.export.preview')}</label>
             <div className="dialog-preview">
               {previewLines}
@@ -360,7 +560,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
-          {inspectEligible && (
+          {inspectPlan.offer && (
             <button
               className="btn-secondary"
               onClick={() => setDebugOperation(activeOperations[0])}
@@ -376,7 +576,9 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
             disabled={!previewResult || !activeDefinition || activeOperations.length === 0 || hasProgramError}
             type="button"
           >
-            {td('dialogs.export.export', { ext: activeDefinition ? `.${activeDefinition.fileExtension}` : '' })}
+            {remainingPrograms > 1
+              ? td('dialogs.export.exportFiles', { count: remainingPrograms })
+              : td('dialogs.export.export', { ext: activeDefinition ? `.${activeDefinition.fileExtension}` : '' })}
           </button>
         </div>
       </div>
@@ -387,6 +589,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           project={project}
           definition={activeDefinition}
           previewResult={previewResult}
+          toolpath={debugOperation.toolpath}
           onClose={() => setDebugOperation(null)}
         />
       )}

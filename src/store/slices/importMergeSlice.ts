@@ -23,6 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
+import { activeFace, aroundSketchAuthoringRefused } from '../helpers/activeFace'
 import { createDefinitionForFeatureWithId, createFeatureInstance } from '../helpers/featureDefinitions'
 import { genId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
@@ -76,6 +77,10 @@ export function createImportMergeSlice(
   return {
     importShapes: (input) => {
       const state = get()
+      // Imported shapes carry the active face (issue #945); the square blank's
+      // Around sheet is round-only, so an import there is refused before any
+      // id, folder, definition, history or selection work (issue #1016 C2-U1).
+      if (aroundSketchAuthoringRefused(state.project, activeFace(state.project))) return []
       const sourceShapes = input.shapes.filter((shape) => !isProfileDegenerate(shape.profile))
       if (sourceShapes.length === 0) return []
 
@@ -124,6 +129,7 @@ export function createImportMergeSlice(
               shape.operation,
             ),
             id: allocateId('f'),
+            authoringFace: activeFace(state.project),
           }))
         }
       } else {
@@ -154,6 +160,7 @@ export function createImportMergeSlice(
                 operation,
               ),
               id: allocateId('f'),
+              authoringFace: activeFace(state.project),
             }))
           }
         }

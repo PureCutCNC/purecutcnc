@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import { inferNestedSolidOperation } from '../../import/classifier'
+import { rectProfile } from '../../types/project'
 import type { DimensionRef, FeatureOperation, Project, SketchProfile } from '../../types/project'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -23,24 +24,86 @@ import {
   normalizeWinding,
   toClipperPath,
 } from '../../engine/toolpaths/geometry'
+import { activeFace, featuresAtActiveFace } from './activeFace'
 import { resolveFeatureInstances } from './resolveFeatures'
+import { barSeedsModel } from './projectType'
 
 const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
   PointInPolygon(point: { X: number; Y: number }, path: Array<{ X: number; Y: number }>): number
 }).PointInPolygon
 
-/** Infer a newly-created closed feature's role from resolved existing solids. */
+/**
+ * A rectangle standing in for the bar as a solid, so nesting has something to
+ * be inside of (#1108). It encloses the new profile and every existing solid,
+ * with a margin half as wide as the widest span — so it is strictly larger
+ * than any real container and only becomes the parent when nothing else
+ * contains the shape. Returns `null` when there is no geometry to enclose.
+ *
+ * Around nests in the unrolled sheet: a container that crosses the seam does
+ * not contain a shape drawn on the other side of it.
+ */
+function barMaterialProfile(profiles: readonly SketchProfile[]): SketchProfile | null {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let hasPoint = false
+  for (const profile of profiles) {
+    for (const point of flattenProfile(profile).points) {
+      hasPoint = true
+      if (point.x < minX) minX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.x > maxX) maxX = point.x
+      if (point.y > maxY) maxY = point.y
+    }
+  }
+  if (!hasPoint) return null
+  const span = Math.max(maxX - minX, maxY - minY)
+  const pad = span > 0 ? span / 2 : 1
+  return rectProfile(minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad)
+}
+
+/**
+ * Infer a newly-created closed feature's role from resolved existing solids —
+ * the ones present at the face being drawn on (issue #945): a pocket cut
+ * part-way in from the other face is solid material here, so a shape drawn
+ * over its outline is not an island in it.
+ *
+ * When the bar is the material (a rotary project, or the Around face) the bar
+ * itself joins the nesting set as a virtual `add` (#395, #1054, #1108): a
+ * shape inside nothing is a cut into the bar, a shape inside that cut is an
+ * island, and a shape inside the island is a cut again. In other words the
+ * bar's first shape is a cut, but nesting below it is unchanged. A block
+ * project keeps the inferred base-solid role.
+ *
+ * Around nests in the unrolled sheet coordinates. An open profile on a bar
+ * stays a cut, as it was before #1108, so lines remain engravings rather than
+ * becoming a base solid on the bar.
+ */
 export function inferManualFeatureOperation(
   project: Project,
   profile: SketchProfile,
 ): FeatureOperation {
-  const existingSolids = resolveFeatureInstances(project)
+  const existingSolids = featuresAtActiveFace(project, resolveFeatureInstances(project))
     .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .map((feature) => ({
       profile: feature.sketch.profile,
       operation: feature.operation as 'add' | 'subtract',
     }))
-  return inferNestedSolidOperation(profile, existingSolids)
+  if (activeFace(project) !== 'around' && !barSeedsModel(project)) {
+    return inferNestedSolidOperation(profile, existingSolids)
+  }
+  if (!profile.closed) return 'subtract'
+  const material = barMaterialProfile([profile, ...existingSolids.map((solid) => solid.profile)])
+  if (!material) return 'subtract'
+  // A shape the classifier cannot nest (self-intersecting) falls back to
+  // 'add' there; on a bar a base solid means nothing, so it stays a cut, as it
+  // was before #1108. Inside the material alone, any nestable shape is a cut.
+  if (inferNestedSolidOperation(profile, [{ profile: material, operation: 'add' }]) !== 'subtract') return 'subtract'
+  return inferNestedSolidOperation(profile, [
+    ...existingSolids,
+    { profile: material, operation: 'add' },
+  ])
 }
 
 /**
@@ -68,6 +131,13 @@ function safeResolveZ(project: Pick<Project, 'dimensions'>, value: DimensionRef)
  *   boundary (Clipper returns non-zero): a Line drawn along a pocket wall
  *   still inherits the pocket floor.
  * - With no enclosing solid, `defaultTopZ` is returned unchanged.
+ *
+ * The result is a height above the face being drawn on (issue #945): on
+ * Bottom the stock is read turned over, so a pocket's floor is its stock-space
+ * `z_top` and the height is measured down from the top face. Callers turn it
+ * into a stock span with `newFeatureSpan`. Only solids present at that face
+ * are considered: a pocket that opens on the other face and stops short of
+ * this one has no floor here.
  */
 export function inferLineTopZFromEnclosingFeature(
   project: Project,
@@ -84,8 +154,9 @@ export function inferLineTopZFromEnclosingFeature(
 
   let bestArea = Infinity
   let bestZ: number | null = null
+  const onTop = activeFace(project) !== 'bottom'
 
-  for (const feature of resolveFeatureInstances(project)) {
+  for (const feature of featuresAtActiveFace(project, resolveFeatureInstances(project))) {
     if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
     if (!feature.sketch.profile.closed) continue
 
@@ -106,12 +177,14 @@ export function inferLineTopZFromEnclosingFeature(
     const area = Math.abs(ClipperLib.Clipper.Area(containerPath))
     if (area >= bestArea) continue
 
-    const zRaw = feature.operation === 'subtract' ? feature.z_bottom : feature.z_top
+    // The surface nearest the cutter: a pocket's floor or a raised solid's
+    // top, seen from the face being drawn on.
+    const zRaw = (feature.operation === 'subtract') === onTop ? feature.z_bottom : feature.z_top
     const resolved = safeResolveZ(project, zRaw)
     if (resolved === null) continue
 
     bestArea = area
-    bestZ = resolved
+    bestZ = onTop ? resolved : project.stock.thickness - resolved
   }
 
   return bestZ ?? defaultTopZ

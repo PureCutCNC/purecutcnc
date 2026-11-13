@@ -256,6 +256,7 @@ function makeModelProject(
     constraints: [],
     z_top: zTop,
     z_bottom: zBottom,
+    authoringFace: 'top',
     folderId: null,
     visible: true,
     locked: false,

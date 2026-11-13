@@ -37,6 +37,7 @@ import {
   isPackedMoves,
   packMoves,
   packResult,
+  transferablesOf,
   unpackMoves,
   unpackResult,
 } from './moveTransport'
@@ -132,6 +133,69 @@ check(
   'no move in the corpus carries a feed scale, so packing it is untested',
 )
 
+check(
+  'the transfer check rejects a lone or mismatched angle pair',
+  (() => {
+    const packed = structuredClone(packMoves([
+      { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 1, y: 0, z: 0, a: 90 } },
+    ]))
+    if (!isPackedMoves(packed)) return false
+    const lone = { ...packed, angleValues: undefined }
+    const mismatched = { ...packed, angleValues: new Float64Array([0]) }
+    const overLong = { ...packed, angleIndices: new Uint32Array([0, 1, 2]) }
+    return !isPackedMoves(lone) && !isPackedMoves(mismatched) && !isPackedMoves(overLong)
+  })(),
+  'a malformed angle payload passed its own shape check',
+)
+
+check(
+  'the transfer check rejects non-increasing, out-of-range and non-finite angle slots',
+  (() => {
+    const packed = structuredClone(packMoves([
+      { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 1, y: 0, z: 0, a: 90 } },
+    ]))
+    if (!isPackedMoves(packed)) return false
+    const malformed = [
+      // The same slot twice: the second angle overwrites or drops the first.
+      { ...packed, angleIndices: new Uint32Array([0, 0]) },
+      // Slots that go backwards.
+      { ...packed, angleIndices: new Uint32Array([1, 0]) },
+      // A slot past the payload (`count * 2` is 2 here).
+      { ...packed, angleIndices: new Uint32Array([0, 2]) },
+      // Non-finite values: a rotation that is not a number is not a rotation.
+      { ...packed, angleValues: new Float64Array([0, Number.NaN]) },
+      { ...packed, angleValues: new Float64Array([Number.POSITIVE_INFINITY, 90]) },
+    ]
+    return malformed.every((candidate) => !isPackedMoves(candidate))
+  })(),
+  'a malformed angle payload (repeat, order, range or finiteness) passed its own shape check',
+)
+
+check(
+  'packing more angled moves than a Uint32 slot can address is refused',
+  (() => {
+    // A sparse array: only the first move is present, so the scan for an angle
+    // finishes at once, but `length` is past the slot limit.
+    const huge: ToolpathMove[] = new Array(2 ** 31)
+    huge[0] = { kind: 'cut', from: { x: 0, y: 0, z: 0, a: 0 }, to: { x: 1, y: 0, z: 0 } }
+    try {
+      packMoves(huge)
+      return false
+    } catch (error) {
+      return /rotary angle/.test((error as Error).message)
+    }
+  })(),
+  'an over-long angled payload was packed, or failed with the wrong error',
+)
+
+check(
+  'the transfer check accepts a valid angle payload',
+  isPackedMoves(structuredClone(packMoves([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0, a: 0 } },
+  ]))),
+  'a valid angle payload was rejected after cloning',
+)
+
 console.log('\nEdge cases')
 
 check('an empty path packs and unpacks', unpackMoves(packMoves([])).length === 0, 'empty round trip failed')
@@ -139,14 +203,63 @@ check('an empty path packs and unpacks', unpackMoves(packMoves([])).length === 0
 check(
   'every declared move kind round-trips',
   (() => {
-    const moves: ToolpathMove[] = TRANSPORT_MOVE_KINDS.map((kind) => ({
+    const moves: ToolpathMove[] = TRANSPORT_MOVE_KINDS.map((kind, index) => ({
       kind,
-      from: { x: 0, y: 0, z: 0 },
-      to: { x: 1, y: 2, z: 3 },
+      from: { x: 0, y: 0, z: 0, a: index * 90 },
+      to: { x: 1, y: 2, z: 3, a: -index * 45 },
     }))
     return canonicalize(unpackMoves(packMoves(moves))) === canonicalize(moves)
   })(),
   'a move kind did not survive the index encoding',
+)
+
+// ── The rotary angle (issue #393) ─────────────────────────────
+
+check(
+  'an angle-free toolpath packs to exactly the pre-rotary layout',
+  (() => {
+    const moves: ToolpathMove[] = [
+      { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 0, y: 0, z: 0 } },
+      { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 }, feedScale: 0.5, source: 'tag' },
+    ]
+    const packed = packMoves(moves)
+    // Not merely an empty pair: the fields are absent, so the transfer list and
+    // the buffer layout are the ones an all-linear toolpath always had.
+    return packed.angleIndices === undefined
+      && packed.angleValues === undefined
+      && transferablesOf(packResult({ operationId: 'op', moves, warnings: [], bounds: null })).length === 5
+  })(),
+  'an angle-free toolpath gained angle buffers, changing its packed layout',
+)
+
+check(
+  'absent / 0 / -45 / 900 / mixed angles all round-trip exactly',
+  (() => {
+    const moves: ToolpathMove[] = [
+      // Absent at both ends.
+      { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0 } },
+      // A real zero is not an absent angle.
+      { kind: 'cut', from: { x: 1, y: 0, z: 0, a: 0 }, to: { x: 2, y: 0, z: 0, a: 0 } },
+      // Negative and past a full turn, never reduced.
+      { kind: 'cut', from: { x: 2, y: 0, z: 0, a: -45 }, to: { x: 3, y: 0, z: 0, a: 900 } },
+      // Mixed within one toolpath: an angle at one end only, and a full
+      // mantissa value that a Float32 encoding would move.
+      { kind: 'rapid', from: { x: 3, y: 0, z: 0 }, to: { x: 4, y: 0, z: 0, a: 12.345678901234567 } },
+      { kind: 'plunge', from: { x: 4, y: 0, z: 0, a: 12.345678901234567 }, to: { x: 4, y: 0, z: -1 } },
+    ]
+    const restored = unpackMoves(structuredClone(packMoves(moves)))
+    return restored.every((move, index) => {
+      const source = moves[index]
+      const sameEnd = (end: 'from' | 'to'): boolean => {
+        const expected = source[end]
+        const actual = move[end]
+        if (expected.a === undefined) return !('a' in actual)
+        return Object.is(actual.a, expected.a)
+      }
+      return sameEnd('from') && sameEnd('to')
+    })
+  })(),
+  'an angle changed, appeared, or disappeared through the packed encoding',
 )
 
 check(

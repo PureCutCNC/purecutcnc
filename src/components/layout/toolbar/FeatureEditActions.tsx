@@ -15,12 +15,16 @@
  */
 
 import { useI18n } from '../../../i18n/i18nContext'
+import type { MessageKey } from '../../../i18n/locales/en'
 import { ToolbarActionButton } from './primitives'
 
 function FeatureEditActions({
   enabled,
   hasLockedSelection,
   hasClosedSelection,
+  hasCannedSelection,
+  hasRotaryCannedSelection,
+  rotaryCannedShapeLabelKey,
   pendingMoveMode,
   pendingTransformMode,
   pendingOffset,
@@ -38,6 +42,17 @@ function FeatureEditActions({
   enabled: boolean
   hasLockedSelection: boolean
   hasClosedSelection: boolean
+  /** A generated shape is selected, so offset and constraints refuse. */
+  hasCannedSelection: boolean
+  /**
+   * A rotary canned shape (Turn, Polygon, Thread, Flutes) is selected, so
+   * Resize, Rotate and Mirror refuse — its size and orientation live in its
+   * parameters (issue #1112 rt7-f). The same refusal the context menu shows,
+   * so no toolbar button can start what the menu would not offer.
+   */
+  hasRotaryCannedSelection: boolean
+  /** The rotary shape a Resize refusal names, when one can be named. */
+  rotaryCannedShapeLabelKey: string | null
   pendingMoveMode: 'move' | 'copy' | null
   pendingTransformMode: 'resize' | 'rotate' | 'mirror' | null
   pendingOffset: boolean
@@ -53,6 +68,19 @@ function FeatureEditActions({
   constraintActive: boolean
 }) {
   const { t } = useI18n()
+  const cannedReason = hasCannedSelection ? t('sketch.canned.actionRefused') : undefined
+  // A rotary shape's Resize names its own editor, as the menu's does; Rotate
+  // and Mirror keep the shared generated-shape refusal (issue #1112 rt7-f).
+  const rotaryReason = hasRotaryCannedSelection ? t('sketch.canned.actionRefused') : undefined
+  const rotaryResizeReason = hasRotaryCannedSelection
+    ? rotaryCannedShapeLabelKey
+      ? t('featureTree.contextMenu.resizeCannedTooltip', {
+          edit: t('featureTree.properties.canned.edit', {
+            shape: t(rotaryCannedShapeLabelKey as MessageKey),
+          }),
+        })
+      : t('sketch.canned.actionRefused')
+    : undefined
 
   if (!enabled) return null
 
@@ -84,7 +112,8 @@ function FeatureEditActions({
           icon="resize"
           label={pendingTransformMode === 'resize' ? t('sketch.transform.cancelResize') : t('sketch.transform.resize')}
           active={pendingTransformMode === 'resize'}
-          disabled={hasLockedSelection}
+          disabled={hasLockedSelection || hasRotaryCannedSelection}
+          disabledReason={rotaryResizeReason}
           tooltipSide={tooltipSide}
           onClick={onResize}
         />
@@ -92,7 +121,8 @@ function FeatureEditActions({
           icon="rotate"
           label={pendingTransformMode === 'rotate' ? t('sketch.transform.cancelRotate') : t('sketch.transform.rotate')}
           active={pendingTransformMode === 'rotate'}
-          disabled={hasLockedSelection}
+          disabled={hasLockedSelection || hasRotaryCannedSelection}
+          disabledReason={rotaryReason}
           tooltipSide={tooltipSide}
           onClick={onRotate}
         />
@@ -100,7 +130,8 @@ function FeatureEditActions({
           icon="mirror"
           label={pendingTransformMode === 'mirror' ? t('sketch.transform.cancelMirror') : t('sketch.transform.mirror')}
           active={pendingTransformMode === 'mirror'}
-          disabled={hasLockedSelection}
+          disabled={hasLockedSelection || hasRotaryCannedSelection}
+          disabledReason={rotaryReason}
           tooltipSide={tooltipSide}
           onClick={onMirror}
         />
@@ -108,7 +139,8 @@ function FeatureEditActions({
           icon="offset"
           label={pendingOffset ? t('sketch.boolean.cancelOffset') : t('sketch.boolean.offset')}
           active={pendingOffset}
-          disabled={hasLockedSelection || !hasClosedSelection}
+          disabled={hasLockedSelection || !hasClosedSelection || hasCannedSelection}
+          disabledReason={hasCannedSelection ? cannedReason : undefined}
           tooltipSide={tooltipSide}
           onClick={onOffset}
         />
@@ -116,7 +148,8 @@ function FeatureEditActions({
           icon="constraint"
           label={constraintActive ? t('sketch.constraint.cancel') : t('sketch.constraint.add')}
           active={constraintActive}
-          disabled={hasLockedSelection}
+          disabled={hasLockedSelection || hasCannedSelection}
+          disabledReason={hasCannedSelection ? cannedReason : undefined}
           tooltipSide={tooltipSide}
           onClick={onConstraint}
         />

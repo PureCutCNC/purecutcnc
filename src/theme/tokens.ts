@@ -152,6 +152,10 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   css('role-construction', 'sketch-roles', 'Construction role'),
   css('role-construction-text', 'sketch-roles', 'Construction role text'),
 
+  // The Bottom stock face (issue #945). Top keeps the accent blue.
+  css('face-bottom', 'sketch-roles', 'Bottom face'),
+  css('face-bottom-text', 'sketch-roles', 'Bottom face text'),
+
   // 2D sketch canvas presentation.
   canvas('background', 'Canvas background'),
   canvas('gridMajor', 'Grid (major)'),
@@ -228,6 +232,8 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   canvas('measurementBackdrop', 'Measurement label background', 'canvas-annotation'),
   canvas('measurementText', 'Measurement label text', 'canvas-annotation'),
   canvas('stockExceeded', 'Stock exceeded warning', 'canvas-annotation'),
+  canvas('ghostTop', 'Top face ghost outline', 'canvas-annotation'),
+  canvas('ghostBottom', 'Bottom face ghost outline', 'canvas-annotation'),
   canvas('invalidText', 'Invalid value text', 'canvas-annotation'),
   canvas('invalidBackdrop', 'Invalid value background', 'canvas-annotation'),
   canvas('constraint', 'Constraint overlay', 'canvas-annotation'),

@@ -25,6 +25,28 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect } from './fixtures'
 import { contextMenu as ctxSel, tree as treeSel } from './selectors'
+import { ALLOW_SOFTWARE_WEBGL_FLAG } from '../src/components/canvas/toolpathWebglSupport'
+
+// ── Dev-only GPU test seam ──────────────────────────────────────────
+
+/**
+ * Allow the toolpath renderer to accept a software WebGL2 context (issue
+ * #1087). CI's headless Chromium renders WebGL2 on SwiftShader, so GPU specs
+ * would otherwise take the Canvas fallback and assert nothing about the GPU.
+ *
+ * The app honours this flag only when `import.meta.env.DEV` is true — it is
+ * inert in production builds, which is why these specs run against the dev
+ * server. Fallback specs deliberately leave it unset. It is applied to the
+ * current page as well as to later navigations, because tests also construct
+ * `GpuToolpathRenderer` directly through `page.evaluate`.
+ */
+export async function allowSoftwareToolpathWebgl(page: Page): Promise<void> {
+  const enable = (flag: string) => {
+    ;(window as unknown as Record<string, unknown>)[flag] = true
+  }
+  await page.addInitScript(enable, ALLOW_SOFTWARE_WEBGL_FLAG)
+  await page.evaluate(enable, ALLOW_SOFTWARE_WEBGL_FLAG)
+}
 
 // ── __pcTest seam ───────────────────────────────────────────────────
 
@@ -44,6 +66,96 @@ export async function getProject(page: Page): Promise<Record<string, unknown>> {
   })
 }
 
+/**
+ * Reload once the page's downloads have finished. A reload in the middle of
+ * the 3D engine's wasm download aborts it, and the old page logs that as a
+ * console error, which fails the test (#1171).
+ */
+export async function reloadWhenIdle(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle')
+  await page.reload()
+}
+
+/**
+ * Select a bundled machine the way a user does: Project → Machine in the
+ * project properties. Mirrors the local helper in plasmaMode.smoke.spec.ts so
+ * every machine-dependent spec selects through one path (#960).
+ */
+export async function selectMachine(
+  page: Page,
+  ui: typeof import('./selectors'),
+  name: string,
+): Promise<void> {
+  await ui.tree.projectRow(page).click()
+  await ui.properties.machineTrigger(page).click()
+  await ui.properties.machineOption(page, name).click()
+}
+
+/** A project type, as the New project dialog offers it. */
+export type NewProjectType = 'Milling / routing' | 'Plasma' | 'Rotary'
+
+/** What a spec wants the New project dialog to create. */
+export interface NewProjectOptions {
+  template?: 'Blank metric' | 'Blank imperial'
+  type?: NewProjectType
+  /** A rotary blank's shape; the field only exists once the type is Rotary. */
+  shape?: 'Round bar' | 'Square blank'
+  /** A rotary blank's diameter (round) or side (square), as typed. */
+  size?: string
+  /** A rotary blank's length, as typed. */
+  length?: string
+  /** A rotary blank's axis. */
+  axis?: 'X' | 'Y'
+}
+
+/**
+ * Create a project through the New project dialog, the only way a project gets
+ * its type since #1046: the type is chosen here and locked afterwards.
+ */
+export async function createNewProject(
+  page: Page,
+  ui: typeof import('./selectors'),
+  options: NewProjectOptions = {},
+): Promise<void> {
+  await ui.toolbar.newProjectButton(page).click()
+  const dialog = ui.newProjectDialog.root(page)
+  await expect(dialog).toBeVisible()
+
+  if (options.template) await ui.newProjectDialog.template(page, options.template).click()
+  if (options.type) {
+    await ui.newProjectDialog.typeTile(page, options.type).click()
+  }
+  if (options.shape) {
+    await ui.newProjectDialog.stockShapeTrigger(page).click()
+    await ui.newProjectDialog.stockShapeOption(page, options.shape).click()
+  }
+  if (options.size !== undefined) await ui.newProjectDialog.stockDimension(page, 'size').fill(options.size)
+  if (options.length !== undefined) await ui.newProjectDialog.stockDimension(page, 'length').fill(options.length)
+  if (options.axis) {
+    await ui.newProjectDialog.stockAxisTrigger(page).click()
+    await ui.newProjectDialog.stockAxisOption(page, options.axis).click()
+  }
+
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await expect(dialog).toHaveCount(0)
+}
+
+/**
+ * Give an already-seeded project a stored type, for specs that are about
+ * something else. The type is not changeable through the UI since #1046, so a
+ * spec that needs a plasma project with a fixture's geometry seeds the field
+ * and reloads; the real user path is `createNewProject`.
+ */
+export async function seedProjectType(
+  page: Page,
+  type: 'milling' | 'plasma' | 'rotary',
+): Promise<void> {
+  const project = await getProject(page)
+  const meta = project.meta as Record<string, unknown>
+  meta.projectType = type
+  await seedProject(page, JSON.stringify(project))
+}
+
 /** Return the feature currently preview-highlighted by the live store. */
 export async function getHoveredFeatureId(page: Page): Promise<string | null> {
   return page.evaluate(async () => {
@@ -52,14 +164,18 @@ export async function getHoveredFeatureId(page: Page): Promise<string | null> {
   })
 }
 
-/** Get the current pending move state (null if idle). */
-export async function getPendingMove(
-  page: Page,
-): Promise<{ mode: string; entityType: string; entityIds: string[] } | null> {
+export interface PendingMoveState {
+  mode: string
+  entityType: string
+  entityIds: string[]
+  fromPoint: { x: number; y: number } | null
+  toPoint: { x: number; y: number } | null
+}
+
+/** Get the current pending move state (null if idle), with the points it holds. */
+export async function getPendingMove(page: Page): Promise<PendingMoveState | null> {
   return page.evaluate(async () => {
-    const w = window as unknown as {
-      __pcTest: { getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null> }
-    }
+    const w = window as unknown as { __pcTest: { getPendingMove: () => Promise<PendingMoveState | null> } }
     return w.__pcTest.getPendingMove()
   })
 }

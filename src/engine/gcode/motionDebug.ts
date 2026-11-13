@@ -22,11 +22,43 @@
 
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
-import type { OperationMotionTrace, MachineDefinition } from './types'
+import type { OperationMotionTrace, PinnedMachineDefinition } from './types'
+import { resolveOutputDialect, rotaryWord } from './types'
+import { parseGcodeMotion } from './gcodeMotionParser'
 import type { ParsedGcodeMove, ParsedGcodeMotion } from './gcodeMotionParser'
+import { parseSbpMotion } from './sbpMotionParser'
 import { machineToProjectPoint, machineToProjectFlipsArcDirection } from './utils'
 
 const Z_EPS = 1e-6
+
+// ── Parsing the exported program ──────────────────────────────
+
+/**
+ * Parse an exported program in the definition's own output dialect. The
+ * debug view calls this rather than a dialect's parser directly, so the text
+ * it validates is always read in the language it was written in.
+ */
+export function parseExportedMotion(program: string, definition: PinnedMachineDefinition): ParsedGcodeMotion {
+  switch (resolveOutputDialect(definition)) {
+    case 'opensbp':
+      return parseSbpMotion(program)
+    case 'gcode': {
+      // A rotary definition's own word and inverse-time commands (issue #393):
+      // the parser reads the angle and keeps an inverse-time F as inverse
+      // time. A definition without them parses exactly as before.
+      const word = rotaryWord(definition)
+      return parseGcodeMotion(
+        program,
+        definition.motion.arcFormat,
+        definition.program.commentPrefix,
+        definition.program.commentSuffix,
+        word === null
+          ? undefined
+          : { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
+      )
+    }
+  }
+}
 
 // ── Eligibility ───────────────────────────────────────────────
 
@@ -142,7 +174,7 @@ function segmentFromMove(move: ToolpathMove): MotionDebugSegment {
 }
 
 /** Project-coord segment from a parsed G-code move (machine → project). */
-function segmentFromParsed(move: ParsedGcodeMove, origin: MachineOrigin, definition: MachineDefinition): MotionDebugSegment {
+function segmentFromParsed(move: ParsedGcodeMove, origin: MachineOrigin, definition: PinnedMachineDefinition): MotionDebugSegment {
   const fromProj = machineToProjectPoint(move.from, origin, definition)
   const toProj = machineToProjectPoint(move.to, origin, definition)
   const cutting = move.kind !== 'rapid'
@@ -249,8 +281,30 @@ function refSegmentsFromParsed(parsed: ParsedGcodeMotion): RefSegment[] {
   return out
 }
 
+/**
+ * Whether one coordinate agrees. A coordinate missing on either side is a
+ * borrowed rotary motor's axis (issue #393): the program cannot carry it as a
+ * linear word at all, so there is nothing to compare it against.
+ */
+function axisMatches(a: number | undefined, b: number | undefined, tol: number): boolean {
+  if (a === undefined || b === undefined) return true
+  return Math.abs(a - b) <= tol
+}
+
 function ptEqXYZ(a: ToolpathPoint, b: ToolpathPoint, tol: number): boolean {
-  return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol && Math.abs(a.z - b.z) <= tol
+  return axisMatches(a.x, b.x, tol) && axisMatches(a.y, b.y, tol) && axisMatches(a.z, b.z, tol)
+}
+
+/**
+ * Whether the rotary angles agree (issue #393). An angle present on one side
+ * and absent on the other is a real mismatch — the program either lost the
+ * turn or invented one — while two absent angles are the ordinary case.
+ * `tol` is the same export tolerance the endpoints use; the angle is in
+ * degrees, and the emitter rounds it to the definition's decimal places.
+ */
+function angleMatches(a: number | undefined, b: number | undefined, tol: number): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return Math.abs(a - b) <= tol
 }
 
 /**
@@ -300,6 +354,14 @@ export function compareMotionTraces(
     // is validated via centre + direction below.
     if (!ptEqXYZ(r.to, g.to, tolerance)) {
       warnings.push({ kind: 'endpoint', message: `segment ${i + 1}: end point deviates beyond tolerance` })
+    }
+    // The rotary angle rides the same endpoint (issue #393): the view must not
+    // report a program as verified when it turned the stock differently.
+    if (!angleMatches(r.to.a, g.to.a, tolerance)) {
+      warnings.push({
+        kind: 'angle',
+        message: `segment ${i + 1}: rotary angle differs (source ${r.to.a}, exported ${g.to.a})`,
+      })
     }
     if (r.kind === 'arc' && g.kind === 'arc') {
       if (r.center && g.center) {
@@ -538,7 +600,8 @@ export interface BuildExportedMotionDebugModelArgs {
   parsed: ParsedGcodeMotion
   postprocessorTrace: OperationMotionTrace
   origin: MachineOrigin
-  definition: MachineDefinition
+  /** Pinned against the project's stock (#1153): the angle letter depends on it. */
+  definition: PinnedMachineDefinition
   tolerance: number
 }
 

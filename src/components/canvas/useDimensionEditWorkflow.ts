@@ -27,7 +27,8 @@ import type { SketchControlRef } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { computeEditDimSteps, type EditDimStep } from './draftHelpers'
-import { arcHandleFromRadius, computeDimensionEditPreviewPoint, type DimensionEditState } from './manualEntry'
+import { arcHandleFromRadius, computeDimensionEditPreviewPoint, formatDirectionAngle, type DimensionEditState } from './manualEntry'
+import { faceAngles } from '../../store/helpers/activeFace'
 import { anchorPointForIndex, arcControlPoint } from './profilePrimitives'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 
@@ -137,7 +138,7 @@ export function useDimensionEditWorkflow(ctx: DimensionEditWorkflowCtx): Dimensi
         height: '',
         radius: '',
         length: formatLength(Math.hypot(dx, dy), units),
-        angle: (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, ''),
+        angle: formatDirectionAngle(dx, dy, faceAngles(projectRef.current)),
       })
     } else {
       const seg = profile.segments[step.control.index]
@@ -226,7 +227,7 @@ export function useDimensionEditWorkflow(ctx: DimensionEditWorkflowCtx): Dimensi
       const newHandle = arcHandleFromRadius(arcStart, seg, newRadius)
       if (newHandle) moveFeatureControl(fId, control, newHandle)
     } else {
-      const pt = computeDimensionEditPreviewPoint(next, projectRef.current.meta.units)
+      const pt = computeDimensionEditPreviewPoint(next, projectRef.current.meta.units, faceAngles(projectRef.current))
       moveFeatureControl(fId, control, pt)
     }
   }

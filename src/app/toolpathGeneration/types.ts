@@ -113,6 +113,13 @@ export interface GenerationStatusSnapshot {
   readonly automaticPaused: boolean
   /** Set when the executor itself faulted, so the UI can offer Retry. */
   readonly executorFailure: GenerationFailure | null
+  /**
+   * Set when the worker could not start and this session moved to the main
+   * thread (issue #1087). Deliberately separate from `executorFailure`:
+   * generation still runs, so the UI reports where it moved rather than a
+   * failure the user has to clear before anything works again.
+   */
+  readonly executorFallback: GenerationFailure | null
   readonly executorKind: ExecutorKind
 }
 

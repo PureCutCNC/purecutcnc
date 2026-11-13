@@ -57,7 +57,9 @@ export function Icon({ id, className, size = 24, fullColor = false }: IconProps)
       strokeLinecap={fullColor ? undefined : 'round'}
       strokeLinejoin={fullColor ? undefined : 'round'}
     >
-      <use href={`${import.meta.env.BASE_URL}icons.svg#${id}`} />
+      {/* `import.meta.env` is Vite-only: the optional fallback keeps icon
+        * rendering alive in a plain Node render (unit tests), as in pdf.ts. */}
+      <use href={`${import.meta.env?.BASE_URL ?? '/'}icons.svg#${id}`} />
     </svg>
   )
 }

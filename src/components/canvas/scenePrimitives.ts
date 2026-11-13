@@ -16,13 +16,16 @@
 
 import type { SketchControlRef } from '../../store/types'
 import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
-import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
+import type { BackdropImage, BarStock, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
+import { barCentre, isBarStock } from '../../types/barStock'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
 import { hexToRgba } from './previewPrimitives'
+import type { AroundSheet } from './aroundSheet'
+import { aroundSeamLabels } from './aroundSheet'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
-import { worldToCanvas } from './viewTransform'
+import { applyViewMirror, worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasThemePalette } from '../../theme/palette'
 import { canvasColors } from './canvasPalette'
@@ -119,7 +122,7 @@ export function drawSketchControls(
 
     // Dashed outline
     ctx.beginPath()
-    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, seg.clockwise)
+    ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, seg.clockwise, vt))
     ctx.setLineDash([5, 5])
     ctx.strokeStyle = palette.mutedGeometry
     ctx.lineWidth = 1
@@ -201,6 +204,59 @@ export function drawSketchControls(
       ctx.stroke()
     }
   }
+}
+
+/**
+ * A canned ellipse's two radius handles (issue #1112 slice w3e-a). The shape is
+ * committed geometry, not an editable sketch, so the handles are drawn against
+ * the placed axes: a dashed radius from the placed centre to each axis end and
+ * a diamond at that end, the same marker an arc handle uses.
+ */
+export function drawEllipseRadiusHandles(
+  ctx: CanvasRenderingContext2D,
+  centre: Point,
+  handles: readonly { axis: 'rx' | 'ry'; world: Point }[],
+  vt: ViewTransform,
+  activeAxis: 'rx' | 'ry' | null,
+  palette: CanvasThemePalette,
+): void {
+  const centreCanvas = worldToCanvas(centre, vt)
+
+  ctx.save()
+  for (const handle of handles) {
+    const point = worldToCanvas(handle.world, vt)
+    ctx.beginPath()
+    ctx.moveTo(centreCanvas.cx, centreCanvas.cy)
+    ctx.lineTo(point.cx, point.cy)
+    ctx.strokeStyle = canvasColors().handleGuide
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  // The placed centre, so a rotated ellipse's handles read as its own axes.
+  const crossSize = activeAxis ? 8 : 6
+  ctx.beginPath()
+  ctx.moveTo(centreCanvas.cx - crossSize, centreCanvas.cy)
+  ctx.lineTo(centreCanvas.cx + crossSize, centreCanvas.cy)
+  ctx.moveTo(centreCanvas.cx, centreCanvas.cy - crossSize)
+  ctx.lineTo(centreCanvas.cx, centreCanvas.cy + crossSize)
+  ctx.strokeStyle = activeAxis ? palette.active : palette.mutedGeometry
+  ctx.lineWidth = activeAxis ? 2 : 1.2
+  ctx.stroke()
+
+  for (const handle of handles) {
+    const point = worldToCanvas(handle.world, vt)
+    const active = handle.axis === activeAxis
+    drawDiamond(ctx, point.cx, point.cy, active ? HANDLE_RADIUS + 1.5 : HANDLE_RADIUS)
+    ctx.fillStyle = active ? palette.active : canvasColors().handleFill
+    ctx.fill()
+    ctx.strokeStyle = active ? palette.activeStrong : canvasColors().handleStroke
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 export function drawSketchEditPreviewPoint(
@@ -326,6 +382,44 @@ export interface StockLabelRect {
   halfH: number
 }
 
+/** The stock fields a dimension label reads. */
+type DimensionLabelStock = Pick<Stock, 'shape'> & Partial<Pick<BarStock, 'axis'>>
+
+/**
+ * The stock's two dimension labels. A round bar's dimension **across** its
+ * axis is a diameter and carries the Ø on that side only; the along dimension
+ * is a plain length. A square blank's cross dimension is its side, never a
+ * diameter, so it carries no Ø (#1016 C2-U1V); a block, which has no bar axis,
+ * is plain on both sides.
+ */
+export function barDimensionLabels(
+  stock: DimensionLabelStock,
+  width: number,
+  height: number,
+  units: Units,
+): { width: string; height: string } {
+  const unitSuffix = units === 'inch' ? 'in' : 'mm'
+  const barAxis = stock.shape === 'round' ? stock.axis : null
+  return {
+    width: `${barAxis === 'y' ? 'Ø' : ''}${formatLength(width, units)} ${unitSuffix}`,
+    height: `${barAxis === 'x' ? 'Ø' : ''}${formatLength(height, units)} ${unitSuffix}`,
+  }
+}
+
+/**
+ * The line a bar turns about, down its whole length, or null for a block. A
+ * round bar and a square blank turn about the same true pivot — the box centre
+ * — so both answer the same centreline (#1016 C2-U1V).
+ */
+export function barCentreline(stock: Stock): { from: Point; to: Point } | null {
+  if (!isBarStock(stock)) return null
+  const bounds = getStockBounds(stock)
+  const centre = barCentre(stock)
+  return stock.axis === 'x'
+    ? { from: { x: bounds.minX, y: centre }, to: { x: bounds.maxX, y: centre } }
+    : { from: { x: centre, y: bounds.minY }, to: { x: centre, y: bounds.maxY } }
+}
+
 function drawStockDimensionLabel(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -366,6 +460,24 @@ export function drawStockOutline(
   ctx.fill()
 
   const bounds = getStockBounds(stock)
+
+  const centreline = barCentreline(stock)
+  if (centreline) {
+    // The centreline the bar turns about, dash-dot down its whole length: the
+    // same line for a round bar and a square blank, both turning about their
+    // box centre at the true pivot (#1016 C2-U1V).
+    const from = worldToCanvas(centreline.from, vt)
+    const to = worldToCanvas(centreline.to, vt)
+    ctx.strokeStyle = exceeded ? stockExceededStroke() : hexToRgba(stock.color, 0.7)
+    ctx.lineWidth = 1
+    ctx.setLineDash([8, 3, 2, 3])
+    ctx.beginPath()
+    ctx.moveTo(from.cx, from.cy)
+    ctx.lineTo(to.cx, to.cy)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
   const widthWorld = bounds.maxX - bounds.minX
   const heightWorld = bounds.maxY - bounds.minY
   if (widthWorld * vt.scale < STOCK_LABEL_MIN_WIDTH_PX) {
@@ -378,11 +490,11 @@ export function drawStockOutline(
   const maxCx = Math.max(cornerA.cx, cornerB.cx)
   const minCy = Math.min(cornerA.cy, cornerB.cy)
   const maxCy = Math.max(cornerA.cy, cornerB.cy)
-  const unitSuffix = units === 'inch' ? 'in' : 'mm'
+  const labels = barDimensionLabels(stock, widthWorld, heightWorld, units)
+  const widthLabelText = labels.width
+  const heightLabelText = labels.height
 
   ctx.save()
-  const widthLabelText = `${formatLength(widthWorld, units)} ${unitSuffix}`
-  const heightLabelText = `${formatLength(heightWorld, units)} ${unitSuffix}`
   const widthCx = (minCx + maxCx) / 2
   const widthCy = minCy - 12
   drawStockDimensionLabel(
@@ -423,6 +535,174 @@ export function drawStockOutline(
       halfW: hMetrics.width / 2 + 4,
       halfH: 9,
     })
+  }
+}
+
+/**
+ * A line across the unrolled sheet at every full turn (issue #395). `k = 0` is
+ * the zero line — the top of the bar with the rotary at zero — and runs through
+ * the middle of the sheet; it is drawn solid so it reads as the datum, and the
+ * rest are dashed and faint. The two at k = ±1 lie on the sheet's edges, which
+ * are the seam (the bottom of the bar, a = ±180°) since issue #1026.
+ */
+export function drawAroundTurnLines(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'along' | 'turnLines'>,
+  vt: ViewTransform,
+  stockColor: string,
+): void {
+  if (sheet.turnLines.length === 0) return
+  ctx.save()
+  for (const line of sheet.turnLines) {
+    const from = sheet.axis === 'x'
+      ? worldToCanvas({ x: sheet.along.min, y: line.across }, vt)
+      : worldToCanvas({ x: line.across, y: sheet.along.min }, vt)
+    const to = sheet.axis === 'x'
+      ? worldToCanvas({ x: sheet.along.max, y: line.across }, vt)
+      : worldToCanvas({ x: line.across, y: sheet.along.max }, vt)
+    ctx.beginPath()
+    ctx.moveTo(from.cx, from.cy)
+    ctx.lineTo(to.cx, to.cy)
+    ctx.strokeStyle = hexToRgba(stockColor, line.solid ? 0.6 : 0.3)
+    ctx.lineWidth = line.solid ? 1.5 : 1
+    ctx.setLineDash(line.solid ? [] : [5, 4])
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/**
+ * The seam labels on the sheet's two edges (issue #1112 slice L, decision
+ * 8.13). Both edges are the same seam — the bottom of the bar, a = ±180° — so
+ * one reads −180° and the other +180°. They hang just outside the sheet at its
+ * along start, where they do not collide with the dimension labels.
+ */
+export function drawAroundSeamLabels(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'along'>,
+  vt: ViewTransform,
+  palette: CanvasThemePalette,
+): void {
+  const labels = aroundSeamLabels(sheet)
+  if (labels.length === 0) return
+  ctx.save()
+  ctx.font = '10px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+  ctx.textBaseline = 'middle'
+  for (const label of labels) {
+    const anchor = worldToCanvas(label.anchor, vt)
+    const first = label.edge === 'first'
+    // Outside the sheet across its edge, inset a little along it: for an X bar
+    // above the top edge and below the bottom one, for a Y bar left and right.
+    ctx.textAlign = sheet.axis === 'x' ? 'left' : first ? 'right' : 'left'
+    const x = sheet.axis === 'x' ? anchor.cx + 6 : anchor.cx + (first ? -6 : 6)
+    const y = sheet.axis === 'x' ? anchor.cy + (first ? -10 : 10) : anchor.cy + 10
+    const width = ctx.measureText(label.text).width
+    const left = ctx.textAlign === 'right' ? x - width : x
+    ctx.fillStyle = palette.labelBackground
+    ctx.fillRect(left - 4, y - 8, width + 8, 16)
+    ctx.fillStyle = palette.labelText
+    ctx.fillText(label.text, x, y)
+  }
+  ctx.restore()
+}
+
+/** The band label's type size, and the inset that keeps it off the band edge. */
+const MODEL_BAND_LABEL_FONT = '11px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace'
+const MODEL_BAND_LABEL_LINE = 13
+const MODEL_BAND_LABEL_PAD = 5
+
+/**
+ * The imported models machined inside the bar, as bands on the Around sheet
+ * (issue #1015 slice K). The model's geometry lives inside the bar, so it can
+ * neither be drawn nor selected there; a band at its extent along the bar, one
+ * circumference across, is what tells the user where it is. The band is the
+ * model's click target on the sheet (issue #1112 I) and highlights like any
+ * other hovered or selected target.
+ *
+ * `label` names a model for the note drawn at the top-left of the part of the
+ * band that is on screen. The note is left out when it does not fit that
+ * visible part, so a short model does not get a label wider than the thing it
+ * labels, and an off-screen band gets none at all.
+ */
+export function drawAroundModelBands(
+  ctx: CanvasRenderingContext2D,
+  sheet: Pick<AroundSheet, 'axis' | 'sheetStart' | 'circumference' | 'modelBands'>,
+  vt: ViewTransform,
+  label: (name: string) => string,
+  selection: { selectedFeatureIds: readonly string[]; hoveredFeatureId: string | null },
+): void {
+  if (sheet.modelBands.length === 0) return
+  const palette = canvasColors()
+  ctx.save()
+  ctx.font = MODEL_BAND_LABEL_FONT
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  for (const band of sheet.modelBands) {
+    const from = sheet.axis === 'x'
+      ? worldToCanvas({ x: band.along.min, y: sheet.sheetStart }, vt)
+      : worldToCanvas({ x: sheet.sheetStart, y: band.along.min }, vt)
+    const to = sheet.axis === 'x'
+      ? worldToCanvas({ x: band.along.max, y: sheet.sheetStart + sheet.circumference }, vt)
+      : worldToCanvas({ x: sheet.sheetStart + sheet.circumference, y: band.along.max }, vt)
+    const x = Math.min(from.cx, to.cx)
+    const y = Math.min(from.cy, to.cy)
+    const width = Math.abs(to.cx - from.cx)
+    const height = Math.abs(to.cy - from.cy)
+    const selected = selection.selectedFeatureIds.includes(band.featureId)
+    const hovered = selection.hoveredFeatureId === band.featureId
+    ctx.fillStyle = selected ? hexToRgba(palette.active, 0.45)
+      : hovered ? hexToRgba(palette.draft, 0.35) : hexToRgba(palette.featureModelFill, 0.14)
+    ctx.strokeStyle = selected ? palette.active
+      : hovered ? palette.draft : hexToRgba(palette.featureModelStroke, 0.6)
+    ctx.lineWidth = selected ? 2.5 : hovered ? 1.8 : 1.4
+    ctx.setLineDash([6, 4])
+    ctx.fillRect(x, y, width, height)
+    ctx.strokeRect(x, y, width, height)
+    ctx.setLineDash([])
+    const text = label(band.name)
+    const textWidth = ctx.measureText(text).width
+    // The note sits at the top-left of the band's *visible* part, not of the
+    // band itself: zoomed in far enough that the band's own corner is off
+    // screen, a label pinned to that corner is drawn off screen and vanishes
+    // (the manager saw this). The canvas is measured in CSS pixels, as the
+    // other canvas draw helpers here measure it (`ctx.canvas.width/height`).
+    const visibleX = Math.max(x, 0)
+    const visibleY = Math.max(y, 0)
+    const visibleWidth = Math.min(x + width, ctx.canvas.width) - visibleX
+    const visibleHeight = Math.min(y + height, ctx.canvas.height) - visibleY
+    // Readable only where the visible part can hold it: a short model along the
+    // bar (or a very thin one, on a Y bar) has no room for the note at the
+    // default zoom, so it is left out rather than spilling past what it
+    // describes. An off-screen band has nothing visible to hold it either.
+    if (visibleWidth < textWidth + MODEL_BAND_LABEL_PAD * 2 || visibleHeight < MODEL_BAND_LABEL_LINE) continue
+    ctx.fillStyle = palette.labelBackground
+    ctx.fillRect(visibleX, visibleY, textWidth + MODEL_BAND_LABEL_PAD * 2, MODEL_BAND_LABEL_LINE)
+    ctx.fillStyle = palette.labelText
+    ctx.fillText(text, visibleX + MODEL_BAND_LABEL_PAD, visibleY + 1)
+  }
+  ctx.restore()
+}
+
+/**
+ * The stock outline the view frames (issue #395): the unrolled sheet on
+ * Around, with its turn lines and without click-to-edit size labels (the
+ * sheet's extents are the bar's diameter and its circumference), and the
+ * stock's own rectangle otherwise.
+ */
+export function drawViewStockOutline(
+  ctx: CanvasRenderingContext2D,
+  stock: Stock,
+  sheet: AroundSheet | null,
+  vt: ViewTransform,
+  units: Units,
+  exceeded: boolean,
+  palette: CanvasThemePalette,
+  stockLabelRects?: StockLabelRect[],
+): void {
+  drawStockOutline(ctx, stock, vt, units, exceeded, palette, sheet ? undefined : stockLabelRects)
+  if (sheet) {
+    drawAroundTurnLines(ctx, sheet, vt, stock.color)
+    drawAroundSeamLabels(ctx, sheet, vt, palette)
   }
 }
 
@@ -576,6 +856,7 @@ export function drawBackdropImage(
 
   ctx.save()
   ctx.translate(center.cx, center.cy)
+  applyViewMirror(ctx, vt)
   ctx.rotate(rotation)
   ctx.globalAlpha = Math.min(Math.max(backdrop.opacity, 0), 1)
   ctx.drawImage(image, -width / 2, -height / 2, width, height)
@@ -584,6 +865,7 @@ export function drawBackdropImage(
   if (selected) {
     ctx.save()
     ctx.translate(center.cx, center.cy)
+    applyViewMirror(ctx, vt)
     ctx.rotate(rotation)
     ctx.beginPath()
     ctx.rect(-width / 2, -height / 2, width, height)

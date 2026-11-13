@@ -18,6 +18,7 @@ import { useEffect, useRef } from 'react'
 import type { MutableRefObject } from 'react'
 import { useProjectStore } from '../store/projectStore'
 import { platform } from './index'
+import { fileNameOf } from './dialogFolder'
 import { checkDesktopUpdate, loadChannel, saveChannel } from '../utils/updateCheck'
 import {
   copySelectedFeatures,
@@ -90,9 +91,13 @@ function getSetWindowTitle(): Promise<(title: string) => void> {
   })
 }
 
-interface DesktopIntegrationOptions {
-  /** Called when the native "Export G-code" menu item is triggered. */
+export interface DesktopIntegrationOptions {
+  /** Called when the native export menu item is triggered. */
   onExportGcode: () => void
+  /** Label for that menu item. It names what the project's machine exports
+   *  ("Export G-code…", "Export ShopBot Part File…"), which the native side
+   *  cannot know (issue #953). */
+  exportMenuLabel: string
   /** Called when the native "Print Design…" menu item is triggered. */
   onPrintDesign: () => void
   /** Called when the native "About PureCutCNC" menu item is triggered. */
@@ -143,7 +148,7 @@ function runFeatureClipboardCommand(
  * Safe to call in the browser — all Tauri-specific listeners are guarded by
  * `platform.isDesktop` and loaded lazily so the web bundle is not affected.
  */
-export function useDesktopIntegration({ onExportGcode, onPrintDesign, onShowAbout }: DesktopIntegrationOptions) {
+export function useDesktopIntegration({ onExportGcode, exportMenuLabel, onPrintDesign, onShowAbout }: DesktopIntegrationOptions) {
   // Keep a ref so event handlers always call the latest version without
   // needing to be re-registered when the callback identity changes.
   const onExportGcodeRef = useRef(onExportGcode)
@@ -165,9 +170,18 @@ export function useDesktopIntegration({ onExportGcode, onPrintDesign, onShowAbou
   const dirty = useProjectStore((s) => s.dirty)
   const projectName = useProjectStore((s) => s.project.meta.name)
 
+  // Native export menu item — relabelled when the wording changes, which is
+  // when the project's machine starts exporting a different format.
+  useEffect(() => {
+    if (!platform.isDesktop) return
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('set_export_menu_label', { label: exportMenuLabel }))
+      .catch(() => {})
+  }, [exportMenuLabel])
+
   useEffect(() => {
     const baseName = filePath
-      ? (filePath.split('/').pop()?.replace(/\.camj$/, '') ?? projectName)
+      ? (fileNameOf(filePath).replace(/\.camj$/, '') || projectName)
       : projectName
     const title = dirty
       ? `\u2022 ${baseName} \u2014 PureCutCNC`

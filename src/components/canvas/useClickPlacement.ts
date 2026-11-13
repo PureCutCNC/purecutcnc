@@ -36,10 +36,17 @@ import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeatur
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
-import { resolveFeatureInstance, resolveFeatureInstances, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { aroundModelBandAt, aroundSheet } from './aroundSheet'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import type { ReferencePickIntent } from './referencePickIntent'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { projectedMoveTarget } from '../../store/helpers/rotaryMove'
+import { isCannedFeature } from '../../cannedShapes'
+import { useNoticeStore } from '../../store/noticeStore'
 import {
   canvasToWorld,
-  computeViewTransform,
+  computeSketchViewTransform,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, isLoopCloseCandidate, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
@@ -109,6 +116,8 @@ export interface ClickPlacementCtx {
   clearOverlapFeaturePicker: () => void
   openOverlapFeaturePicker: (candidates: readonly OverlapFeatureCandidate[], additive: boolean) => void
   selectionRef: MutableRefObject<SelectionState>
+  getReferencePickIntent: () => ReferencePickIntent
+  showOtherSide: () => boolean
   projectRef: MutableRefObject<Project>
   pendingAddRef: MutableRefObject<PendingAddTool | null>
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
@@ -251,6 +260,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     openOverlapFeaturePicker,
     selectionRef,
     projectRef,
+    getReferencePickIntent,
+    showOtherSide,
     pendingAddRef,
     pendingMoveRef,
     pendingTransformRef,
@@ -376,8 +387,11 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
 
     clearOverlapFeaturePicker()
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
+    // The Around sheet folds a canned shape's drawing, so the hit tests below
+    // must fold the same way (issue #1112 L).
+    const sheet = aroundSheet(project)
     const pendingConstraint = pendingConstraintRef.current
     const constraintRefPickingClick = !!pendingConstraint && !!pendingConstraint.anchor && !pendingConstraint.reference
     const resolvedSnap = snap.resolveCurrentSketchSnap(world, vt, {
@@ -391,7 +405,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     if (pendingFeatureDistribution?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
       if (guideHit.kind === 'direct') {
         setFeatureDistributionGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -406,7 +420,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     // guide hit — text cannot follow its own outline.
     const pendingTextLayout = pendingTextLayoutRef.current
     if (pendingTextLayout?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt, sheet)
       if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
         setTextLayoutGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -576,7 +590,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         return
       }
       const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
-      const targetFeatureId = findHitFeatureId(lockedPickedPoint, resolvedProjectFeatures(project), vt)
+      const targetFeatureId = findHitFeatureId(lockedPickedPoint, editableProjectFeatures(project), vt, sheet)
       const targetId =
         targetFeatureId && targetFeatureId !== pendingConstraint.featureId
           ? targetFeatureId
@@ -691,13 +705,21 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
             return
           }
           if (pending && pending.phase === 'pick-reference' && pending.subject) {
-            const hit = segmentHitTest(world, project, vt, { openOnly: false })
+            const hit = segmentHitTest(world, project, vt, { openOnly: false, referenceFeatures: getReferencePickIntent() === 'segment' ? referenceProjectFeatures(project, showOtherSide()) : undefined })
             if (hit) {
               const ref = {
                 featureId: hit.featureId,
                 segmentIndex: hit.segmentIndex,
                 point: hit.point,
                 t: hit.t,
+              }
+              // A generated shape's stored profile is only its placement
+              // frame, so it cannot be a reference edge. Say why instead of
+              // treating the click as empty space (#1112 A2).
+              const refFeature = resolveFeatureInstance(project, ref.featureId)
+              if (isCannedFeature(refFeature)) {
+                useNoticeStore.getState().showNotice('sketch.canned.trimRefused')
+                return
               }
               if (pending.tool === 'trim') {
                 trimFeatureSegment(pending.subject, ref)
@@ -895,7 +917,10 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         setPendingMovePreviewPointRef({ point: snapped, session: pendingMove.session })
       } else if (!pendingMove.toPoint) {
         const lockedSnapped = applyLock(snapped, pendingMove.fromPoint)
-        move.beginMoveDistanceEntry(lockedSnapped)
+        // A canned rotary move only travels along the bar (issue #1112 rt6-d),
+        // so the target the distance panel measures from is already the
+        // committed one: one direction, one distance, one stored result.
+        move.beginMoveDistanceEntry(projectedMoveTarget(project, pendingMove, pendingMove.fromPoint, lockedSnapped))
       }
       return
     }
@@ -968,25 +993,42 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       }
     }
 
-    const hitClampId = findHitClampId(world, project.clamps)
+    // Clamp bands and tabs are reference, not selection targets, on the sheet
+    // (issue #395): a click there falls through to features and empty space.
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode
       selectClamp(hitClampId, additive)
       return
     }
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode
       selectTab(hitTabId, additive)
       return
     }
 
-    const resolvedFeatures = resolvedProjectFeatures(project)
-    const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
+    // On Around a model is drawn and hit as a band, never as its flat
+    // footprint: leaving the footprint in this hit test lets it steal a click
+    // from a band that covers the same point (issue #1112 I2).
+    const resolvedFeatures = editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl')
+    const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt, sheet)
+    // A model's band is on the sheet itself, so it is checked only when no
+    // outline at the point claims the click first (issue #1112 I).
+    const bandModelId = sheet ? aroundModelBandAt(sheet, world) : null
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
 
     if (featureHit.kind === 'direct') {
+      // A canned shape cannot enter a join/cut workflow: the store refuses the
+      // selection, so say why instead of leaving the click inert (#1112 A2).
+      if (pendingShapeAction) {
+        const hitFeature = resolvedFeatures.find((feature) => feature.id === featureHit.featureId)
+        if (hitFeature && isCannedFeature(hitFeature)) {
+          useNoticeStore.getState().showNotice('sketch.canned.actionRefused')
+          return
+        }
+      }
       selectFeature(featureHit.featureId, additive)
     } else if (featureHit.kind === 'ambiguous') {
       const featuresById = new Map(resolvedFeatures.map((feature) => [feature.id, feature]))
@@ -998,6 +1040,12 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         }
       }
       openOverlapFeaturePicker(hitCandidates, additive)
+    } else if (bandModelId !== null) {
+      // A model inside the bar is drawn as a band on the sheet, so the band is
+      // its click target (issue #1112 I): anywhere along the model's extent
+      // selects the model the band names. A feature outline at the same point
+      // still wins above, because it is the more precise thing drawn there.
+      selectFeature(bandModelId, additive)
     } else if (project.backdrop?.visible && hitBackdrop(world, project.backdrop)) {
       selectBackdrop()
     } else if (!additive) {

@@ -61,7 +61,15 @@ Bundled definitions and user-provided definitions use the same runtime contract.
 A definition may describe:
 
 - controller identity and output extensions;
-- startup and shutdown templates;
+- startup and shutdown templates, restricted by class (#1057 slice F, completed
+  by the review fixes): every string field of the schema is classified — the
+  program header may only set up modals, the tool change and the footer may do
+  anything (the program restarts after a tool change), and every other template
+  must be inert — no motion, axis, mode or macro word. Single-word command
+  fields (rapid/linear/arc words, feed/RPM prefixes, units, peck word, machine
+  retract, plasma probe/set-zero) match an exact per-field pattern, and operator
+  text may only be substituted inside a comment. The schema refuses a definition
+  that breaks the rule, naming the field and the word;
 - units, precision, comments, and line formatting;
 - motion and drilling-cycle capabilities;
 - tool-change, spindle, and coolant behavior;
@@ -69,6 +77,285 @@ A definition may describe:
 
 Unknown or invalid capabilities produce validation errors or warnings; they are
 not guessed by the exporter.
+
+### Plasma machine metadata (#956)
+
+`machineKind` is optional: absent means `router`, and validation leaves the
+field absent on existing definitions. `plasma` holds `torchOnCommand`,
+`torchOffCommand`, optional `thcOnCommand` / `thcOffCommand`, and
+`pierceMode`, which decides the rest of the block (#983):
+
+| `pierceMode` | who owns pierce and height | required | must be absent |
+| --- | --- | --- | --- |
+| `controller` | the controller's material table (QtPlasmaC) | `materialSelectCommand` (with the reserved `{materialNumber}`), `materialWaitCommand`, `materialFeedCommand` | `touchOff` |
+| `gcode` | the program (Grbl, no THC) | `touchOff` | the three material commands |
+
+`touchOff` is `probeCommand`, `probeDepth`, `probeFeed`, `setZeroCommand` and
+`switchOffset`. Its lengths are millimetres and its feed millimetres per minute
+whatever the project units; the exporter converts them. Before each cut the
+program probes `probeDepth` below the current Z zero, then writes
+`setZeroCommand Z<-switchOffset>`, so Z zero lands on the sheet surface even
+when a floating head travels past it before its switch trips (0 for ohmic
+sensing). `setZeroCommand` therefore carries no Z word. `switchOffset` may be
+omitted, which means 0; it stays absent rather than being filled in. THC
+commands stay optional in both modes: a Grbl table can switch an external
+height controller from a spare output.
+
+A plasma machine requires this block, and the block requires plasma kind and
+G-code dialect. Command text is preserved verbatim; blank optional commands are
+absent, and THC keys keep the position #956 gave them so existing snapshots
+serialize unchanged. Format remains 3.3, with no injected defaults or
+version-based migration.
+
+The bundled **QtPlasmaC (experimental)** machine uses controller-owned pierce
+height, delay and THC, following the
+[LinuxCNC QtPlasmaC command reference](https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#_qtplasmac_specific_g_codes).
+Its header switches on QtPlasmaC's own hole handling (`#<holes> = 1`) and
+states that the output is experimental, including the LinuxCNC 2.9.10 stall
+found by #954. The preamble includes `G92.1`, `G97` and `M52 P1`; QtPlasmaC
+supplies its documented default path tolerance when `G64` is absent.
+
+### Plasma torch path (#959)
+
+A plasma machine with `pierceMode: controller` exports a torch path instead of
+the spindle path. What the machine is asked to do is decided in
+`motionPipeline.ts`; the G-code emitter only spells it:
+
+- `planProgramSequence` takes its plasma branch (`planPlasmaSequence`): no
+  spindle, coolant or tool-change word is written. A non-`plasma_profile`
+  operation is left out with `postPlasmaOperationSkipped`. A plasma tool with
+  no selectable `qtplasmacMaterialNumber` raises `postPlasmaMaterialMissing`,
+  which blocks the export. A different plasma tool raises
+  `postNoToolChangeCommands`: a consumable swap is not paused for.
+- The mirror case is settled before the dialect is even chosen: a
+  `plasma_profile` operation exported on a machine that is not a plasma table
+  never reaches the emitters, and `runPostProcessor` reports it as
+  `postPlasmaCutSkipped` so that tool-change, spindle and coolant sequencing
+  behave exactly as if the operation were not in the project (#960).
+- A persistent QtPlasmaC material number must be an integer from 1 to 999999.
+  The manual reserves 1000000 and above for the temporary materials QtPlasmaC
+  numbers itself, whose material change CAM must never emit; 0 is the sentinel
+  this project's simulator reserves for "nothing selected" (not a general
+  QtPlasmaC prohibition). A stored number outside the range is cleared at the
+  load/import boundary rather than thrown, so the file still opens and the
+  export blocks with `postPlasmaMaterialMissing` until a real material is set.
+- The material handshake is written before an operation's first cut when the
+  material differs from the one selected before: `materialSelectCommand` with
+  `{materialNumber}` substituted, then `materialWaitCommand`, then
+  `materialFeedCommand`. The order matters because the interpreter reads ahead:
+  a feed word ahead of the wait takes the previous material's feed.
+- `planPlasmaPath` groups an operation's planned moves into torch-off travel
+  and torch-on cuts. A cut starts at the toolpath's `plunge` and ends at the
+  next `rapid` (#957 writes each contour that way), so the lead-in, contour and
+  lead-out are all cut with the torch on. Arc fitting never joins moves of
+  different kinds, so no fitted arc spans a cut boundary.
+- A complete counter-clockwise circle is folded into one G2/G3 block
+  (`foldFullCircleArcs`, plasma only). QtPlasmaC recognises a hole only from a
+  single closed arc block, and only inspects lines that carry the G-code word,
+  so the ≤ 90° sub-arcs arc fitting produces would otherwise leave the
+  controller's `#<holes>` reduction unexecuted. Clockwise complete circles stay
+  split: a closed clockwise circle is a hole cut the wrong way round, which the
+  controller warns about.
+- Each cut is an XY rapid to the pierce point, `torchOnCommand`, the cut moves,
+  then `torchOffCommand`. No Z word is written, because QtPlasmaC probes,
+  pierces and drops to cut height itself and its load filter strips Z motion.
+  No numeric F is written on a plasma move: the cut runs at the material feed.
+- The direction is physical: arcs are fitted after the machine transform, so
+  a mirrored axis mapping swaps G2 and G3 and the path still turns the same way
+  over the sheet.
+
+The exported programs run through the QtPlasmaC simulator
+(`scripts/gcode-conformance/qtplasmac/`, `EXPORTED_CASES`), the exporter's own
+program for each reference subject. The exported small-hole case must show the
+controller's automatic feed reduction in the run trace, not merely carry the
+`#<holes>` header.
+
+### Plasma G-code pierce path (#983)
+
+A plasma machine with `pierceMode: gcode` (Grbl / OpenBuilds CONTROL) writes the
+torch path itself on the same pipeline as #959: `planProgramSequence` takes the
+same plasma branch, and `planPlasmaPath` groups the moves into torch-off travel
+and torch-on cuts. The material handshake is controller-only, so the tool's
+`qtplasmacMaterialNumber` is ignored and no `postPlasmaMaterialMissing` can
+block such an export.
+
+Per cut (the requester's OpenBuilds sample, and the approved plan):
+
+1. `G0 Z<safe>`, then `G0 X Y` to the pierce point. The safe height is in the
+   operator's own zero for the first cut of the program only; from then on it
+   is measured from the sheet, and is left out when the retract of the
+   previous cut already put the head there;
+2. `probeCommand Z-<probeDepth> F<probeFeed>`;
+3. `setZeroCommand Z<-switchOffset>`;
+4. `G0 Z<pierceHeight>`, `torchOnCommand`, then `G4 P<pierceDelay>`;
+5. `G1 Z<cutHeight> F<plungeFeed>`;
+6. the lead-in, contour and lead-out at cut height and the cut feed;
+7. `torchOffCommand`, then `G0 Z<safe>` measured from the sheet.
+
+Z after the touch-off is relative to the sheet surface, not the stock top: the
+probe sets Z zero on the sheet, and pierce and cut heights come from the tool as
+configured — even when pierce height is the lower of the two. The first
+`G0 Z<safe>` is still in the operator's own zero, taken from the toolpath's safe
+height. That number is only valid until the first `G10 L20`: afterwards the
+same height is written as its clearance above the sheet, toolpath safe Z minus
+the stock top, both mapped to machine coordinates the way every move is
+(`plasmaSheetZ`). The two agree only when the project's Z zero is on the sheet
+top; with it on the table the old number retracted too high, and with it above
+the sheet the retract went below the sheet surface. The emitter remembers
+across operations that a touch-off has happened, so a later operation's first
+safe rapid is in the sheet frame as well. Cuts that carry no rapid to read the
+safe height from are not written, and `postPlasmaSafeHeightMissing` blocks the
+export. The touch-off fields are stored in millimetres and millimetres per
+minute whatever the project units, so `planPlasmaGcodeCut` converts them once at
+emission; an absent switch offset is 0 and the offset is applied negatively
+(`G10 L20 ... Z<-offset>`). Every contour is probed and zeroed again, because
+the sheet warps as it heats.
+
+The drop in step 5 runs at the operation's plunge feed, or else the torch's.
+The example torch (`defaultPlasmaTool`, and the two bundled library entries)
+carries 300 mm/min. That one value is not from the Hypertherm cut chart, which
+gives no Z transition speed: it is the drop feed in the requester's OpenBuilds
+sample (`G1 F300 Z7`, #983). A torch stored or imported without a plunge feed
+keeps 0, and a cut or drop feed that is missing, not positive, or rounds to
+zero blocks the export (`postPlasmaCutFeedMissing` /
+`postPlasmaPlungeFeedMissing`) rather than writing `F0` after the torch fires.
+
+There is no `G0` between `M3` and `M5` and the torch is always `M3`, never `M4`,
+so Grbl laser mode (`$32`) cannot drop the torch. Only Grbl 1.1 words are
+written, so grblHAL reads the same program.
+
+The generated programs are in the `grbl-plasma-*` corpus cases and are checked
+two ways (`npm run check:gcode`): GRBL's own parser (`grbl-gvalidate`) for the
+words and arcs, and the sequence verdict in
+`scripts/gcode-conformance/grbl-plasma/verdict.ts` for the per-cut order, torch
+pairing, feeds, Z signs and units. gvalidate cannot trigger the probe, so it is
+fed a copy with `$X` after each probe (see that folder's README); the program
+itself is unchanged. Both Grbl and QtPlasmaC machines stay "experimental" until
+a tester runs files on a real table (#952).
+
+The bundled **Grbl plasma (OpenBuilds CONTROL) (experimental)** machine is the
+`gcode` counterpart, from a requester's OpenBuilds CONTROL table (#983). Its
+word syntax is a copy of `grbl.json` (a test keeps the shared fields equal, so
+GRBL's own parser verdicts apply), with `.gcode` files, torch `M3 S1000` / `M5`,
+and touch-off `G38.2`, 30 mm, 100 mm/min, `G10 L20 P0`, offset 0. Its spindle
+words are comments: the torch sequence is the only thing written.
+
+The library shows machine kind for every row, including legacy routers and
+project-only snapshots. The focused editor exposes kind and the plasma block;
+imports, custom storage and project snapshots retain the same validated data.
+
+## Output dialects
+
+A machine definition describes G-code word syntax, and that is not every
+machine's language. A definition may therefore name an **output dialect**
+(issue #953):
+
+| `outputDialect` | Program | Bundled machine |
+| --- | --- | --- |
+| absent, or `gcode` | RS-274 G-code driven by the definition's words and templates | every definition but one |
+| `opensbp` | native ShopBot part file (`.sbp`) | ShopBot (SBP) |
+
+The field is optional and an absent key means G-code, so every definition and
+project that predates it behaves exactly as before, and parsing one adds
+nothing to it.
+
+**One pipeline, one emitter per dialect.** `runPostProcessor` chooses the
+dialect and delegates. What the machine is asked to do is shared and lives in
+`motionPipeline.ts`:
+
+- the program's sequence — whether the tool changes, when the spindle starts,
+  is restated at a new speed and stops, when coolant comes on, the feed and
+  speed fallbacks, and the warnings for what was asked for but cannot be
+  written;
+- the machine-coordinate transform, for moves and for drill cycles, including
+  the turn of the operation's machining setup (issue #944): a Bottom
+  operation's stock-space toolpath is turned into its setup's frame before
+  the origin offset, and a Top operation takes the unturned path;
+- arc fitting, the emitted-arc fallback and their warnings;
+- the safe-Z split of a rapid, and the motion trace.
+
+An emitter contributes line syntax and keeps only what it has written so far.
+A later feature that changes what the machine is asked to do (setups, a rotary
+axis, another machine kind) changes the pipeline and reaches every dialect; it
+does not add branches for one dialect inside another's emitter. Sequencing is
+in the pipeline for a concrete reason: the first ShopBot emitter carried its
+own copy and dropped a spindle-speed change between two operations on one
+tool, which the G-code emitter restated.
+
+**What a ShopBot program contains.**
+
+- Header comments, the units guard, then `SA` (absolute mode).
+- The units guard: system variable `%(25)` is 0 when the control software is
+  set to inches and 1 for millimetres. A millimetre program starts with
+  `IF %(25)=0 THEN GOTO UNIT_ERROR`, an inch program with `%(25)=1`. The
+  `UNIT_ERROR` block is a message box and `END`, placed after the program's
+  own `END`, so a program never runs in the wrong units.
+- Speeds are modal and in units per **second**: `MS,xy,z`, written only when a
+  value changes and restated after a tool change. The XY speed follows the
+  feed of the move being cut and the Z speed follows the plunge feed, never
+  above that move's own feed; an axis a move does not travel on keeps its
+  speed. Jog speeds are left to the machine's own settings.
+- Rapids are jogs, split like every rapid: `JZ` first, then `J2`. Cuts are
+  `M3,x,y,z`. Fitted arcs are `CG,,endX,endY,I,J,T,dir` with `dir` 1 for
+  clockwise and -1 for counter-clockwise, and the centre offsets measured from
+  the position actually written on the previous line, as for G2/G3.
+- Spindle: `TR,rpm` then `C6` to start, and the same pair again when the
+  speed changes between two operations that keep the spindle running — the
+  counterpart of G-code restating `M3 S…`. `C7` to stop.
+- Tool change: `&Tool=N` then `C9`, the standard ShopBot tool-change macro
+  (manual or automatic). `C9` moves the machine and may set speeds, so neither
+  is assumed afterwards: the part file restarts with `SA`, a `JZ` to a proven
+  safe Z and a `J2` to the point the next move starts from, and the next fed
+  move restates `MS`. The G-code path writes the equivalent block
+  (`G90 G94 G17`, the units word, a proven safe-Z rapid, then `G0` with X, Y
+  and the rotary word) after every emitted tool change (#1057 slice F). A bar
+  Top/Bottom program always retracts to the machine-coordinate Safe Z there and
+  restates the setup's A angle, on a square blank too; a program written with
+  tool changes off is unchanged.
+- Drilling is written as its expanded moves: there are no canned cycles.
+- Coolant is not written, because output wiring differs per machine; asking
+  for it raises the same warning as on a G-code machine without coolant.
+- No line numbers. Lines end in CRLF, since the control software is a Windows
+  program.
+
+**Not covered.** Helical `CG`, the tab and pocket options of `CG`, A/B axes,
+converting third-party ShopBot posts, and controller conformance testing
+(`npm run check:gcode` has no ShopBot interpreter to run; the emitter is held
+by round-trip tests through `sbpMotionParser.ts` instead).
+
+**Sources and licensing.** ShopBot placed the part-file syntax and its
+Programming Handbook in the public domain (opensbp.com). Parameter order is
+checked against ShopBot's Apache-2.0 FabMo-Engine as a reference only. Autodesk's
+`shopbot.cps` and FreeCAD's `opensbp_post.py` are not used. "OpenSBP" is a
+ShopBot trademark: the machine is named "ShopBot (SBP)" and no compliance is
+claimed. `opensbpEmitter.ts` carries the citations.
+
+**The dialect is not editable in the machine library.** A bundled definition
+carries it and a duplicate inherits it. The focused editor form has no field
+for it and preserves it. For an `opensbp` machine the editor shows the name
+and file extension and a note in place of the G-code command and template
+fields, which that machine never reads; the fields it does read (axis mapping,
+number format, arc support) are under Advanced.
+
+**Wording follows the dialect.** Everything that names the exported format
+names the one the project's machine writes: the export dialog's title and its
+"emit tool changes" option ("Export ShopBot part file", "(C9)"), the exported
+layer of the debug view ("Exported part file"), the per-operation export button
+in the CAM panel, and the desktop app's File menu item. `exportDialectLabels.ts`
+maps each dialect to its wording. The native menu is built in Rust and is not
+translated, so the app shell passes it an English label through the
+`set_export_menu_label` command whenever the wording changes.
+
+**Older builds.** A build that predates the field drops it and exports through
+the G-code path, under the definition's `.sbp` extension. Two things address
+that. Project format 3.3 exists only so such a build shows its newer-version
+warning when it opens the file; that is a warning, not a refusal. And the
+bundled ShopBot definition's unused G-code words are comment-prefixed with
+non-modal motion, so what the G-code path writes is a file of comments ending
+in `END`, never motion — plus, since #1057 slice F, the tool-change restart's
+`G90 G94 G17` baseline, which carries no motion or axis word. The second also
+covers a machine JSON imported into an older build, which no project version
+can.
 
 ## Application library vs project snapshot
 
@@ -89,7 +376,20 @@ project without any per-project refresh.
 project. `project.meta.machineDefinitions` holds zero or one entry and
 `selectedMachineId` always matches `machineDefinitions[0]?.id ?? null`
 (enforced on decode and by the `setProjectMachine` store action). Selecting a
-library machine copies a validated snapshot in by value.
+library machine copies a snapshot in by value.
+
+Persisted snapshots and library entries are read through the **structural**
+reader (`MachineDefinitionStructureSchema`): capability checks and schema
+defaults, but not the #1057 template rules (#1119). A 0.5.x machine whose
+templates still break a rule is therefore kept unchanged, with its id,
+selection, templates and joined words intact — it is never rewritten or
+dropped. Export eligibility is derived from the unchanged rules by
+`machineTemplateDiagnostics`; nothing is persisted as an "invalid" flag. An
+invalid definition's export is refused before generation, again in the save
+path, and again inside `runPostProcessor` before either dialect emitter, so it
+produces no program even with tool changes/coolant off or a smaller operation
+selection. The diagnostics name the template path, one-based program line,
+offending text/word and broken rule, and every offending line is reported.
 
 `getActiveMachineDefinition(project)` is the export boundary and resolves
 **only** the embedded snapshot. Export, preview, exported-motion inspection,
@@ -120,12 +420,24 @@ Nothing replaces an embedded snapshot automatically.
 
 Files that stored a whole machine library are compacted on decode: the entry
 matching `selectedMachineId` is preserved verbatim as the only embedded
-snapshot, unselected bundled copies are discarded (the live library supplies
-them), and valid custom definitions are merged into My Machines — skipping
-semantically identical entries and re-keying ID collisions. An unresolvable
-selection is cleared and reported in the load warning. Compacted projects are
-marked dirty; the original file is unchanged until saved. The compact
-zero-or-one array is valid format 3.0 and stays readable by older builds.
+snapshot, and distinct unselected definitions are rescued into My Machines
+instead of being discarded — custom definitions, template-invalid definitions,
+and edited copies of bundled machines (re-keyed away from the reserved bundled
+id). Only an unmodified bundled copy is dropped, because the build supplies it.
+Semantically identical entries are consolidated, ID collisions are re-keyed,
+and every move/consolidation/re-key is reported as a structured load
+diagnostic. An unresolvable selection is cleared and reported. A structurally
+unreadable entry, or a selected id carried by two different definitions,
+refuses the whole load atomically with an indexed diagnostic: the current
+project and the original bytes are untouched, and no other machine is
+substituted. Compacted projects are marked dirty; the original file is
+unchanged until saved. The compact zero-or-one array is valid format 3.0 and
+stays readable by older builds.
+
+The My Machines envelope follows the same rule (#1119): an unreadable envelope
+(bad JSON, a future schema version, an unrepresentable entry) is reported with
+its index, the readable entries still load, and every library write is blocked
+so the stored bytes are preserved until the problem is resolved.
 
 ## Postprocessor invariants
 
@@ -198,8 +510,11 @@ project→machine coordinate transform and G-code emission. It does not modify
 
 The exported-motion debug view (issue #356, `src/components/export/ExportedMotionDebugDialog.tsx`
 backed by `src/engine/gcode/gcodeMotionParser.ts` and `motionDebug.ts`) is a
-diagnostic overlay that verifies the motion *written to the `.nc` file* still
-represents the intended path. It opens from the Export dialog when exactly one
+diagnostic overlay that verifies the motion *written to the exported file* still
+represents the intended path. The text is parsed in the definition's own output
+dialect (`parseExportedMotion`): G-code through `gcodeMotionParser.ts`, a
+ShopBot part file through `sbpMotionParser.ts`. Both return the same motion
+shape, so everything after the parse is dialect-independent. It opens from the Export dialog when exactly one
 eligible operation is selected, and overlays three planar layers in project
 coordinates:
 

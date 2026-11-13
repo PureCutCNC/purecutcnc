@@ -31,12 +31,14 @@ import {
 import { inspectStepFileUnits, type StepUnitInspection } from '../../import/stepUnits'
 import { StepImportError } from '../../import/stepProtocol'
 import { useProjectStore } from '../../store/projectStore'
+import { activeFace } from '../../store/helpers/activeFace'
 import type { ModelAxisOrientation } from '../../engine/importedMesh'
 import type { ImportedModelSourceFormat } from '../../types/project'
 import type { Units } from '../../utils/units'
 import { useImportGeometryAnalysis } from './useImportGeometryAnalysis'
 import { ImportGeometryModeSection } from './ImportGeometryModeSection'
 import { importModelFile } from './importModelFile'
+import { camjImportWarnings } from './camjImportWarnings'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -334,6 +336,13 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       return
     }
 
+    // The model refuses a 3D model on the unrolled bar (issue #395). Show
+    // that refusal where the dialog's other errors go, before doing any work.
+    if (isModelSourceType(loadedFile.sourceType) && activeFace(project) === 'around') {
+      setDialogError(td('dialogs.importGeometry.error.modelOnAround'))
+      return
+    }
+
     setBusy(true)
     setLoadingProgress(0)
     setLoadingStage(td('dialogs.importGeometry.preparingImport'))
@@ -360,6 +369,14 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           return
         }
         setLoadingStage(td('dialogs.importGeometry.mergingFolders'))
+        // Read before the import changes the project: what the merge is about
+        // to do that the user did not ask for by name (issue #946).
+        const mergeWarnings = camjImportWarnings({
+          currentProject: project,
+          sourceProject: camj.project,
+          selectedFolderIds,
+          importStock: wantsStock,
+        })
         createdIds = importCamjFolders({
           fileName: loadedFile.fileName,
           sourceProject: camj.project,
@@ -367,9 +384,15 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           importStock: wantsStock,
         })
         if (createdIds.length === 0 && !wantsStock) {
-          setDialogError(td('dialogs.importGeometry.error.noFeaturesImported'))
+          setDialogError(mergeWarnings[0] ?? td('dialogs.importGeometry.error.noFeaturesImported'))
           setBusy(false)
           return
+        }
+        if (mergeWarnings.length > 0) {
+          const alertKey = createdIds.length === 1
+            ? 'dialogs.importGeometry.importedFeaturesWarnings.one' as const
+            : 'dialogs.importGeometry.importedFeaturesWarnings.other' as const
+          window.alert(td(alertKey, { count: createdIds.length, warnings: mergeWarnings.join('\n') }))
         }
         setLoadingProgress(100)
       } else if (isModelSourceType(loadedFile.sourceType)) {

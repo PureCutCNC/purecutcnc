@@ -59,6 +59,8 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
 
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': 'Rohteil: {width} × {height} × {thickness} {units}',
+  'appShell.status.stockDimRound': 'Rohteil: Ø{diameter} × {length} {units}',
+  'appShell.status.stockDimSquare': 'Rohteil: ▢{side} × {length} {units}',
   'appShell.status.editStockDimensions': 'Rohteilmaße bearbeiten',
   'appShell.status.changeUnits': 'Projekteinheiten von {from} in {to} ändern',
 
@@ -125,16 +127,14 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.generation.working': 'Wird berechnet ({count})',
   'appShell.generation.paused': 'Berechnung pausiert',
   'appShell.generation.failed': 'Berechnung fehlgeschlagen',
+  'appShell.generation.workerFallback': 'Hintergrundthread nicht verfügbar; der Hauptthread wird verwendet.',
   'appShell.generation.stop': 'Stopp',
   'appShell.generation.stopUnavailable': 'Stopp kann eine bereits im Hauptthread laufende Operation nicht unterbrechen.',
   'appShell.generation.resume': 'Fortsetzen',
   'appShell.generation.retry': 'Erneut versuchen',
   'appShell.generation.backend': 'Berechnung',
   'appShell.generation.menuAria': 'Einstellungen zur Werkzeugweg-Berechnung',
-  'appShell.generation.backendInline': 'Hauptthread',
-  'appShell.generation.backendInlineDetail': 'Das Fenster reagiert während einer Berechnung nicht, und Stopp muss deren Ende abwarten.',
-  'appShell.generation.backendWorker': 'Hintergrundthread (experimentell)',
-  'appShell.generation.backendWorkerDetail': 'Hält das Fenster während der Berechnung bedienbar und lässt Stopp sofort wirken.',
+  'appShell.generation.display': 'Anzeige',
   'appShell.status.about': 'Über PureCutCNC',
   'appShell.status.shellMode': 'Shell-Modus (nur Entwicklung)',
 
@@ -178,4 +178,19 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.fillet': 'Verrundung',
   'appShell.toolRail.trim': 'Stutzen',
   'appShell.toolRail.extend': 'Dehnen',
+
+  // ── Workspace face control (issues #945, #1112) ──
+  'appShell.face.label': 'Seite',
+  'appShell.face.top': 'Oben',
+  'appShell.face.bottom': 'Unten',
+  'appShell.face.around': 'Rundum',
+  'appShell.face.switchToTop': 'Auf der Oberseite arbeiten',
+  'appShell.face.switchToBottom': 'Auf der Unterseite arbeiten',
+  'appShell.face.busy': 'Aktuelle Bearbeitung abschließen, bevor die Seite gewechselt wird',
+  'appShell.face.current': 'Aktuelle Seite: {face}',
+  'appShell.face.flippedShort': 'um {axis} gewendet',
+  'appShell.face.otherSide': 'Andere Seite',
+  'appShell.face.showOtherSide': 'Andere Seite als Geisterbild anzeigen',
+  'appShell.face.hideOtherSide': 'Andere Seite ausblenden',
+  'appShell.face.showOtherSideItem': 'Andere Seite anzeigen',
 }

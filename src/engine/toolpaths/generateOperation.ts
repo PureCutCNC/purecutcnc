@@ -35,7 +35,19 @@
  * `useToolpathGeneration`. Their differences are deliberate and load-bearing;
  * each one carries the comment that explains it. Do not "tidy" them into a
  * shared sequence — focused engine suites own the behaviour of each one.
+ *
+ * Machining setups (issue #946) are handled here and nowhere below: an
+ * operation in a setup that turns the stock is generated against the project
+ * turned into that setup's frame (`projectInSetupFrame`), by the same chains,
+ * and its result is carried back into stock space. The chains and the
+ * generators under them only ever see a top-down project, so none of them
+ * branches on a face.
  */
+
+import { isRotaryOperationKind } from '../../types/project'
+import { generateRotaryOperation, generateRotaryOperationAsync } from './rotaryOperation'
+import type { RotaryBatchFactory } from './rotaryModel'
+import { generatePlasmaProfileToolpath, plasmaSetupIsTop } from './plasma'
 
 import { applyClampWarnings } from './clamps'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings } from './tabs'
@@ -51,7 +63,27 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateVCarveMedialToolpath } from './vcarveMedial'
 import { generateVCarveToolpath } from './vcarve'
 import type { ToolpathResult } from './types'
+import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project } from '../../types/project'
+import { formatLength } from '../../utils/units'
+import type { Units } from '../../utils/units'
+import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
+import {
+  acrossScaledAroundProject,
+  aroundFrameForOperation,
+  surfaceAroundFrame,
+  aroundMaterialBands,
+  flatFaceProject,
+  forwardWrappedToolpath,
+  unrolledProject,
+  wrapToolpath,
+} from '../aroundFrame'
+import type { AroundMaterialBands } from '../aroundFrame'
+import { setupFrameForOperation } from '../setupOrientation'
+import { operationFace, setupGenerationBlock, withoutUnreachableSubtracts } from '../setupTargets'
+import type { SetupGenerationBlock } from '../setupTargets'
+import { liftSquareSheetTravel, squareSheetPathBlock, squareSheetTravelZ } from './squareSheetPath'
+import { operationTurnSurfaceRadius } from '../../store/helpers/turnedSheet'
 
 export interface ComputeOperationOptions {
   /**
@@ -64,6 +96,16 @@ export interface ComputeOperationOptions {
    * for every request, to be thrown away.
    */
   trace?: boolean
+}
+
+/** The asynchronous entry's options: the synchronous ones plus the batch seam. */
+export interface ComputeOperationAsyncOptions extends ComputeOperationOptions {
+  /**
+   * The per-angle batch runner rotary sampling dispatches through. Omitted, the
+   * driver's in-process serial runner is used, which is the same computation
+   * with an `await` in the middle; a worker pool supplies its own (p-d2).
+   */
+  rotaryRunBatch?: RotaryBatchFactory
 }
 
 export interface OperationToolpathEnvelope {
@@ -81,17 +123,251 @@ export interface OperationToolpathEnvelope {
 }
 
 /**
+ * The warning for a square blank's unsupported setup (#1016 C2-S4). Its own
+ * refusals are errors, so they block a save; the round/flat mismatch above
+ * keeps its historical warning severity.
+ *
+ * When the physical workholding guard is what refused, the verdict's reason is
+ * carried into the block (`SetupGenerationBlock.refusal`) and the message names
+ * the actual problem rather than saying the setup "cannot cut it". Lengths are
+ * formatted in the project's units. Anything else — a wrapped 2D path, a
+ * non-model target, an unreadable blank or a stale cutter — keeps the generic
+ * code as the fallback (#1016 C2 F3).
+ */
+function squareRotaryBlockWarning(
+  block: SetupGenerationBlock,
+  operation: Operation,
+  units: Units,
+): ToolpathWarning {
+  const refusal = block.refusal
+  const diameter = refusal?.diameter
+  const required = refusal?.required
+  if (refusal?.reason === 'workholdingDiameter'
+    && typeof diameter === 'number' && Number.isFinite(diameter)
+    && typeof required === 'number' && Number.isFinite(required)) {
+    return {
+      code: 'workholdingDiameter',
+      params: {
+        operation: operation.name,
+        clamp: refusal.clampName,
+        diameter: formatLength(diameter, units),
+        required: formatLength(required, units),
+      },
+    }
+  }
+  if (refusal?.reason === 'workholdingPlacement') {
+    return { code: 'workholdingPlacement', params: { operation: operation.name, clamp: refusal.clampName } }
+  }
+  if (refusal?.reason === 'ordinaryClampOverlap') {
+    return { code: 'ordinaryClampOverlap', params: { operation: operation.name, clamp: refusal.clampName } }
+  }
+  return { code: 'postSetupOperationRefused', params: { operation: operation.name } }
+}
+
+function setupBlockWarning(block: SetupGenerationBlock, operation: Operation, units: Units): ToolpathWarning {
+  if (block.reason === 'aroundStockMismatch') return { code: 'aroundStockMismatch', params: { operation: operation.name } }
+  if (block.reason === 'squareRotaryUnsupported') return squareRotaryBlockWarning(block, operation, units)
+  if (block.reason === 'squareSectionNotRound') {
+    return {
+      code: block.section === 'flats' ? 'squareSheetOnFlats' : 'squareSheetNotTurned',
+      params: { operation: operation.name },
+    }
+  }
+  if (block.reason === 'aroundCentreline') return { code: 'aroundCentreline', params: { operation: operation.name, feature: block.features.map((feature) => feature.featureName).join(', ') } }
+  return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
+}
+
+/**
+ * True when a **cutting** move of a flat Around toolpath reaches the bar's
+ * centreline (issue #395). Around flat heights are lowered by the radius, so
+ * the centreline is flat zero; a cut at or below it would pass through the
+ * middle of the bar. Rapids are exempt — they travel above the work.
+ */
+function reachesCentreline(result: ToolpathResult): boolean {
+  return result.moves.some((move) => move.kind !== 'rapid' && Math.min(move.from.z, move.to.z) <= 0)
+}
+
+/**
  * Generate one operation's toolpath, post-processing included.
  *
  * Returns `null` for an operation kind this dispatch does not handle, which is
  * how the caller distinguishes "nothing to generate" from a generated empty
  * path. An empty path with warnings is a *successful* result and comes back as
  * a normal envelope — infrastructure failures must never be encoded that way.
+ *
+ * The result is always in stock space, whichever setup the operation is cut
+ * in. A Top operation in a project with no Around feature takes the path it
+ * always did: the project and the result are passed through untouched, not
+ * copied. A flat face and Around exchange nothing (issue #395): an operation
+ * that is not in an Around setup is generated without the project's Around
+ * features, which belong to the bar's unrolled sheet.
  */
 export function computeOperationToolpath(
   project: Project,
   operation: Operation,
   options: ComputeOperationOptions = {},
+): OperationToolpathEnvelope | null {
+  // Plasma is Top-only: diagnose its original setup before target checks or
+  // the Bottom transform, which makes every setup top-down for milling.
+  if (operation.kind === 'plasma_profile' && !plasmaSetupIsTop(project, operation)) {
+    return computeTopDownToolpath(flatFaceProject(project), operation, options)
+  }
+
+  // An operation its setup may not cut produces no motion, and says why.
+  const block = setupGenerationBlock(project, operation)
+  if (block) return blockedToolpath(project, operation, block)
+
+  if (isRotaryOperationKind(operation.kind)) {
+    return { result: generateRotaryOperation(project, operation), raw: null }
+  }
+
+  // The face this operation is cut from, read in stock space before anything
+  // is turned, and the one gate that keeps every resolver below from reading
+  // work authored on the other face as if this setup could reach it (#1079).
+  const face = operationFace(project, operation)
+
+  const reference = aroundFrameForOperation(project, operation)
+  // Work wholly on one Turn is planned across the bar at the Turn's radius
+  // (#1131, Frank 2026-11-06): angles and heights are unchanged, only sheet
+  // distances across shrink to the surface they are cut on.
+  const surfaceRadius = reference && operation.kind !== 'drilling' ? operationTurnSurfaceRadius(project, operation) : null
+  const around = reference && surfaceRadius !== null ? surfaceAroundFrame(reference, surfaceRadius) : reference
+  const sheetProject = reference && surfaceRadius !== null
+    ? acrossScaledAroundProject(project, reference, surfaceRadius / reference.radius)
+    : project
+  if (around) {
+    // What stands on the sheet, for the Follow line's keep-out (issue #1112
+    // rt6-e). Computed from the real project, before the unroll drops the
+    // models it is made of, and in the unrolled frame the generator reads.
+    const materials = operation.kind === 'follow_line' ? aroundMaterialBands(sheetProject, around) : undefined
+    const envelope = computeTopDownToolpath(
+      withoutUnreachableSubtracts(unrolledProject(sheetProject, around), face),
+      operation,
+      options,
+      materials,
+    )
+    if (!envelope) return null
+    // A depth the operation works out itself — an Engrave's carve depth, a
+    // countersink's derived plunge — can reach the centreline although the
+    // target is stored short of it. Refuse rather than cut the bar through.
+    if (reachesCentreline(envelope.result)) {
+      return {
+        result: {
+          operationId: operation.id,
+          moves: [],
+          warnings: [{ code: 'aroundCutReachesCentreline', params: { operation: operation.name } }],
+          bounds: null,
+        },
+        raw: null,
+      }
+    }
+    // #1103 slice ca-h: a wrapped Follow line's lifted returns go forward. A
+    // Thread/Flutes canned shape is cut by a Follow line whose every depth pass
+    // starts at its own line's angle; without this, each pass's return unwinds
+    // the whole thread's turns. Only whole turns are added, so the thread's
+    // phase and every cut are unchanged. No other wrapped kind is retargeted:
+    // a pocket/profile arc is a closed loop rather than a pass of a longer
+    // pattern, and its output stays byte-identical.
+    const forward = <T extends typeof envelope.result>(path: T): T =>
+      operation.kind === 'follow_line' ? forwardWrappedToolpath(path) : path
+    // A square blank's sheet work (#1131) travels above the standing corners
+    // and must keep the cutter over the turned section. `travelZ` is null on a
+    // round bar, whose path is returned exactly as before.
+    const travelZ = squareSheetTravelZ(project)
+    const finish = <T extends typeof envelope.result>(path: T): T => {
+      const wrapped = forward(wrapToolpath(path, around))
+      return travelZ === null ? wrapped : liftSquareSheetTravel(wrapped, around.axis, travelZ)
+    }
+    const result = finish(envelope.result)
+    if (travelZ !== null) {
+      const section = squareSheetPathBlock(project, operation, result)
+      if (section) {
+        return blockedToolpath(project, operation, {
+          reason: 'squareSectionNotRound',
+          face,
+          features: [],
+          section,
+        })
+      }
+    }
+    return {
+      result,
+      raw: envelope.raw ? finish(envelope.raw) : null,
+    }
+  }
+
+  const frame = setupFrameForOperation(project, operation)
+  const flat = flatFaceProject(project)
+  if (!frame) {
+    return computeTopDownToolpath(withoutUnreachableSubtracts(flat, face), operation, options)
+  }
+
+  const envelope = computeTopDownToolpath(
+    withoutUnreachableSubtracts(projectInSetupFrame(flat, frame), face),
+    operation,
+    options,
+  )
+  if (!envelope) return null
+  return {
+    result: toolpathInStockFrame(envelope.result, frame),
+    raw: envelope.raw ? toolpathInStockFrame(envelope.raw, frame) : null,
+  }
+}
+
+/**
+ * The asynchronous counterpart of {@link computeOperationToolpath} (#1115 slice
+ * p-d1).
+ *
+ * Only the rotary kinds differ, and only in *where an angle's row comes from*:
+ * their sampling is dispatched through `options.rotaryRunBatch` and awaited,
+ * while every other kind -- and every rotary refusal -- runs exactly the
+ * synchronous code. The synchronous entry above stays the default; p-d3's
+ * worker is what will call this one.
+ */
+export async function computeOperationToolpathAsync(
+  project: Project,
+  operation: Operation,
+  options: ComputeOperationAsyncOptions = {},
+): Promise<OperationToolpathEnvelope | null> {
+  // Every non-rotary kind -- plasma's setup diagnosis, the Around unwrap, the
+  // face and setup frames -- stays on the synchronous path untouched.
+  if (!isRotaryOperationKind(operation.kind)) return computeOperationToolpath(project, operation, options)
+  const block = setupGenerationBlock(project, operation)
+  if (block) return blockedToolpath(project, operation, block)
+  return {
+    result: await generateRotaryOperationAsync(project, operation, options.rotaryRunBatch),
+    raw: null,
+  }
+}
+
+/**
+ * The per-kind dispatch, for a project in the conventional top-down frame:
+ * the cutter comes down onto the face that is up. A turned setup's project
+ * has already been turned into that frame by the time it gets here.
+ */
+/**
+ * The result for an operation its setup may not cut: no motion, and the warning
+ * that says which guard refused it. Shared by the synchronous entry and its
+ * asynchronous rotary twin (#1115 slice p-d1), so the two can never disagree
+ * about a blocked operation.
+ */
+function blockedToolpath(
+  project: Project,
+  operation: Operation,
+  block: SetupGenerationBlock,
+): OperationToolpathEnvelope {
+  return {
+    result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block, operation, project.meta.units)], bounds: null },
+    raw: null,
+  }
+}
+
+function computeTopDownToolpath(
+  project: Project,
+  operation: Operation,
+  options: ComputeOperationOptions,
+  /** Around only: the material standing on the unrolled sheet, see the call site. */
+  materials?: AroundMaterialBands,
 ): OperationToolpathEnvelope | null {
   let raw: ToolpathResult | null = null
 
@@ -104,7 +380,9 @@ export function computeOperationToolpath(
 
   let result: ToolpathResult | null = null
 
-  if (operation.kind === 'pocket') {
+  if (operation.kind === 'plasma_profile') {
+    result = applyClampWarnings(project, optimizeAndCapture(generatePlasmaProfileToolpath(project, operation)), operation)
+  } else if (operation.kind === 'pocket') {
     result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
   } else if (operation.kind === 'v_carve') {
     result = applyClampWarnings(project, optimizeAndCapture(generateVCarveToolpath(project, operation)), operation)
@@ -135,7 +413,7 @@ export function computeOperationToolpath(
     const warned = applyTabWarnings(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
     result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
   } else if (operation.kind === 'follow_line') {
-    result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation)), operation)
+    result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation, materials)), operation)
   } else if (operation.kind === 'drilling') {
     result = applyClampWarnings(project, optimizeAndCapture(generateDrillingToolpath(project, operation)), operation)
   }

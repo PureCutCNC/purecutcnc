@@ -18,10 +18,16 @@ import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../te
 import { convertLength } from '../../utils/units'
 import { spacingToScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import { roundScallopHeight } from '../../utils/scallopHeightFormat'
-import { defaultRetractOffset, defaultTool } from '../../types/project'
+import { defaultRetractOffset, defaultTool, isRotaryOperationKind } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
+import type { ResolvedProject } from './resolveFeatures'
+import { toolInUnits } from '../../engine/operations/toolSelection'
+import { samePlasmaParameters } from '../../toolPolicy'
+import { FLUTES_CANNED_KIND, THREAD_CANNED_KIND } from '../../cannedShapes/generators/kinds'
+import { normalizeFlutesCannedParams } from '../../cannedShapes/generators/flutes'
+import { normalizeThreadCannedParams } from '../../cannedShapes/generators/thread'
 import type {
   FeatureOperation,
   Operation,
@@ -54,6 +60,7 @@ export function resolveFolderAssignments(authoritativeProject: Project, featureI
 }
 
 export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
+  if (existingTool.type === 'plasma' || candidate.type === 'plasma') return samePlasmaParameters(existingTool, candidate)
   return (
     existingTool.name === candidate.name
     && existingTool.units === candidate.units
@@ -72,6 +79,8 @@ export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'i
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return 'Plasma through-cut'
     case 'pocket':
       return 'Pocket'
     case 'v_carve':
@@ -84,6 +93,10 @@ export function operationKindLabel(kind: OperationKind): string {
       return 'Edge route outside'
     case 'surface_clean':
       return 'Surface clean'
+    case 'rotary_rough':
+      return 'Rotary rough'
+    case 'rotary_finish':
+      return 'Rotary finish'
     case 'rough_surface':
       return '3D surface rough'
     case 'finish_surface':
@@ -98,7 +111,15 @@ export function operationKindLabel(kind: OperationKind): string {
 }
 
 export function isOperationTargetValid(authoritativeProject: Project, kind: OperationKind, target: OperationTarget): boolean {
-  const project = resolveProject(authoritativeProject)
+  return isOperationTargetValidResolved(resolveProject(authoritativeProject), kind, target)
+}
+
+/**
+ * The target rule against an already-resolved project. Callers that ask the
+ * same question for several targets of one project — the Cuts list's remove ×
+ * is one per row — resolve the features once instead of once per row.
+ */
+export function isOperationTargetValidResolved(project: ResolvedProject, kind: OperationKind, target: OperationTarget): boolean {
   // Construction geometry is sketch-only reference geometry — it can never be
   // an operation target (issue #199). One guard covers every kind below.
   if (target.source === 'features' && target.featureIds.some((featureId) => {
@@ -106,6 +127,34 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     return feature !== undefined && isConstruction(feature)
   })) {
     return false
+  }
+
+  if (isRotaryOperationKind(kind)) {
+    if (target.source !== 'features' || target.featureIds.length === 0) return false
+    const features = target.featureIds.flatMap((id) => {
+      const feature = project.features.find((entry) => entry.id === id)
+      return feature ? [feature] : []
+    })
+    if (features.length !== target.featureIds.length) return false
+    const models = features.filter((feature) => feature.kind === 'stl' && feature.operation === 'model')
+    const regions = features.filter((feature) => isRegion(feature))
+    // A rotary operation always machines at least one imported model, and may
+    // carry closed Around regions as filters (#1096) -- the same mask the 2.5D
+    // Around operations accept, drawn in the sheet's own coordinates. Anything
+    // else is not a rotary target.
+    return models.length > 0
+      && regions.every((region) => region.authoringFace === 'around' && featureHasClosedGeometry(region))
+      && features.length === models.length + regions.length
+  }
+
+  if (kind === 'plasma_profile') {
+    return target.source === 'features' && target.featureIds.length > 0
+      && target.featureIds.every((id) => {
+        const feature = project.features.find((entry) => entry.id === id)
+        return feature !== undefined && feature.kind !== 'stl'
+          && ['add', 'subtract', 'line'].includes(feature.operation)
+          && featureHasClosedGeometry(feature)
+      })
   }
 
   if (kind === 'drilling') {
@@ -255,9 +304,62 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     && regionFeatures.every((feature) => feature.sketch.profile.closed)
 }
 
+/**
+ * The depth a Follow line on canned Thread/Flutes must cut: the feature's own
+ * stored depth (decision 3, #1112). The old one-shot command wrote it straight
+ * onto the operation (`carveDepth: input.depth`); a Follow line added later
+ * through Add, Use current selection, Add to operation or CAM Plan has no
+ * dialog to inherit from, so it reads the same parameter instead of today's
+ * 1 mm default.
+ *
+ * The rule applies only when **every** target is a canned Thread or Flutes.
+ * A target set with any other feature keeps the operation's depth as it is,
+ * because such a target has no pattern depth to name.
+ *
+ * Several canned patterns may carry different depths while the operation has
+ * only one cutting depth. Take the deepest: the shallower value would leave
+ * the deeper thread/flute uncut, and one `carveDepth` cannot satisfy both.
+ */
+export function cannedPatternCarveDepth(project: Project, target: OperationTarget): number | null {
+  if (target.source !== 'features' || target.featureIds.length === 0) return null
+  let deepest: number | null = null
+  for (const featureId of target.featureIds) {
+    const feature = project.features.find((entry) => entry.id === featureId)
+    const canned = feature ? project.featureDefinitions[feature.definitionId]?.canned : null
+    let depth: number
+    if (canned?.kind === THREAD_CANNED_KIND) {
+      const params = normalizeThreadCannedParams(canned.params)
+      if (!params) return null
+      depth = params.depth
+    } else if (canned?.kind === FLUTES_CANNED_KIND) {
+      const params = normalizeFlutesCannedParams(canned.params)
+      if (!params) return null
+      depth = params.depth
+    } else {
+      return null
+    }
+    deepest = deepest === null ? depth : Math.max(deepest, depth)
+  }
+  return deepest
+}
+
+/**
+ * Apply the canned-pattern depth rule to a Follow line whose target set just
+ * changed. Kept beside the rule itself so every target-setting path —
+ * `updateOperation` and new-operation creation — reads the same rule, not a
+ * per-UI handler. A non-Follow-line operation, or a target set with any other
+ * feature, is returned unchanged.
+ */
+export function withCannedPatternTargetDepth(project: Project, operation: Operation): Operation {
+  if (operation.kind !== 'follow_line') return operation
+  const depth = cannedPatternCarveDepth(project, operation.target)
+  if (depth === null) return operation
+  return { ...operation, carveDepth: depth, maxCarveDepth: depth }
+}
+
 export function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
-    || kind === 'finish_surface_cleanup'
+  const baseName = kind === 'plasma_profile' || kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
+    || kind === 'finish_surface_cleanup' || isRotaryOperationKind(kind)
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
   if (!operations.some((operation) => operation.name === baseName)) {
@@ -283,10 +385,19 @@ export function defaultOperationForTarget(
   index: number,
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
-  const tool = resolved?.tool ?? project.tools[0] ?? defaultTool(project.meta.units, 1)
-  const toolRef = resolved ? resolved.toolRef : (project.tools[0]?.id ?? null)
+  if (isRotaryOperationKind(kind)) pass = kind === 'rotary_rough' ? 'rough' : 'finish'
+  // The fallback cutter is in the project's units too (issue #1132): an
+  // automatic pick never crosses the unit systems, so a project holding only
+  // other-unit tools falls back to `defaultTool` instead of them.
+  const firstTool = project.tools.find((candidate) =>
+    toolInUnits(candidate, project.meta.units)
+    && (kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma'),
+  )
+  const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
+  const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
 
   const isVCarve = kind === 'v_carve' || kind === 'v_carve_medial'
+  const cannedCarveDepth = kind === 'follow_line' ? cannedPatternCarveDepth(project, target) : null
   const isRoughEdge = pass === 'rough' && (kind === 'edge_route_inside' || kind === 'edge_route_outside')
   const isEdge = kind === 'edge_route_inside' || kind === 'edge_route_outside'
   const vCarveMaxDepth = tool.maxCutDepth > 0
@@ -308,11 +419,16 @@ export function defaultOperationForTarget(
       ? convertLength(1, 'mm', project.meta.units)
       : tool.defaultStepdown,
     stepover: tool.defaultStepover,
-    feed: tool.defaultFeed,
-    plungeFeed: tool.defaultPlungeFeed,
+    feed: kind === 'plasma_profile' ? convertLength(tool.defaultFeed, tool.units, project.meta.units) : tool.defaultFeed,
+    // A plasma tool's plunge feed is its drop feed (#983) and follows the same
+    // tool-units -> project-units conversion as the cut feed above: a tool the
+    // operator switched to another unit must not seed an operation in the wrong
+    // scale. The operation's own zero still falls back to the tool at export.
+    plungeFeed: kind === 'plasma_profile' ? convertLength(tool.defaultPlungeFeed, tool.units, project.meta.units) : tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
+    ...(kind === 'plasma_profile' ? { plasmaSide: 'auto' as const, plasmaReverseDirection: false, plasmaLeadIn: 'arc' as const, plasmaLeadOut: 'line' as const } : {}),
     ...(isEdge ? { edgeStrategy: 'contour' as const } : {}),
     ...(kind === 'follow_line' ? { carveStrategy: 'direct' as const } : {}),
     // trochoidalCutWidth and trochoidalAdvance are deliberately NOT seeded.
@@ -343,12 +459,13 @@ export function defaultOperationForTarget(
     // always an explicit choice — unlike roundOutsideCorners, which only
     // affects how the tool travels through a corner it already cleared.
     cornerRelief: 'none',
+    ...(isRotaryOperationKind(kind) ? { rotaryChuckSupport: 0, rotaryTailSupport: 0 } : {}),
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,
     finishFloor: true,
-    carveDepth: convertLength(1, 'mm', project.meta.units),
-    maxCarveDepth: isVCarve ? vCarveMaxDepth : convertLength(1, 'mm', project.meta.units),
+    carveDepth: cannedCarveDepth ?? convertLength(1, 'mm', project.meta.units),
+    maxCarveDepth: isVCarve ? vCarveMaxDepth : (cannedCarveDepth ?? convertLength(1, 'mm', project.meta.units)),
     cutDirection: 'conventional',
     machiningOrder: 'feature_first',
     // Rounded before it is stored (#893): the field shows the stored value as
@@ -377,6 +494,16 @@ export function defaultOperationForTarget(
 }
 
 export function fallbackOperationTarget(authoritativeProject: Project, kind: OperationKind): OperationTarget {
+  if (kind === 'plasma_profile') return { source: 'features', featureIds: [] }
+  if (isRotaryOperationKind(kind)) {
+    // The same rule validity, the adapter and the setup target judge enforce: an
+    // imported model marked `operation: 'model'`. A plain `stl` feature (an
+    // imported silhouette used as a 2D shape) is not a rotary target (#1015).
+    return { source: 'features', featureIds: authoritativeProject.features.filter((feature) => {
+      const definition = authoritativeProject.featureDefinitions[feature.definitionId]
+      return definition?.kind === 'stl' && definition.operation === 'model'
+    }).map((feature) => feature.id) }
+  }
   const project = resolveProject(authoritativeProject)
   if (kind === 'drilling') {
     const firstCircle = project.features.find((feature) => feature.kind === 'circle')

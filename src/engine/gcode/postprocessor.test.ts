@@ -435,8 +435,10 @@ function runDrillingFixture(
       tool: normalizeToolForProject(toolRecord, project),
       toolpath,
     }],
+    // No tool change: the restart block after one (#1057 slice F) is motion
+    // too, and these assertions count the cycle's own blocks.
     options: {
-      emitToolChanges: true,
+      emitToolChanges: false,
       emitCoolant: false,
       programName: project.meta.name,
     },
@@ -1044,8 +1046,10 @@ function runArcFixture(
     project,
     definition,
     operations: [{ operation, tool, toolpath }],
+    // No tool change: these fixtures count the operation's own motion, and the
+    // restart block after a tool change (#1057 slice F) writes motion too.
     options: {
-      emitToolChanges: true,
+      emitToolChanges: false,
       emitCoolant: false,
       programName: project.meta.name,
     },
@@ -1365,7 +1369,8 @@ function testArcMixedRapidAndCut(): void {
     project,
     definition: def,
     operations: [{ operation, tool, toolpath }],
-    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+    // No tool change: the count below is the operation's own emitted motion.
+    options: { emitToolChanges: false, emitCoolant: false, programName: project.meta.name },
   })
   // Should have G0 for rapid, G2/G3 for the arc.
   assert(/\bG0\b/.test(result.gcode), 'should contain G0 rapid')

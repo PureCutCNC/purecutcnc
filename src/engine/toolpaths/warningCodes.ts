@@ -24,6 +24,23 @@
  * translated.
  */
 export type ToolpathWarningCode =
+  | 'plasmaTopOnly'
+  | 'plasmaHoleBeforePart'
+  | 'plasmaPartialDepth'
+  | 'plasmaStraightLead'
+  | 'plasmaInvalid'
+  | 'plasmaOpenPath'
+  | 'plasmaNoLead'
+  | 'plasmaSmallHole'
+  | 'plasmaCentrePierce'
+  | 'plasmaLeadOutOmitted'
+  /** This operation cuts an outline while a later plasma operation of the
+   *  same setup cuts a contour inside it (issue #958). Inside one operation
+   *  the cut order puts inside contours first; across operations the user's
+   *  operation order decides, and an outline cut first leaves a loose part
+   *  whose holes can no longer be cut in place. A warning, not an export
+   *  block: the program is the one the operation list asks for. */
+  | 'plasmaOutlineBeforeHole'
   // resolver
   | 'targetsMissingOrWrongRole'
   | 'closedProfilesOnly'
@@ -144,6 +161,20 @@ export type ToolpathWarningCode =
   | 'targetsNotFound'
   | 'stepoverRatioRange'
   | 'operationStepoverRatioRange'
+  /** A rotary **rough**'s layer depth is a finite positive number but smaller
+   *  than the physically meaningful minimum (#1045 slice O); a finish has no
+   *  layer depth. Distinct from `stepdownPositive`: the value is valid in form,
+   *  just unusably small. */
+  | 'rotaryStepdownBelowMinimum'
+  /** A rotary **rough** would emit more moves than its work budget allows at
+   *  the requested layer depth and sampling (#1045 slice O; a finish has no
+   *  layers). The job is refused rather than hanging the worker mid-generation. */
+  | 'rotaryWorkBudgetExceeded'
+  /** The finish has no enabled rotary rough on the same model feature earlier
+   *  in the same setup's operation order, so it will cut to full depth in one
+   *  pass. Advisory only (2026-10-22 decision): the finish follows the model
+   *  either way, and the warning changes no motion. */
+  | 'rotaryFinishWithoutRough'
   | 'surface3dNeedsModel'
   | 'surface3dNotMesh'
   | 'surface3dLoadFailed'
@@ -247,7 +278,27 @@ export type ToolpathWarningCode =
   | 'carveNoTargets'
   | 'carveWrongKind'
   | 'carveNoValidTargets'
+  /** A Follow line on the Around face was stopped short of a neighbouring
+   *  section standing above the surface it is cut on, so the cutter body cannot
+   *  enter it (issue #1112 slice rt6-e; a safety rule, not an option). Params:
+   *  the guide feature's name, the distance kept, the project units, the
+   *  neighbour (`neighbour`, or `neighbourId: 'bar'` for the uncut bar, which
+   *  presentation translates) and `sideId` (`start` or `end`, likewise
+   *  translated). */
+  | 'carveNeighbourTrimmed'
+  /** The same keep-out broke the guide in the middle and left a span uncut
+   *  (`distance` is the length of line removed). */
+  | 'carveNeighbourTrimmedSpan'
+  /** The keep-out removed the whole guide: nothing is cut, and saying so
+   *  matters more than the missing motion (issue #1112 slice rt6-e). */
+  | 'carveNeighbourTrimmedAway'
   | 'targetsMissing'
+  /** A selected target resolved to a feature that exists, but that feature
+   *  expands into no geometry (a canned shape or a text feature whose
+   *  parameters yield nothing). Distinct from `targetsMissing`: the feature is
+   *  there, and saying it is gone sends the user looking for something they
+   *  can see in the tree. */
+  | 'targetsNoGeometry'
   // rest regions
   | 'restOnlyEdgeRoute'
   | 'restOnlyPocket'
@@ -295,11 +346,212 @@ export type ToolpathWarningCode =
    * and gouged it (issue #746). Trimming is silent stock left behind unless it
    * is said out loud, hence the warning rather than a quiet clip. */
   | 'pocketFinishIslandWallTooTight'
+  // machining setups (issue #946)
+  /** A target was drawn on the other face and does not go through the stock,
+   *  so the operation's setup cannot reach it. Nothing is generated: motion
+   *  for the wrong side is worse than no motion. */
+  | 'setupTargetNotThrough'
+  /** A Bottom setup of a rotary bar project flips the part about the other
+   *  horizontal axis than the bar lies along, so its A180 instruction (which
+   *  turns the bar about its own axis) does not describe the turn its
+   *  transform applies. The stored setup is left as the user made it and the
+   *  export names it; the fix is the setup's flip axis (#1054 slice 2). A
+   *  warning, not an error: the program is still the user's to run. */
+  | 'setupFlipAxisMismatch'
+  /** Around needs a bar — round or square — lying along the setup's axis for
+   *  the operation to cut. A warning, as it always was: the operation produces
+   *  no motion, but the code's severity is part of the frozen round/flat
+   *  contract. The **square** blank's own new refusals (#1016 C2-S4: a wrapped
+   *  2D operation, a non-model target, or a physical workholding/clamp setup
+   *  the guard refuses) report `postSetupOperationRefused` instead, so only
+   *  they block a save. */
+  | 'aroundStockMismatch'
+  /** A radial cut must stop above the bar centreline. */
+  | 'aroundCentreline'
+  /** The operation's generated cut reaches the bar's centreline although its
+   *  stored target stops short: a depth the operation works out itself, such
+   *  as an Engrave's carve depth or a countersink's derived plunge. No motion
+   *  is generated (issue #395). */
+  | 'aroundCutReachesCentreline'
+  /** Rotary finishing needs a cutter whose contact the sampler models: a ball
+   *  nose or a flat end mill. A V-bit's height depends on its own profile and a
+   *  drill has no boundary cut, so the sampler's value is not a safe tip
+   *  height for either. The operation emits no motion rather than an
+   *  approximate pass (issue #1015). */
+  | 'rotaryToolUnsupported'
+  /** The model reaches below the bar's centreline where the pass samples. A
+   *  tool tip cannot go below the axis without the bar's far side coming back
+   *  up into it, so a clamped point leaves that place uncut; the first such
+   *  place is named (issue #1015). */
+  | 'rotaryBelowCentreline'
+  /** End supports and workholding leave no model extent to machine. */
+  | 'rotaryNoRoom'
+  /** Part of the target mesh lies outside the bar — farther from its axis than
+   *  the bar's radius, or past one of its ends. The sampler only sees the bar's
+   *  own surface there, so those parts are machined as air; the operation still
+   *  runs and says so (issue #1015). */
+  | 'rotaryModelOutsideBar'
+  /** The operation's radial stock to leave is not a usable allowance: it is
+   *  not finite, it is negative, or it makes the sampler's tool radius zero or
+   *  negative. Sampling with that radius would read "no model" everywhere, and
+   *  the rough would cut the whole pass down to the axis, so it refuses with
+   *  no motion instead (issue #1016 C2 correction M1). */
+  | 'rotaryStockToLeaveInvalid'
+  /** A program was asked to hold operations of more than one setup. The
+   *  operator turns the part by hand between setups, so one program must
+   *  never run across the turn. */
+  | 'postMixedSetups'
+  /** A **square** blank's Around face was asked for a job it does not
+   *  support (#1016 C2-S4): a non-rotary kind, a target that is not a real
+   *  model, or a physical workholding / ordinary-clamp setup this build cannot
+   *  hold. The file would be missing a pass.
+   *
+   * The physical workholding verdicts have their own codes below, so the
+   * operation names the actual problem; this one stays the fallback for the
+   * remaining square reasons (an unreadable blank, non-finite project
+   * clearances, a malformed clamp row, a stale cutter) and for
+   * `setupTargetNotThrough`. */
+  | 'postSetupOperationRefused'
+  /** A square blank's chuck or tailstock outer diameter is smaller than the
+   *  blank's corner envelope, so its corners would pass through the jaws as
+   *  the blank turns (#1016 C2 F3). Params: operation, clamp, diameter and the
+   *  required corner diameter, both formatted in project units. */
+  | 'workholdingDiameter'
+  /** A square blank's chuck or tailstock is off the true centreline or its
+   *  height is not derived from the pivot (#1016 C2 F3). Params: operation,
+   *  clamp. */
+  | 'workholdingPlacement'
+  /** An ordinary clamp reaches into the region the square blank sweeps as it
+   *  turns, grown by the cutter body and the project's clamp clearance
+   *  (#1016 C2 F3). Params: operation, clamp. */
+  | 'ordinaryClampOverlap'
+  /** Sheet work on a square blank's Around face whose targets — or whose
+   *  cutter's reach along the bar — are over a section no Turn above them has
+   *  made round (#1131). No motion: the standing corners are not the surface
+   *  the sheet describes. An error, like the square refusals it narrows.
+   *  Params: operation. */
+  | 'squareSheetNotTurned'
+  /** The same, over a section a Polygon above the targets shapes into flats
+   *  (#1131). Params: operation. */
+  | 'squareSheetOnFlats'
+  /** The program is for a second setup that declares no registration
+   *  reference: nothing records how the turned part is located. */
+  | 'postSetupNoRegistration'
+  /** The project's type and the machine it has selected disagree (issue
+   *  #1028): the program would be cut on a machine the job is not set up for,
+   *  so the export is refused rather than written. Params: the machine's name
+   *  and the project type it does not suit. */
+  | 'exportMachineTypeMismatch'
+  /** The project is rotary and the machine it selected is a router with no
+   *  rotary block, so the Around setup's turning motion does not exist on it
+   *  (issue #1112, item 35). Kept apart from `exportMachineTypeMismatch` so the
+   *  message names the missing axis instead of telling a router owner their
+   *  machine is the wrong kind. Params: the machine's name. */
+  | 'exportMachineMissingRotaryAxis'
+  /** The selected machine's templates still break a #1057 template rule, so
+   *  the program is refused rather than written (#1119). The definition is
+   *  kept, selected and shown with its diagnostics until it is corrected;
+   *  turning off tool changes or coolant, or selecting fewer operations, does
+   *  not bypass the refusal because it is decided from the definition alone.
+   *  Params: the machine's name. */
+  | 'exportMachineTemplateInvalid'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'
   | 'postToolChangesDisabled'
   | 'postNoCoolantCommands'
+  /** A milling operation was exported to a plasma machine. It has no torch
+   *  path, so it is left out of the program (issue #959). */
+  | 'postPlasmaOperationSkipped'
+  /** A plasma cut was exported to a machine that is not a plasma table. It
+   *  has no spindle path, so it is left out of the program rather than run
+   *  1.5 mm above the stock (issue #960). */
+  | 'postPlasmaCutSkipped'
+  /** A plasma operation's tool has no QtPlasmaC material number, so the
+   *  program cannot select the material it cuts with (issue #959). */
+  | 'postPlasmaMaterialMissing'
+  /** A G-code pierce operation has no effective cut feed: it is missing,
+   *  non-finite, non-positive, or positive but rounds to zero at the
+   *  definition's emitted precision. The program would cut with F0. G-code
+   *  piercing owns the cut feed, unlike controller piercing, which takes it
+   *  from the material table (issue #983). */
+  | 'postPlasmaCutFeedMissing'
+  /** The same for the plunge (drop) feed: the torch would drop from pierce
+   *  height to cut height with F0 (issue #983). */
+  | 'postPlasmaPlungeFeedMissing'
+  /** A G-code pierce operation has cuts but no rapid to read its safe height
+   *  from, so the retracts between them cannot be placed and the cuts are not
+   *  written. The #957 toolpath ends every contour with a rapid, so this
+   *  guards a toolpath that reached the emitter in another shape (issue
+   *  #983). */
+  | 'postPlasmaSafeHeightMissing'
+  /** Rotary refusals (issue #393). Each skips the operation and names it: a
+   *  program that guessed at the stock's angle, or at a feed that is not the
+   *  one the cut needs, cuts the part wrong. */
+  /** The toolpath turns the stock, but this machine has no rotary axis. */
+  | 'postRotaryNoAxis'
+  /** The toolpath has a turning feed move and the controller has no
+   *  inverse-time feed, so no correct feed word can be written for it. */
+  | 'postRotaryNoInverseTime'
+  /** The operation moves along the project axis whose motor drives the rotary,
+   *  so that travel does not exist on this machine. */
+  | 'postRotaryBorrowedAxisTravel'
+  /** A turning cut measures its feed from the bar's centreline, and the stock
+   *  is not a round bar. */
+  | 'postRotaryNeedsRoundStock'
+  /** The operation starts cutting at an angle the program has not turned the
+   *  bar to: the controller is at another angle, or at an unknown one because
+   *  no rapid has established it yet (issue #393, rule 2). */
+  | 'postRotaryAngleNotEstablished'
+  /** One of the machine's own template lines (a header, tool-change or other
+   *  command) writes the machine's rotary word, so it would turn the bar behind
+   *  the planner's back. Every operation is refused on a borrowed motor, and on
+   *  a machine with its own axis the program is refused once any exported
+   *  operation carries an angle (issue #393, rule 3c). */
+  | 'postRotaryTemplateUsesBorrowedAxis'
+  /** A drilling operation has drill holes but no expanded moves. Canned cycles
+   *  are never written on a machine whose rotary borrows a motor, so the holes
+   *  would be silently dropped; the operation is refused instead (issue #393,
+   *  rule 3b). */
+  | 'postRotaryDrillNotExpanded'
+  /** The toolpath carries an angle about the bar's own axis, but the machine
+   *  turns the stock about the other horizontal axis: the angle means a
+   *  different motion on this machine, so the operation is not exported
+   *  (issue #395). */
+  | 'postRotaryAxisMismatch'
+  /** The project is in inch and the machine's controller converts the angle
+   *  like a length under G20 — a borrowed motor, or an own axis flagged
+   *  `angleScalesWithUnits` — so the bar would turn 25.4 times too far. The
+   *  turning operation, or the program, is not exported (issue #1153). */
+  | 'postRotaryInchUnits'
+  /** A square blank's corners sweep `barMaxRadius` about the true pivot as the
+   *  blank turns. A supplied or stale path that changes A while the cutter's
+   *  lowest point is below that corner envelope would drive the standing
+   *  corners through the cutter, so the operation is refused rather than
+   *  posted (issue #1016 C2 correction M1).
+   *
+   *  #1045 slice K admits the one kind of below-envelope turn that is a real
+   *  cut: an around-the-bar pass on a square blank, whose motion must equal the
+   *  toolpath the generator emits for the current project (see
+   *  `postSquareAroundToolpathStale`). A **turning rapid**, and a turn on an
+   *  along-mode operation, keeps this refusal. Params: operation. */
+  | 'postRotarySquareTurnBelowEnvelope'
+  /** A square blank's around-the-bar operation is being posted with motion that
+   *  is not what the generator emits for the current project: a stale path, a
+   *  hand-edited one, or another operation's path. Around mode turns below the
+   *  blank's corner envelope because the turn is the cut, so the export check
+   *  proves the motion is the generator's own by regenerating the operation and
+   *  comparing it move for move (same kinds, points exactly equal bit for bit,
+   *  same order). The operation is refused rather than posted (issue #1045
+   *  slices K and L). Params: operation. */
+  | 'postSquareAroundToolpathStale'
+  /** A bar turn (the manual-index opening turn or the closing unwind) has no
+   *  honest clearance retract: no tool-length compensation is active, so a
+   *  work-coordinate retract would not describe the tip, and the machine has
+   *  no machine-coordinate rapid to the Safe Z. The program is refused rather
+   *  than turned with a clearance nobody can prove (issue #1054 fix 2). */
+  | 'postRotaryTurnWithoutClearance'
+  | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
   | 'postArcFallbackLinear'
@@ -312,9 +564,16 @@ export type ToolpathWarningCode =
   | 'restOnlyPocketEdgeTargets'
   | 'restTrochoidalUnsupported'
 
+/**
+ * One warning placeholder value. A name list stays an array through generation
+ * so presentation can join it in the active language (`Intl.ListFormat`)
+ * instead of baking a comma join into the engine.
+ */
+export type ToolpathWarningParam = string | number | readonly string[]
+
 export interface ToolpathWarning {
   code: ToolpathWarningCode
-  params?: Record<string, string | number>
+  params?: Record<string, ToolpathWarningParam>
 }
 
 export type ToolpathWarningSeverity = 'warning' | 'error'
@@ -327,12 +586,91 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * that works for someone today, so each promotion is its own decision (issue
  * #755).
  *
+ * - `exportMachineTypeMismatch` — the machine selected for the project cannot
+ *   run the job it holds: a plasma machine on a milling project. Publishing the
+ *   program would invite a cut on the wrong machine (issue #1028).
+ * - `exportMachineMissingRotaryAxis` — a router with no rotary block on a
+ *   rotary project. The same reasoning as the code above, but the machine is
+ *   the right family and short one axis, so the message says what is missing
+ *   instead of calling the choice wrong (issue #1112, item 35).
+ * - `exportMachineTemplateInvalid` — the selected machine's own templates still
+ *   break a #1057 class rule: a header that moves, a mode change inside the
+ *   program, a placeholder that would become part of a G/M number. The program
+ *   is refused rather than written; the machine is kept and its diagnostics are
+ *   shown so it can be corrected (#1119).
  * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
  *   with the first operation's tool. Nothing in the program pauses the machine
  *   for a change, so the part is machined with the wrong cutter.
+ * - `postMixedSetups` — the program runs operations of two setups back to
+ *   back, with nothing between them to turn the part: the second setup's
+ *   paths are cut into the wrong face (issue #946).
+ * - `postSetupOperationRefused` — an operation in the program has no motion
+ *   because its setup may not cut it, so the saved file would quietly lack a
+ *   pass the operation list promises (issue #946).
+ * - `workholdingDiameter`, `workholdingPlacement`, `ordinaryClampOverlap` — a
+ *   square blank's physical setup is not one this build can hold: the blank's
+ *   standing corners would pass through a too-small support, the support is not
+ *   at the pivot, or an ordinary clamp reaches into the swept envelope. The
+ *   operation generates no motion, so the same missing-pass reasoning applies
+ *   and each names the actual problem (issue #1016 C2 F3).
+ * - `postPlasmaMaterialMissing` — QtPlasmaC would fire the torch with
+ *   whatever material happens to be loaded: the wrong cut feed, heights and
+ *   pierce delay for the sheet on the table (issue #959).
+ * - `postPlasmaCutFeedMissing` / `postPlasmaPlungeFeedMissing` — a G-code
+ *   pierce program would command F0 on a cut or on the drop to cut height, so
+ *   the torch fires and the machine then does not move (issue #983).
+ * - `postPlasmaSafeHeightMissing` — a G-code pierce operation's cuts are left
+ *   out because no safe height could be read for them, so the saved file
+ *   would quietly lack that operation's cuts (issue #983).
+ * - `postRotaryNoAxis`, `postRotaryNoInverseTime`, `postRotaryBorrowedAxisTravel`,
+ *   `postRotaryNeedsRoundStock`, `postRotaryAngleNotEstablished`,
+ *   `postRotaryTemplateUsesBorrowedAxis`, `postRotaryDrillNotExpanded`,
+ *   `postRotaryAxisMismatch`, `postRotarySquareTurnBelowEnvelope`,
+ *   `postSquareAroundToolpathStale`, `postRotaryTurnWithoutClearance` and
+ *   `postRotaryInchUnits` — a
+ *   rotary operation the machine cannot run, a square around path that is not
+ *   the current project's own, or a bar turn with no provable clearance is left
+ *   out of the program (issues #393, #1016 C2 M1, #1045, #1054 fix 2). The file
+ *   would otherwise be saved without that pass, and approximating any of them
+ *   would cut the stock at the wrong angle, the wrong feed, or through the
+ *   square blank's standing corners, or turn the bar at a height nobody can
+ *   prove.
+ *
+ * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
+ * round bar or a block in an Around setup is a note about a job the setup does
+ * not describe, and promoting the code globally would have changed existing
+ * round/flat programs' severity (a frozen contract). The square blank's own
+ * new refusals do not reuse it — they report `postSetupOperationRefused`
+ * (already an error), so only the square case blocks a save.
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
+  'exportMachineTypeMismatch',
+  'exportMachineMissingRotaryAxis',
+  'exportMachineTemplateInvalid',
   'postToolChangesDisabled',
+  'postMixedSetups',
+  'postSetupOperationRefused',
+  'workholdingDiameter',
+  'workholdingPlacement',
+  'ordinaryClampOverlap',
+  'squareSheetNotTurned',
+  'squareSheetOnFlats',
+  'postPlasmaMaterialMissing',
+  'postPlasmaCutFeedMissing',
+  'postPlasmaPlungeFeedMissing',
+  'postPlasmaSafeHeightMissing',
+  'postRotaryNoAxis',
+  'postRotaryNoInverseTime',
+  'postRotaryBorrowedAxisTravel',
+  'postRotaryNeedsRoundStock',
+  'postRotaryAngleNotEstablished',
+  'postRotaryTemplateUsesBorrowedAxis',
+  'postRotaryDrillNotExpanded',
+  'postRotaryAxisMismatch',
+  'postRotarySquareTurnBelowEnvelope',
+  'postSquareAroundToolpathStale',
+  'postRotaryTurnWithoutClearance',
+  'postRotaryInchUnits',
 ])
 
 /**

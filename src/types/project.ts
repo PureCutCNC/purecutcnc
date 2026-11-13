@@ -324,6 +324,13 @@ export type TextLayout =
       /** Walk the guide backwards. The path analogue of `direction` above. */
       reversed: boolean
       orientation: TextBaselineOrientation
+      /**
+       * The feature the path was copied from, when it is still known. The path
+       * itself stays baked (deleting or editing the source cannot break the
+       * run); this only lets Properties offer "Refresh" to copy it again
+       * (issue #1112 slice E). Absent on runs wrapped before the field existed.
+       */
+      sourceFeatureId?: string
     }
 
 export interface TextFeatureData {
@@ -364,6 +371,78 @@ export function cloneTextLayout(layout: TextLayout | null | undefined): TextLayo
 /** Deep-copy text feature data. */
 export function cloneTextFeatureData(text: TextFeatureData | null | undefined): TextFeatureData | null {
   return text ? { ...text } : null
+}
+
+/**
+ * A value a canned-shape generator stores. The set is deliberately JSON-only:
+ * every parameter has to survive the `.camj` round trip unchanged, so a stored
+ * shape can regenerate the same outlines after a save and a load (issue #1112).
+ */
+export type CannedShapeParamValue =
+  | number
+  | string
+  | boolean
+  | null
+  | CannedShapeParamValue[]
+  | { [key: string]: CannedShapeParamValue }
+
+/** Generator-owned parameters, keyed by the generator's own schema. */
+export type CannedShapeParams = Record<string, CannedShapeParamValue>
+
+/**
+ * Shape data that keeps a parametric shape *canned*: the definition stores the
+ * kind and parameters, and the outlines are generated on read instead of being
+ * frozen into `profile` (the Text pattern, issue #1112).
+ *
+ * `kind` is a generator registry key rather than a `FeatureKind` member so a
+ * new shape can be added by registering a generator, without widening the
+ * stored model or the `FeatureKind` union. The registry lives in
+ * `src/cannedShapes/`; the read path is `resolveCannedShapeProfiles` there.
+ *
+ * An unregistered kind is preserved verbatim on load: a file written by a later
+ * build must not lose its shape data when an older build opens it.
+ */
+export interface CannedShapeData {
+  /** Generator registry key, e.g. `'slot'`. */
+  kind: string
+  /** The generator's parameters, JSON-safe. */
+  params: CannedShapeParams
+}
+
+function cloneCannedParamValue(value: CannedShapeParamValue): CannedShapeParamValue {
+  if (Array.isArray(value)) {
+    return value.map(cloneCannedParamValue)
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, cloneCannedParamValue(entry)]),
+    )
+  }
+  return value
+}
+
+/** Deep-copy canned-shape data, so two definitions never share one params object. */
+export function cloneCannedShapeData(canned: CannedShapeData | null | undefined): CannedShapeData | null {
+  return canned
+    ? { kind: canned.kind, params: cloneCannedParamValue(canned.params) as CannedShapeParams }
+    : null
+}
+
+/**
+ * Structural check for decorative `.camj` input. It validates only the
+ * envelope this file owns (`kind` + `params`); a generator validates its own
+ * parameter schema when it is asked to generate.
+ */
+export function isCannedShapeData(value: unknown): value is CannedShapeData {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as { kind?: unknown; params?: unknown }
+  return typeof candidate.kind === 'string'
+    && candidate.kind.length > 0
+    && candidate.params !== null
+    && typeof candidate.params === 'object'
+    && !Array.isArray(candidate.params)
 }
 
 /**
@@ -443,6 +522,8 @@ export interface SketchFeature {
   text?: TextFeatureData | null
   /** Curved baseline, in the same space as `sketch.profile`. See {@link FeatureInstance.textLayout}. */
   textLayout?: TextLayout | null
+  /** Canned-shape kind and parameters. Definition-owned; a draft carries it until it is minted. */
+  canned?: CannedShapeData | null
   stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
@@ -450,6 +531,8 @@ export interface SketchFeature {
   regionMaskMode?: RegionMaskMode
   z_top: DimensionRef
   z_bottom: DimensionRef
+  /** See {@link FeatureInstance.authoringFace}. Missing on a draft means Top. */
+  authoringFace?: SetupFace
   visible: boolean
   locked: boolean
 }
@@ -488,6 +571,12 @@ export interface FeatureDefinition {
   profile: SketchProfile
   dimensions: LocalDimension[]
   text?: TextFeatureData | null
+  /**
+   * Canned shape, if this definition generates its outlines on read instead of
+   * using `profile` verbatim. `profile` then holds the shape's placement frame
+   * (as Text's holds its run frame), and `canned` is the authoritative data.
+   */
+  canned?: CannedShapeData | null
   stl?: STLFeatureData | null
   operation: FeatureOperation
   regionMaskMode?: RegionMaskMode
@@ -512,8 +601,22 @@ export interface FeatureInstance {
    */
   textLayout?: TextLayout | null
   constraints: LocalConstraint[]
+  /**
+   * Stock-space Z span — the volumetric truth, whichever face the feature was
+   * drawn on. A depth measured from a face is a derived view of this span
+   * (`depthFromFace` in `src/engine/setupOrientation.ts`) and is never stored
+   * in its place.
+   */
   z_top: DimensionRef
   z_bottom: DimensionRef
+  /**
+   * The stock face this feature is drawn and edited on (issue #944). It says
+   * where the feature is authored, not what it means: the span above is
+   * unchanged by it. Files saved before setups existed have no value and load
+   * as `'top'`. Around stores unrolled plan coordinates with the surface at
+   * `thickness` and depths downward, exactly like Top on the same bar.
+   */
+  authoringFace: SetupFace
   folderId: string | null
   visible: boolean
   locked: boolean
@@ -535,7 +638,7 @@ export type FeatureTreeEntry =
 // Stock
 // ============================================================
 
-export interface Stock {
+interface StockBase {
   // Stock boundary is also a profile (defaults to rectangle)
   profile: SketchProfile
   thickness: number           // Z height of stock block
@@ -548,6 +651,41 @@ export interface Stock {
   /** Lightweight source instance retained while the stock source is out of the feature tree. */
   sourceFeature?: FeatureInstance | null
 }
+
+/** The project axis a round bar lies along and turns about. */
+export type StockAxis = 'x' | 'y'
+
+/** A block: an outline extruded by `thickness`. `shape` is absent in files written before round stock existed and is never written for a block. */
+export interface BlockStock extends StockBase {
+  shape?: 'block'
+}
+
+/**
+ * A round bar lying along `axis`. `profile` is the rectangle the bar shows
+ * from above (length along `axis`, diameter across it) and `thickness` is the
+ * diameter, so every reader of the stock's box needs no round case.
+ */
+export interface RoundStock extends StockBase {
+  shape: 'round'
+  axis: StockAxis
+}
+
+/**
+ * A square bar lying along `axis` — the physical blank a square-to-round job
+ * turns (#1016 C2-S1). `thickness` is the physical side and `profile` is the
+ * rectangle the bar shows from above: side across `axis`, length along it. The
+ * corner radius is therefore `thickness * √½`, not the round bar's half-side;
+ * the pure geometry lives in `barStock.ts`.
+ */
+export interface SquareStock extends StockBase {
+  shape: 'square'
+  axis: StockAxis
+}
+
+/** The bar stock shapes: a round bar or a square blank. */
+export type BarStock = RoundStock | SquareStock
+
+export type Stock = BlockStock | RoundStock | SquareStock
 
 export interface GridSettings {
   extent: number
@@ -562,18 +700,25 @@ export interface GridSettings {
 // Tools
 // ============================================================
 
-export type ToolType = 'flat_endmill' | 'ball_endmill' | 'v_bit' | 'drill'
+export type ToolType = 'flat_endmill' | 'ball_endmill' | 'v_bit' | 'drill' | 'plasma'
 
 export interface Tool {
   id: string
   name: string
   units: ProjectMeta['units']
   type: ToolType
+  /** Cutter diameter, or full kerf width for plasma consumables. */
   diameter: number
+  /** Plasma heights in tool units; delay in seconds. Absent on milling tools. */
+  pierceHeight?: number
+  cutHeight?: number
+  pierceDelay?: number
+  qtplasmacMaterialNumber?: number
   vBitAngle: number | null
   flutes: number
   material: 'hss' | 'carbide'
   defaultRpm: number
+  /** Milling feed, or plasma cut feed, in tool units per minute. */
   defaultFeed: number
   defaultPlungeFeed: number
   defaultStepdown: number
@@ -586,17 +731,35 @@ export interface Tool {
 // ============================================================
 
 export type OperationKind =
+  | 'plasma_profile'
   | 'pocket'
   | 'v_carve'
   | 'v_carve_medial'
   | 'edge_route_inside'
   | 'edge_route_outside'
   | 'surface_clean'
+  | 'rotary_rough'
+  | 'rotary_finish'
   | 'rough_surface'
   | 'finish_surface'
   | 'finish_surface_cleanup'
   | 'follow_line'
   | 'drilling'
+
+export function isRotaryOperationKind(kind: OperationKind): boolean {
+  return kind === 'rotary_rough' || kind === 'rotary_finish'
+}
+
+/**
+ * How a rotary operation's passes travel over the bar (#1045 slice A).
+ *
+ * `'along'` is the original and the load-bearing default: every pass runs along
+ * the bar at one angle and the passes step round in A. `'around'` runs a ring at
+ * one along position instead, turning A round the bar while Z follows the model,
+ * then steps along. A saved operation without the field must keep the along
+ * motion it was saved with.
+ */
+export type RotaryPassDirection = 'along' | 'around'
 
 export type OperationPass = 'rough' | 'finish'
 
@@ -666,7 +829,26 @@ export interface Operation {
   id: string
   name: string
   description?: string
+  /**
+   * The machining setup this operation belongs to (issue #944). Every
+   * operation of a loaded project has one: `syncProjectSetups` stamps it on
+   * load and after each store change. It is optional in the type only so a
+   * hand-built operation stays valid — read it through `setupForOperation`,
+   * which treats a missing value as the Top orientation.
+   */
+  setupId?: string
   kind: OperationKind
+  /** Plasma distances are in project units; absent values derive from stock/tool. */
+  plasmaSide?: 'auto' | 'outside' | 'inside'
+  plasmaReverseDirection?: boolean
+  plasmaLeadIn?: 'line' | 'arc'
+  plasmaLeadInLength?: number
+  plasmaLeadOut?: 'line' | 'arc'
+  plasmaLeadOutLength?: number
+  /** Optional desired contour start, in resolved project XY; projected onto the contour. */
+  plasmaStartPoint?: Point
+  /** Optional contour-ID keyed starts in the owning instance's definition space. Missing entries stay automatic. */
+  plasmaStartPoints?: Record<string, Point>
   pass: OperationPass
   enabled: boolean
   showToolpath: boolean
@@ -731,6 +913,13 @@ export interface Operation {
    *  both Edge Route kinds; the relieved corners are the convex corners of
    *  whatever region that operation clears, so no operation kind is named. */
   cornerRelief?: CornerReliefStyle
+  /** Bar length left uncut at each end, in project units. Missing reads as zero. */
+  rotaryChuckSupport?: number
+  rotaryTailSupport?: number
+  /** Whether a rotary rough/finish cuts along the bar (step round in A) or
+   *  around it (a ring at each along position, A turning). Missing reads as
+   *  `'along'`, which is what a saved operation was cut with (#1045 slice A). */
+  rotaryPassDirection?: RotaryPassDirection
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean
@@ -826,12 +1015,28 @@ export function isTrochoidalPocket(operation: Operation): boolean {
 // Clamps
 // ============================================================
 
-export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw'
+export type ClampType = 'step_clamp' | 'toe_clamp' | 'vacuum_zone' | 'vise_jaw' | 'chuck' | 'tailstock'
+
+/** Optional 3.3 chuck data. Missing means legacy equipment; never inferred on load. */
+export interface ChuckData {
+  size?: string
+  /** Physical equipment capacity in millimetres, independent of project units. */
+  clampingRangeMm?: { min: number; max: number }
+  jawCount?: 3 | 4 | 6
+  /**
+   * The operator described this chuck by hand — a size pick, a jaw count, a
+   * typed capacity or a dragged body. A stock size or shape change then leaves
+   * its equipment alone, while an untouched default follows the bar (#1112 R2
+   * item 23). Missing is the default/legacy reading: additive, no format bump.
+   */
+  manual?: boolean
+}
 
 export interface Clamp {
   id: string
   name: string
   type: ClampType
+  chuck?: ChuckData
   x: number
   y: number
   w: number
@@ -943,14 +1148,124 @@ export interface BackdropImage {
 }
 
 // ============================================================
+// Machining setups (issue #944)
+// ============================================================
+
+/** A stock face: where a feature is drawn, and which face a setup turns up. */
+export type SetupFace = 'top' | 'bottom' | 'around'
+/** A planar authoring face, with no unrolled rotary coordinates. */
+export type FlatFace = Exclude<SetupFace, 'around'>
+
+/**
+ * How the stock is turned for a setup, stored as a rotation rather than a
+ * face name so an indexed 3+1 setup (#394) adds an angle instead of a second
+ * transform. The pivot is not stored: it is the centre of the stock at
+ * mid-thickness, so the turned stock still occupies `[0, thickness]`.
+ */
+export interface SetupOrientation {
+  /** Stock axis the part turns about: the flip axis for a Bottom setup. */
+  axis: 'x' | 'y'
+  /** 0 is Top, 180 is Bottom. This build accepts no other value. */
+  angleDeg: number
+}
+
+/** `'manual'`: the operator mounts the part for each setup; Around wrapping is distinguished by `kind`. */
+export type SetupIndexing = 'manual'
+
+export type RegistrationKind = 'dowel' | 'fence' | 'corner'
+
+/**
+ * What a registration reference locates the stock against. Points are in
+ * stock space, like feature geometry. A feature reference follows its feature
+ * and is dropped when that feature is deleted.
+ */
+export type RegistrationTarget =
+  | { type: 'feature'; featureId: string }
+  | { type: 'point'; point: Point }
+  | { type: 'edge'; start: Point; end: Point }
+
+/** A declared locating reference. It records intent; it verifies nothing. */
+export interface RegistrationReference {
+  id: string
+  kind: RegistrationKind
+  target: RegistrationTarget
+}
+
+/**
+ * One fixed orientation of the stock on the machine. Top and Bottom are
+ * setups; the face is derived from the orientation (`setupFace`), not stored.
+ * An Around setup is marked by `kind`: it wraps an unrolled sheet around a
+ * round bar and carries Top-style feature heights.
+ */
+export interface MachiningSetup {
+  /**
+   * `'around'`: the setup cuts the unrolled sheet wrapped around the bar.
+   * Absent on the flat Top and Bottom setups.
+   */
+  kind?: 'around'
+  id: string
+  name: string
+  orientation: SetupOrientation
+  indexing: SetupIndexing
+  registration: RegistrationReference[]
+  notes: string
+  /**
+   * This setup's operations, in cutting order. Derived, not authored:
+   * membership is `Operation.setupId` and order is `Project.operations`, and
+   * `syncProjectSetups` rewrites this list to match both.
+   */
+  operationIds: string[]
+}
+
+/** Whether a setup wraps its unrolled toolpath around a round bar. */
+export function isAroundSetup(setup: Pick<MachiningSetup, 'kind'>): boolean {
+  return setup.kind === 'around'
+}
+
+/** Id of the Top setup every new and every migrated project starts with. */
+export const DEFAULT_SETUP_ID = 'setup-top'
+
+export function defaultTopSetup(operationIds: string[] = []): MachiningSetup {
+  return {
+    id: DEFAULT_SETUP_ID,
+    name: 'Top',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [...operationIds],
+  }
+}
+
+// ============================================================
 // Project — top-level .camj document
 // ============================================================
+
+/**
+ * What kind of job the project is (issue #1028). The user chooses it and the
+ * rest follows: which machine suits it, which stock shapes it offers, whether
+ * the Around face and the rotary operations exist, and whether plasma or
+ * milling operations are cut.
+ *
+ * `projectType` is the stored field; read it through
+ * `src/store/helpers/projectType.ts` (`projectType`), never directly, so a
+ * hand-built project without it still reads correctly.
+ */
+export type ProjectType = 'milling' | 'plasma' | 'rotary'
 
 export interface ProjectMeta {
   name: string
   created: string    // ISO 8601
   modified: string
   units: 'mm' | 'inch'
+  /**
+   * The project's type (issue #1028). Absent in every file saved before the
+   * field existed, and in hand-built projects; `normalizeProject` infers one
+   * from the machine and the stock on load (`inferProjectType`). Saving always
+   * writes it. The format number stays 3.3 — the migration keys on the field
+   * being missing, not on a version bump.
+   */
+  projectType: ProjectType
   showFeatureInfo: boolean
   showDimensions: boolean
   /** Default copy mode for Duplicate gesture and Copy/Paste. */
@@ -960,14 +1275,21 @@ export interface ProjectMeta {
   clampClearanceXY: number
   clampClearanceZ: number
   /**
-   * The project's embedded machine snapshot — **zero or one** entry, never a
+   * The project's embedded machine snapshot — normally one entry, and never a
    * library. The machine library lives in `src/machine/` as an application
    * preference; only the definition selected for this project travels with
    * the `.camj` file, so export stays deterministic for whoever opens it.
    * The array field is retained so older builds can still read the file.
    *
-   * Invariant (enforced on decode and by `setProjectMachine`):
-   * `selectedMachineId === machineDefinitions[0]?.id ?? null`.
+   * When the machine library cannot durably rescue an unselected definition,
+   * it stays here instead of being compacted away (#1119). Such a retained
+   * definition follows the selected one, and `selectedMachineId` may be null
+   * while retained definitions remain after the user clears the selection.
+   *
+   * Invariant: every write goes through
+   * `store/helpers/machineDefinitions.ts`, which only lets an entry leave
+   * through an explicit user delete, an unmodified bundled copy, or a durable
+   * rescue. The selected definition, when present, is `machineDefinitions[0]`.
    */
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
@@ -985,8 +1307,11 @@ export interface Project {
   /** Schema version. '3.0' made lightweight definition-backed instances
  *  authoritative; '3.1' reinterpreted drilling `retractHeight` as a distance
  *  above the material surface (issue #481); '3.2' marks files whose edge-route
- *  `entryStrategy` is live rather than a dormant default (issue #891). */
-  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1' | '3.2'
+ *  `entryStrategy` is live rather than a dormant default (issue #891); '3.3'
+ *  marks files whose embedded machine definition may carry `outputDialect`
+ *  (issue #953). 3.3 changes no stored data: it exists so a build that would
+ *  ignore the dialect and export G-code announces that the file is newer. */
+  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1' | '3.2' | '3.3'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -1004,6 +1329,15 @@ export interface Project {
   global_constraints: GlobalConstraint[]
   tools: Tool[]
   operations: Operation[]
+  /**
+   * Machining setups (issue #944) — always at least one. A file without the
+   * field loads as a single Top setup holding every operation. The format
+   * number does not mark it: 0.6.0 stays on 3.3, so the migration keys on the
+   * field being absent.
+   */
+  setups: MachiningSetup[]
+  /** The setup the workspace is on; new operations join it. Always names an entry of `setups`. */
+  activeSetupId: string
   tabs: Tab[]
   clamps: Clamp[]
   /**
@@ -1309,6 +1643,75 @@ export function stockFromFeature(feature: SketchFeature): Stock {
   }
 }
 
+/** True when the stock is a round bar rather than a block. */
+export function isRoundStock(stock: Stock): stock is RoundStock {
+  return stock.shape === 'round'
+}
+
+/**
+ * A round bar of `diameter` and `length` lying along `axis`. `at` is the min
+ * corner of the rectangle the bar shows from above; axis `'x'` puts the length
+ * along X, axis `'y'` puts it along Y.
+ */
+export function roundStock(
+  diameter: number,
+  length: number,
+  axis: StockAxis = 'x',
+  at: Point = { x: 0, y: 0 },
+): RoundStock {
+  return {
+    shape: 'round',
+    axis,
+    profile: axis === 'x'
+      ? rectProfile(at.x, at.y, length, diameter)
+      : rectProfile(at.x, at.y, diameter, length),
+    thickness: diameter,
+    material: 'aluminum_6061',
+    color: '#b9a83c', // theme-exempt: default stock colour is project data, not UI chrome
+    visible: true,
+    origin: { x: 0, y: 0 },
+  }
+}
+
+export function roundStockDiameter(stock: RoundStock): number {
+  return stock.thickness
+}
+
+/** The bar's length: its extent along {@link RoundStock.axis}. */
+export function roundStockLength(stock: RoundStock): number {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x' ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY
+}
+
+/** The centreline's coordinate across the bar: a Y value for axis 'x', an X value for axis 'y'. */
+export function roundStockCentre(stock: RoundStock): number {
+  const bounds = getStockBounds(stock)
+  return stock.axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+}
+
+/**
+ * The canonical round bar: a plain rectangle along `axis` that keeps the
+ * current bounds' min/max, centred across `axis` on the existing centreline and
+ * exactly `thickness` wide. Drops the feature source — a bar cannot be derived
+ * from a feature — and maps an unknown axis to `'x'`. Idempotent.
+ */
+export function normalizeRoundStock(stock: RoundStock): RoundStock {
+  const axis: StockAxis = stock.axis === 'y' ? 'y' : 'x'
+  const bounds = getStockBounds(stock)
+  const centre = axis === 'x' ? (bounds.minY + bounds.maxY) / 2 : (bounds.minX + bounds.maxX) / 2
+  const at = axis === 'x'
+    ? { x: bounds.minX, y: centre - stock.thickness / 2 }
+    : { x: centre - stock.thickness / 2, y: bounds.minY }
+  const { sourceFeatureId: _sourceFeatureId, sourceFeature: _sourceFeature, ...rest } = stock
+  return {
+    ...rest,
+    axis,
+    profile: axis === 'x'
+      ? rectProfile(at.x, at.y, bounds.maxX - bounds.minX, stock.thickness)
+      : rectProfile(at.x, at.y, stock.thickness, bounds.maxY - bounds.minY),
+  }
+}
+
 /**
  * Transform a feature's sketch profile by applying sketch.origin translation and
  * orientationAngle rotation, producing a profile in project coordinates.
@@ -1450,6 +1853,22 @@ export function defaultClampClearanceZ(units: ProjectMeta['units'] = 'mm'): numb
 
 export function defaultOrigin(stock: Stock): MachineOrigin {
   const bounds = getStockBounds(stock)
+  // Both bars sit their default origin on the centreline (#1016 C2-S2): the
+  // round bar's former rule, with the same X-start / Y-start convention, so a
+  // square blank's origin is X minX / Y centre (axis 'x') and X centre / Y maxY
+  // (axis 'y'), and Z stays the physical top. A block keeps its corner origin.
+  if (isRoundStock(stock) || stock.shape === 'square') {
+    const centre = stock.axis === 'x'
+      ? (bounds.minY + bounds.maxY) / 2
+      : (bounds.minX + bounds.maxX) / 2
+    return {
+      name: 'Origin',
+      x: stock.axis === 'x' ? bounds.minX : centre,
+      y: stock.axis === 'x' ? centre : bounds.maxY,
+      z: stock.thickness,
+      visible: true,
+    }
+  }
   return {
     name: 'Origin',
     x: bounds.minX,
@@ -1665,7 +2084,7 @@ export function profileHasSelfIntersection(profile: SketchProfile): boolean {
   return false
 }
 
-export function getStockBounds(stock: Stock): Bounds2D {
+export function getStockBounds(stock: Pick<Stock, 'profile'>): Bounds2D {
   return getProfileBounds(stock.profile)
 }
 
@@ -1681,7 +2100,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 }
 
 /** The newest project schema version this build understands. */
-export const LATEST_PROJECT_VERSION = '3.2'
+export const LATEST_PROJECT_VERSION = '3.3'
 
 /**
  * True when a loaded project's `version` is newer than this build supports
@@ -1712,6 +2131,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
       created: now,
       modified: now,
       units,
+      projectType: 'milling' as const,
       showFeatureInfo: true,
       showDimensions: true,
       copyMode: 'reference' as const,
@@ -1736,6 +2156,8 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
     global_constraints: [],
     tools: [],
     operations: [],
+    setups: [defaultTopSetup()],
+    activeSetupId: DEFAULT_SETUP_ID,
     tabs: [],
     clamps: [],
     ai_history: [],

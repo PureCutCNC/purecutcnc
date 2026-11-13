@@ -15,16 +15,26 @@
  */
 
 import { rectProfile, sampleProfilePoints } from '../../types/project'
-import type { Clamp, Point, Project, SketchProfile, Tab } from '../../types/project'
+import type { CannedShapeData, Clamp, FeatureOperation, Matrix2D, Point, Project, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures, activeFace } from '../../store/helpers/activeFace'
+import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import type { ArcSeg } from '../../store/helpers/segmentIntersection'
+import { isCannedFeature, resolveCannedShapeShapes } from '../../cannedShapes'
+import { foldProfileToSheet } from './aroundDisplayWrap'
+import type { AroundWrapWindow } from './aroundDisplayWrap'
+import { aroundFrame } from '../../engine/aroundFrame'
+import { isBarStock } from '../../types/barStock'
 
 export interface FeatureLike {
   id: string
   visible: boolean
   sketch: { profile: SketchProfile }
+  /** Generated shapes hit-test their outlines, never the stored placement frame. */
+  canned?: CannedShapeData | null
+  transform?: Matrix2D
+  operation?: FeatureOperation
 }
 
 export type FeatureSelectionHit =
@@ -223,65 +233,76 @@ export function segmentHitTest(
   worldPoint: Point,
   project: Project,
   vt: ViewTransform,
-  opts: { openOnly: boolean },
+  opts: { openOnly: boolean; referenceFeatures?: readonly ResolvedSketchFeature[] },
   tolerancePx = 8,
 ): SegmentHitResult | null {
-  const features = resolvedProjectFeatures(project)
+  const features = opts.referenceFeatures ?? editableProjectFeatures(project)
   const toleranceWorld = tolerancePx / Math.max(vt.scale, 1e-6)
+  // On Around, canned outlines are drawn folded, so a folded stripe is what the
+  // reference pick must find (issue #1112 L). The frame is all the fold needs;
+  // building the full sheet would resolve every model band on every pick.
+  const sheet = activeFace(project) === 'around' && isBarStock(project.stock)
+    ? aroundFrame(project.stock)
+    : null
 
   let bestDist = Infinity
   let best: SegmentHitResult | null = null
 
   for (const feature of features) {
     if (!feature.visible) continue
-    const profile = feature.sketch.profile
-    if (opts.openOnly && profile.closed) continue
 
-    const resolved = resolveProfileSegments(profile)
-    if (resolved.length === 0) continue
+    // A generated shape's editable-segment index means nothing (it has no
+    // editable sketch), but reference picking must still find the drawn lines
+    // rather than the frame (#1112 A2).
+    for (const profile of featureHitProfiles(feature, sheet)) {
+      if (opts.openOnly && profile.closed) continue
 
-    for (let index = 0; index < resolved.length; index += 1) {
-      const seg = resolved[index]
-      if (!seg) continue // bezier → skip
+      const resolved = resolveProfileSegments(profile)
+      if (resolved.length === 0) continue
 
-      let dist: number
-      let point: Point
-      let t: number
+      for (let index = 0; index < resolved.length; index += 1) {
+        const seg = resolved[index]
+        if (!seg) continue // bezier → skip
 
-      if (seg.kind === 'line') {
-        const dx = seg.p1.x - seg.p0.x
-        const dy = seg.p1.y - seg.p0.y
-        const len2 = dx * dx + dy * dy
-        if (len2 < EPS) {
-          // Degenerate line (point)
-          dist = Math.hypot(worldPoint.x - seg.p0.x, worldPoint.y - seg.p0.y)
-          point = seg.p0
-          t = 0
-        } else {
-          t = Math.max(0, Math.min(1,
-            ((worldPoint.x - seg.p0.x) * dx + (worldPoint.y - seg.p0.y) * dy) / len2,
-          ))
-          point = {
-            x: seg.p0.x + dx * t,
-            y: seg.p0.y + dy * t,
+        let dist: number
+        let point: Point
+        let t: number
+
+        if (seg.kind === 'line') {
+          const dx = seg.p1.x - seg.p0.x
+          const dy = seg.p1.y - seg.p0.y
+          const len2 = dx * dx + dy * dy
+          if (len2 < EPS) {
+            // Degenerate line (point)
+            dist = Math.hypot(worldPoint.x - seg.p0.x, worldPoint.y - seg.p0.y)
+            point = seg.p0
+            t = 0
+          } else {
+            t = Math.max(0, Math.min(1,
+              ((worldPoint.x - seg.p0.x) * dx + (worldPoint.y - seg.p0.y) * dy) / len2,
+            ))
+            point = {
+              x: seg.p0.x + dx * t,
+              y: seg.p0.y + dy * t,
+            }
+            dist = Math.hypot(worldPoint.x - point.x, worldPoint.y - point.y)
           }
-          dist = Math.hypot(worldPoint.x - point.x, worldPoint.y - point.y)
+        } else {
+          // arc
+          const result = distancePointToArc(worldPoint, seg)
+          dist = result.dist
+          point = result.point
+          t = result.t
         }
-      } else {
-        // arc
-        const result = distancePointToArc(worldPoint, seg)
-        dist = result.dist
-        point = result.point
-        t = result.t
-      }
 
-      if (dist <= toleranceWorld && dist < bestDist) {
-        bestDist = dist
-        best = {
-          featureId: feature.id,
-          segmentIndex: index, // TRUE profile.segments index
-          point,
-          t,
+        if (dist <= toleranceWorld && dist < bestDist) {
+          bestDist = dist
+          best = {
+            featureId: feature.id,
+            segmentIndex: index, // TRUE profile.segments index
+            point,
+            t,
+          }
         }
       }
     }
@@ -290,9 +311,62 @@ export function segmentHitTest(
   return best
 }
 
-function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewTransform): boolean {
-  return pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)
-    || pointNearProfile(worldPoint, feature.sketch.profile, vt)
+/**
+ * The profiles a feature is actually drawn from. A generated (canned) shape
+ * stores only its placement frame in `sketch.profile`; hit testing against that
+ * frame would make the empty space between generated lines — or outside a
+ * curved outline — clickable, so the generated outlines are used instead
+ * (issue #1112 A2). On the Around sheet the drawn outlines are folded into the
+ * sheet, so a folded stripe is hit where it is drawn (issue #1112 L).
+ */
+export function featureHitProfiles(
+  feature: FeatureLike,
+  sheet?: AroundWrapWindow | null,
+): SketchProfile[] {
+  let profiles: SketchProfile[] | null = null
+  if (isCannedFeature(feature) && feature.operation) {
+    const shapes = resolveCannedShapeShapes({
+      operation: feature.operation,
+      canned: feature.canned,
+      transform: feature.transform,
+    })
+    if (shapes.length > 0) profiles = shapes.map((shape) => shape.profile)
+  }
+  if (profiles === null) profiles = [feature.sketch.profile]
+  if (!sheet || !isCannedFeature(feature)) return profiles
+  const folded = profiles.flatMap((profile) => foldProfileToSheet(profile, sheet))
+  return folded.length > 0 ? folded : profiles
+}
+
+function featureProfileHit(
+  feature: FeatureLike,
+  worldPoint: Point,
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): {
+  hit: boolean
+  nearOutline: boolean
+} {
+  let hit = false
+  let nearOutline = false
+  for (const profile of featureHitProfiles(feature, sheet)) {
+    if (pointNearProfile(worldPoint, profile, vt)) {
+      hit = true
+      nearOutline = true
+    } else if (pointInProfile(worldPoint.x, worldPoint.y, profile)) {
+      hit = true
+    }
+  }
+  return { hit, nearOutline }
+}
+
+function featureContainsPoint(
+  feature: FeatureLike,
+  worldPoint: Point,
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): boolean {
+  return featureProfileHit(feature, worldPoint, vt, sheet).hit
 }
 
 /**
@@ -301,12 +375,17 @@ function featureContainsPoint(feature: FeatureLike, worldPoint: Point, vt: ViewT
  * The selection UI uses this to disambiguate overlaps. Callers that only need
  * the topmost feature should keep using {@link findHitFeatureId}.
  */
-export function findHitFeatureIds(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string[] {
+export function findHitFeatureIds(
+  worldPoint: Point,
+  features: readonly FeatureLike[],
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): string[] {
   const hitIds: string[] = []
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (featureContainsPoint(feature, worldPoint, vt)) hitIds.push(feature.id)
+    if (featureContainsPoint(feature, worldPoint, vt, sheet)) hitIds.push(feature.id)
   }
   return hitIds
 }
@@ -324,6 +403,7 @@ export function resolveFeatureSelectionHit(
   worldPoint: Point,
   features: readonly FeatureLike[],
   vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
 ): FeatureSelectionHit {
   const candidates: { id: string; profile: SketchProfile }[] = []
   const nearbyOutlineIds: string[] = []
@@ -332,13 +412,16 @@ export function resolveFeatureSelectionHit(
     const feature = features[index]
     if (!feature.visible) continue
 
-    const nearOutline = pointNearProfile(worldPoint, feature.sketch.profile, vt)
-    if (!nearOutline && !pointInProfile(worldPoint.x, worldPoint.y, feature.sketch.profile)) {
+    const profiles = featureHitProfiles(feature, sheet)
+    const outlineHit = featureProfileHit(feature, worldPoint, vt, sheet)
+    if (!outlineHit.hit) {
       continue
     }
 
-    candidates.push({ id: feature.id, profile: feature.sketch.profile })
-    if (nearOutline) nearbyOutlineIds.push(feature.id)
+    // Nesting resolution still needs one representative contour; generators
+    // emit the outer contour first, so that is the shape's extent.
+    candidates.push({ id: feature.id, profile: profiles[0] })
+    if (outlineHit.nearOutline) nearbyOutlineIds.push(feature.id)
   }
 
   const candidateIds = candidates.map((candidate) => candidate.id)
@@ -364,13 +447,18 @@ export function resolveFeatureSelectionHit(
   return { kind: 'ambiguous', candidateIds }
 }
 
-export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {
+export function findHitFeatureId(
+  worldPoint: Point,
+  features: readonly FeatureLike[],
+  vt: ViewTransform,
+  sheet?: AroundWrapWindow | null,
+): string | null {
   const candidates: { id: string; profile: SketchProfile }[] = []
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
-    if (featureContainsPoint(feature, worldPoint, vt)) {
-      candidates.push({ id: feature.id, profile: feature.sketch.profile })
+    if (featureContainsPoint(feature, worldPoint, vt, sheet)) {
+      candidates.push({ id: feature.id, profile: featureHitProfiles(feature, sheet)[0] })
     }
   }
   return resolveInnermostOrTopmostId(candidates)
@@ -380,13 +468,26 @@ function pointInRect(point: Point, minX: number, minY: number, maxX: number, max
   return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
 }
 
-export function featureFullyInsideRect(feature: FeatureLike, minX: number, minY: number, maxX: number, maxY: number): boolean {
-  const points = sampleProfilePoints(feature.sketch.profile)
-  if (points.length === 0) {
-    return false
+export function featureFullyInsideRect(
+  feature: FeatureLike,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  sheet?: AroundWrapWindow | null,
+): boolean {
+  let sawPoints = false
+  for (const profile of featureHitProfiles(feature, sheet)) {
+    const points = sampleProfilePoints(profile)
+    if (points.length === 0) {
+      return false
+    }
+    sawPoints = true
+    if (!points.every((point) => pointInRect(point, minX, minY, maxX, maxY))) {
+      return false
+    }
   }
-
-  return points.every((point) => pointInRect(point, minX, minY, maxX, maxY))
+  return sawPoints
 }
 
 export function findHitClampId(worldPoint: Point, clamps: Clamp[]): string | null {

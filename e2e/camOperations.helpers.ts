@@ -191,6 +191,12 @@ function buildCamQuickOperationProjectJson(): string {
 
 const CAM_QUICK_OPERATION_FIXTURE_JSON = buildCamQuickOperationProjectJson()
 
+/**
+ * The fixture's raw JSON, for specs that need to vary it (issue #1028's
+ * project-type smoke seeds it with a machine and a stored project type).
+ */
+export const camQuickOperationProjectJson = CAM_QUICK_OPERATION_FIXTURE_JSON
+
 export async function seedCamQuickOperationProject(page: Page): Promise<void> {
   await seedProject(page, CAM_QUICK_OPERATION_FIXTURE_JSON)
 }

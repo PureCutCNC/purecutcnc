@@ -147,12 +147,12 @@ esac
 
 # Everything below reads from a snapshot of the process table, so a worker that
 # exits mid-run cannot make two phases disagree about it.
-listing="$(mktemp -t worker-instances)" || fail "cannot create a temporary file"
-records="$(mktemp -t worker-instances-records)" || fail "cannot create a temporary file"
-leaves_file="$(mktemp -t worker-instances-leaves)" || fail "cannot create a temporary file"
-raw_file="$(mktemp -t worker-instances-raw)" || fail "cannot create a temporary file"
-dispatch_file="$(mktemp -t worker-instances-dispatch)" || fail "cannot create a temporary file"
-apps_file="$(mktemp -t worker-instances-apps)" || fail "cannot create a temporary file"
+listing="$(mktemp "${TMPDIR:-/tmp}/worker-instances.XXXXXX")" || fail "cannot create a temporary file"
+records="$(mktemp "${TMPDIR:-/tmp}/worker-instances-records.XXXXXX")" || fail "cannot create a temporary file"
+leaves_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-leaves.XXXXXX")" || fail "cannot create a temporary file"
+raw_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-raw.XXXXXX")" || fail "cannot create a temporary file"
+dispatch_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-dispatch.XXXXXX")" || fail "cannot create a temporary file"
+apps_file="$(mktemp "${TMPDIR:-/tmp}/worker-instances-apps.XXXXXX")" || fail "cannot create a temporary file"
 cleanup() { rm -f "$listing" "$records" "$leaves_file" "$raw_file" "$dispatch_file" "$apps_file"; }
 trap cleanup EXIT
 
@@ -164,9 +164,24 @@ patterns=(
   'MacOS/claude'
   'dsh --profile'
 )
+# Portable process rows. BSD `pgrep -fl` prints "PID full command line", but
+# procps `-l` prints only the 15-character process name (`-a` is the command
+# line there), so ask for the ids and read each command line explicitly.
+cmdline_for_pid() {
+  if [[ -r "/proc/$1/cmdline" ]]; then
+    tr '\0' ' ' <"/proc/$1/cmdline"
+  else
+    ps -o args= -p "$1" 2>/dev/null | head -1
+  fi
+}
 : >"$listing"
 for pattern in "${patterns[@]}"; do
-  pgrep -fl "$pattern" >>"$listing" 2>/dev/null || true
+  while IFS= read -r matched_pid; do
+    [[ -n "$matched_pid" ]] || continue
+    matched_cmd="$(cmdline_for_pid "$matched_pid")"
+    [[ -n "$matched_cmd" ]] || continue
+    printf '%s %s\n' "$matched_pid" "$matched_cmd" >>"$listing"
+  done < <(pgrep -f "$pattern" 2>/dev/null || true)
 done
 # One record per PID: "PID<TAB>first command line". Continuation lines (a
 # pasted prompt) are dropped on purpose; every flag this script needs is on the

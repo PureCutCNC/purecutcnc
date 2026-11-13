@@ -22,6 +22,7 @@ import {
   countImportableSelected,
   filterLibraryEntries,
   filterLibraryEntryStates,
+  offeredLibraryEntries,
   toolMatchesLibraryEntry,
   type LibraryEntryState,
 } from './toolLibraryDialogModel'
@@ -99,6 +100,49 @@ describe('toolMatchesLibraryEntry', () => {
     const entry = makeEntry({ maxCutDepth: 2.0 })
     const tool = makeTool({ maxCutDepth: 1.0 })
     assert.equal(toolMatchesLibraryEntry(tool, entry), true)
+  })
+
+  it('compares a plasma torch on its plunge feed', () => {
+    // The drop feed of a G-code pierce program (#983): a torch whose plunge
+    // feed the operator edited is no longer its library entry.
+    const torch = { type: 'plasma' as const, name: 'Torch', pierceHeight: 0.15, cutHeight: 0.06, pierceDelay: 0.2, defaultPlungeFeed: 0 }
+    const entry = makeEntry(torch)
+    assert.equal(toolMatchesLibraryEntry(makeTool(torch), entry), true)
+    assert.equal(toolMatchesLibraryEntry(makeTool({ ...torch, defaultPlungeFeed: 80 }), entry), false)
+  })
+})
+
+// ── offeredLibraryEntries ────────────────────────────────────────────
+
+describe('offeredLibraryEntries', () => {
+  const entries: ToolLibraryEntry[] = [
+    makeEntry({ key: 'mill', type: 'flat_endmill' }),
+    makeEntry({ key: 'carve', type: 'v_bit', vBitAngle: 90 }),
+    makeEntry({ key: 'drill', type: 'drill', name: 'Drill' }),
+    makeEntry({ key: 'torch', type: 'plasma', name: 'Torch' }),
+  ]
+
+  it('offers only the milling family to a router machine', () => {
+    assert.deepEqual(
+      offeredLibraryEntries(entries, 'router').map((entry) => entry.key),
+      ['mill', 'carve', 'drill'],
+    )
+  })
+
+  it('offers only torches to a plasma machine', () => {
+    assert.deepEqual(
+      offeredLibraryEntries(entries, 'plasma').map((entry) => entry.key),
+      ['torch'],
+    )
+  })
+
+  it('keeps the input order and returns the same entries', () => {
+    const offered = offeredLibraryEntries(entries, 'router')
+    assert.deepEqual(offered, [entries[0], entries[1], entries[2]])
+  })
+
+  it('returns an empty list when the mode offers nothing present', () => {
+    assert.deepEqual(offeredLibraryEntries([makeEntry({ type: 'drill' })], 'plasma'), [])
   })
 })
 

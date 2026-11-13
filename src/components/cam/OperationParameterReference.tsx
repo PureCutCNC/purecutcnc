@@ -15,6 +15,7 @@
  */
 
 import type { ReactNode } from 'react'
+import { camT } from './camI18n'
 import { type OperationParamRefKind, operationParamRefLabel } from './operationParamRefData'
 
 // All diagrams are drawn on a shared 58×34 stage and normalized to fill roughly
@@ -22,11 +23,13 @@ import { type OperationParamRefKind, operationParamRefLabel } from './operationP
 function OpParamRefFrame({
   children,
   label,
+  note,
 }: {
   children: ReactNode
   label: string
+  note?: string
 }) {
-  return (
+  const diagram = (
     <svg
       className="op-param-ref"
       viewBox="0 0 58 34"
@@ -36,6 +39,15 @@ function OpParamRefFrame({
     >
       {children}
     </svg>
+  )
+  // A note names a limit the picture cannot draw (issue #1112 decision 8.16).
+  // It rides with the picture in the same grid cell, so it moves with it.
+  if (!note) return diagram
+  return (
+    <span className="op-param-ref-block">
+      {diagram}
+      <span className="op-param-ref-note">{note}</span>
+    </span>
   )
 }
 
@@ -291,14 +303,15 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
-      // slots_only (default): the reduction glyph sits over the full-width
-      // slot, where the cutter engages the whole channel at once.
+      // slots_only (default): the cutter runs between both slot walls, so
+      // its whole leading half is buried; the same short feed arrow as above.
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M6 8v18h20V8z" />
-          <circle className="gear-reference__outline" cx="16" cy="17" r="9" />
-          <path className="gear-reference__accent-fill" d="M16 3.4l-2.2 3h4.4z" />
-          <path className="gear-reference__accent-fill" d="M16 6.8l-2.2 3h4.4z" />
+          <path className="gear-reference__outline" d="M6 8h27M6 26h27" />
+          <circle className="gear-reference__outline" cx="24" cy="17" r="9" />
+          <path className="gear-reference__accent" d="M24 8a9 9 0 0 1 0 18" />
+          <path className="gear-reference__accent" d="M35 17h9" />
+          <path className="gear-reference__accent-fill" d="M46 17l-4-2.4v4.8z" />
         </OpParamRefFrame>
       )
     }
@@ -394,6 +407,19 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'trochoidal') {
+        // Small overlapping orbits walking along a channel, instead of rings
+        // that follow the pocket wall.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 5h46v24H6z" />
+            <path className="gear-reference__guide" d="M11 11.5h36M11 22.5h36" />
+            {[17, 23, 29, 35, 41].map((cx) => (
+              <circle key={cx} className="gear-reference__accent" cx={cx} cy="17" r="4.5" />
+            ))}
+          </OpParamRefFrame>
+        )
+      }
       // offset (default)
       return (
         <OpParamRefFrame label={label}>
@@ -436,6 +462,8 @@ export function OperationParameterReference({
           <path className="gear-reference__guide" d="M6 17h46" />
           <path className="gear-reference__accent" d="M13 27l17-21M22 27l17-21M31 27l17-21" />
           <path className="gear-reference__accent-fill" d="M46 8l-1.6-2.6 3.1-.5z" />
+          {/* The angle, measured from the X axis. */}
+          <path className="gear-reference__accent" d="M38.1 17A8 8 0 0 0 35.1 10.8" />
         </OpParamRefFrame>
       )
 
@@ -490,31 +518,126 @@ export function OperationParameterReference({
       )
     }
 
+    // A pocket in section; the finish pass runs just inside the face it cleans.
     case 'finishWalls':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__guide" d="M6 6h46v22H6z" />
-          <path className="gear-reference__guide" d="M9 17h40" />
-          <path className="gear-reference__accent" d="M6 6v22M52 6v22" />
+          <path className="gear-reference__outline" d="M6 7h10v20h26V7h10" />
+          <path className="gear-reference__accent" d="M19 8.5v16M39 8.5v16" />
         </OpParamRefFrame>
       )
 
     case 'finishFloor':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__guide" d="M6 6h46v22H6z" />
-          <path className="gear-reference__guide" d="M6 9v16M52 9v16" />
-          <path className="gear-reference__accent" d="M8 28h44" />
+          <path className="gear-reference__outline" d="M6 7h10v20h26V7h10" />
+          <path className="gear-reference__accent" d="M19 24h20" />
         </OpParamRefFrame>
       )
 
-    case 'stockRadial':
+    case 'stockRadial': {
+      // Same field, same name: on a rotary operation the wall to clear away is
+      // the bar's circumference, so the leave is measured across a radial
+      // cross-section instead of between pocket walls (#1112 decision 7.10).
+      // On Around those walls are radial rather than the pocket's upright ones,
+      // and the pocket's picture says so (decision 8.16).
+      if (variant === 'rotary') {
+        return (
+          <OpParamRefFrame label={label} note={camT('cam.paramRef.stockRadialNote')}>
+            <path className="gear-reference__guide" d="M29 17m-12 0a12 11 0 1 0 24 0a12 11 0 1 0-24 0" />
+            <path className="gear-reference__outline" d="M29 17m-7 0a7 6 0 1 0 14 0a7 6 0 1 0-14 0" />
+            <path className="gear-reference__accent" d="M29 10.9v-4.5" />
+            <path className="gear-reference__accent-fill" d="M29 6l-1.7 2.5h3.4zM29 11l-1.7-2.5h3.4z" />
+          </OpParamRefFrame>
+        )
+      }
+      // A pocket wrapped onto the Around sheet keeps its wall picture, but the
+      // sheet cannot show the walls turning toward the axis, so the limit note
+      // rides with it (decision 8.16). A Top or Bottom pocket gets neither.
       return (
-        <OpParamRefFrame label={label}>
+        <OpParamRefFrame
+          label={label}
+          note={variant === 'around' ? camT('cam.paramRef.stockRadialNote') : undefined}
+        >
           <path className="gear-reference__guide" d="M8 7h42v20H8z" />
           <path className="gear-reference__outline" d="M14 12h24v10H14z" />
           <path className="gear-reference__accent" d="M39 17h10" />
           <path className="gear-reference__accent-fill" d="M38 17l3-2.2v4.4zM50 17l-3-2.2v4.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'passes': {
+      // Rotary rough/finish runs one of two ways (#1045). Along: the pass runs
+      // the length of the bar, then the cutter steps around it. Around: the bar
+      // turns under the cutter at one position, then the cutter steps along
+      // (#1112 decision 7.9). The bar is the side view every rotary picture
+      // uses; the two variants share it so the difference reads as the motion.
+      // `data-arrow` names the signature arrow of each picture so a test can
+      // assert the along picture is longitudinal and the around one rotational
+      // instead of merely accepting two different drawings.
+      const bar = <path className="gear-reference__outline" d="M6 9h46v16H6z" />
+      const centre = <path className="gear-reference__guide" d="M6 17h46" />
+      if (variant === 'around') {
+        return (
+          <OpParamRefFrame label={label}>
+            {bar}
+            {centre}
+            <path className="gear-reference__guide" d="M31 10.5v13M43 10.5v13" />
+            <path
+              className="gear-reference__accent"
+              data-arrow="around-bar"
+              d="M18 11.5c3.7 0 6.5 2.5 6.5 5.5s-2.8 5.5-6.5 5.5"
+            />
+            <path className="gear-reference__accent-fill" d="M16 22.5l3-2.3v4.6z" />
+            <path className="gear-reference__accent" d="M27 27.5h11" />
+            <path className="gear-reference__accent-fill" d="M40 27.5l-3.4-2.3v4.6z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          {bar}
+          {centre}
+          <path className="gear-reference__guide" d="M10 12.5h36M10 21.5h36" />
+          <path className="gear-reference__accent" data-arrow="along-bar" d="M12 17h24" />
+          <path className="gear-reference__accent-fill" d="M38 17l-3.4-2.3v4.6z" />
+          <path className="gear-reference__accent" d="M47 12.5v9" />
+          <path className="gear-reference__accent-fill" d="M47 10.5l-2.2 3h4.4zM47 23.5l-2.2-3h4.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'rotaryChuckSupport':
+      // The bar side view the Passes picture uses, held in the chuck jaws on
+      // the left. The finished shape (guide) stops short of the jaws; the
+      // dimension is the full-diameter length left between them.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M3 4h4v26H3z" />
+          <path className="gear-reference__outline" d="M7 6.5h6v3.5H7zM7 24h6v3.5H7z" />
+          <path className="gear-reference__outline" d="M13 10h41v14H13z" />
+          <path className="gear-reference__guide" d="M13 17h41" />
+          <path className="gear-reference__guide" d="M25 13h25v8H25z" />
+          <path className="gear-reference__guide" d="M25 3v7" />
+          <path className="gear-reference__accent" d="M15.5 5h7" />
+          <path className="gear-reference__accent-fill" d="M13 5l3.3-2.4v4.8zM25 5l-3.3-2.4v4.8z" />
+        </OpParamRefFrame>
+      )
+
+    case 'rotaryTailSupport':
+      // The mirror of the chuck end: the tailstock centre points into the
+      // right-hand end of the bar, and the dimension is the length left there.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M4 10h41v14H4z" />
+          <path className="gear-reference__guide" d="M4 17h41" />
+          <path className="gear-reference__outline" d="M45 17l5-4.5v9z" />
+          <path className="gear-reference__outline" d="M50 11h5v12h-5z" />
+          <path className="gear-reference__guide" d="M8 13h25v8H8z" />
+          <path className="gear-reference__guide" d="M33 3v7" />
+          <path className="gear-reference__accent" d="M35.5 5h7" />
+          <path className="gear-reference__accent-fill" d="M33 5l3.3-2.4v4.8zM45 5l-3.3-2.4v4.8z" />
         </OpParamRefFrame>
       )
 
@@ -638,6 +761,152 @@ export function OperationParameterReference({
           <path className="gear-reference__outline" d="M18 7l11 9v13M40 7l-11 9v13" />
           <path className="gear-reference__accent" d="M19 4h20" />
           <path className="gear-reference__accent-fill" d="M17 4l4.4-2.4v4.8zM41 4l-4.4-2.4v4.8z" />
+        </OpParamRefFrame>
+      )
+
+    // Plasma pictures are top views of the sheet. The part or hole edge is the
+    // outline, the torch path is the accent: the kerf sits on the scrap side.
+    case 'plasmaSide': {
+      if (variant === 'inside') {
+        // A hole: the sheet around it is the part, so the path runs inside.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__guide" d="M5 4h48v26H5z" />
+            <rect className="gear-reference__outline" x="15" y="9" width="28" height="16" rx="2" />
+            <rect className="gear-reference__accent" x="18.5" y="12.5" width="21" height="9" rx="1" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'outside') {
+        return (
+          <OpParamRefFrame label={label}>
+            <rect className="gear-reference__outline" x="15" y="9" width="28" height="16" rx="2" />
+            <rect className="gear-reference__accent" x="11.5" y="5.5" width="35" height="23" rx="4" />
+          </OpParamRefFrame>
+        )
+      }
+      // Automatic: outside the part's outline and inside its hole at once.
+      return (
+        <OpParamRefFrame label={label}>
+          <rect className="gear-reference__outline" x="10" y="7" width="38" height="20" rx="2" />
+          <rect className="gear-reference__accent" x="6.5" y="3.5" width="45" height="27" rx="4" />
+          <rect className="gear-reference__outline" x="22" y="12" width="14" height="10" rx="1.5" />
+          <rect className="gear-reference__accent" x="25.5" y="15.5" width="7" height="3" rx="0.5" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'plasmaReverse': {
+      // Standard consumables cut an outline clockwise (viewed from above);
+      // reversing runs it the other way. One arrowhead per long side.
+      const reversed = variant === 'on'
+      return (
+        <OpParamRefFrame label={label}>
+          <rect className="gear-reference__outline" x="15" y="10" width="28" height="14" rx="2" />
+          <rect className="gear-reference__accent" x="11" y="6" width="36" height="22" rx="4" />
+          <path
+            className="gear-reference__accent-fill"
+            data-arrow={reversed ? 'ccw' : 'cw'}
+            d={reversed ? 'M26 6l4.5-2.7v5.4zM32 28l-4.5-2.7v5.4z' : 'M32 6l-4.5-2.7v5.4zM26 28l4.5-2.7v5.4z'}
+          />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'plasmaLeadIn': {
+      // The pierce (dot) happens in the scrap, and the lead carries the torch
+      // onto the cut path (guide) along the part edge.
+      const edge = (
+        <>
+          <path className="gear-reference__outline" d="M6 34v-5.5a2.5 2.5 0 0 1 2.5-2.5h41a2.5 2.5 0 0 1 2.5 2.5V34" />
+        </>
+      )
+      if (variant === 'arc') {
+        return (
+          <OpParamRefFrame label={label}>
+            {edge}
+            <path className="gear-reference__guide" d="M33 22h15" />
+            <circle className="gear-reference__accent-fill" cx="17" cy="6" r="2.3" />
+            <path className="gear-reference__accent" d="M17 6c0 9 5.5 16 13 16" />
+            <path className="gear-reference__accent-fill" d="M34 22l-4.5-2.7v5.4z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          {edge}
+          <path className="gear-reference__guide" d="M24 22h24" />
+          <circle className="gear-reference__accent-fill" cx="24" cy="5" r="2.3" />
+          <path className="gear-reference__accent" d="M24 7v11" />
+          <path className="gear-reference__accent-fill" d="M24 22l-2.7-4.5h5.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'plasmaLeadInLength':
+      // Measured from the pierce to the cut path. On an arc lead the same
+      // value is the arc's radius, which spans the same gap.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 34v-5.5a2.5 2.5 0 0 1 2.5-2.5h41a2.5 2.5 0 0 1 2.5 2.5V34" />
+          <path className="gear-reference__guide" d="M30 22h18" />
+          <circle className="gear-reference__accent-fill" cx="30" cy="5" r="2.3" />
+          <path className="gear-reference__guide" d="M30 7v15" />
+          <path className="gear-reference__guide" d="M14 5h13M14 22h13" />
+          <path className="gear-reference__accent" d="M18 8v11" />
+          <path className="gear-reference__accent-fill" d="M18 5l-2.6 3.6h5.2zM18 22l-2.6-3.6h5.2z" />
+        </OpParamRefFrame>
+      )
+
+    case 'plasmaLeadOut': {
+      // The torch leaves the cut path (guide) and runs off into the scrap,
+      // where the arc goes out — no pierce on this end.
+      const edge = (
+        <>
+          <path className="gear-reference__outline" d="M6 34v-5.5a2.5 2.5 0 0 1 2.5-2.5h41a2.5 2.5 0 0 1 2.5 2.5V34" />
+        </>
+      )
+      if (variant === 'arc') {
+        return (
+          <OpParamRefFrame label={label}>
+            {edge}
+            <path className="gear-reference__guide" d="M10 22h17" />
+            <path className="gear-reference__accent" d="M27 22c7.5 0 13-7 13-14" />
+            <path className="gear-reference__accent-fill" d="M40 4l-2.7 4.5h5.4z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          {edge}
+          <path className="gear-reference__guide" d="M10 22h24" />
+          <path className="gear-reference__accent" d="M34 22V9" />
+          <path className="gear-reference__accent-fill" d="M34 5l-2.7 4.5h5.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'plasmaLeadOutLength':
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 34v-5.5a2.5 2.5 0 0 1 2.5-2.5h41a2.5 2.5 0 0 1 2.5 2.5V34" />
+          <path className="gear-reference__guide" d="M10 22h18" />
+          <path className="gear-reference__guide" d="M28 22V5" />
+          <path className="gear-reference__guide" d="M31 5h13M31 22h13" />
+          <path className="gear-reference__accent" d="M40 8v11" />
+          <path className="gear-reference__accent-fill" d="M40 5l-2.6 3.6h5.2zM40 22l-2.6-3.6h5.2z" />
+        </OpParamRefFrame>
+      )
+
+    case 'plasmaStart':
+      // Where on the closed contour the cut begins, and the way it sets off.
+      return (
+        <OpParamRefFrame label={label}>
+          <rect className="gear-reference__outline" x="9" y="9" width="40" height="18" rx="3" />
+          <path className="gear-reference__guide" d="M22 3v12M16 9h12" />
+          <circle className="gear-reference__accent-fill" cx="22" cy="9" r="2.6" />
+          <path className="gear-reference__accent" d="M27 9h8" />
+          <path className="gear-reference__accent-fill" d="M39 9l-4.5-2.7v5.4z" />
         </OpParamRefFrame>
       )
   }

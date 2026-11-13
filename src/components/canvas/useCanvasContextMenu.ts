@@ -24,7 +24,8 @@ import type {
   SelectionState,
 } from '../../store/types'
 import type { Project } from '../../types/project'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { aroundModelBandAt, aroundSheet } from './aroundSheet'
 import {
   findHitClampId,
   findHitTabId,
@@ -32,7 +33,7 @@ import {
 } from './hitTest'
 import {
   canvasToWorld,
-  computeViewTransform,
+  computeSketchViewTransform,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState } from './viewTransform'
 
@@ -101,9 +102,11 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     const point: CanvasPoint = { cx: clientX - rect.left, cy: clientY - rect.top }
     const project = projectRef.current
     const selection = selectionRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
-    const hitClampId = findHitClampId(world, project.clamps)
+    // Clamp bands and tabs are not edit targets on the sheet (issue #395).
+    const sheet = aroundSheet(project)
+    const hitClampId = sheet ? null : findHitClampId(world, project.clamps)
     if (hitClampId) {
       if (!selection.selectedClampIds.includes(hitClampId)) {
         selectClamp(hitClampId)
@@ -112,7 +115,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
       return
     }
 
-    const hitTabId = findHitTabId(world, project.tabs)
+    const hitTabId = sheet ? null : findHitTabId(world, project.tabs)
     if (hitTabId) {
       if (!selection.selectedTabIds.includes(hitTabId)) {
         selectTab(hitTabId)
@@ -124,10 +127,18 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     // Resolve the hit exactly like an ordinary click: a uniquely indicated
     // outline wins, an interior click takes the topmost (hover-highlighted)
     // feature. Coincident outlines cannot show the picker here, so fall back
-    // to the topmost candidate.
-    const featureHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
-    if (featureHit.kind === 'none') return
-    const hitId = featureHit.kind === 'direct' ? featureHit.featureId : featureHit.candidateIds[0]
+    // to the topmost candidate. Around hit-tests models by their bands only
+    // (issue #1112 I2), never by a flat footprint that is not drawn there.
+    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project).filter((feature) => !sheet || feature.kind !== 'stl'), vt, sheet)
+    // A model inside the bar is drawn as a band on the sheet, so right-clicking
+    // the band opens the model's own menu, as clicking the model's row does
+    // (issue #1112 I).
+    const hitId = featureHit.kind === 'direct'
+      ? featureHit.featureId
+      : featureHit.kind === 'ambiguous'
+        ? featureHit.candidateIds[0]
+        : sheet ? aroundModelBandAt(sheet, world) : null
+    if (hitId === null) return
 
     if (!selection.selectedFeatureIds.includes(hitId)) {
       selectFeature(hitId)

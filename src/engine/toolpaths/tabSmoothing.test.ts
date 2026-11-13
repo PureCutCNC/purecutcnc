@@ -33,6 +33,7 @@ import { applyEdgeRouteTabs, applyTabsToEdgeRoute } from './tabs'
 import { optimizeLinearMoves } from './linearMoveOptimization'
 import { smoothTabZAt } from './tabProfile'
 import type { ToolpathMove, ToolpathResult } from './types'
+import { deepStrictEqual } from 'node:assert/strict'
 
 // ── Harness ──────────────────────────────────────────────────────────
 
@@ -264,6 +265,74 @@ test('the pass still reaches full depth outside the tab', () => {
   assert(
     out.warnings.every((warning) => warning.code !== 'tabsBlockFinalDepth'),
     'a single smooth tab does not block the final pass',
+  )
+})
+
+// ── The rotary angle through a tab split (issue #393) ────────────────
+
+/**
+ * The output of the same angle-free single cut across the same rectangular tab
+ * on this branch before the rotary work — captured verbatim, so the rule that
+ * an angle-free path is untouched is a byte-for-byte statement, not a sampled
+ * one. The smooth variant is the same cut across the smooth tab, held as the
+ * exact JSON because it has thirty vertices.
+ */
+const ANGLE_FREE_RECT: ToolpathMove[] = [
+  { kind: 'cut', from: { x: 0, y: 50, z: 0 }, to: { x: 40, y: 50, z: 0 } },
+  { kind: 'lead_out', from: { x: 40, y: 50, z: 0 }, to: { x: 40, y: 50, z: 3 } },
+  { kind: 'cut', from: { x: 40, y: 50, z: 3 }, to: { x: 60, y: 50, z: 3 } },
+  { kind: 'lead_in', from: { x: 60, y: 50, z: 3 }, to: { x: 60, y: 50, z: 0 } },
+  { kind: 'cut', from: { x: 60, y: 50, z: 0 }, to: { x: 100, y: 50, z: 0 } },
+]
+const ANGLE_FREE_SMOOTH = JSON.parse(
+  '[{"kind":"cut","from":{"x":0,"y":50,"z":0},"to":{"x":40,"y":50,"z":0}},{"kind":"cut","from":{"x":40,"y":50,"z":0},"to":{"x":40.714285700000005,"y":50,"z":0.037608130229257686}},{"kind":"cut","from":{"x":40.714285700000005,"y":50,"z":0.037608130229257686},"to":{"x":41.4285714,"y":50,"z":0.1485466923045749}},{"kind":"cut","from":{"x":41.4285714,"y":50,"z":0.1485466923045749},"to":{"x":42.1428571,"y":50,"z":0.327252763705985}},{"kind":"cut","from":{"x":42.1428571,"y":50,"z":0.327252763705985},"to":{"x":42.8571429,"y":50,"z":0.5647653130017312}},{"kind":"cut","from":{"x":42.8571429,"y":50,"z":0.5647653130017312},"to":{"x":43.5714286,"y":50,"z":0.8491744034542781}},{"kind":"cut","from":{"x":43.5714286,"y":50,"z":0.8491744034542781},"to":{"x":44.2857143,"y":50,"z":1.1662186056287287}},{"kind":"cut","from":{"x":44.2857143,"y":50,"z":1.1662186056287287},"to":{"x":45,"y":50,"z":1.4999999999999998}},{"kind":"cut","from":{"x":45,"y":50,"z":1.4999999999999998},"to":{"x":45.714285700000005,"y":50,"z":1.8337813943712742}},{"kind":"cut","from":{"x":45.714285700000005,"y":50,"z":1.8337813943712742},"to":{"x":46.4285714,"y":50,"z":2.1508255965457215}},{"kind":"cut","from":{"x":46.4285714,"y":50,"z":2.1508255965457215},"to":{"x":47.1428571,"y":50,"z":2.4352346869982684}},{"kind":"cut","from":{"x":47.1428571,"y":50,"z":2.4352346869982684},"to":{"x":47.8571429,"y":50,"z":2.672747236294015}},{"kind":"cut","from":{"x":47.8571429,"y":50,"z":2.672747236294015},"to":{"x":48.5714286,"y":50,"z":2.851453307695425}},{"kind":"cut","from":{"x":48.5714286,"y":50,"z":2.851453307695425},"to":{"x":49.2857143,"y":50,"z":2.9623918697707428}},{"kind":"cut","from":{"x":49.2857143,"y":50,"z":2.9623918697707428},"to":{"x":50,"y":50,"z":3}},{"kind":"cut","from":{"x":50,"y":50,"z":3},"to":{"x":50.7142857,"y":50,"z":2.9623918697707428}},{"kind":"cut","from":{"x":50.7142857,"y":50,"z":2.9623918697707428},"to":{"x":51.4285714,"y":50,"z":2.8514533076954254}},{"kind":"cut","from":{"x":51.4285714,"y":50,"z":2.8514533076954254},"to":{"x":52.14285709999999,"y":50,"z":2.6727472362940174}},{"kind":"cut","from":{"x":52.14285709999999,"y":50,"z":2.6727472362940174},"to":{"x":52.8571429,"y":50,"z":2.4352346869982684}},{"kind":"cut","from":{"x":52.8571429,"y":50,"z":2.4352346869982684},"to":{"x":53.571428600000004,"y":50,"z":2.1508255965457197}},{"kind":"cut","from":{"x":53.571428600000004,"y":50,"z":2.1508255965457197},"to":{"x":54.285714299999995,"y":50,"z":1.8337813943712753}},{"kind":"cut","from":{"x":54.285714299999995,"y":50,"z":1.8337813943712753},"to":{"x":55.00000000000001,"y":50,"z":1.4999999999999978}},{"kind":"cut","from":{"x":55.00000000000001,"y":50,"z":1.4999999999999978},"to":{"x":55.7142857,"y":50,"z":1.1662186056287296}},{"kind":"cut","from":{"x":55.7142857,"y":50,"z":1.1662186056287296},"to":{"x":56.4285714,"y":50,"z":0.8491744034542784}},{"kind":"cut","from":{"x":56.4285714,"y":50,"z":0.8491744034542784},"to":{"x":57.1428571,"y":50,"z":0.5647653130017318}},{"kind":"cut","from":{"x":57.1428571,"y":50,"z":0.5647653130017318},"to":{"x":57.8571429,"y":50,"z":0.327252763705985}},{"kind":"cut","from":{"x":57.8571429,"y":50,"z":0.327252763705985},"to":{"x":58.5714286,"y":50,"z":0.14854669230457507}},{"kind":"cut","from":{"x":58.5714286,"y":50,"z":0.14854669230457507},"to":{"x":59.2857143,"y":50,"z":0.03760813022925702}},{"kind":"cut","from":{"x":59.2857143,"y":50,"z":0.03760813022925702},"to":{"x":60,"y":50,"z":0}},{"kind":"cut","from":{"x":60,"y":50,"z":0},"to":{"x":100,"y":50,"z":0}}]',
+) as ToolpathMove[]
+
+/** One turning cut from x=0/A0 to x=100/A90, straight across the fixture tab. */
+function turningCut(): ToolpathMove[] {
+  return [{ kind: 'cut', from: { x: 0, y: 50, z: CUT_Z, a: 0 }, to: { x: 100, y: 50, z: CUT_Z, a: 90 } }]
+}
+
+/** Every split point's angle is its own linear position along the 0..100 cut. */
+function assertAnglesTrackTheCut(moves: ToolpathMove[]): void {
+  for (const move of moves) {
+    for (const point of [move.from, move.to]) {
+      assert(point.a !== undefined, `every split point keeps an angle (x=${point.x})`)
+      assertClose(point.a, (90 * point.x) / 100, 1e-9, `the angle tracks the cut at x=${point.x}`)
+    }
+  }
+}
+
+test('a turning cut across a rectangular tab keeps every angle', () => {
+  const project = projectWithTabs([tab('tb1', 40, 40, 20, 20, 'rect')])
+  const out = applyTabsToEdgeRoute(project, operation(), result(turningCut()))
+
+  assertAnglesTrackTheCut(out.moves)
+  const last = out.moves[out.moves.length - 1]
+  assertClose(last.to.a as number, 90, 1e-9, 'the split ends at the target angle')
+  // The vertical lifts over the tab stand on their own split point's angle.
+  for (const move of verticalTransitions(out.moves)) {
+    assert(move.from.a === move.to.a, `a vertical move does not turn (x=${move.from.x})`)
+  }
+})
+
+test('a turning cut across a smooth tab keeps every angle', () => {
+  const project = projectWithTabs([tab('tb1', 40, 40, 20, 20, 'smooth')])
+  const out = applyTabsToEdgeRoute(project, operation(), result(turningCut()))
+
+  assertAnglesTrackTheCut(out.moves)
+  const last = out.moves[out.moves.length - 1]
+  assertClose(last.to.a as number, 90, 1e-9, 'the split ends at the target angle')
+})
+
+test('the same cuts with no angle are exactly the pre-rotary output', () => {
+  const rect = applyTabsToEdgeRoute(projectWithTabs([tab('tb1', 40, 40, 20, 20, 'rect')]), operation(), result(straightPass(1)))
+  deepStrictEqual(rect.moves, ANGLE_FREE_RECT)
+  const smooth = applyTabsToEdgeRoute(projectWithTabs([tab('tb1', 40, 40, 20, 20, 'smooth')]), operation(), result(straightPass(1)))
+  deepStrictEqual(smooth.moves, ANGLE_FREE_SMOOTH)
+  assert(
+    [...rect.moves, ...smooth.moves].every((move) => !('a' in move.from) && !('a' in move.to)),
+    'an angle-free split gains no angle key',
   )
 })
 

@@ -1,0 +1,33 @@
+(wait after the material select in the wrong place)
+(PureCutCNC NEGATIVE fixture for the QtPlasmaC simulator check, issue #954.)
+(The check MUST reject this program. It is single-outline.ngc with one defect:)
+(the M66 wait comes after the feed word, so the feed rate is still read too early.)
+
+(Manual: Preamble and Postamble Codes)
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+(Manual: Paused Motion)
+M52 P1
+(Manual: Automatic Material Handling - select, wait, then take the feed rate)
+(from the material; the three codes must come in this order)
+M190 P1
+(DEFECT: the feed rate is read before the wait instead of after it)
+F#<_hal[plasmac.cut-feed-rate]>
+M66 P3 L3 Q1
+
+(100 x 60 rectangle, cut clockwise, pierced 5 mm outside the part)
+G0 X15 Y50
+(Manual: Mandatory Codes - begin cut)
+M3 $0 S1
+G1 X20 Y50
+G1 X20 Y80
+G1 X120 Y80
+G1 X120 Y20
+G1 X20 Y20
+G1 X20 Y50
+(Manual: Mandatory Codes - end cut)
+M5 $0
+
+(Manual: Preamble and Postamble Codes)
+G0 X0 Y0
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+M2

@@ -51,12 +51,15 @@
 }
 
 /* Top row: name + template (left) beside the template preview (right);
-   the example projects span the full width underneath. */
+   the example projects span the full width underneath. The left column owns
+   the choices (three type tiles, the name, the four templates) and takes the
+   larger share; the preview is a readout, so it gets the smaller one
+   (issue #1102 slice K). */
 .dialog--new-project .dialog-body {
-  padding: 16px;
+  padding: 14px;
   column-gap: 18px;
-  row-gap: 16px;
-  grid-template-columns: 300px 1fr;
+  row-gap: 14px;
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
   grid-template-areas:
     "form preview"
     "examples examples";
@@ -64,21 +67,35 @@
 
 .dialog--new-project .dialog-section {
   grid-area: form;
-  gap: 12px;
+  gap: 8px;
 }
 
 .dialog--new-project .dialog-preview-container {
   grid-area: preview;
+  /* The preview is sized by its own rows: a template carries only its units,
+     stock and three counts, so stretching the card down the column showed
+     empty space without adding anything (issue #1102 slice K). */
+  grid-template-rows: auto auto;
+  align-content: start;
 }
 
 .dialog--new-project .new-project-examples {
   grid-area: examples;
   border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: 12px;
+}
+
+/* The example cards keep their layout, but their artwork is a banner in this
+   dialog: three cards across at 4:3 made the thumbnail 154 px tall on its own,
+   and the examples row is what pushed the dialog past 90vh at 1280×800
+   (issue #1102 slice K). The shared onboarding overlay keeps the 4:3 card. */
+.dialog--new-project .example-project-card__thumb {
+  height: 68px;
+  aspect-ratio: auto;
 }
 
 .dialog--new-project .dialog-section-group {
-  gap: 6px;
+  gap: 4px;
 }
 
 .dialog--new-project .dialog-section-title {
@@ -90,7 +107,75 @@
 }
 
 .dialog--new-project .project-template-card {
-  padding: 9px 12px;
+  padding: 8px 12px;
+}
+
+/* The four templates read as a 2×2 grid (issue #1102 slice K): Blank metric |
+   Blank imperial / Current project | Template file. The cards keep the same
+   look, handlers and active state; two rows instead of four stacked cards is
+   what lets the dialog fit without scrolling. */
+.dialog--new-project .project-template-list--template {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* The project type is the dialog's first choice and reads as three tiles in
+   one row (issue #1102, proposal 16). The tiles take the template card look
+   with tighter side padding; the meta line wraps inside its tile and the row
+   keeps a shared height. */
+.dialog--new-project .project-template-list--project-type {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-list--project-type .project-template-card {
+  min-width: 0;
+  padding: 8px 9px;
+}
+
+/* A template brings its own project type (issue #1112, item 24), so the tiles
+   show the type that will be used and stop taking clicks. The checked tile
+   keeps its full contrast; the two the template does not use dim. */
+.dialog--new-project .project-template-list--project-type .project-template-card:disabled {
+  cursor: default;
+}
+
+.dialog--new-project .project-template-list--project-type .project-template-card:disabled:not(.project-template-card--active) {
+  opacity: 0.5;
+}
+
+.dialog--new-project .new-project-type-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* Below the tablet target the three tiles stack, one per row, rather than
+   squeezing the labels and their meta lines into a narrow column. */
+@media (max-width: 1023px) {
+  .dialog--new-project .project-template-list--project-type {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog--new-project .project-template-list--project-type .project-template-card {
+    padding: 9px 12px;
+  }
+}
+
+/* Below the tablet target the two columns stack (form, then preview, then the
+   examples) instead of splitting a 600 px dialog three-to-two and leaving the
+   stock fields in the preview too little room (issue #1102 slice K). */
+@media (max-width: 720px) {
+  .dialog--new-project .dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+    /* max-content rows: an auto row is sized before the stacked preview has
+       an intrinsic height and collapses the preview to nothing. */
+    grid-template-rows: max-content max-content max-content;
+    grid-template-areas:
+      "form"
+      "preview"
+      "examples";
+  }
 }
 
 .dialog--import {
@@ -929,6 +1014,7 @@
    fully-shrunk layout is too tall, the left column scrolls as a fallback. */
 .dialog-body--gcode-export {
   overflow: hidden;
+  grid-template-columns: 320px minmax(0, 1fr);
   /* Pin the single row to the body height when the 90vh dialog cap engages,
      so the columns shrink/scroll internally instead of growing past it. */
   grid-template-rows: minmax(0, 1fr);
@@ -966,11 +1052,17 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  min-width: 0;
 }
 
 .dialog-body--gcode-export .dialog-preview {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.dialog-body--gcode-export .export-error,
+.dialog-body--gcode-export .export-warning {
+  overflow-wrap: anywhere;
 }
 
 /* Long warning lists scroll too, instead of pushing the layout around. */
@@ -1009,6 +1101,79 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-subtle);
+}
+
+/* Per-setup export (issue #946): the checklist is grouped by setup, and each
+   setup's program is listed with the file it will be written to. */
+.export-setup-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.export-setup-heading:not(:first-child) {
+  margin-top: 4px;
+}
+
+.export-setup-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.export-program-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.export-program {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.export-program--active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.export-program-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.export-program-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.export-program-file {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .export-option--disabled {
@@ -1102,6 +1267,12 @@
   gap: 8px;
 }
 
+/* A rotary blank has four fields — shape, size, length, axis (issue #1046). */
+.new-project-stock-dimensions--bar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-basis: 300px;
+}
+
 .new-project-stock-dimensions .properties-field {
   grid-template-columns: 1fr;
   align-items: stretch;
@@ -1119,7 +1290,7 @@
 
 .project-template-preview__content {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .project-template-preview__title {
@@ -1138,6 +1309,19 @@
 
 .project-template-preview__row--stock {
   align-items: start;
+}
+
+/* In the narrower preview column (issue #1102 slice K) the "Stock" label sits
+ * above its fields, so the width / height / thickness inputs get the whole
+ * column instead of sharing it with the label. */
+.dialog--new-project .project-template-preview__row--stock {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.dialog--new-project .project-template-preview__row--stock .new-project-stock-dimensions {
+  flex: 1 1 auto;
 }
 
 .project-template-preview__row strong {
@@ -1526,6 +1710,49 @@
   touch-action: none;
 }
 
+/* 3D wrapped view (issue #1179): the same frame as the SVG wrap, holding the
+   three.js canvas the component appends. */
+.motion-debug__canvas-wrap {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line-strong);
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 420px;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+.motion-debug__canvas-wrap:active {
+  cursor: grabbing;
+}
+
+.motion-debug__view-toggle {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.motion-debug__angle-readout {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 14px;
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.motion-debug__angle-pointer {
+  color: var(--text);
+}
+
 .motion-debug__sidebar {
   display: flex;
   flex-direction: column;
@@ -1539,6 +1766,11 @@
   letter-spacing: 0.04em;
   color: var(--text-dim);
   margin: 0 0 4px;
+}
+
+.motion-debug__note {
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
 .motion-debug__layers {
@@ -1629,7 +1861,9 @@
 }
 
 [data-shell-mode="tablet"] .motion-debug__svg-wrap,
-[data-shell-mode="tablet-compact"] .motion-debug__svg-wrap {
+[data-shell-mode="tablet-compact"] .motion-debug__svg-wrap,
+[data-shell-mode="tablet"] .motion-debug__canvas-wrap,
+[data-shell-mode="tablet-compact"] .motion-debug__canvas-wrap {
   min-height: 360px;
 }
 
@@ -1988,6 +2222,16 @@
   font-weight: 500;
 }
 
+/* Checkbox row: box and text on one line, left-aligned with the fields. */
+.machine-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .machine-editor-input {
   background: var(--surface-panel);
   border: 1px solid var(--line-strong);
@@ -2049,6 +2293,14 @@
   border-color: var(--accent);
 }
 
+/* Shown instead of the G-code fields for a machine that does not export G-code. */
+.machine-editor-note {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
 .machine-editor-error {
   margin-top: 8px;
   padding: 8px 12px;
@@ -2104,9 +2356,28 @@
 
 .dialog-body--machine-manager {
   grid-template-columns: 240px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* The library's own state (unreadable envelope, repeated write failure)
+   spans both columns so it cannot be mistaken for a machine's property. */
+.machine-manager-library-notices {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.machine-manager-library-notices .machine-editor-error,
+.machine-manager-library-notices .machine-manager-hint {
+  margin: 0;
 }
 
 /* Left: machine list */
@@ -2120,6 +2391,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   width: 100%;
   padding: 10px 14px;
   border: none;
@@ -2147,9 +2419,55 @@
 }
 
 .machine-manager-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The row's status badges and kind/rotary icons (#1153), kept on the name's line. */
+.machine-manager-item-marks {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.machine-manager-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--surface-hover);
+  color: var(--text-dim);
+}
+
+.machine-manager-mark--rotary {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* What the row icons mean, pinned under the list as it scrolls. */
+.machine-manager-legend {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev-1);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.machine-manager-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* Right: detail + actions */
@@ -2193,6 +2511,7 @@
   color: var(--accent);
 }
 
+.machine-manager-badge--kind,
 .machine-manager-badge--custom {
   background: var(--surface-hover);
   color: var(--text-dim);
@@ -2213,6 +2532,12 @@
 .machine-manager-badge--missing {
   background: color-mix(in srgb, var(--text-dim) 16%, transparent);
   color: var(--text-dim);
+}
+
+/* The machine still breaks a template rule: export is blocked. */
+.machine-manager-badge--invalid {
+  background: color-mix(in srgb, var(--danger-text) 16%, transparent);
+  color: var(--danger-text);
 }
 
 /* Group headings in the library list */
@@ -2249,6 +2574,88 @@
 .machine-manager-comparison .machine-manager-hint {
   margin: 0;
   word-break: break-word;
+}
+
+/* ── Machine template diagnostics (#1119) ─────────────────── */
+
+.machine-manager-diagnostics {
+  border: 1px solid color-mix(in srgb, var(--danger-text) 40%, transparent);
+  background: color-mix(in srgb, var(--danger-text) 7%, transparent);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.machine-manager-diagnostics strong {
+  display: block;
+  color: var(--danger-text);
+  margin-bottom: 4px;
+}
+
+.machine-manager-diagnostics .machine-manager-hint {
+  margin: 0 0 6px;
+}
+
+.machine-diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.machine-diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-subtle) 70%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.machine-diagnostic-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.machine-diagnostic-field {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.machine-diagnostic-rule {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.machine-diagnostic-text {
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-hover) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.machine-diagnostic-word {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.machine-editor-diagnostics .machine-editor-note {
+  margin: 0 0 6px;
 }
 
 /* ── Non-blocking machine-update notice ─────────────────────── */
@@ -2415,7 +2822,18 @@
 
   .dialog-body--machine-manager {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
+  }
+
+  /* Larger touch-readable diagnostic rows on the tablet layout. */
+  .machine-diagnostic {
+    font-size: 13px;
+  }
+
+  .machine-diagnostic-field,
+  .machine-diagnostic-text,
+  .machine-diagnostic-word {
+    font-size: 12.5px;
   }
 
   .machine-manager-list {
@@ -3303,3 +3721,10 @@
     height: 40px;
   }
 }
+
+/* The rotary commands sit under the drawing tools in the vertical creation
+   rail, with a little air so the two commands do not read as shapes. */
+.toolbar--creation.toolbar--vertical .toolbar-group--rotary {
+  margin-top: 6px;
+}
+

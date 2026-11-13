@@ -23,6 +23,7 @@ import {
   profilePathLength,
   type FeatureDistributionSpec,
 } from '../../sketch/featureDistribution'
+import { aroundSheetAuthoringRefused, faceAngles, faceOffsets, featureOperation } from '../helpers/activeFace'
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
@@ -46,6 +47,21 @@ export type FeatureDistributionSlice = Pick<
 function resolvedFeatures(project: Project, ids: string[]): ResolvedSketchFeature[] | null {
   const features = ids.map((id) => resolveFeatureInstance(project, id))
   return features.every((feature): feature is ResolvedSketchFeature => feature !== null) ? features : null
+}
+
+/**
+ * A new radial sweep starts as a positive turn, and a new grid steps the
+ * positive way, on the face being drawn on (issue #945): the spec keeps both
+ * in stock space, where a Bottom setup's turns and one of its axes run the
+ * other way.
+ */
+function faceLocalDefaults(spec: FeatureDistributionSpec, project: Project): FeatureDistributionSpec {
+  if (spec.mode === 'radial') return { ...spec, sweepDegrees: faceAngles(project).turn(spec.sweepDegrees) }
+  if (spec.mode === 'grid') {
+    const offsets = faceOffsets(project)
+    return { ...spec, spacingX: offsets.x(spec.spacingX), spacingY: offsets.y(spec.spacingY) }
+  }
+  return spec
 }
 
 export function createFeatureDistributionSlice(
@@ -75,7 +91,7 @@ export function createFeatureDistributionSlice(
           guideId: null,
           pickTarget: null,
           radialCenterPicked: false,
-          spec: createFeatureDistributionSpec(mode, s.project.meta.units, sourcePivot),
+          spec: faceLocalDefaults(createFeatureDistributionSpec(mode, s.project.meta.units, sourcePivot), s.project),
           session: nextPlacementSession(),
         },
         selection: {
@@ -181,6 +197,16 @@ export function createFeatureDistributionSlice(
           s.project.featureDefinitions,
           s.project.meta.copyMode,
         ).map((feature) => ({ ...feature, folderId: null }))
+        // A distribution copy spread its source row, so it keeps that source's
+        // authoring face (`copyFeatures.ts`), and the copies are inserted
+        // directly. Judge the rows about to be created — never the workspace
+        // face — and refuse the whole commit, grid/radial/path and both copy
+        // modes alike, before the source placement moves, the pending request
+        // clears, or any history/selection write. Top and STL distribution is
+        // unaffected (issue #1016 C2-U1G).
+        if (created.some((feature) => aroundSheetAuthoringRefused(s.project, feature.authoringFace ?? 'top', featureOperation(s.project, feature)))) {
+          return {}
+        }
         const definitions = extractClonedDefinitions(created)
         const instances = created.map((feature) => createFeatureInstance(feature, feature.definitionId, feature.transform))
         createdIds = created.map((feature) => feature.id)

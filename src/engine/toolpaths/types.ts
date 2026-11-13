@@ -25,6 +25,9 @@ export interface ToolpathPoint {
   x: number
   y: number
   z: number
+  /** Degrees the stock is turned to, about the bar's axis, when the tool is at
+   *  this point. Absent = no rotary component (issue #393). */
+  a?: number
 }
 
 export interface ToolpathMove {
@@ -113,6 +116,10 @@ export interface NormalizedTool {
   name: string
   sourceUnits: Units
   units: Units
+  pierceHeight?: number
+  cutHeight?: number
+  pierceDelay?: number
+  qtplasmacMaterialNumber?: number
   type: Tool['type']
   diameter: number
   radius: number

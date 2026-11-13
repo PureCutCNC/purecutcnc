@@ -33,10 +33,21 @@ export type WebglStatus = 'ok' | 'unavailable' | 'context-lost'
  * WebGL2 context. three r163+ throws from the constructor in that case, and a
  * throw escaping a mount effect takes the whole app down through the error
  * boundary — including the 2D workspace, which never needed WebGL (issue #786).
+ *
+ * `stencil: true` (three defaults it to false) gives the plasma kerf bands a
+ * stencil buffer so each pixel of a band is painted at most once — without it
+ * the overlapping round-capped quads of a `LineSegments2` add up at every
+ * corner and along every segmented arc. Nothing else in the scene writes the
+ * stencil buffer, and the renderer's normal per-frame clear resets it.
  */
 export function createViewportRenderer(viewName: string): THREE.WebGLRenderer | null {
   try {
-    return new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+    return new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance',
+      stencil: true,
+    })
   } catch (error) {
     console.error(`${viewName}: WebGL2 context creation failed`, error)
     return null

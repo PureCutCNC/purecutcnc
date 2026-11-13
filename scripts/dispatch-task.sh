@@ -207,7 +207,7 @@ esac
 
 # Buffer the prompt so it can be fed to either leaf without changing its
 # contract. The provider receives it only when the leaf is invoked below.
-prompt_file="$(mktemp -t dispatch-task-prompt)"
+prompt_file="$(mktemp "${TMPDIR:-/tmp}/dispatch-task-prompt.XXXXXX")"
 worker_prompt_file="$prompt_file"
 trap 'rm -f "$prompt_file" "$worker_prompt_file"' EXIT
 cat > "$prompt_file"
@@ -235,7 +235,7 @@ prepare_worker_prompt() {
   local worktree="$1"
   [[ -n "$handoff" ]] || return 0
   validate_handoff "$worktree"
-  worker_prompt_file="$(mktemp -t dispatch-task-worker-prompt)"
+  worker_prompt_file="$(mktemp "${TMPDIR:-/tmp}/dispatch-task-worker-prompt.XXXXXX")"
   {
     printf 'Read the complete task handoff at %s in the current worktree.\n' "$handoff"
     printf 'That tracked file is the primary specification; follow it exactly.\n\n'

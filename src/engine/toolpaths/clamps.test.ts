@@ -25,6 +25,7 @@ import type { Clamp, Project } from '../../types/project'
 import { newProject } from '../../types/project'
 import type { ToolpathMove, ToolpathResult } from './types'
 import { applyClampWarnings } from './clamps'
+import { deepStrictEqual } from 'node:assert/strict'
 
 const wtext = (w: { code: string; params?: Record<string, unknown> }): string =>
   w.code === 'debug' ? String(w.params?.text ?? '') : [w.code, ...Object.values(w.params ?? {})].join(' ')
@@ -127,6 +128,65 @@ function testIndicesReferToAdjustedMovesArray() {
 }
 
 // ---------------------------------------------------------------------------
+// The rotary angle (issue #393)
+// ---------------------------------------------------------------------------
+
+/**
+ * A turning rapid across the clamp. `toZ = 2` needs the full lift-traverse-
+ * descend; `toZ = 10` (the clearance height) ends on the traverse with no
+ * descent. The lift's angles are 0 -> 90.
+ */
+function turningRapid(toZ: number): ToolpathMove {
+  return {
+    kind: 'rapid',
+    from: { x: 0, y: 15, z: 2, a: 0 },
+    to: { x: 40, y: 15, z: toZ, a: 90 },
+  }
+}
+
+/** The pre-#393 output for the same geometry with no angle anywhere. */
+const ANGLE_FREE_LIFT_WITH_DESCENT: ToolpathMove[] = [
+  { kind: 'rapid', from: { x: 0, y: 15, z: 2 }, to: { x: 0, y: 15, z: 10 } },
+  { kind: 'rapid', from: { x: 0, y: 15, z: 10 }, to: { x: 40, y: 15, z: 10 } },
+  { kind: 'rapid', from: { x: 40, y: 15, z: 10 }, to: { x: 40, y: 15, z: 2 } },
+]
+const ANGLE_FREE_LIFT_NO_DESCENT: ToolpathMove[] = [
+  { kind: 'rapid', from: { x: 0, y: 15, z: 2 }, to: { x: 0, y: 15, z: 10 } },
+  { kind: 'rapid', from: { x: 0, y: 15, z: 10 }, to: { x: 40, y: 15, z: 10 } },
+]
+
+function testTurningRapidKeepsItsAngleThroughTheLift() {
+  const project = makeProjectWithClamp()
+  const out = applyClampWarnings(project, makeResult([turningRapid(2)]))
+  assert(out.moves.length === 3, `lift + traverse + descend, got ${out.moves.length}`)
+  assert(out.moves[0].from.a === 0 && out.moves[0].to.a === 0, 'the lift stays at the start angle')
+  assert(out.moves[1].from.a === 0 && out.moves[1].to.a === 90, 'the traverse turns to the target angle')
+  assert(out.moves[2].from.a === 90 && out.moves[2].to.a === 90, 'the descent holds the target angle')
+  console.log('turning rapid keeps its angle through the lift: PASSED')
+}
+
+function testTurningRapidWithoutADescentStillReachesTheTargetAngle() {
+  const project = makeProjectWithClamp()
+  const out = applyClampWarnings(project, makeResult([turningRapid(10)]))
+  assert(out.moves.length === 2, `lift + traverse, no descent, got ${out.moves.length}`)
+  assert(out.moves[0].from.a === 0 && out.moves[0].to.a === 0, 'the lift stays at the start angle')
+  assert(out.moves[1].from.a === 0 && out.moves[1].to.a === 90, 'the traverse turns to the target angle')
+  assert(out.moves[1].to.a === 90, 'the rapid ends at the target angle')
+  console.log('turning rapid without a descent reaches the target angle: PASSED')
+}
+
+function testAngleFreeRapidLiftIsExactlyAsBefore() {
+  const withDescent = applyClampWarnings(makeProjectWithClamp(), makeResult([move('rapid', 2, 2)]))
+  deepStrictEqual(withDescent.moves, ANGLE_FREE_LIFT_WITH_DESCENT)
+  assert(withDescent.moves.every((m) => !('a' in m.from) && !('a' in m.to)), 'no point gains an angle key')
+
+  const noDescent = applyClampWarnings(makeProjectWithClamp(), makeResult([move('rapid', 2, 10)]))
+  deepStrictEqual(noDescent.moves, ANGLE_FREE_LIFT_NO_DESCENT)
+  assert(noDescent.moves.every((m) => !('a' in m.from) && !('a' in m.to)), 'no point gains an angle key')
+  console.log('angle-free rapid lift is byte-identical to before: PASSED')
+}
+
+// ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
 
@@ -136,6 +196,9 @@ try {
   testCollidingCutIsTaggedAndWarned()
   testAutoLiftedRapidIsNotTagged()
   testIndicesReferToAdjustedMovesArray()
+  testTurningRapidKeepsItsAngleThroughTheLift()
+  testTurningRapidWithoutADescentStillReachesTheTargetAngle()
+  testAngleFreeRapidLiftIsExactlyAsBefore()
   console.log('\nAll clamp tests PASSED.')
 } catch (e) {
   console.error(e)

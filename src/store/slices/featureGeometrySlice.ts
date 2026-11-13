@@ -52,6 +52,7 @@ import {
   splitArcSegment,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
+import { isGhostFeature } from '../helpers/activeFace'
 import { gcOrphanedDefinitions, makeUnique as makeUniqueHelper } from '../helpers/featureDefinitions'
 import { invertMatrix } from '../helpers/instanceTransforms'
 import {
@@ -63,6 +64,7 @@ import {
   type ResolvedProject,
   type ResolvedSketchFeature,
 } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
 import { segmentIntersections, type ResolvedSeg, type LineSeg } from '../helpers/segmentIntersection'
 import { resolveProfileSegments } from '../helpers/resolveProfileSegments'
 
@@ -121,6 +123,7 @@ export function createFeatureGeometrySlice(
       constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
       z_top: feature.z_top,
       z_bottom: feature.z_bottom,
+      authoringFace: feature.authoringFace,
       folderId: feature.folderId,
       visible: feature.visible,
       locked: feature.locked,
@@ -233,7 +236,9 @@ export function createFeatureGeometrySlice(
       const nextProject: ResolvedProject = {
         ...editableProject,
         features: editableProject.features.map((feature) => {
-          if (feature.id !== featureId || feature.locked) return feature
+          // Reached by feature id, not through the selection: a ghost is
+          // refused here as a locked feature is (issue #945).
+          if (feature.id !== featureId || feature.locked || isGhostFeature(s.project, feature)) return feature
 
           const { profile } = feature.sketch
           const nextProfile = {
@@ -799,8 +804,14 @@ export function createFeatureGeometrySlice(
     const hints: string[] = []
     set((s) => {
       const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
-      if (!subjectFeature || subjectFeature.locked) {
+      if (!subjectFeature || subjectFeature.locked || isGhostFeature(s.project, subjectFeature)) {
         hints.push('Subject feature not found or locked')
+        return {}
+      }
+      // A canned shape has no editable segments — its frame is not its geometry.
+      // Expand to features first (issue #1112).
+      if (isCannedFeature(subjectFeature)) {
+        hints.push('Canned shape cannot be trimmed — expand to features first')
         return {}
       }
 
@@ -839,6 +850,10 @@ export function createFeatureGeometrySlice(
       const cutterFeature = resolveFeatureInstance(s.project, cutterRef.featureId)
       if (!cutterFeature) {
         hints.push('Cutter feature not found')
+        return {}
+      }
+      if (isCannedFeature(cutterFeature)) {
+        hints.push('Canned shape cannot be a trim reference — expand to features first')
         return {}
       }
       const cutterResolved = resolveProfileSegments(cutterFeature.sketch.profile)
@@ -1040,8 +1055,13 @@ export function createFeatureGeometrySlice(
     const hints: string[] = []
     set((s) => {
       const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
-      if (!subjectFeature || subjectFeature.locked) {
+      if (!subjectFeature || subjectFeature.locked || isGhostFeature(s.project, subjectFeature)) {
         hints.push('Subject feature not found or locked')
+        return {}
+      }
+      // Extend is a sketch edit, which a canned shape refuses until Expanded.
+      if (isCannedFeature(subjectFeature)) {
+        hints.push('Canned shape cannot be extended — expand to features first')
         return {}
       }
 

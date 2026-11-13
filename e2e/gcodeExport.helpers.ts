@@ -65,6 +65,38 @@ export interface GcodeExportSeedOptions {
    * other case, a program that really does change tool (issue #755).
    */
   routeBOnSecondTool?: boolean
+  /**
+   * The bundled machine to select; GRBL when omitted. `shopbot` selects the
+   * one bundled machine that does not export G-code (issue #953).
+   */
+  machineId?: string
+  /**
+   * Add a plasma through-cut of the same feature on a torch tool (issue #959).
+   * `materialNumber: null` leaves the tool without a QtPlasmaC material.
+   * `plungeFeed` sets both the torch's drop feed and the operation's own: 0
+   * models an unconfigured G-code pierce, which blocks the export (#983).
+   */
+  plasmaCut?: { materialNumber: number | null; toolName?: string; plungeFeed?: number }
+}
+
+const PLASMA_TORCH = {
+  id: 'torch',
+  name: 'Plasma Torch',
+  units: 'inch',
+  type: 'plasma',
+  diameter: 0.055,
+  pierceHeight: 0.15,
+  cutHeight: 0.06,
+  pierceDelay: 0.2,
+  vBitAngle: null,
+  flutes: 0,
+  material: 'carbide',
+  defaultRpm: 0,
+  defaultFeed: 200,
+  defaultPlungeFeed: 0,
+  defaultStepdown: 0,
+  defaultStepover: 0,
+  maxCutDepth: 0,
 }
 
 /**
@@ -77,6 +109,11 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
   const now = '2026-01-01T00:00:00.000Z'
   const stockW = 180
   const stockH = 120
+  // The fixture's legacy `machineId` used to imply the project type on load.
+  // Write the type explicitly instead: a plasma machine id means a plasma
+  // project, everything else is milling (issue #1028).
+  const machineId = options.machineId ?? 'grbl'
+  const projectType = machineId === 'qtplasmac' || machineId === 'grbl-plasma' ? 'plasma' : 'milling'
 
   return JSON.stringify({
     version: '3.0',
@@ -92,7 +129,8 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
       operationClearanceZ: 0.2,
       clampClearanceXY: 0.5,
       clampClearanceZ: 0.2,
-      machineId: 'grbl',
+      projectType,
+      machineId,
     },
     grid: {
       extent: 200,
@@ -160,6 +198,14 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
         defaultStepover: 0.125,
         maxCutDepth: 1,
       },
+      ...(options.plasmaCut
+        ? [{
+          ...PLASMA_TORCH,
+          name: options.plasmaCut.toolName ?? PLASMA_TORCH.name,
+          defaultPlungeFeed: options.plasmaCut.plungeFeed ?? PLASMA_TORCH.defaultPlungeFeed,
+          ...(options.plasmaCut.materialNumber === null ? {} : { qtplasmacMaterialNumber: options.plasmaCut.materialNumber }),
+        }]
+        : []),
       ...(options.routeBOnSecondTool
         ? [{
           id: 'tool-2',
@@ -180,6 +226,13 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
         : []),
     ],
     operations: [
+      ...(options.plasmaCut
+        ? [{
+          ...outsideRouteOperation('op-plasma', 'Plasma Cut', 'torch'),
+          kind: 'plasma_profile', feed: 200, rpm: 0,
+          ...(options.plasmaCut.plungeFeed === undefined ? {} : { plungeFeed: options.plasmaCut.plungeFeed }),
+        }]
+        : []),
       outsideRouteOperation('op-route-a', 'Route A', 'tool-1'),
       outsideRouteOperation('op-route-b', 'Route B', options.routeBOnSecondTool ? 'tool-2' : 'tool-1'),
     ],

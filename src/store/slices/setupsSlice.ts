@@ -1,0 +1,272 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Machining-setup actions (issue #944). Moving an operation to another setup
+ * is validated (issue #946): its targets are re-judged from the new face by
+ * `planOperationMove`, and the move is refused when nothing valid would be
+ * left. Changing a feature's authoring face is still accepted as asked — an
+ * operation left targeting a face it cannot reach generates nothing and says
+ * why (`setupGenerationBlock`).
+ */
+
+import type { StateCreator } from 'zustand'
+import { uniqueName } from '../../import'
+import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrientation'
+import { isBarStock } from '../../types/barStock'
+import { applyOperationMove, planOperationMove } from '../../engine/setupOperationMove'
+import type { MachiningSetup, Project } from '../../types/project'
+import { nextUniqueGeneratedId } from '../helpers/ids'
+import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { aroundUnavailableReason, dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
+import { manualIndexingApplies } from '../helpers/projectType'
+import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
+import { syncRoundWorkholding, transposeRoundWorkholding, followBarChuck } from '../helpers/roundWorkholding'
+import type { ProjectStore, SelectionState } from '../types'
+
+export type SetupsSlice = Pick<
+  ProjectStore,
+  | 'createSetup'
+  | 'renameSetup'
+  | 'updateSetup'
+  | 'deleteSetup'
+  | 'setActiveSetup'
+  | 'assignOperationToSetup'
+  | 'setFeatureAuthoringFace'
+>
+
+type SetFn = Parameters<StateCreator<ProjectStore>>[0]
+
+/**
+ * Wrap the store's `set` so every project it writes has its setups in their
+ * invariant: a new operation joins the active setup, a deleted one leaves its
+ * setup's list, a reorder is reflected in it. The operation actions therefore
+ * never have to know setups exist. A face that is only being looked at stays
+ * provisional, and gets its setup with the first content created on it
+ * (issue #945).
+ *
+ * The same pass keeps a round bar's chuck and tailstock centred with the
+ * height the bar's diameter implies (#392), so a stock resize, a clamp drag,
+ * a duplicate or an undo needs no workholding case of its own. A stock re-aim
+ * turns them with the bar (#1016 C2): the clamps keep their distance from the
+ * bar's start end while the along and across dimensions swap. A write that
+ * does not affect them leaves the project's identity alone.
+ *
+ * A stock *transition* — its size or its shape — also re-defaults a chuck the
+ * operator has not set by hand (4 inch, or the smallest preset that fits, with
+ * the shape's jaw count; #1112 R2 item 23). Opening or creating a document is
+ * a replacement, not a stock edit, so a saved project keeps the jaw count it
+ * stored. History restoration is not an edit either: the store hands undo,
+ * redo and a cancelled transaction a setter with `followStockChuck: false`,
+ * because the snapshot's own equipment is what the operator had, even where
+ * that differs from the shape's default today. Without it a square saved with
+ * three jaws, switched to round and undone, would come back with four.
+ */
+export function withSetupSync<S extends { project: Project }>(
+  set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
+  options: { followStockChuck?: boolean } = {},
+): (update: Partial<S> | ((state: S) => Partial<S>)) => void {
+  const followStockChuck = options.followStockChuck !== false
+  return (update) => set((state) => {
+    const patch = typeof update === 'function' ? update(state) : update
+    if (!patch.project) return patch
+    const previous = state.project
+    const next = syncWorkspaceSetups(previous, patch.project)
+    // Only a write that carried the clamps over is a stock re-aim. Undo and
+    // redo restore a cloned project whose clamps already belong to its axis,
+    // so transposing them there would undo the undo.
+    const transposed = next.clamps === previous.clamps
+      ? transposeRoundWorkholding(previous.stock, next)
+      : next
+    // A document that is being replaced (open, new, load) carries its own
+    // workholding; only an edit of the project in front of the operator is a
+    // stock change a default chuck follows (the same replacement test the
+    // rotary surface sync uses to decide whether it has a previous project).
+    // `projectKey` is not part of this wrapper's generic state, so it is read
+    // through the shape the store's own sync uses.
+    const patchKey = (patch as { projectKey?: number }).projectKey
+    const replaced = patchKey !== undefined && patchKey !== (state as { projectKey?: number }).projectKey
+    const followed = replaced || !followStockChuck ? transposed : followBarChuck(previous.stock, transposed)
+    const project = syncRoundWorkholding(followed)
+    return project === patch.project ? patch : { ...patch, project }
+  })
+}
+
+/**
+ * Wrap the store's `set` so no write can leave a ghost feature selected
+ * (issue #945): switching face, moving a feature to the other face, undo and
+ * every selection action all pass through here, so the rule has one home
+ * instead of one check per action.
+ */
+export function withGhostSelectionGuard<S extends { project: Project; selection: SelectionState }>(
+  set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
+): (update: Partial<S> | ((state: S) => Partial<S>)) => void {
+  return (update) => set((state) => {
+    const patch = typeof update === 'function' ? update(state) : update
+    if (patch.project === undefined && patch.selection === undefined) return patch
+    const selection = patch.selection ?? state.selection
+    const guarded = dropGhostSelection(patch.project ?? state.project, selection)
+    return guarded === selection ? patch : { ...patch, selection: guarded }
+  })
+}
+
+function touched(project: Project): Project {
+  return { ...project, meta: { ...project.meta, modified: new Date().toISOString() } }
+}
+
+export function createSetupsSlice(
+  set: SetFn,
+  get: Parameters<StateCreator<ProjectStore>>[1],
+): SetupsSlice {
+  /** Commit a project edit as one undo step, or do nothing when it changed nothing. */
+  const commit = (edit: (project: Project) => Project | null): boolean => {
+    let changed = false
+    set((s) => {
+      const edited = edit(s.project)
+      if (!edited || projectsEqual(edited, s.project)) return {}
+      changed = true
+      const project = touched(edited)
+      if (s.history.transactionStart) return { project }
+      return {
+        project,
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }
+    })
+    return changed
+  }
+
+  return {
+    createSetup: (input) => {
+      if (!isSupportedSetupOrientation(input.orientation)) return null
+      const project = get().project
+      if (input.kind === 'around' && (aroundUnavailableReason(project) !== null
+        || input.orientation.angleDeg !== 0 || project.setups.some((setup) => setup.kind === 'around'))) return null
+      const id = nextUniqueGeneratedId(project, 'su')
+      const face = setupFace(input)
+      // A new Bottom setup on a rotary bar follows the bar's axis (#1054
+      // slice 2): A180 is a turn about the bar, so flipping about the other
+      // horizontal axis would turn the part the wrong way. An existing setup
+      // is never rewritten — export warns about one that disagrees.
+      const orientation = face === 'bottom' && manualIndexingApplies(project) && isBarStock(project.stock)
+        ? { axis: project.stock.axis, angleDeg: input.orientation.angleDeg }
+        : { axis: input.orientation.axis, angleDeg: input.orientation.angleDeg }
+      const setup: MachiningSetup = {
+        ...(input.kind === 'around' ? { kind: 'around' as const } : {}),
+        id,
+        name: uniqueName(
+          input.name?.trim() || (face === 'around' ? 'Around' : face === 'top' ? 'Top' : 'Bottom'),
+          project.setups.map((entry) => entry.name),
+        ),
+        orientation,
+        indexing: 'manual',
+        registration: [],
+        notes: '',
+        operationIds: [],
+      }
+      return commit((current) => ({ ...current, setups: [...current.setups, setup] })) ? id : null
+    },
+
+    // Editing a setup that is only being looked at makes it a real one first,
+    // in the same undo step (issue #945).
+    renameSetup: (id, name) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      commit((current) => {
+        const { project, id: setupId } = realizeProvisionalSetup(current, id)
+        return {
+          ...project,
+          setups: project.setups.map((setup) => (setup.id === setupId ? { ...setup, name: trimmed } : setup)),
+        }
+      })
+    },
+
+    updateSetup: (id, patch) => commit((current) => {
+      if (patch.name !== undefined && !patch.name.trim()) return null
+      if (patch.flipAxis !== undefined && patch.flipAxis !== 'x' && patch.flipAxis !== 'y') return null
+      const { project, id: setupId } = realizeProvisionalSetup(current, id)
+      const targetSetup = project.setups.find((setup) => setup.id === setupId)
+      if (!targetSetup || (targetSetup.kind === 'around' && patch.flipAxis !== undefined)) return null
+      return {
+        ...project,
+        setups: project.setups.map((setup) => setup.id === setupId ? {
+          ...setup,
+          ...(patch.name === undefined ? {} : { name: patch.name.trim() }),
+          ...(patch.flipAxis === undefined ? {} : { orientation: { ...setup.orientation, axis: patch.flipAxis } }),
+          ...(patch.registration === undefined ? {} : { registration: structuredClone(patch.registration) }),
+          ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+        } : setup),
+      }
+    }),
+
+    // A setup takes its operations with it, as one undo step. They are not
+    // moved to another setup: that is a cross-face move, and a move needs the
+    // validation an explicit Move action brings (#946).
+    deleteSetup: (id) => commit((project) => {
+      if (project.setups.length <= 1 || !project.setups.some((setup) => setup.id === id)) return null
+      return {
+        ...project,
+        setups: project.setups.filter((setup) => setup.id !== id),
+        operations: project.operations.filter((operation) => operation.setupId !== id),
+      }
+    }),
+
+    // Which face the workspace is on is a view choice that travels with the
+    // file: it adds no undo step and does not mark the project as changed.
+    // A face the project has no setup for is looked at provisionally — the
+    // project itself is not touched.
+    setActiveSetup: (id) =>
+      set((s) => {
+        const known = s.project.setups.some((setup) => setup.id === id)
+          || (['top', 'bottom', 'around'] as const).some((face) => (
+            id === provisionalSetupId(face) && (face !== 'around' || aroundUnavailableReason(s.project) === null) && !findSetupForFace(s.project, face)
+          ))
+        return s.project.activeSetupId === id || !known
+          ? {}
+          : { project: { ...s.project, activeSetupId: id }, dirty: s.dirty }
+      }),
+
+    // The move is planned against the project it is applied to, so the
+    // store cannot commit a move the plan would have blocked. Targets the new
+    // face cannot reach are dropped with it, as one undo step.
+    assignOperationToSetup: (operationId, setupId) => {
+      commit((current) => {
+        const { project, id } = realizeProvisionalSetup(current, setupId)
+        return applyOperationMove(project, planOperationMove(project, operationId, id))
+      })
+    },
+
+    // Only where the feature is drawn changes. `z_top`/`z_bottom` are the
+    // feature's stock-space span and are deliberately left alone.
+    setFeatureAuthoringFace: (featureIds, face) => {
+      // A feature under a pending edit keeps its face until the edit is done.
+      if (isFaceEditInProgress(get())) return
+      const ids = new Set(featureIds)
+      commit((project) => ({
+        ...project,
+        features: project.features.map((feature) => (
+          ids.has(feature.id) && !feature.locked && feature.authoringFace !== face
+            && face !== 'around' && feature.authoringFace !== 'around'
+            ? { ...feature, authoringFace: face }
+            : feature
+        )),
+      }))
+    },
+  }
+}

@@ -23,7 +23,7 @@
 
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { getProject } from './helpers'
+import { getProject, reloadWhenIdle } from './helpers'
 
 const SELECTION_KEY = 'purecutcnc.appearance.themeSelection'
 const CUSTOM_THEMES_KEY = 'purecutcnc.appearance.customThemes'
@@ -91,7 +91,7 @@ test('duplicates a built-in, edits with live preview, applies, and persists', as
   expect(withoutModified(await getProject(app.page))).toEqual(withoutModified(before))
 
   // Persists across reload (bootstrap applies it before React renders).
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('data-theme-id', /^custom-/)
   expect(await inlineToken(app.page, '--accent')).toBe('#ff8800')
@@ -138,6 +138,10 @@ test('blocks applying an unreadable theme and recovers via the safety action', a
   // The always-readable recovery action restores the saved colors.
   await ui.themeEditor.restoreButton(app.page).click()
   await expect(ui.themeEditor.blockers(app.page)).toHaveCount(0)
+  // Back to the saved theme, so there is nothing to apply yet (issue #1112 F4);
+  // one valid edit after the recovery is what makes it applicable again.
+  await expect(ui.themeEditor.applyButton(app.page)).toBeDisabled()
+  await ui.themeEditor.nameInput(app.page).fill('Dark copy (recovered)')
   await expect(ui.themeEditor.applyButton(app.page)).toBeEnabled()
   await expect(ui.themeEditor.contrastOk(app.page)).toBeVisible()
   await expect.poll(() => inlineToken(app.page, '--text')).toBe('')
@@ -288,7 +292,7 @@ test('supports a custom theme in the System pair and follows the OS scheme', asy
   await ui.themeManager.doneButton(app.page).click()
 
   // The pair persists across reload.
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
   await expect(app.page.locator('html')).toHaveAttribute('data-theme-preference', 'system')
   await expect(app.page.locator('html')).toHaveAttribute('data-theme-id', /^custom-/)
@@ -302,7 +306,7 @@ test('migrates a legacy light preference into the selection model', async ({ app
     window.localStorage.removeItem(selectionKey)
   }, [LEGACY_KEY, SELECTION_KEY])
 
-  await app.page.reload()
+  await reloadWhenIdle(app.page)
   await app.page.waitForSelector('canvas', { timeout: 15000 })
 
   await expect(app.page.locator('html')).toHaveAttribute('data-theme', 'light')

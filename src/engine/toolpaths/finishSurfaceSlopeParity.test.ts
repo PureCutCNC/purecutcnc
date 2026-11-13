@@ -57,56 +57,60 @@ import type { Project } from '../../types/project'
 //   2,625).
 // Its parallel rows and every `model-in-pocket.camj` row are byte-identical.
 // Both the raw toolpath result and posted program must remain byte-identical.
+// The `gcode` hashes were re-captured for #1057 slice F: every posted program
+// here writes a tool change, and a tool change now carries one restart block
+// (`G90 G94 G17`, the units word, a safe-Z rapid and the start plane). The
+// `motion` hashes did not move — the generated toolpaths are unchanged.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
     "moves": 3990,
     "motion": "6da5830f50426c7f9ff513b39403c867f41d373f0ce2c08d1a2ba42f75834929",
-    "gcode": "87e86b2241c884ef5fd53de00370d1b1aa1c8edd3185b203d652de12407ee21f"
+    "gcode": "87af0d9dbe5263995989911099ddfb43284b58f629a3040b2ec5325bc95bb10c"
   },
   "3d-imported-block-test3.camj/op6792424/waterline": {
     "moves": 3323,
     "motion": "0e082c29859152dec78d32443feb592b3a4256abeb87ece9167a1848857dec0b",
-    "gcode": "f50842293b2674c166b49c7c35b99a491a010f8d0da668538317182bc10c128b"
+    "gcode": "9b1a60cd5c72c34462057f278be6d96f2e2ba566ce25b60d80d8cbf494067aeb"
   },
   "3d-imported-block-test3.camj/op6792425/parallel": {
     "moves": 3990,
     "motion": "a92478eeb03c84cb5a2d005c3a3ed349aa39aaee43de7e1cda73a16976d22a7d",
-    "gcode": "83a731b9eebd46929b488663fc2da719078ce5464fd95426b4b3587959a292d8"
+    "gcode": "8cc7b66eecd2b390667b87f284b98e41daa4ac5f6e267289a9963a70032f087f"
   },
   "3d-imported-block-test3.camj/op6792425/waterline": {
     "moves": 3323,
     "motion": "dd1417225749dffb93f8116706437a5826204538ff14c239f146e7ed2f240292",
-    "gcode": "2b7c1a34d9365b2035df3f6223b69fac354682b9573e3df6636a8793ab4baa4d"
+    "gcode": "350a707ef252724ab201da594e2f5ee8859417f637eb84182c72ac57f3d0ced1"
   },
   "issue-401-cone-finish.camj/op0925/parallel": {
     "moves": 28245,
     "motion": "90f269ecedd76071d76daf03757c4f2da1dbff9556f2a03e74b6ddf75715acc9",
-    "gcode": "132a41b34125066dc5563cc43d5e3b775f83eef9276a5df32719f30367b56b66"
+    "gcode": "fe2674e6c5daafdf0df08bf16ae5782ad80c203c9a5a93d662cdc71f8c459d6f"
   },
   "issue-401-cone-finish.camj/op0925/waterline": {
     "moves": 5481,
     "motion": "dd0cbac54abc863f4207409e1ed3332d6ee75b308d255e5008c385b04d1ff802",
-    "gcode": "9f9ca0bde7d3cffd040842328d65d90546fec53ff7f1ebb30fa738e2af7c016a"
+    "gcode": "fa8f344e63ceb01036bc1263ec50cf52bc22c1a13d3e46ec5a0289be08b6e86a"
   },
   "issue-401-cone-finish.camj/op0927/parallel": {
     "moves": 28245,
     "motion": "3ece4d1b531592a575d1fbc131afcc332798c22b80ed578ef71303dda4f9de96",
-    "gcode": "99ca7dc8d150e01d14910249813c7de3d7cc04aac0a34aeca6567e5b74ea1295"
+    "gcode": "b5b99d4d41720991a941bccc33b3f0988028f6d8b58ccf70c9f3c2fd1b38e7b7"
   },
   "issue-401-cone-finish.camj/op0927/waterline": {
     "moves": 5481,
     "motion": "4a7e468fa7ef48412313d79cd46fdc2d424aa8760e4774b0d6c42925a1ff55ab",
-    "gcode": "386e8ead771625abe60b1ad21211715971d8af52c13feaa1991f47b55516d87b"
+    "gcode": "aa5559d91531f8cccc95f0c26eb7a15c0d3b53ee58cf22e0d8326569b695bd7e"
   },
   "model-in-pocket.camj/op6792442/parallel": {
     "moves": 786,
     "motion": "b7172e3a6f328fd188198a366eaf384b4ff74a2b12c1f204d2a468e3a3c6d6fc",
-    "gcode": "97d9c2a6b3b1da8f5d6c5cafc270868eec5e7fbc9b2c02a1a4be861a606c98a9"
+    "gcode": "dc580bbad5da62283abb49e3cc20cdc1e3b594f712104213d5a56a970c5d49cf"
   },
   "model-in-pocket.camj/op6792442/waterline": {
     "moves": 3836,
     "motion": "e31625615929fefa03233a3dd1eb3554ecdcd27beb0578724958c5ddaa706a22",
-    "gcode": "eae4febf8d8c3abc5dafc52b40ea4526cf7fff4a0a9e9f8c877cb858179c873d"
+    "gcode": "b146c8c4db7a47bad60d4dff623d7ba4a2b64a121944649761ea1f5e6b3da330"
   }
 }
 

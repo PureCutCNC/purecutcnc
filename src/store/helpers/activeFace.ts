@@ -1,0 +1,861 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * The workspace face (issue #945): which stock face the active setup turns
+ * up, and what that means for features. A feature authored on the other face
+ * is a *ghost* — visible for reference, never an edit target — and everything
+ * that decides "can this be picked, snapped to or changed here" asks this
+ * module rather than comparing faces itself.
+ */
+
+import {
+  canonicalToSetupPoint,
+  depthFromFace,
+  setupFace,
+  setupFrame,
+  setupOriginInCanonical,
+  setupToCanonicalPoint,
+} from '../../engine/setupOrientation'
+import { defaultTopSetup, isRoundStock } from '../../types/project'
+import { squareSheetHasRoundSection } from './turnedSheet'
+import { isBarStock, isSquareStock } from '../../types/barStock'
+import { featureStockSpan, isThroughFeature as setupIsThroughFeature, spanReachesBothFaces } from '../../engine/setupTargets'
+import type {
+  CannedShapeData,
+  DimensionRef,
+  FeatureInstance,
+  FeatureOperation,
+  FlatFace,
+  MachineOrigin,
+  MachiningSetup,
+  Matrix2D,
+  Point,
+  Project,
+  SetupFace,
+  SketchFeature,
+  Stock,
+} from '../../types/project'
+import { getDefinitionId } from './featureDefinitions'
+import { projectType } from './projectType'
+import { defaultSetupForFace, provisionalSetupFor } from './provisionalSetup'
+import { resolvedProjectFeatures } from './resolveFeatures'
+import type { ResolvedSketchFeature } from './resolveFeatures'
+import type { CreationTarget, PendingAddTool, ProjectStore, SelectionState } from '../types'
+
+type FaceProject = Pick<Project, 'setups' | 'activeSetupId'> & Partial<Pick<Project, 'stock' | 'meta' | 'featureDefinitions' | 'dimensions'>>
+
+/**
+ * The setup the workspace is on. A project always has one — but it is not
+ * always one of `project.setups`: while the workspace looks at a face the
+ * project has no setup for, this is that face's provisional setup (see
+ * `provisionalSetup.ts`), which becomes a real one with the first content
+ * created there.
+ */
+export function activeSetup(project: FaceProject): MachiningSetup {
+  if (!project.setups) return defaultTopSetup()
+  return project.setups.find((setup) => setup.id === project.activeSetupId)
+    ?? provisionalSetupFor(project)
+    ?? project.setups[0]
+    ?? defaultTopSetup()
+}
+
+/** The stock face the workspace is drawing on. */
+export function activeFace(project: FaceProject): SetupFace {
+  return setupFace(activeSetup(project))
+}
+
+/** The first setup that turns `face` up, if the project has one. */
+export function findSetupForFace(project: Pick<Project, 'setups'>, face: SetupFace): MachiningSetup | undefined {
+  return project.setups.find((setup) => setupFace(setup) === face)
+}
+
+/**
+ * Whether the workspace shows multiple faces: the project has a non-Top setup
+ * or feature, or a non-Top face is being looked at. A
+ * Top-only project seen from Top answers false, and the workspace then shows
+ * no face layers, ghosts or face chips at all.
+ */
+export function projectUsesBothFaces(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'>): boolean {
+  return project.setups.some((setup) => setupFace(setup) !== 'top')
+    || project.features.some((feature) => (feature.authoringFace ?? 'top') !== 'top')
+    || activeFace(project) !== 'top'
+}
+
+/**
+ * True once a shape being drawn has a point on the canvas. An armed tool with
+ * nothing placed yet belongs to no face; a half-drawn outline does, because
+ * its points were picked in that face's view.
+ */
+function placementUnderWay(pendingAdd: PendingAddTool | null): boolean {
+  if (!pendingAdd) return false
+  if ('anchor' in pendingAdd) return pendingAdd.anchor !== null
+  if ('points' in pendingAdd) return pendingAdd.points.length > 0
+  return pendingAdd.shape === 'composite' && pendingAdd.start !== null
+}
+
+/**
+ * True while a feature is being drawn, edited, moved or combined. That work
+ * belongs to the face it started on: changing the workspace face, or a
+ * feature's authoring face, is refused until it is finished or cancelled, so
+ * it can never complete on a ghost or with an outline picked in two views.
+ */
+export function isFaceEditInProgress(state: Pick<
+  ProjectStore,
+  | 'selection'
+  | 'pendingAdd'
+  | 'pendingMove'
+  | 'pendingTransform'
+  | 'pendingOffset'
+  | 'pendingShapeAction'
+  | 'pendingFeatureDistribution'
+  | 'pendingNest'
+  | 'pendingTextLayout'
+>): boolean {
+  return state.selection.mode === 'sketch_edit'
+    || placementUnderWay(state.pendingAdd)
+    || state.pendingMove !== null
+    || state.pendingTransform !== null
+    || state.pendingOffset !== null
+    || state.pendingShapeAction !== null
+    || state.pendingFeatureDistribution !== null
+    || state.pendingNest !== null
+    || state.pendingTextLayout !== null
+}
+
+/**
+ * What the face rules need of a feature: its own authoring face, and enough to
+ * recognise a canned model (a resolved row carries both; an instance points at
+ * its definition).
+ */
+type FaceFeature = {
+  authoringFace?: SetupFace
+  definitionId?: string
+  kind?: string
+  canned?: CannedShapeData | null
+  operation?: FeatureOperation
+  z_top?: DimensionRef
+  z_bottom?: DimensionRef
+}
+
+/**
+ * True for a canned Turn/Polygon model (issue #1112 G). A canned model is not
+ * tied to a face: it is one row the user can select and target from Top,
+ * Bottom or Around, exactly as the plan requires.
+ */
+export function isCannedModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  const definition = feature.definitionId ? project.featureDefinitions?.[feature.definitionId] : undefined
+  return (feature.kind ?? definition?.kind) === 'stl' && !!(feature.canned ?? definition?.canned)
+}
+
+/**
+ * True for any 3D model row — an imported mesh or a canned Turn/Polygon. A
+ * model is not tied to a face (issue #1112 I): it is selectable everywhere and
+ * reachable as a target from every setup, so it is never a ghost.
+ */
+export function isModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  const definition = feature.definitionId ? project.featureDefinitions?.[feature.definitionId] : undefined
+  return (feature.kind ?? definition?.kind) === 'stl'
+}
+
+/**
+ * True for a **canned bar model**: a Turn or Polygon (issue #1112 G), whose
+ * geometry is a solid of revolution about the bar rather than a shape on a
+ * face. It is a model (`operation: 'model'`, kind `stl`) that draws itself from
+ * stored parameters, so an imported mesh — plain `kind: 'stl'`, no `canned` — is
+ * not one.
+ *
+ * Storage authors these rows on Top, because the persisted-model loader accepts
+ * only that face, so the authoring face says nothing about where the row
+ * belongs: it belongs to the bar. The feature tree therefore lists it once, in
+ * the Around section, whichever face is being worked on (issue #1112 rt3-a,
+ * item 27), and on a flat face the canvas shows its side view only (item 19).
+ */
+export function isBarModelFeature(
+  project: Pick<Project, 'featureDefinitions'> | { featureDefinitions?: Project['featureDefinitions'] },
+  feature: FaceFeature,
+): boolean {
+  return isCannedModelFeature(project, feature) && featureOperation(project, feature) === 'model'
+}
+
+/**
+ * True for a subtract that goes through the whole stock, so the other flat
+ * face can target it too. The rule is `engine/setupTargets.ts`'s — the same one
+ * `judgeTargetFromFace` applies — asked without a stock or dimensions it
+ * answers false, because an unknown span never earns the exception.
+ */
+function isThroughFlatFeature(project: FaceProject, feature: FaceFeature): boolean {
+  if (!project.stock || !project.dimensions || feature.definitionId === undefined
+    || feature.z_top === undefined || feature.z_bottom === undefined) return false
+  return setupIsThroughFeature(
+    { stock: project.stock, dimensions: project.dimensions, featureDefinitions: project.featureDefinitions },
+    {
+      authoringFace: feature.authoringFace,
+      z_top: feature.z_top,
+      z_bottom: feature.z_bottom,
+      definitionId: feature.definitionId,
+    },
+  )
+}
+
+/**
+ * The ghost rule, resolved once for a project: true for a feature authored on
+ * the face the workspace is not on that cannot be a target from it. A feature
+ * that names no face is on Top. Every "is this a ghost" question in the app is
+ * this predicate, and it is the same rule `judgeTargetFromFace` applies: a
+ * model is listed on every face, and a through-feature on both flat faces.
+ */
+export function ghostPredicate(project: FaceProject): (feature: FaceFeature) => boolean {
+  const face = activeFace(project)
+  return (feature) => {
+    const authoringFace = feature.authoringFace ?? 'top'
+    if (authoringFace === face) return false
+    if (isModelFeature(project, feature)) return false
+    if (face !== 'around' && authoringFace !== 'around' && isThroughFlatFeature(project, feature)) return false
+    return true
+  }
+}
+
+/** True for a feature authored on the face the workspace is not on. */
+export function isGhostFeature(project: FaceProject, feature: FaceFeature): boolean {
+  return ghostPredicate(project)(feature)
+}
+
+/**
+ * How many linked copies of these features' shapes are authored on a face
+ * other than `face`. A linked copy is the same shape wherever it sits, the
+ * other face included: editing one changes all of them. The ghost guard
+ * keeps a ghost from being picked or moved; it does not unlink a shared
+ * shape, so wherever a shape can be edited or a copy moved across, the UI
+ * says how many copies on the other face go with it.
+ */
+export function linkedCopiesOffFace(
+  project: Pick<Project, 'features'>,
+  featureIds: readonly string[],
+  face: SetupFace,
+): number {
+  const ids = new Set(featureIds)
+  const definitions = new Set<string>()
+  for (const feature of project.features) {
+    if (ids.has(feature.id)) definitions.add(getDefinitionId(feature))
+  }
+  if (definitions.size === 0) return 0
+  return project.features.filter((feature) => (
+    !ids.has(feature.id)
+    && (feature.authoringFace ?? 'top') !== face
+    && definitions.has(getDefinitionId(feature))
+  )).length
+}
+
+/**
+ * The features that can be picked, snapped to and edited on the active face.
+ * Returns the input array itself when nothing is a ghost, so a Top-only
+ * project takes exactly the path it always did.
+ */
+export function editableFeatures<T extends { authoringFace?: SetupFace }>(
+  project: FaceProject,
+  features: readonly T[],
+): readonly T[] {
+  const isGhost = ghostPredicate(project)
+  return features.some(isGhost) ? features.filter((feature) => !isGhost(feature)) : features
+}
+
+/**
+ * The project's world-space features minus the ghosts: what hit-testing,
+ * snapping and every other edit interaction on the sketch may see.
+ */
+export function editableProjectFeatures(project: Project): readonly ResolvedSketchFeature[] {
+  return editableFeatures(project, resolvedProjectFeatures(project))
+}
+
+/** Ids of the project's ghost features, empty for a Top-only project. */
+export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'> & Partial<Pick<Project, 'featureDefinitions' | 'stock' | 'dimensions'>>): Set<string> {
+  const isGhost = ghostPredicate(project)
+  const ids = new Set<string>()
+  for (const feature of project.features) {
+    if (isGhost(feature)) ids.add(feature.id)
+  }
+  return ids
+}
+
+/**
+ * The features a shape newly drawn on the active face is judged against —
+ * which solid it sits in, which surface a Line lands on. Those authored on
+ * this face, and those from the other face whose span reaches it: a base
+ * that fills the stock is material on both faces, but a pocket cut part-way
+ * in from Top is not there at all when the stock is seen from Bottom.
+ * Returns the input array itself when nothing is left out, so a Top-only
+ * project takes exactly the path it always did.
+ */
+export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_bottom'> & { authoringFace?: SetupFace }>(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'dimensions'>,
+  features: readonly T[],
+): readonly T[] {
+  const face = activeFace(project)
+  const isGhost = ghostPredicate(project)
+  const epsilon = 1e-9
+  const atFace = (feature: T): boolean => {
+    if (!isGhost(feature)) return true
+    if (face === 'around' || feature.authoringFace === 'around') return false
+    const span = resolveStockSpan(project, feature)
+    if (!span) return false
+    return face === 'top' ? span.z_top >= project.stock.thickness - epsilon : span.z_bottom <= epsilon
+  }
+  return features.every(atFace) ? features : features.filter(atFace)
+}
+
+/**
+ * The Z span a freshly drawn feature gets, given the height a Top feature
+ * would start at. Drawing tools reason as if the face in front of them were
+ * the top of the stock; this carries that span into stock space, so a new
+ * Bottom feature opens at the bottom face instead of the top one.
+ *
+ * On Around a new shape is a shallow cut into the bar's surface (issue #395):
+ * the Top span would run through the whole bar, to `z_bottom = 0`, which is at
+ * the centreline every radial operation refuses. The depth scales with the bar:
+ * a sixteenth of its diameter (`project.stock.thickness`), rounded to the
+ * units' tidy step (0.5 mm, 1/64 in) so the field shows exactly what is used.
+ * It is never under one step, nor over a quarter of the diameter — the latter
+ * wins on a very thin bar, so the cut never reaches the centreline.
+ */
+export function newFeatureSpan(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'meta'>,
+  faceLocalTopZ: number,
+): { z_top: number; z_bottom: number } {
+  const face = activeFace(project)
+  if (face === 'around') {
+    const step = project.meta.units === 'inch' ? 1 / 64 : 0.5
+    const diameter = project.stock.thickness
+    const depth = Math.min(Math.max(Math.round(diameter / 16 / step) * step, step), diameter / 4)
+    return { z_top: diameter, z_bottom: diameter - depth }
+  }
+  return face !== 'bottom'
+    ? { z_top: faceLocalTopZ, z_bottom: 0 }
+    : { z_top: project.stock.thickness, z_bottom: project.stock.thickness - faceLocalTopZ }
+}
+
+/**
+ * The mirror that makes anchored artwork — text, whose letterforms have a
+ * reading direction — read correctly on the active face. On Top there is
+ * none (null). On Bottom the view is the stock turned over, so the artwork
+ * is mirrored across the flip axis through `anchor`; the turned view mirrors
+ * it back, once, and it reads the right way round from below. A text run
+ * carries it as its instance transform, so a curved run — whose frame is
+ * re-derived from the bent template — keeps it too.
+ */
+export function faceArtworkMirror(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  anchor: Point,
+): ((point: Point) => Point) | null {
+  const setup = activeSetup(project)
+  if (setupFace(setup) !== 'bottom') return null
+  return flipAxisMirror(setup, project.stock, anchor)
+}
+
+/**
+ * The mirror that carries anchored artwork from one face to the other: the
+ * Bottom setup's, whichever face is in view. It is its own inverse, so the
+ * same map puts the mirror on a text run that goes to Bottom and takes it
+ * off one that comes back to Top.
+ */
+export function crossFaceArtworkMirror(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'> & Partial<Pick<Project, 'meta'>>,
+  anchor: Point,
+  sourceFace?: SetupFace,
+): (point: Point) => Point {
+  const active = activeSetup(project)
+  if (setupFace(active) === 'around' || sourceFace === 'around') return (point) => point
+  const bottom = setupFace(active) === 'bottom'
+    ? active
+    : findSetupForFace(project, 'bottom') ?? defaultSetupForFace('bottom', project)
+  return flipAxisMirror(bottom, project.stock, anchor)
+}
+
+/** A setup's own XY mirror, re-centred on `anchor` so the anchor stays put. */
+function flipAxisMirror(setup: MachiningSetup, stock: Stock, anchor: Point): (point: Point) => Point {
+  const frame = setupFrame(setup.orientation, stock)
+  // The turn's own XY mirror, re-centred on the anchor so the anchor stays put.
+  const turnedAnchor = setupToCanonicalPoint({ x: anchor.x, y: anchor.y, z: 0 }, frame)
+  const dx = anchor.x - turnedAnchor.x
+  const dy = anchor.y - turnedAnchor.y
+  return (point) => {
+    const turned = setupToCanonicalPoint({ x: point.x, y: point.y, z: 0 }, frame)
+    return { x: turned.x + dx, y: turned.y + dy }
+  }
+}
+
+/**
+ * Where the shared machine origin sits in stock space for the active setup.
+ * `Project.origin` is placed relative to the face that is up, so on screen it
+ * stays where it was; in stock space it is mirrored with the stock.
+ */
+export function activeOriginInStock(
+  project: Pick<Project, 'origin' | 'setups' | 'activeSetupId' | 'stock'>,
+): MachineOrigin {
+  const setup = activeSetup(project)
+  if (setupFace(setup) !== 'bottom') return project.origin
+  const point = setupOriginInCanonical(project.origin, setupFrame(setup.orientation, project.stock))
+  return { ...project.origin, x: point.x, y: point.y }
+}
+
+/**
+ * A stock-space point picked on the active face, as the XY to store in
+ * `Project.origin`: the inverse of {@link activeOriginInStock}.
+ */
+export function originPlacementFromStock(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  point: Point,
+): Point {
+  const setup = activeSetup(project)
+  if (setupFace(setup) !== 'bottom') return point
+  const local = canonicalToSetupPoint({ x: point.x, y: point.y, z: 0 }, setupFrame(setup.orientation, project.stock))
+  return { x: local.x, y: local.y }
+}
+
+/** {@link faceArtworkMirror} as an instance transform, or null on Top. */
+export function faceArtworkTransform(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  anchor: Point,
+): Matrix2D | null {
+  const mirror = faceArtworkMirror(project, anchor)
+  return mirror ? affineMatrixOf(mirror) : null
+}
+
+/** {@link crossFaceArtworkMirror} as a matrix to compose onto an instance transform. */
+export function crossFaceArtworkTransform(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  anchor: Point,
+  sourceFace?: SetupFace,
+): Matrix2D {
+  return affineMatrixOf(crossFaceArtworkMirror(project, anchor, sourceFace))
+}
+
+/** The matrix of an affine point map, read off where it sends the origin and the unit axes. */
+function affineMatrixOf(map: (point: Point) => Point): Matrix2D {
+  const origin = map({ x: 0, y: 0 })
+  const unitX = map({ x: 1, y: 0 })
+  const unitY = map({ x: 0, y: 1 })
+  return {
+    a: unitX.x - origin.x,
+    b: unitX.y - origin.y,
+    c: unitY.x - origin.x,
+    d: unitY.y - origin.y,
+    e: origin.x,
+    f: origin.y,
+  }
+}
+
+/**
+ * True for a cut that goes right through the stock, so either setup can make
+ * it: a subtract whose span reaches both faces. Material that merely fills
+ * the stock's height is not "through", and an unresolvable span (a dangling
+ * dimension reference) answers false.
+ */
+export function isThroughFeature(
+  project: Pick<Project, 'stock' | 'dimensions'>,
+  feature: Pick<SketchFeature, 'z_top' | 'z_bottom' | 'operation'>,
+): boolean {
+  return setupIsThroughFeature(project, feature)
+}
+
+/** A feature as the face-change rule reads it: a tree row or a resolved feature. */
+type FaceChangeFeature = Pick<FeatureInstance, 'z_top' | 'z_bottom'> & {
+  authoringFace?: SetupFace
+  definitionId?: string
+  operation?: FeatureOperation
+}
+
+/**
+ * Whether a feature's authoring face may be changed (issue #1102 slice L).
+ *
+ * Only a feature that goes through the whole stock has a second face to be
+ * measured from: a through hole cut top to bottom is the same hole whichever
+ * side is up, and a full-height solid stands on both faces. A blind pocket
+ * or a partial-height add belongs to the face it was cut from — seen from
+ * below it sits under material no Bottom operation can reach — so offering
+ * to move it would produce a feature that cannot be machined.
+ *
+ * The role is read from the shared definition, the way `isThroughFeature`
+ * does, and only Add and Subtract qualify: a region is a filter and
+ * construction geometry is never machined, whatever their span. Around is a
+ * different surface entirely and never moves between the flat faces. A span
+ * that cannot be resolved (a dangling dimension reference) answers false.
+ */
+export function canChangeAuthoringFace(
+  project: Pick<Project, 'stock' | 'dimensions'> & Partial<Pick<Project, 'featureDefinitions'>>,
+  feature: FaceChangeFeature,
+): boolean {
+  if (feature.authoringFace === 'around') return false
+  const operation = feature.operation
+    ?? (feature.definitionId === undefined ? undefined : project.featureDefinitions?.[feature.definitionId]?.operation)
+  if (operation !== 'subtract' && operation !== 'add') return false
+  const span = featureStockSpan(project, feature)
+  return span !== null && spanReachesBothFaces(span, project.stock)
+}
+
+/** What a face-change confirmation would do with the features it was asked for. */
+export interface FaceChangeSelection {
+  /** Requested features on `fromFace`, unlocked, that go through the whole stock. */
+  movable: FeatureInstance[]
+  /** Requested locked features, of either face: they cannot move at all. */
+  locked: number
+  /** Requested unlocked features on `fromFace` that do not go through the stock. */
+  notThrough: number
+}
+
+/**
+ * The confirmation's selection plan: what moves, and what stays because it is
+ * locked or does not go through the whole stock. `fromFace` is the face of the
+ * first requested feature, so one confirmation always moves one way.
+ */
+export function faceChangeSelection(
+  project: Pick<Project, 'stock' | 'dimensions'> & Partial<Pick<Project, 'featureDefinitions'>>,
+  requested: readonly FeatureInstance[],
+  fromFace: FlatFace,
+): FaceChangeSelection {
+  const movable: FeatureInstance[] = []
+  let locked = 0
+  let notThrough = 0
+  for (const feature of requested) {
+    if (feature.locked) {
+      locked += 1
+    } else if (feature.authoringFace === fromFace) {
+      if (canChangeAuthoringFace(project, feature)) movable.push(feature)
+      else notThrough += 1
+    }
+  }
+  return { movable, locked, notThrough }
+}
+
+// ── Face-local angles ─────────────────────────────────────────
+
+/**
+ * How an angle reads on the face the workspace is on (issue #945). Stored
+ * angles stay in stock space; a typed or displayed angle is converted here, at
+ * the UI boundary, so that on Bottom a positive angle turns the same way on
+ * screen as it does on Top.
+ *
+ * Every map is its own inverse — the same call takes a stored angle to the
+ * field and a typed angle back to storage — so "applied twice" is a no-op and
+ * shows up at once as an unconverted value.
+ */
+export interface FaceAngles {
+  /** A direction, in degrees from +X: a line's heading, an orientation. */
+  direction: (degrees: number) => number
+  /** A turn about an in-plane point: a rotation amount, a sweep. */
+  turn: (degrees: number) => number
+  /** A 3D rotation about a stock axis, for the model orientation fields. */
+  axisTurn: (axis: 'x' | 'y' | 'z', degrees: number) => number
+}
+
+function withoutNegativeZero(value: number): number {
+  return value === 0 ? 0 : value
+}
+
+/**
+ * Which stock axes the active setup's turn reverses, read off the #944
+ * transform, or null on Top where none is.
+ */
+function reversedStockAxes(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+): Record<'x' | 'y' | 'z', boolean> | null {
+  const setup = activeSetup(project)
+  if (setupFace(setup) !== 'bottom') return null
+  const frame = setupFrame(setup.orientation, project.stock)
+  const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
+  return {
+    x: canonicalToSetupPoint({ x: 1, y: 0, z: 0 }, frame).x < origin.x,
+    y: canonicalToSetupPoint({ x: 0, y: 1, z: 0 }, frame).y < origin.y,
+    z: canonicalToSetupPoint({ x: 0, y: 0, z: 1 }, frame).z < origin.z,
+  }
+}
+
+/**
+ * How a signed distance along a stock axis reads on the face the workspace
+ * is on (issue #945): a grid's Spacing X / Spacing Y. Like the angles, the
+ * stored value stays in stock space and is converted at the UI boundary, so
+ * a positive step goes the same way on screen on Bottom as it does on Top.
+ * Each map is its own inverse.
+ */
+export interface FaceOffsets {
+  x: (distance: number) => number
+  y: (distance: number) => number
+}
+
+/** Top, and anything stored: distances read as they are. */
+export const STOCK_OFFSETS: FaceOffsets = {
+  x: (distance) => distance,
+  y: (distance) => distance,
+}
+
+/** The signed-distance maps for the active setup: an axis the turn reverses changes sign. */
+export function faceOffsets(project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>): FaceOffsets {
+  const reversed = reversedStockAxes(project)
+  if (!reversed) return STOCK_OFFSETS
+  return {
+    x: (distance) => withoutNegativeZero(reversed.x ? -distance : distance),
+    y: (distance) => withoutNegativeZero(reversed.y ? -distance : distance),
+  }
+}
+
+/** Top, and anything stored: angles read as they are. */
+export const STOCK_ANGLES: FaceAngles = {
+  direction: (degrees) => degrees,
+  turn: (degrees) => degrees,
+  axisTurn: (_axis, degrees) => degrees,
+}
+
+/**
+ * The angle maps for the active setup, read off the #944 transform: which
+ * stock axes the turn reverses. The arithmetic is exact (a sign, or 180° less
+ * the angle), so a typed 30 is stored as -30, not as a rounded neighbour.
+ */
+export function faceAngles(project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>): FaceAngles {
+  const reversed = reversedStockAxes(project)
+  if (!reversed) return STOCK_ANGLES
+  // Seen from above the turned stock is a mirror, so in-plane turns reverse
+  // whenever exactly one of X and Y does.
+  const handedness = reversed.x !== reversed.y ? -1 : 1
+  return {
+    direction: (degrees) => {
+      const flippedY = reversed.y ? -degrees : degrees
+      const flipped = reversed.x ? 180 - flippedY : flippedY
+      // Keep the (-180, 180] range the fields already show.
+      const wrapped = flipped > 180 ? flipped - 360 : flipped <= -180 ? flipped + 360 : flipped
+      return withoutNegativeZero(wrapped)
+    },
+    turn: (degrees) => withoutNegativeZero(handedness * degrees),
+    // The setup-local frame is the stock frame turned as a rigid body, so a
+    // rotation about a stock axis keeps its sense about that axis only where
+    // the axis itself still points the same way.
+    axisTurn: (axis, degrees) => withoutNegativeZero(reversed[axis] ? -degrees : degrees),
+  }
+}
+
+/** A Z range as heights above the table with the stock flipped, bottom face up. */
+export interface FlippedZRange {
+  top: number
+  bottom: number
+}
+
+/**
+ * A stock span as a Bottom setup presents it: the stock turned over, Z still
+ * measured up from the table, so the bottom face is at `thickness` and a
+ * Bottom feature reads the way the same feature reads on Top. Derived from
+ * the #944 depth view — a height is the thickness less the depth from the
+ * bottom face — and, like it, never stored.
+ */
+export function flippedZRange(span: { z_top: number; z_bottom: number }, stock: Pick<Stock, 'thickness'>): FlippedZRange {
+  const depth = depthFromFace(span, 'bottom', stock)
+  return { top: stock.thickness - depth.start, bottom: stock.thickness - depth.end }
+}
+
+function resolveZ(project: Pick<Project, 'dimensions'>, value: DimensionRef): number | null {
+  const resolved = typeof value === 'number' ? value : project.dimensions[value]?.value
+  return typeof resolved === 'number' && Number.isFinite(resolved) ? resolved : null
+}
+
+/** A feature's stock-space span with dimension references resolved, or null when one dangles. */
+export function resolveStockSpan(
+  project: Pick<Project, 'dimensions'>,
+  feature: Pick<SketchFeature, 'z_top' | 'z_bottom'>,
+): { z_top: number; z_bottom: number } | null {
+  const top = resolveZ(project, feature.z_top)
+  const bottom = resolveZ(project, feature.z_bottom)
+  return top === null || bottom === null ? null : { z_top: top, z_bottom: bottom }
+}
+
+/**
+ * A selection with every ghost feature removed. Ghosts are reference
+ * geometry: because they can never be selected, no selection-driven edit —
+ * move, delete, sketch edit, a property change — can reach one. Returns the
+ * same object when there was nothing to remove.
+ */
+export function dropGhostSelection(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'features'>,
+  selection: SelectionState,
+): SelectionState {
+  if (selection.selectedFeatureIds.length === 0 && selection.hoveredFeatureId === null) return selection
+  const ghosts = ghostFeatureIds(project)
+  if (ghosts.size === 0) return selection
+  const kept = selection.selectedFeatureIds.filter((id) => !ghosts.has(id))
+  const hoveredFeatureId = selection.hoveredFeatureId !== null && ghosts.has(selection.hoveredFeatureId)
+    ? null
+    : selection.hoveredFeatureId
+  if (kept.length === selection.selectedFeatureIds.length && hoveredFeatureId === selection.hoveredFeatureId) {
+    return selection
+  }
+  const primaryId = selection.selectedFeatureId === null || !ghosts.has(selection.selectedFeatureId)
+    ? selection.selectedFeatureId
+    : kept.at(-1) ?? null
+  const keepsEdit = selection.mode === 'sketch_edit' && primaryId !== null && primaryId === selection.selectedFeatureId
+  return {
+    ...selection,
+    selectedFeatureIds: kept,
+    selectedFeatureId: primaryId,
+    selectedNode: selection.selectedNode?.type === 'feature'
+      ? (primaryId ? { type: 'feature', featureId: primaryId } : null)
+      : selection.selectedNode,
+    hoveredFeatureId,
+    mode: keepsEdit ? selection.mode : 'feature',
+    sketchEditTool: keepsEdit ? selection.sketchEditTool : null,
+    activeControl: keepsEdit ? selection.activeControl : null,
+    groupFolderId: kept.length > 0 ? selection.groupFolderId : null,
+  }
+}
+
+/**
+ * Why the Around face cannot be created or selected on this project.
+ *
+ * This is the **authoring** guard, so only the two things that actually define
+ * the Around geometry are asked: the project type (issue #1028 — only a rotary
+ * project has an Around face at all) and a bar. `aroundFrame` derives the whole
+ * surface from the bar's axis, diameter and centre, so a missing machine, a
+ * router without a rotary block or a rotary axis across the bar must not stop
+ * the user designing on it (issue #1034).
+ *
+ * Since #1016 C2 the bar may be **round or square**: a real square blank is a
+ * turning job whose finished round target is generated as an ordinary model
+ * (`rotarySolids.ts`), so the face is workflow-available on either shape. The
+ * `needsRoundBar` string is kept for compatibility with the existing UI and
+ * translations even though it now means "not a bar at all" — a block. The
+ * round-only *sketch* rule is separate: see
+ * {@link aroundSketchAuthoringAvailable}.
+ *
+ * Machine suitability is enforced where it is real — at the output boundary:
+ * `projectMachineMismatch` refuses a machine that does not suit the type, and
+ * `planRotaryRefusals` refuses a missing or mismatched rotary axis when a
+ * program is posted. Neither is replaced by a default machine.
+ *
+ * The result carries only those two authoring reasons. The machine reasons the
+ * old guard returned are gone from the union as well, so no caller can branch
+ * on a condition this guard does not test (issue #1034 slice B).
+ */
+export function aroundUnavailableReason(
+  project: Pick<Project, 'stock' | 'meta'>,
+): null | 'needsRotaryProject' | 'needsRoundBar' {
+  if (projectType(project) !== 'rotary') return 'needsRotaryProject'
+  if (!isBarStock(project.stock)) return 'needsRoundBar'
+  return null
+}
+
+/**
+ * Whether arbitrary 2D geometry may be drawn on the Around sheet (issue #1016
+ * C2-U1). This is deliberately **narrower** than the Around face's workflow
+ * availability ({@link aroundUnavailableReason}): a square blank can be a
+ * turning job — its generated round target and rotary operations are ordinary
+ * authoring — but the unrolled sheet's raw coordinates only describe a round
+ * surface. A square blank therefore authors its sheet only once a Turn has made
+ * some section of it round (#1131): before that, hand-drawn Thread/Flutes and
+ * arbitrary 2D profiles are refused there ("Turn a section round first"). A
+ * feature drawn over a section that is still square is kept but not cut — the
+ * per-feature rule is `squareSheetFeatureBlock`. A round bar, and a project
+ * whose type is not rotary, keep their old answer.
+ *
+ * Free of `aroundUnavailableReason` so the two rules can be read and tested
+ * apart: workflow availability admits a square blank, this predicate does not
+ * until it has a round section.
+ */
+export function aroundSketchAuthoringAvailable(project: Project): boolean {
+  if (projectType(project) !== 'rotary') return false
+  if (isRoundStock(project.stock)) return true
+  return isSquareStock(project.stock) && squareSheetHasRoundSection(project)
+}
+
+/**
+ * Whether drawing on `face` is refused because the Around workflow is open but
+ * its sheet is round-only: a square blank in a rotary project. A block is left
+ * to {@link aroundUnavailableReason}'s own refusal (the store discards a write
+ * that would realise its provisional setup), so this answers false there and
+ * the pre-#1016 behavior is untouched.
+ */
+export function aroundSketchAuthoringRefused(
+  project: Project,
+  face: SetupFace,
+): boolean {
+  return face === 'around'
+    && aroundUnavailableReason(project) === null
+    && !aroundSketchAuthoringAvailable(project)
+}
+
+/**
+ * The operation of a row about to be inserted or already stored (issue #1112
+ * decision 17). Format 3.3 keeps it on the shared definition, so a
+ * `FeatureInstance` answers from its definition and a draft — the shape
+ * `addFeature`, `createDerivedFeature` and the copy helpers build — carries it
+ * itself. Reading either shape is what keeps the sheet rule about the row, not
+ * about which of the two the caller happens to hold.
+ */
+export function featureOperation(
+  project: { featureDefinitions?: Project['featureDefinitions'] },
+  feature: { operation?: FeatureOperation; definitionId?: string },
+): FeatureOperation | undefined {
+  if (feature.operation) return feature.operation
+  return feature.definitionId === undefined ? undefined : project.featureDefinitions?.[feature.definitionId]?.operation
+}
+
+/**
+ * Whether an operation cuts the sheet (issue #1112 decision 17). A **region** is
+ * a filter on a rotary operation (#1096) and **construction** geometry is never
+ * machined, so neither cuts the stock; every other operation — an add, a
+ * subtract, an engraving line, a model — does.
+ */
+function operationCutsSheet(operation: FeatureOperation | null | undefined): boolean {
+  return operation !== 'region' && operation !== 'construction'
+}
+
+/**
+ * The operation a creation target authors, when the question is only "does it
+ * cut?" — `null` for the targets that do (`feature`, `line`). The operation
+ * itself is `buildShapeFeature`'s, which also infers an open profile into a
+ * line; neither of those two is sheet-safe, so one answer covers both.
+ */
+function creationTargetOperation(target: CreationTarget): FeatureOperation | null {
+  if (target === 'region') return 'region'
+  if (target === 'construction') return 'construction'
+  return null
+}
+
+/**
+ * Whether authoring a row of this **operation** is refused on `face` (issue
+ * #1112 decision 17). The rule is {@link aroundSketchAuthoringRefused} with one
+ * exception: a region or a construction line is authored on a square blank's
+ * Around sheet as on any other face, because it never cuts the sheet — and a
+ * region is exactly how a rotary operation is limited to part of that sheet
+ * (#1096). Everything that would be cut there keeps its refusal.
+ */
+export function aroundSheetAuthoringRefused(
+  project: Project,
+  face: SetupFace,
+  operation: FeatureOperation | null | undefined,
+): boolean {
+  return operationCutsSheet(operation) && aroundSketchAuthoringRefused(project, face)
+}
+
+/** {@link aroundSheetAuthoringRefused} for a creation target rather than a row's operation. */
+export function aroundSheetTargetRefused(
+  project: Project,
+  face: SetupFace,
+  target: CreationTarget,
+): boolean {
+  return aroundSheetAuthoringRefused(project, face, creationTargetOperation(target))
+}

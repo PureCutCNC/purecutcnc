@@ -21,7 +21,9 @@
 
 import { DEFAULT_SNAP_SETTINGS, type SnapSettings } from '../../sketch/snapping'
 import { newProject, type Point, type Project, type SketchFeature, type SketchProfile } from '../../types/project'
-import { projectWithFeatures } from '../../test/projectFixtures'
+import { DEFAULT_SETUP_ID } from '../../types/project'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import { BOTTOM_SETUP_ID, withBottomSetup, projectWithFeatures } from '../../test/projectFixtures'
 import { resolveSketchSnap } from './snappingHelpers'
 import type { ViewTransform } from './viewTransform'
 
@@ -193,4 +195,19 @@ try {
 } catch (error) {
   console.error(error)
   throw error
+}
+
+for (const face of ['top', 'bottom'] as const) {
+  const guide = { ...makeFeature('construction-guide', lineProfile({ x: 20, y: 30 }, { x: 40, y: 30 })),
+    operation: 'construction' as const, authoringFace: face === 'top' ? 'bottom' as const : 'top' as const }
+  const project = withBottomSetup(projectWithFeatures(newProject(), [guide]))
+  project.activeSetupId = face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID
+  for (const mode of ['midpoint', 'line'] as const) {
+    const snap = resolveSketchSnap({ rawPoint: { x: 30, y: 30.1 }, vt, project, referencePoint: null,
+      snapSettings: snapSettings([mode]), referenceFeatures: referenceProjectFeatures(project, true) })
+    assert(snap.mode === mode, `${face}: existing ${mode} snapping accepts a foreign construction reference`)
+    assertPointClose(snap.point, { x: 30, y: 30 }, `${face}: the reference point stays canonical`)
+    assert(snap.anchor?.kind === (mode === 'midpoint' ? 'midpoint' : 'segmentPoint'), 'existing source anchor kind is retained')
+    assert(snap.anchor?.kind !== 'segmentPoint' || Math.abs(snap.anchor.t - 0.5) < 1e-6, 'reference line parameter stays canonical')
+  }
 }

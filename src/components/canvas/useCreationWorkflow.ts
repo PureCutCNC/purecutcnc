@@ -24,6 +24,7 @@ import type { PendingAddTool } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
 import { computeDimensionEditPreviewPoint, type DimensionEditState } from './manualEntry'
+import { faceAngles } from '../../store/helpers/activeFace'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 export interface CreationWorkflowCtx {
@@ -54,6 +55,15 @@ export interface CreationWorkflowCtx {
 }
 
 type CreationPanelShape = 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'gear' | 'roundrect' | 'chamferrect' | null
+
+/**
+ * True for a Turn/Polygon/Thread/Flutes creation session. Those render their own
+ * page-level panel and nothing is placed on the canvas, so they are neither a
+ * creation-panel shape nor a placement prompt (issue #1112 rt2-b).
+ */
+function isRotaryCreate(pendingAdd: PendingAddTool | null): boolean {
+  return pendingAdd?.shape === 'rotary-solid' || pendingAdd?.shape === 'rotary-pattern'
+}
 
 export interface CreationWorkflow {
   creationPanelShape: CreationPanelShape
@@ -135,7 +145,13 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     pageLevel: true,
   })
 
-  const placementPanelActive = !!pendingAdd && !creationPanelShape
+  // A canned-shape edit borrows `pendingAdd` as its open flag but has its own
+  // side panel, so it is neither a creation panel nor a placement prompt. A
+  // rotary create session is the same: its own page-level panel, nothing placed.
+  const placementPanelActive = !!pendingAdd
+    && pendingAdd.shape !== 'canned-edit'
+    && !isRotaryCreate(pendingAdd)
+    && !creationPanelShape
   const placementWorkflowPanel = useCanvasWorkflowPanel({
     open: placementPanelActive,
     phaseKey: pendingAdd?.shape ?? 'place',
@@ -152,7 +168,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   function commitCreationDimensionEdit() {
     const edit = dimensionEditRef.current
     if (!edit) return
-    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
+    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units, faceAngles(projectRef.current))
     const curr = pendingAddRef.current
     if ((edit.shape === 'polygon' || edit.shape === 'spline') && (curr?.shape === 'polygon' || curr?.shape === 'spline')) {
       addPendingPolygonPoint(pt)
@@ -203,7 +219,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length === 1 && edit.arcStart && !edit.arcEnd) {
       const units = projectRef.current.meta.units
       const len = parseLengthInput(edit.length, units)
-      const angleDeg = parseFloat(edit.angle)
+      // The field holds the angle as it reads on the active face (issue #945).
+      const angleDeg = faceAngles(projectRef.current).direction(parseFloat(edit.angle))
       const slotWidth = parseLengthInput(edit.radius, units)
       if (len != null && len > 0 && !Number.isNaN(angleDeg) && slotWidth != null && slotWidth > 0) {
         const angleRad = angleDeg * Math.PI / 180

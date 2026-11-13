@@ -41,6 +41,12 @@ export interface OperationBookletReport {
   stockSizeSummary: string
   targetSummary: string
   targetFeatureNames: string[]
+  /**
+   * The setup the operation is cut in: which program it belongs to, how the
+   * stock is turned, what locates it, and the operator's notes (issue #946).
+   * Empty for a project with a single setup, whose booklet has no such section.
+   */
+  setupRows: OperationBookletRow[]
   toolRows: OperationBookletRow[]
   settingRows: OperationBookletRow[]
   /** Rendered, localized warning text — the booklet is a user-facing document. */

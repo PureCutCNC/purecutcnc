@@ -51,7 +51,8 @@
     "ccwArcCommand": "G3",
     "arcFormat": "ij",
     "modalMotion": true,
-    "arcInterpolation": true
+    "arcInterpolation": true,
+    "machineSafeZ": 0
   },
   "feedSpeed": {
     "feedCommand": "F",
@@ -68,7 +69,7 @@
       "M0 ( Tool change: {toolName} )"
     ],
     "stopSpindleFirst": true,
-    "pauseAfterChange": true,
+    "pauseAfterChange": false,
     "pauseCommand": "M0"
   },
   "cannedCycles": null,

@@ -21,7 +21,10 @@
  * what filename to suggest for the resulting program.
  */
 
-import type { Operation, Project } from '../../types/project'
+import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
+import { projectExportsPerSetup, setupProgramNumber } from '../../engine/gcode/setupPrograms'
+import { setupFace, setupForOperation } from '../../engine/setupOrientation'
+import { operationHiddenByProjectType } from '../../store/helpers/projectType'
 
 /**
  * Translation-key references for operation exportability reasons.
@@ -40,7 +43,12 @@ export interface ExportOperationOption {
 }
 
 export function listExportOperationOptions(project: Project): ExportOperationOption[] {
-  return project.operations.map((operation) => {
+  // Only operations in an Around setup of a non-rotary project are left off the
+  // checklist: that setup's face does not exist for the type (issue #1028, rule
+  // (a)), and leaving them off also keeps them out of the programs it feeds. An
+  // operation of the other family stays listed — the postprocessor skips it and
+  // the dialog shows its warning (issue #960).
+  return project.operations.filter((operation) => !operationHiddenByProjectType(project, operation)).map((operation) => {
     const hasTool = operation.toolRef !== null
       && project.tools.some((tool) => tool.id === operation.toolRef)
     const reasonKey: ExportOperationReasonKey | null = !operation.enabled
@@ -57,6 +65,42 @@ export function listExportOperationOptions(project: Project): ExportOperationOpt
   })
 }
 
+/** The export checklist's operations under the setup that cuts them. */
+export interface ExportOperationGroup {
+  /** The setup; null for the one unlabelled group of a single-setup project. */
+  setup: MachiningSetup | null
+  programNumber: number
+  face: SetupFace
+  options: ExportOperationOption[]
+}
+
+/**
+ * Group the checklist by setup (issue #946): each setup exports as its own
+ * program, so the list shows which program an operation will land in. Setups
+ * come in project order and keep their operations in project order; a setup
+ * with no operations has no group. A project with a single setup is one
+ * unlabelled group — the list it always was.
+ */
+export function groupExportOperationOptions(
+  project: Project,
+  options: readonly ExportOperationOption[],
+): ExportOperationGroup[] {
+  if (!projectExportsPerSetup(project)) {
+    if (options.length === 0) return []
+    const sole = project.setups?.[0]
+    const face = sole ? setupFace(sole) : 'top'
+    // An Around-only project is not the unlabelled legacy group: its one
+    // program is named and wears the Around icon (issue #395).
+    return [{ setup: face === 'around' ? sole ?? null : null, programNumber: 1, face, options: [...options] }]
+  }
+  return project.setups.flatMap((setup) => {
+    const members = options.filter((option) => (setupForOperation(project, option.operation) ?? project.setups[0]) === setup)
+    return members.length === 0
+      ? []
+      : [{ setup, programNumber: setupProgramNumber(project, setup.id), face: setupFace(setup), options: members }]
+  })
+}
+
 /**
  * Filename stem for the save dialog: the project name, plus the operation
  * name when exactly one operation is being exported. Whitespace collapses to
@@ -67,4 +111,17 @@ export function suggestGcodeFileName(projectName: string, selectedOperationNames
     ? `${projectName} ${selectedOperationNames[0]}`
     : projectName
   return stem.replace(/\s+/g, '_')
+}
+
+/**
+ * The previous export's path, when this export may overwrite it in place.
+ *
+ * Only a file of the same kind qualifies. After a change of machine the
+ * extension differs, and writing one machine's program under another's name is
+ * how a `.nc` would end up holding a ShopBot part file (issue #953); the
+ * caller then asks where to save instead.
+ */
+export function reusableExportPath(lastExportPath: string | null, extension: string): string | null {
+  if (!lastExportPath) return null
+  return lastExportPath.toLowerCase().endsWith(`.${extension.toLowerCase()}`) ? lastExportPath : null
 }

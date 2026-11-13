@@ -16,17 +16,22 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { pinRotaryAxis, resolveOutputDialect, rotaryWord } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { DisclosureSection } from '../common/DisclosureSection'
+import { formHasChanges } from '../common/formDraft'
 import {
   toFormData,
   mergeFormData,
   validateDef,
 } from './machineDefinitionForm'
 import type { MachineFormData } from './machineDefinitionForm'
+import { machineEditorDiagnostics } from './machineEditorDiagnostics'
+import { MachineDiagnosticList } from './MachineDiagnosticList'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
+import { PlasmaMachineFields } from './PlasmaMachineFields'
 
 export interface MachineDefinitionEditorDialogProps {
   definition: MachineDefinition
@@ -50,6 +55,10 @@ export function MachineDefinitionEditorDialog({
     JSON.stringify(definition, null, 2),
   )
   const textAreaRef = useRef<HTMLTextAreaElement>(null)
+  // Preserve Advanced settings while a required command is temporarily blank.
+  const lastValidDefinition = useRef(definition)
+  // An invalid raw edit must stay visible, never be replaced by the older form.
+  const invalidAdvancedEdit = useRef(false)
 
   // Escape key closes the dialog.
   useEffect(() => {
@@ -87,30 +96,42 @@ export function MachineDefinitionEditorDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
   }, [advancedJson, definition, form, languageTag])
 
+  // Persistent template-rule diagnostics for the content being edited, not the
+  // strict schema's first message (#1119). They update as each line is fixed
+  // and disappear exactly when the definition becomes saveable.
+  const templateDiagnostics = useMemo(
+    () => machineEditorDiagnostics(definition, form, advancedJson),
+    [advancedJson, definition, form],
+  )
+
   function handleFormChange(patch: Partial<MachineFormData>) {
-    setForm((prev) => {
-      const next = { ...prev, ...patch }
-      // When the focused form changes, also update the Advanced JSON view
-      // so both stay in sync. Only sync if the JSON view doesn't have a
-      // syntax error (if it does, keep the user's broken JSON).
-      try {
-        JSON.parse(advancedJson)
-        const merged = mergeFormData(definition, next)
-        setAdvancedJson(JSON.stringify(merged, null, 2))
-      } catch {
-        // Syntax error in JSON editor — don't overwrite; user is editing raw.
-      }
-      return next
-    })
+    const next = { ...form, ...patch }
+    setForm(next)
+    if (invalidAdvancedEdit.current) return
+    // Merge against the current valid JSON so advanced edits survive a
+    // later focused edit, including changes to the optional plasma block.
+    try {
+      const parsed = JSON.parse(advancedJson)
+      const base = validateDef(parsed).ok ?? lastValidDefinition.current
+      const merged = mergeFormData(base, next)
+      const valid = validateDef(merged).ok
+      if (valid) lastValidDefinition.current = valid
+      setAdvancedJson(JSON.stringify(merged, null, 2))
+    } catch {
+      // Keep a syntax error intact while the user is editing raw JSON.
+    }
   }
 
   function handleJsonChange(value: string) {
+    invalidAdvancedEdit.current = true
     setAdvancedJson(value)
     try {
       const parsed = JSON.parse(value)
       // Also sync the focused form from the JSON.
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
+        lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
     } catch {
@@ -130,6 +151,8 @@ export function MachineDefinitionEditorDialog({
       const parsed = JSON.parse(advancedJson)
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
+        lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
     } catch {
@@ -146,7 +169,36 @@ function renderVar(name: string, desc: string, context?: string) {
   )
 }
 
-  const canSave = mergedDef !== null && !jsonError
+  // The definition this dialog opened on, in the shape the Advanced editor
+  // holds: the JSON round trip is the one Save itself parses, so an untouched
+  // definition cannot differ by a key the round trip does not carry. Save
+  // writes nothing in that case, so it is disabled rather than silently
+  // re-selecting the machine (issue #1112 F4).
+  const savedDefinition = useMemo(
+    () => validateDef(JSON.parse(JSON.stringify(definition))).ok ?? definition,
+    [definition],
+  )
+  const canSave = mergedDef !== null && !jsonError && formHasChanges(savedDefinition, mergedDef)
+
+  // A ShopBot machine's program is written by the emitter, not from this
+  // definition's command words and templates (issue #953). Showing those
+  // fields would offer edits that change nothing, so they are left out.
+  const usesGcodeFields = resolveOutputDialect(mergedDef ?? definition) === 'gcode'
+
+  // A rotary axis can exist only on a G-code router (issue #393): a plasma
+  // machine and a ShopBot are refused by validation, so the group is hidden.
+  const rotaryAvailable = usesGcodeFields && form.machineKind !== 'plasma'
+  // The word follows the edited definition, so a coordinate system that maps
+  // project Y to machine X shows that letter instead of a hard-coded one.
+  // The editor always holds an explicit axis (the manager pins one on open,
+  // #1153), so the pin only satisfies the type.
+  const rotaryProgramWord = rotaryWord(pinRotaryAxis(mergeFormData(mergedDef ?? definition, form), null))
+  // A block error belongs on the Driven by field it names, but only while that
+  // field is on screen; otherwise the Advanced section keeps showing it.
+  const rotaryFieldVisible = rotaryAvailable && form.rotaryAbout !== 'none'
+  const rotaryError = rotaryFieldVisible && validationError && /\(at rotary[.)]/.test(validationError)
+    ? validationError
+    : null
 
   function renderTextAreaField(label: string, value: string, onChange: (v: string) => void) {
     return (
@@ -183,6 +235,13 @@ function renderVar(name: string, desc: string, context?: string) {
 
         <div className="dialog-body">
           <div className="dialog-section">
+            {templateDiagnostics.length > 0 ? (
+              <div className="dialog-section-group machine-editor-diagnostics">
+                <span className="dialog-section-title">{td('dialogs.machineEditor.diagnosticsTitle')}</span>
+                <p className="machine-editor-note">{td('dialogs.machineEditor.diagnosticsHint')}</p>
+                <MachineDiagnosticList diagnostics={templateDiagnostics} />
+              </div>
+            ) : null}
             <div className="dialog-section-group">
               <span className="dialog-section-title">{td('dialogs.machineEditor.general')}</span>
               <label className="machine-editor-field">
@@ -203,77 +262,178 @@ function renderVar(name: string, desc: string, context?: string) {
                   onChange={(e) => handleFormChange({ fileExtension: e.target.value })}
                 />
               </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.mmCommand')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.mmCommand}
-                  placeholder="e.g. G21"
-                  onChange={(e) => handleFormChange({ mmCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.inchCommand')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.inchCommand}
-                  placeholder="e.g. G20"
-                  onChange={(e) => handleFormChange({ inchCommand: e.target.value })}
-                />
-              </label>
-            </div>
-
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.program')}</span>
-              {renderTextAreaField(td('dialogs.machineEditor.header'), form.header, (v) => handleFormChange({ header: v }))}
-              {renderTextAreaField(td('dialogs.machineEditor.operationHeader'), form.operationHeader, (v) =>
-                handleFormChange({ operationHeader: v }),
+              {usesGcodeFields ? null : (
+                <p className="machine-editor-note">{td('dialogs.machineEditor.opensbpNote')}</p>
               )}
-              {renderTextAreaField(td('dialogs.machineEditor.footer'), form.footer, (v) => handleFormChange({ footer: v }))}
+              {usesGcodeFields ? (
+                <>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.mmCommand')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.mmCommand}
+                      placeholder="e.g. G21"
+                      onChange={(e) => handleFormChange({ mmCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.inchCommand')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.inchCommand}
+                      placeholder="e.g. G20"
+                      onChange={(e) => handleFormChange({ inchCommand: e.target.value })}
+                    />
+                  </label>
+                </>
+              ) : null}
             </div>
 
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.toolChange')}</span>
-              {renderTextAreaField(td('dialogs.machineEditor.toolChangeCommands'), form.toolChangeCommands, (v) =>
-                handleFormChange({ toolChangeCommands: v }),
-              )}
-            </div>
+            {usesGcodeFields ? <PlasmaMachineFields form={form} onChange={handleFormChange} /> : null}
 
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.coolant')}</span>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.floodOn')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.floodOnCommand}
-                  placeholder="e.g. M8"
-                  onChange={(e) => handleFormChange({ floodOnCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.mistOn')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.mistOnCommand}
-                  placeholder="e.g. M7"
-                  onChange={(e) => handleFormChange({ mistOnCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.coolantOff')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.coolantOffCommand}
-                  placeholder="e.g. M9"
-                  onChange={(e) => handleFormChange({ coolantOffCommand: e.target.value })}
-                />
-              </label>
-            </div>
+            {rotaryAvailable ? (
+              <div className="dialog-section-group">
+                <span className="dialog-section-title">{td('dialogs.machineEditor.rotary')}</span>
+                <label className="machine-editor-field">
+                  <span className="machine-editor-label">{td('dialogs.machineEditor.rotary')}</span>
+                  <select
+                    className="machine-editor-input"
+                    data-testid="machine-rotary-axis"
+                    value={form.rotaryAbout}
+                    onChange={(event) => handleFormChange({
+                      rotaryAbout: event.target.value === 'x' ? 'x' : event.target.value === 'y' ? 'y' : 'none',
+                    })}
+                  >
+                    <option value="none">{td('dialogs.machineEditor.rotaryNone')}</option>
+                    <option value="x">{td('dialogs.machineEditor.rotaryBarX')}</option>
+                    <option value="y">{td('dialogs.machineEditor.rotaryBarY')}</option>
+                  </select>
+                </label>
+                {form.rotaryAbout === 'none' ? null : (
+                  <>
+                    <label className="machine-editor-field">
+                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryDrivenBy')}</span>
+                      <select
+                        className="machine-editor-input"
+                        data-testid="machine-rotary-drive"
+                        value={form.rotaryDrive}
+                        onChange={(event) => handleFormChange({
+                          rotaryDrive: event.target.value === 'borrowed' ? 'borrowed' : 'own',
+                        })}
+                      >
+                        <option value="own">{td('dialogs.machineEditor.rotaryOwn')}</option>
+                        <option value="borrowed">
+                          {form.rotaryAbout === 'x'
+                            ? td('dialogs.machineEditor.rotaryYMotor')
+                            : td('dialogs.machineEditor.rotaryXMotor')}
+                        </option>
+                      </select>
+                    </label>
+                    {rotaryProgramWord ? (
+                      <p className="machine-editor-note" data-testid="machine-rotary-word">
+                        {td('dialogs.machineEditor.rotaryWord', { word: rotaryProgramWord })}
+                      </p>
+                    ) : null}
+                    {rotaryError ? (
+                      <div className="machine-editor-error" role="alert">{rotaryError}</div>
+                    ) : null}
+                    <label className="machine-editor-check">
+                      <input
+                        type="checkbox"
+                        data-testid="machine-rotary-reversed"
+                        checked={form.rotaryReversed}
+                        onChange={(event) => handleFormChange({ rotaryReversed: event.target.checked })}
+                      />
+                      <span>{td('dialogs.machineEditor.rotaryReverse')}</span>
+                    </label>
+                    {form.rotaryDrive === 'own' ? (
+                      <label className="machine-editor-check">
+                        <input
+                          type="checkbox"
+                          data-testid="machine-rotary-angle-scales"
+                          checked={form.rotaryAngleScalesWithUnits}
+                          onChange={(event) => handleFormChange({ rotaryAngleScalesWithUnits: event.target.checked })}
+                        />
+                        <span>{td('dialogs.machineEditor.rotaryAngleScales')}</span>
+                      </label>
+                    ) : (
+                      <p className="machine-editor-note" data-testid="machine-rotary-mm-only">
+                        {td('dialogs.machineEditor.rotaryBorrowedMmOnly')}
+                      </p>
+                    )}
+                    <label className="machine-editor-field">
+                      <span className="machine-editor-label">{td('dialogs.machineEditor.rotaryZeroA')}</span>
+                      <input
+                        className="machine-editor-input"
+                        type="text"
+                        data-testid="machine-rotary-zero-a"
+                        value={form.rotaryZeroA}
+                        placeholder="G10 L20 P1 A0"
+                        spellCheck={false}
+                        onChange={(event) => handleFormChange({ rotaryZeroA: event.target.value })}
+                      />
+                      <span className="machine-editor-note">{td('dialogs.machineEditor.rotaryZeroAHint')}</span>
+                    </label>
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            {usesGcodeFields ? (
+              <>
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.program')}</span>
+                  {renderTextAreaField(td('dialogs.machineEditor.header'), form.header, (v) => handleFormChange({ header: v }))}
+                  {renderTextAreaField(td('dialogs.machineEditor.operationHeader'), form.operationHeader, (v) =>
+                    handleFormChange({ operationHeader: v }),
+                  )}
+                  {renderTextAreaField(td('dialogs.machineEditor.footer'), form.footer, (v) => handleFormChange({ footer: v }))}
+                </div>
+
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.toolChange')}</span>
+                  {renderTextAreaField(td('dialogs.machineEditor.toolChangeCommands'), form.toolChangeCommands, (v) =>
+                    handleFormChange({ toolChangeCommands: v }),
+                  )}
+                </div>
+
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.coolant')}</span>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.floodOn')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.floodOnCommand}
+                      placeholder="e.g. M8"
+                      onChange={(e) => handleFormChange({ floodOnCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.mistOn')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.mistOnCommand}
+                      placeholder="e.g. M7"
+                      onChange={(e) => handleFormChange({ mistOnCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.coolantOff')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.coolantOffCommand}
+                      placeholder="e.g. M9"
+                      onChange={(e) => handleFormChange({ coolantOffCommand: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </>
+            ) : null}
           </div>
 
           <div className="dialog-section">
@@ -284,6 +444,7 @@ function renderVar(name: string, desc: string, context?: string) {
               <textarea
                 ref={textAreaRef}
                 className="machine-editor-json"
+                aria-label={td('dialogs.machineEditor.advanced')}
                 value={advancedJson}
                 onChange={(e) => handleJsonChange(e.target.value)}
                 onBlur={handleJsonBlur}
@@ -296,35 +457,38 @@ function renderVar(name: string, desc: string, context?: string) {
                 </div>
               ) : null}
             </DisclosureSection>
-            {validationError ? (
+            {validationError && !rotaryError ? (
               <div className="machine-editor-error" role="alert">
                 {validationError}
               </div>
             ) : null}
 
-            <DisclosureSection
-              title={td('dialogs.machineEditor.variablesReference')}
-              storageKey="machine-editor-vars"
-            >
-              <div className="machine-editor-vars">
-                {renderVar('programName', 'Project name (comment-safe)', 'header, footer')}
-                {renderVar('date', 'Current date (YYYY-MM-DD)', 'header, footer')}
-                {renderVar('units', 'Project units: mm or inch', 'header, footer')}
-                {renderVar('unitsCommand', 'Units G-code command (e.g. G21)', 'header, footer')}
-                {renderVar('wcsCommand', 'Work coordinate select (e.g. G54)', 'header, footer')}
-                {renderVar('operationIndex', '1-based operation number', 'operation header')}
-                {renderVar('operationName', 'Operation name (comment-safe)', 'operation header')}
-                {renderVar('operationDescription', 'Operation description text', 'operation header')}
-                {renderVar('operationKind', 'Operation kind: contour, pocket, drill…', 'operation header')}
-                {renderVar('operationPass', 'rough or finish', 'operation header')}
-                {renderVar('operationTarget', 'Target shape summary', 'operation header')}
-                {renderVar('toolNumber', 'Tool index (1-based)', 'tool change, op header')}
-                {renderVar('toolName', 'Tool name (comment-safe)', 'tool change, op header')}
-                {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
-                {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
-                {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
-              </div>
-            </DisclosureSection>
+            {usesGcodeFields ? (
+              <DisclosureSection
+                title={td('dialogs.machineEditor.variablesReference')}
+                storageKey="machine-editor-vars"
+              >
+                <div className="machine-editor-vars">
+                  {renderVar('programName', 'Project name (comment-safe)', 'header, footer')}
+                  {renderVar('date', 'Current date (YYYY-MM-DD)', 'header, footer')}
+                  {renderVar('units', 'Project units: mm or inch', 'header, footer')}
+                  {renderVar('unitsCommand', 'Units G-code command (e.g. G21)', 'header, footer')}
+                  {renderVar('wcsCommand', 'Work coordinate select (e.g. G54)', 'header, footer')}
+                  {renderVar('operationIndex', '1-based operation number', 'operation header')}
+                  {renderVar('operationName', 'Operation name (comment-safe)', 'operation header')}
+                  {renderVar('operationDescription', 'Operation description text', 'operation header')}
+                  {renderVar('operationKind', 'Operation kind: contour, pocket, drill…', 'operation header')}
+                  {renderVar('operationPass', 'rough or finish', 'operation header')}
+                  {renderVar('operationTarget', 'Target shape summary', 'operation header')}
+                  {renderVar('toolNumber', 'Tool index (1-based)', 'tool change, op header')}
+                  {renderVar('toolName', 'Tool name (comment-safe)', 'tool change, op header')}
+                  {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
+                  {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
+                  {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
+                  {form.machineKind === 'plasma' && form.pierceMode === 'controller' ? renderVar('materialNumber', td('dialogs.machineEditor.materialNumberReference'), 'plasma.materialSelectCommand') : null}
+                </div>
+              </DisclosureSection>
+            ) : null}
           </div>
         </div>
 

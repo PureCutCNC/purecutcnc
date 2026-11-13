@@ -32,13 +32,18 @@ import { parentPort } from 'node:worker_threads'
 import { tsImport } from 'tsx/esm/api'
 
 interface WorkerScopeShim {
-  postMessage(message: unknown): void
+  postMessage(message: unknown, transfer?: Transferable[]): void
   onmessage: ((event: { data: unknown }) => void) | null
   onmessageerror: ((event: { data: unknown }) => void) | null
 }
 
 const shim: WorkerScopeShim = {
-  postMessage: (message: unknown) => { parentPort?.postMessage(message) },
+  // The transfer list is part of the shipped worker's contract since #1115
+  // slice p-d3: it hands one end of a `MessageChannel` to the main thread, and
+  // a shim that dropped the list would send a detached copy instead.
+  postMessage: (message: unknown, transfer?: Transferable[]) => {
+    parentPort?.postMessage(message, transfer as never)
+  },
   onmessage: null,
   onmessageerror: null,
 }

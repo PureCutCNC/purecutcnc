@@ -41,8 +41,8 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { Operation, OperationKind, Tool } from '../../types/project'
-import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
+import type { Operation, OperationKind, SetupFace, Tool } from '../../types/project'
+import { isRotaryOperationKind, isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import { roughingRingIsTheFinishedWall } from '../../engine/toolpaths/xyLead'
@@ -64,7 +64,9 @@ import type { OperationParamRefKind } from './operationParamRefData'
  *  where the pass cuts full depth in one go (finish edge routes). */
 export function showStepdown(operation: Operation): boolean {
   if (
-    operation.kind === 'v_carve'
+    operation.kind === 'rotary_finish'
+    || operation.kind === 'plasma_profile'
+    || operation.kind === 'v_carve'
     || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
     || operation.kind === 'finish_surface_cleanup'
@@ -145,6 +147,23 @@ function leavesStock(operation: Operation): boolean {
     && operation.kind !== 'drilling'
 }
 
+/**
+ * Which stock-to-leave reference picture a row shows (#1112 decisions 7.10,
+ * 8.16). A rotary operation clears the bar's circumference, so its leave is
+ * drawn across a radial cross-section. Any other operation on the Around sheet
+ * keeps the pocket-wall picture — its walls are the pocket's — but the picture
+ * carries the "walls are radial" note, because a wrapped pocket's walls run
+ * toward the axis rather than standing up from the sheet. A Top or Bottom
+ * pocket gets neither: its walls are ordinary upright walls.
+ */
+export function stockRadialRefVariant(
+  operation: Pick<Operation, 'kind'>,
+  face: SetupFace,
+): 'rotary' | 'around' | undefined {
+  if (isRotaryOperationKind(operation.kind)) return 'rotary'
+  return face === 'around' ? 'around' : undefined
+}
+
 // ── Groups ─────────────────────────────────────────────────────────
 
 export const OPERATION_FIELD_GROUP_IDS = [
@@ -223,6 +242,11 @@ export const OPERATION_FIELD_IDS = [
   'finishFloor',
   'stockToLeaveRadial',
   'stockToLeaveAxial',
+  'rotaryChuckSupport',
+  'rotaryTailSupport',
+  // Rotary strategy, listed beside the rotary depth rows because the Passes
+  // choice belongs to the same family (#1045 slice B).
+  'rotaryPassDirection',
   // Speeds & feeds.
   'feed',
   'plungeFeed',
@@ -354,6 +378,16 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && (operation.kind !== 'finish_surface' || isWaterlineFinish(operation)),
   },
   { id: 'stockToLeaveAxial', group: 'depth', paramRef: 'stockAxial', appliesTo: leavesStock },
+  { id: 'rotaryChuckSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
+  { id: 'rotaryTailSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
+  {
+    // Along vs around the bar (#1045 slice B). Missing reads as `'along'`, the
+    // motion every saved rotary operation was cut with, so the row shows that
+    // value without writing the field onto the operation.
+    id: 'rotaryPassDirection',
+    group: 'strategy',
+    appliesTo: (operation) => isRotaryOperationKind(operation.kind),
+  },
   // ── Speeds & feeds — the numbers that change with the material. Slot feed and
   //   its engagement mode stay adjacent: the mode governs how the reduction
   //   above it is applied, so splitting them reads as two unrelated settings.
@@ -606,6 +640,16 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
 ]
 
 /**
+ * Whether the operation description shows its textarea (issue #1102,
+ * proposal 10). An empty note starts as a "+ Add note" link; revealing it or
+ * having a stored note shows the textarea. `revealed` is the user's click —
+ * kept here rather than in the component so the rule is testable on its own.
+ */
+export function operationNoteShowsTextarea(revealed: boolean, storedDescription: string): boolean {
+  return revealed || storedDescription.trim().length > 0
+}
+
+/**
  * The fields of `group` that apply to `operation`, in render order. An empty
  * result means the group must not render at all.
  */
@@ -616,6 +660,8 @@ export function operationFieldsForGroup(
 ): OperationFieldSpec[] {
   return OPERATION_FIELDS.filter((field) => {
     const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
+    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport', 'rotaryPassDirection'].includes(field.id)) return false
+    if (operation.kind === 'plasma_profile' && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'feed', 'arcFitting'].includes(field.id)) return false
     return fieldGroup === group && field.appliesTo(operation, tool)
   })
 }

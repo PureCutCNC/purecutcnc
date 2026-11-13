@@ -18,8 +18,11 @@ import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { cloneProject } from '../helpers/normalize'
+import { keepWorkspaceFace } from '../helpers/provisionalSetup'
+import { isGhostFeature } from '../helpers/activeFace'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
+import { isCannedFeature } from '../../cannedShapes'
 
 export interface SelectionSliceDependencies {
   normalizeProject: (project: Project) => Project
@@ -257,7 +260,11 @@ export function createSelectionSlice(
         const selectedFeature = id ? featureById(s.project, id) : null
 
         if (joinMode) {
-          if (selectedFeature && (!selectedFeature.sketch.profile.closed || selectedFeature.locked)) {
+          if (selectedFeature && (
+            !selectedFeature.sketch.profile.closed
+            || selectedFeature.locked
+            || isCannedFeature(selectedFeature)
+          )) {
             return {}
           }
 
@@ -305,7 +312,7 @@ export function createSelectionSlice(
             return {}
           }
 
-          if (selectedFeature && selectedFeature.locked) {
+          if (selectedFeature && (selectedFeature.locked || isCannedFeature(selectedFeature))) {
             return {}
           }
           // Open features as targets are only allowed when at least one
@@ -974,6 +981,11 @@ export function createSelectionSlice(
 
     enterSketchEdit: (id) =>
       set((s) => {
+        const feature = featureById(s.project, id)
+        if (!feature || isGhostFeature(s.project, feature)) return {}
+        // A canned shape has no editable sketch — its parameters own the
+        // geometry. Expand to features first (issue #1112).
+        if (isCannedFeature(feature)) return {}
         return {
           pendingTransform: null,
           pendingOffset: null,
@@ -1113,7 +1125,8 @@ export function createSelectionSlice(
           }
         }
 
-        const restored = deps.normalizeProject(cloneProject(s.sketchEditSession.snapshot))
+        // Like undo: the snapshot is restored onto the face in view (#945).
+        const restored = keepWorkspaceFace(deps.normalizeProject(cloneProject(s.sketchEditSession.snapshot)), s.project)
         return {
           project: restored,
           selection: {
@@ -1169,6 +1182,8 @@ export function createSelectionSlice(
 
     setPendingSketchSubject: (subject) =>
       set((s) => {
+        const feature = featureById(s.project, subject.featureId)
+        if (!feature || feature.locked || isGhostFeature(s.project, feature)) return {}
         if (!s.pendingSketchEdit || s.pendingSketchEdit.phase !== 'pick-subject') {
           return {}
         }

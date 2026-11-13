@@ -15,6 +15,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [import/](import/INDEX.md) — DXF / SVG / STL / OBJ / STEP importers that normalize into `.camj` (STEP is tessellated by Open CASCADE in a worker); `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
 - [postProcessorConverter/](postProcessorConverter/INDEX.md) — standalone CLI that converts external CAM post-processor files into a `MachineDefinition` JSON plus a conversion report
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers. `baseline.ts` bends a straight run onto an arc or a guide path (issue #671) — one similarity transform per glyph, so letterforms are never sheared
+- [cannedShapes/](cannedShapes/INDEX.md) — canned-shape model (issue #1112): a definition stores a shape kind and JSON parameters and generates its outlines on read, with the same Add/Subtract nesting rule as Text. Slices D–G extend it by exporting a generator and appending it to `generators/index.ts`
 - [geometry/](geometry/INDEX.md) — layer-neutral pure profile primitives (`clonePoint`, `translatePoint`, `transformProfile`, `translateProfile`, `cloneProfile`) shared by the store and `text/` so neither depends on the other
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation, arc-text placement gesture in `textPlacement.ts`)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
@@ -22,14 +23,15 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [theme/](theme/INDEX.md) — app-local Dark/Light/System appearance state plus typed canvas and Three.js palettes
 - [machine/](machine/INDEX.md) — app-local machine library: bundled definitions from the build plus a persistent **My Machines** list; a project embeds only its selected snapshot
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
-- [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
+- [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema; `barStock.ts` adds the shape-agnostic bar geometry beside the round helpers — the square blank (`squareStock`, `normalizeSquareStock`) and `barCentre`/`barLength`/`barPivotZ`/`barInscribedRadius`/`barMaxRadius`/`barSurfaceRadius` (#1016 C2-S1)
 - [utils/](utils/) — units, analytics, icons, version, misc helpers
-- [platform/](platform/) — platform abstraction (web vs Tauri), including touch-only `.camj.json` save compatibility, desktop integration, feature clipboard helpers, and hidden-iframe HTML printing (`printDocument.ts`)
-- [styles/](styles/) — shared CSS (incl. `tablet.css` for touch UX)
+- [platform/](platform/) — platform abstraction (web vs Tauri), including touch-only `.camj.json` save compatibility, desktop integration, feature clipboard helpers (a paste onto a square blank's Around sheet is refused before its history transaction opens, #1016 C2-U1), and hidden-iframe HTML printing (`printDocument.ts`)
+- [styles/](styles/) — shared CSS (incl. `tablet.css` for touch UX and `face.css` for the Top / Bottom face switch, banner, tree layers, depth fields and CAM setup sections/dialogs)
 - [assets/](assets/) — editable per-icon SVG sources in `icons/` (see `icons/README.md`), fonts, etc.
 - [test/](test/INDEX.md) — shared helpers for constructing strict current-format test projects
 
 ## Loose files
+- `toolPolicy.ts` — new plasma defaults, missing-field migration, operation/tool family guards and equality (issue #955); `plasmaTool.test.ts` covers defaults/library, persistence/units, creation/import/history, generation and cutter-only readers
 - `toolLibrary.ts` — built-in tool definitions and tool-library helpers
 - `toolLibrary.test.ts` — structural test over `public/tool-library.json`: every entry must survive parsing (the parser drops invalid ones silently), keys and names are unique, and every V-bit's `maxCutDepth` reaches its own cone height so it can cut a full-diameter countersink
 

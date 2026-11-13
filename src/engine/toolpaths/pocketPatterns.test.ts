@@ -64,12 +64,15 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 const ALL_KINDS: OperationKind[] = [
+  'plasma_profile',
   'pocket',
   'v_carve',
   'v_carve_medial',
   'edge_route_inside',
   'edge_route_outside',
   'surface_clean',
+  'rotary_rough',
+  'rotary_finish',
   'rough_surface',
   'finish_surface',
   'finish_surface_cleanup',

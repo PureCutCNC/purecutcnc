@@ -16,7 +16,7 @@
 
 import {
   BufferAttribute, Camera, Color, DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry,
-  Mesh, NoBlending, NoColorSpace, PlaneGeometry, Scene, ShaderMaterial, Vector2, Vector3,
+  Mesh, NoBlending, NoColorSpace, PlaneGeometry, Scene, ShaderMaterial, Vector2, Vector4,
   WebGLRenderer, WebGLRenderTarget,
 } from 'three'
 import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
@@ -24,11 +24,12 @@ import { parseColor } from '../../theme/color'
 import { canvasFeedColour, feedColourStep, type CanvasThemePalette } from '../../theme/palette'
 import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import { buildToolpathOverlayLayers, toolpathLayerBuckets, type ToolpathOverlayLayerKey } from '../viewport3d/toolpathOverlay'
-import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
-import type { ViewTransform } from './viewTransform'
+import { toolpathCollisionAlpha, toolpathLayerStyles, toolpathStrokeAlpha, toolpathStrokeWidth } from './toolpathStyles'
+import { viewLinearMap, type ViewTransform } from './viewTransform'
 import { maskVertexShader, maskFragmentShader, compositeVertexShader, compositeFragmentShader } from './gpuToolpathShaders'
 import { GpuToolpathAnnotations } from './gpuToolpathAnnotations'
 import { movesAtToolpathLevel } from '../toolpathLevels'
+import { acquireToolpathWebgl } from './toolpathWebglSupport'
 
 interface LayerBatch { scene: Scene; geometries: InstancedBufferGeometry[] }
 interface PreparedLayers {
@@ -40,7 +41,11 @@ interface PreparedToolpath extends PreparedLayers {
   collisions: LayerBatch
   levels: Map<number, PreparedLayers>
 }
-export interface GpuToolpathEntry { toolpath: ToolpathResult; emphasized: boolean; selectedLevel?: number | null; slotScale: number }
+export interface GpuToolpathEntry {
+  toolpath: ToolpathResult; emphasized: boolean; selectedLevel?: number | null; slotScale: number
+  /** Cut in a setup the workspace is not on: drawn faint (issue #947). */
+  muted?: boolean
+}
 
 const MAX_CACHED_LEVELS_PER_TOOLPATH = 2
 
@@ -53,7 +58,7 @@ export class GpuToolpathRenderer {
   private readonly renderer: WebGLRenderer
   private readonly camera = new Camera()
   private readonly mask = new WebGLRenderTarget(1, 1, { samples: 4, depthBuffer: false })
-  private readonly view = new Vector3()
+  private readonly view = new Vector4()
   private readonly viewport = new Vector2()
   private readonly maskMaterial = new ShaderMaterial({
     uniforms: { view: { value: this.view }, viewport: { value: this.viewport },
@@ -78,7 +83,9 @@ export class GpuToolpathRenderer {
 
   constructor(canvas: HTMLCanvasElement, invalidate: () => void) {
     this.canvas = canvas
-    const context = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true })
+    // A software-only context is slower than Canvas, so ask for a real GPU and
+    // take the existing fallback path when the browser refuses (issue #1087).
+    const context = acquireToolpathWebgl(canvas, import.meta.env.DEV)
     if (!context) throw new Error('WebGL2 is unavailable; retaining Canvas toolpaths')
     try {
       this.renderer = new WebGLRenderer({ canvas, context })
@@ -225,12 +232,13 @@ export class GpuToolpathRenderer {
       this.renderer.setSize(width, height, false)
       this.mask.setSize(width, height)
     }
-    this.view.set(vt.scale, vt.offsetX, vt.offsetY)
+    const map = viewLinearMap(vt)
+    this.view.set(map.scaleX, map.scaleY, map.offsetX, map.offsetY)
     this.viewport.set(width, height)
     this.renderer.setRenderTarget(null)
     this.renderer.clear()
     const styles = toolpathLayerStyles(palette)
-    for (const { toolpath, emphasized, selectedLevel = null, slotScale } of entries) {
+    for (const { toolpath, emphasized, selectedLevel = null, slotScale, muted = false } of entries) {
       const prepared = this.prepare(toolpath, slotScale)
       const layers = emphasized && selectedLevel !== null
         ? this.prepareLevel(toolpath, prepared, selectedLevel)
@@ -240,14 +248,14 @@ export class GpuToolpathRenderer {
         if (!layer.visible) continue
         const style = styles[layer.key]
         const width = toolpathStrokeWidth(style.lineWidth, emphasized)
-        const alpha = emphasized ? 1 : .34
+        const alpha = toolpathStrokeAlpha(emphasized, muted)
         if (layer.key === 'cuts' && feedOn) {
           for (const [step, batch] of layers.feeds) this.paint(batch, canvasFeedColour(step, palette), width, alpha)
         } else {
           this.paint(layers.layers[layer.key], style.stroke, width, alpha, style.dash.length > 0)
         }
       }
-      this.paint(prepared.collisions, palette.toolpathCollision, emphasized ? 3 : 2.2, emphasized ? 1 : .55)
+      this.paint(prepared.collisions, palette.toolpathCollision, emphasized ? 3 : 2.2, toolpathCollisionAlpha(emphasized, muted))
       // Canvas owns the annotation rules for both backends. Composite the
       // selected operation's cached raster here, before the next operation.
       this.annotations.render(this.renderer, this.camera, toolpath, emphasized,

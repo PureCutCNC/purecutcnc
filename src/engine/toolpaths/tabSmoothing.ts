@@ -109,6 +109,21 @@ function sameXY(a: ToolpathPoint, b: ToolpathPoint): boolean {
 }
 
 /**
+ * The stock's angle at parameter `t` along `move`, or undefined when the move
+ * has none (issue #393). A move with an angle at either end is a turning move;
+ * an absent end takes the other's angle rather than implying a turn to or from
+ * an angle that was never written.
+ */
+function angleAt(move: ToolpathMove, t: number): number | undefined {
+  const start = move.from.a
+  const end = move.to.a
+  if (start === undefined && end === undefined) return undefined
+  if (start === undefined) return end
+  if (end === undefined) return start
+  return start + (end - start) * t
+}
+
+/**
  * Merge arc-length intervals that touch or overlap. Consecutive moves crossing
  * one footprint produce intervals that meet exactly at the move boundary, so
  * without this a single crossing would look like several.
@@ -443,23 +458,31 @@ export function splitCutMoveWithSmoothTabs(
     const zStart = requiredZ(arcAt(startT), baseZ, chain.totalLength, activeRect, activeSmooth)
     const zEnd = requiredZ(arcAt(endT), baseZ, chain.totalLength, activeRect, activeSmooth)
 
-    const segmentStart = {
+    const segmentStart: ToolpathPoint = {
       x: move.from.x + (move.to.x - move.from.x) * startT,
       y: move.from.y + (move.to.y - move.from.y) * startT,
       z: zStart,
     }
-    const segmentEnd = {
+    const segmentEnd: ToolpathPoint = {
       x: move.from.x + (move.to.x - move.from.x) * endT,
       y: move.from.y + (move.to.y - move.from.y) * endT,
       z: zEnd,
     }
+    // The split turns with the cut (issue #393): the angle is interpolated
+    // linearly at each fraction, and an angle-free move gains no key.
+    const startAngle = angleAt(move, startT)
+    if (startAngle !== undefined) segmentStart.a = startAngle
+    const endAngle = angleAt(move, endT)
+    if (endAngle !== undefined) segmentEnd.a = endAngle
 
     if (
       Math.abs(current.x - segmentStart.x) > EPSILON
       || Math.abs(current.y - segmentStart.y) > EPSILON
       || Math.abs(current.z - segmentStart.z) > EPSILON
     ) {
-      const transitionTo = { x: segmentStart.x, y: segmentStart.y, z: segmentStart.z }
+      // The vertical transition stands on `segmentStart`'s XY, so it keeps that
+      // point's angle rather than dropping it.
+      const transitionTo = { ...segmentStart }
       result.push({
         kind: segmentStart.z > current.z ? 'lead_out' : 'lead_in',
         from: current,

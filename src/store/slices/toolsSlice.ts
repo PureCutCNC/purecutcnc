@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { defaultPlasmaTool, isToolCompatibleWithOperation } from '../../toolPolicy'
+import { projectType } from '../helpers/projectType'
 import type { StateCreator } from 'zustand'
 import type { Tool } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -44,6 +46,20 @@ function duplicateToolName(name: string, tools: Tool[]): string {
   return `${baseName} ${index}`
 }
 
+/** The example torch's name, unique among the project's tools. */
+function plasmaToolName(tools: Tool[]): string {
+  const baseName = 'Plasma torch'
+  if (!tools.some((tool) => tool.name === baseName)) {
+    return baseName
+  }
+
+  let index = 2
+  while (tools.some((tool) => tool.name === `${baseName} ${index}`)) {
+    index += 1
+  }
+  return `${baseName} ${index}`
+}
+
 export function createToolsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
@@ -53,11 +69,17 @@ export function createToolsSlice(
     addTool: () => {
       const state = get()
       const nextId = nextUniqueGeneratedId(state.project, 't')
-      const template = defaultTool(state.project.meta.units, state.project.tools.length + 1)
-      const tool: Tool = {
-        ...template,
-        id: nextId,
-      }
+      // The project type decides which family a new tool belongs to (issue #1028).
+      const tool: Tool = projectType(state.project) === 'plasma'
+        ? {
+            ...defaultPlasmaTool(state.project.meta.units),
+            id: nextId,
+            name: plasmaToolName(state.project.tools),
+          }
+        : {
+            ...defaultTool(state.project.meta.units, state.project.tools.length + 1),
+            id: nextId,
+          }
 
       set((s) => {
         const nextProject = {
@@ -128,7 +150,13 @@ export function createToolsSlice(
       set((s) => {
         const nextProject = {
           ...s.project,
-          tools: s.project.tools.map((tool) => (tool.id === id ? { ...tool, ...patch } : tool)),
+          tools: s.project.tools.map((tool) => (tool.id === id ? (patch.type === 'plasma' || tool.type === 'plasma'
+            ? normalizeTool({ ...tool, ...patch }, s.project.meta.units, 0) : { ...tool, ...patch }) : tool)),
+          operations: s.project.operations.map((operation) => {
+            const tool = s.project.tools.find((candidate) => candidate.id === id)
+            return operation.toolRef === id && tool && !isToolCompatibleWithOperation({ ...tool, ...patch }, operation.kind)
+              ? { ...operation, toolRef: null } : operation
+          }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {

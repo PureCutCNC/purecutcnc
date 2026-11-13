@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { normalizePlasmaTool, plasmaToolDefaults } from './toolPolicy'
 import type { Tool, ToolType } from './types/project'
 
 export interface ToolLibraryEntry extends Omit<Tool, 'id'> {
@@ -26,7 +27,7 @@ export interface ToolLibraryFile {
   tools: ToolLibraryEntry[]
 }
 
-const TOOL_TYPES: ToolType[] = ['flat_endmill', 'ball_endmill', 'v_bit', 'drill']
+const TOOL_TYPES: ToolType[] = ['flat_endmill', 'ball_endmill', 'v_bit', 'drill', 'plasma']
 const TOOL_MATERIALS: Tool['material'][] = ['carbide', 'hss']
 const TOOL_UNITS: Tool['units'][] = ['mm', 'inch']
 
@@ -53,6 +54,15 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
   const name = readString(value.name, `Library Tool ${index + 1}`)
   const units = TOOL_UNITS.includes(value.units as Tool['units']) ? (value.units as Tool['units']) : null
   const type = TOOL_TYPES.includes(value.type as ToolType) ? (value.type as ToolType) : null
+  if (units && type === 'plasma') {
+    try {
+      const tool = normalizePlasmaTool({ ...plasmaToolDefaults(units), ...value, id: key, name, units, type } as Tool)
+      const { id: _id, ...entry } = tool
+      return { ...entry, key }
+    } catch {
+      return null
+    }
+  }
   const material = TOOL_MATERIALS.includes(value.material as Tool['material'])
     ? (value.material as Tool['material'])
     : null

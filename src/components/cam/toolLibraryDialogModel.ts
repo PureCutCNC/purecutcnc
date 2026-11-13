@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
+import { samePlasmaParameters } from '../../toolPolicy'
 import type { Tool, ToolType } from '../../types/project'
 import type { ToolLibraryEntry } from '../../toolLibrary'
+import { libraryEntryOffered, type MachineMode } from './machineMode'
 
 /**
  * Pure filtering and selection helpers for the tool-library import dialog.
@@ -42,6 +44,7 @@ export function toolMatchesLibraryEntry(
   tool: Tool,
   libraryEntry: ToolLibraryEntry,
 ): boolean {
+  if (tool.type === 'plasma' || libraryEntry.type === 'plasma') return samePlasmaParameters(tool, libraryEntry)
   return (
     tool.name === libraryEntry.name
     && tool.units === libraryEntry.units
@@ -109,6 +112,19 @@ export function filterLibraryEntryStates(
   filters: LibraryFilterValues,
 ): LibraryEntryState[] {
   return entries.filter((entry) => entryMatchesFilters(entry, filters))
+}
+
+/**
+ * The library entries this machine mode offers (#960). The CAM panel's Add
+ * menu and tool editor apply the same restriction to what they author, so the
+ * dialog cannot offer the other family's library either. Entries the project
+ * already has are untouched: this filters what is listed, never what exists.
+ */
+export function offeredLibraryEntries(
+  entries: ToolLibraryEntry[],
+  mode: MachineMode,
+): ToolLibraryEntry[] {
+  return entries.filter((entry) => libraryEntryOffered(mode, entry.type))
 }
 
 /**

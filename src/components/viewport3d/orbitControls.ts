@@ -20,8 +20,10 @@ import {
   MAX_CAMERA_RADIUS,
   MIN_CAMERA_RADIUS,
   VIEW_PRESETS,
+  viewPresetSpherical,
   type ViewPreset,
 } from './viewPresets'
+import type { SetupFace } from '../../types/project'
 
 /** Margin applied on top of the exact frustum fit, kept small since the fit
  *  is already tight (no sphere over-estimate). */
@@ -58,6 +60,8 @@ export interface OrbitControlsOptions {
   isInteractionBlocked: () => boolean
   /** Initial orbit target. Defaults to the origin. */
   initialTarget?: THREE.Vector3Tuple
+  /** The workspace face presets are taken for (issue #947). Defaults to Top. */
+  presetFace?: () => SetupFace
 }
 
 export interface OrbitControls {
@@ -107,7 +111,7 @@ export function createOrbitControls(
   let hasSceneBounds = false
 
   function applyPreset(preset: ViewPreset, preserveRadius = true, render = true) {
-    const presetState = VIEW_PRESETS[preset]
+    const presetState = viewPresetSpherical(preset, options.presetFace?.() ?? 'top')
     spherical = {
       theta: presetState.theta,
       phi: presetState.phi,

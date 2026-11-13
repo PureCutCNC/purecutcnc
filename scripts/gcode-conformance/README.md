@@ -1,6 +1,6 @@
 # G-code conformance corpus
 
-Exports representative G-code and feeds it to **real controller interpreters**
+Exports representative G-code and ShopBot part files and feeds it to **real controller interpreters**
 (issue #450).
 
 The unit tests in `src/engine/gcode/` re-derive controller rules in TypeScript.
@@ -22,14 +22,68 @@ the command succeeds, saying plainly that nothing was verified.
 `corpus.ts` defines the cases; each states what it covers. They target the ways
 arc output has actually broken: small-radius fitted arcs (the issue #447
 failure), full circles, the 90° split boundary, inch output, the R dialect,
-per-machine dialects, and a pure-G1 control.
+per-machine dialects, and a pure-G1 control. SBP cases cover mm/inch, `CG` in
+both directions, two-tool changes, expanded peck drilling and the units guard.
+
+The `bottom-setup-*` cases (issue #946) export an operation from a setup that
+turns the stock over. They carry the setup header — comments in each dialect's
+own syntax, with free-text operator notes — and their moves have been through
+the two half turns a Bottom toolpath takes (into stock space when generated,
+back out when exported), which is exact only up to floating-point rounding.
+One case is a pocket drawn on the bottom face and generated end to end.
+
+The `rotary-*` and `around-*` cases (issues #393, #395, #1015, #1153) run on
+the **bundled rotary machines**, with no machine override. Those machines
+follow the bar, so every case is posted for a bar along X and again for a bar
+along Y (`-bar-y`):
+
+- `grbl-rotary` borrows a motor. For a bar along X the Y motor turns it and
+  the angle is written as `Y`; for a bar along Y it is the X motor and `X`.
+  The borrowed letter carries angles only, never a linear coordinate. These
+  cases run on every validator that claims `grbl-rotary`, Grbl's own parser
+  included.
+- `linuxcnc-rotary` and `grblhal-rotary` write `A` and turn in inverse time
+  (`G93`), which plain Grbl rejects. That is a dialect verdict, not an arc
+  one, so these cases name the LinuxCNC interpreter. There is no grblHAL
+  validator: the interpreter proves the syntax and `G93`, not grblHAL itself.
+- `mach3-rotary`, `uccnc-rotary` and `grbl-rotary-a` (a Grbl fork with its own
+  A) have no interpreter here that reads them (`%`/`O`/`N` line numbers, `A`),
+  so they are exported and reported as **not validated**.
+
+A case may carry a `validators` list. A case without one runs on every
+validator that claims its machine, exactly as before.
+
+| case (bar along X; `-bar-y` twin for Y) | machine | validators | what it shows |
+|---|---|---|---|
+| `rotary-borrowed-y-inverse-time` / `rotary-borrowed-x-bar-y-inverse-time` | grbl-rotary | all claiming it | the angle under `Y` / `X`, `G93` and an inverse-time `F`, no linear word for that letter |
+| `rotary-own-axis-inverse-time` / `rotary-own-axis-bar-y-inverse-time` | linuxcnc-rotary | `linuxcnc-rs274` | the angle under `A` and `G93` |
+| `around-engrave-borrowed-y` / `around-engrave-borrowed-x-bar-y` | grbl-rotary | all claiming it | a wrapped Engrave (#395): the Around header, the angle under the borrowed letter, inverse time, the last angle kept at the end |
+| `around-pocket-own-axis` / `around-pocket-own-axis-bar-y` | linuxcnc-rotary | `linuxcnc-rs274` | a wrapped pocket (#395): every ring turns the bar, the angle under `A`, inverse time throughout |
+| `rotary-model-finish-borrowed-y` / `rotary-model-finish-borrowed-x-bar-y` | grbl-rotary | all claiming it | a model-in-a-bar finish (#1015): the angle carried by the borrowed motor, inverse time around each turning link |
+| `rotary-model-rough-own-axis` / `rotary-model-rough-own-axis-bar-y` | linuxcnc-rotary | `linuxcnc-rs274` | a model-in-a-bar rough (#1015) in layers: the angle under `A`, inverse time throughout |
+| `rotary-grblhal-own-axis` (+ `-bar-y`) | grblhal-rotary | `linuxcnc-rs274` | grblHAL's `A`/`G93` program, syntax only |
+| `rotary-mach3-own-axis`, `rotary-uccnc-own-axis`, `rotary-grbl-fork-own-axis` (+ `-bar-y`) | mach3-rotary, uccnc-rotary, grbl-rotary-a | none | exported, reported not validated |
+
+The `around-*` cases (issue #395) are generated end to end, not hand-built: an
+Around toolpath is produced on the unrolled sheet and carried onto the bar by
+`wrapToolpath`, so no hand-picked move set can imitate it. They carry the
+Around header as comments, and neither ends with a closing unwind (#1091):
+the last operation's own retract is the final motion, at the last angle.
+
+The `rotary-model-*` cases (issue #1015) are generated end to end for the same
+reason: a finish and a rough on an imported model inside a round bar, produced
+by the rotary generators through `computeOperationToolpath` rather than a
+hand-built turning path. The borrowed-motor finish runs on every validator that
+claims Grbl; the own-axis rough writes `A` and is restricted to the LinuxCNC
+validator exactly as the #393/#395 own-axis programs are.
 
 ## Validators
 
 | validator | what it is | dialects |
 |---|---|---|
-| `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc |
-| `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic |
+| `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc, grbl-rotary |
+| `fabmo-opensbp` | pinned [FabMo-Engine](https://github.com/FabMo/FabMo-Engine) OpenSBP grammar, built with Peggy 4.0.3 | shopbot (syntax only) |
+| `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic, linuxcnc-rotary, grblhal-rotary |
 
 `rs274` has no macOS build and `linuxcnc-uspace` is absent from the Ubuntu
 runner's sources, so CI runs it in a **Debian container** as a separate job.
@@ -73,18 +127,90 @@ nothing — which is how `rs274` was first misread here.
 
 Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
 `O` program number and `N` line numbers long before reaching an arc, so a
-syntax error there would say nothing about arc validity. Cases no available
+syntax error there would say nothing about arc validity. A case can narrow this
+further with its own `validators` list (issue #393): the own-axis `A` program
+is a case in point, since Grbl rejects the `A` word itself. Cases no available
 interpreter can parse are reported as **not validated** rather than passed —
 an unchecked case must never read as a verified one.
 
 Mach3 and UCCNC have no offline interpreter: closed-source, Windows-only, and
 line-limited demos. They stay a manual pre-release step.
 
+## ShopBot: FabMo OpenSBP syntax
+
+`npm run check:gcode` also feeds eight current `.sbp` exports to FabMo's
+unmodified generated grammar. Setup fetches FabMo at
+`147325ca628e5b5148880b5fc3542605076935c5` and builds
+`runtime/opensbp/sbp_parser.pegjs` with Peggy **4.0.3** (the version in the
+upstream `parser.js` instructions). No upstream code is checked in here; it
+lives under the ignored validator directory. No FabMo engine installation or
+lifecycle scripts run.
+
+The adapter uses the generated parser directly, passing each nonblank,
+non-comment line and retaining original line numbers in errors. FabMo's wrapper
+uses the same parser, but adds a permissive fast path and an error logger that
+loads engine configuration; neither is needed to check our exports.
+
+Before verdicts are trusted, a valid program (including both `CG` directions,
+`MS`, tool and spindle macros) must parse, and two deliberately unterminated
+quoted arguments, one in `CG` and one in `MS`, must fail. The focused tests also
+make those mutations in an actual export and require the adapter CLI to exit 1.
+Adapter tests run first in `check:gcode`, even when no validator is installed.
+
+Locally, a missing FabMo validator is reported as unvalidated; with none of the
+interpreters installed, the command exports the corpus and says nothing was
+verified. An installed but broken FabMo parser fails. CI's Ubuntu conformance
+job sets `FABMO_OPEN_SBP_REQUIRED=1`, so absence also fails; the parser shares
+the validator cache keyed by `setup-validators.sh`. `GCODE_VALIDATOR_DIR`
+selects an alternative validator root containing `fabmo-opensbp/`.
+
+### The sole exception: `MSGBOX`
+
+The ShopBot Programming Handbook documents `MSGBOX`, but this FabMo grammar
+does not implement it. Worse, the generic two-character mnemonic rule parses
+`MSGBOX(...)` as **`MS` with string arguments**. That is not evidence that the
+message works. The adapter excludes only the exact emitted units-error message
+(mm or inch), at the end of the `UNIT_ERROR:` footer, after the normal `END`,
+with its matching units guard present and a final `END` following it. Every
+excluded line is printed as **EXCEPTION**, and boundary tests reject modified
+messages and misplaced/duplicated blocks. Exported bytes and the units guard
+stay unchanged. This is a FabMo grammar gap, not full FabMo portability.
+
+The tester still needs to confirm whether their SB3/SB4 displays this message
+and stops without motion on a units mismatch (question recorded on #966).
+The parser check does not replace the real-machine test in #962.
+
+### Level 2 decision and limits
+
+This is **Level 1 syntax only**. The grammar accepts bare strings as arguments;
+it does not check numeric argument types, parameter arity, speeds, arc geometry,
+macro availability or motion. Changing `MS,10,3` to `MS,banana,3` survives the
+upstream grammar; that is outside this check's claim.
+
+At the pinned commit, `SBPRuntime.simulateString` can generate G-code while
+disconnected, but importing the runtime still loads engine configuration,
+manual/driver modules, and the command loader; `C6`, `C7` and `C9` depend on the
+machine's macro files. A full-program trace comparison would need that engine
+and machine configuration. Stubbing those would prove a different environment,
+so Level 2 is deferred as the approved issue permits. Existing SBP round-trip
+unit tests remain the motion check; they are not FabMo runtime verification.
+
+See [`fabmo-opensbp/INDEX.md`](fabmo-opensbp/INDEX.md) for the adapter files.
+
+## Plasma: the QtPlasmaC simulator
+
+Plasma programs are checked separately, by `npm run check:gcode:qtplasmac`
+(issue #954). `rs274` cannot run QtPlasmaC's `M190` material select or read
+`#<_hal[...]>`, so that check runs LinuxCNC's whole QtPlasmaC simulator
+configuration in a container and judges the torch sequence from a trace of the
+run. It has its own corpus, runner and workflow, and shares nothing with the
+validators above: see [`qtplasmac/README.md`](qtplasmac/README.md).
+
 ## Notes
 
 - Output lives in `.gcode-conformance/` (gitignored). `corpus/` is wiped each
   run; `validators/` persists so built binaries survive.
-- Tool changes are disabled when exporting: they emit `M0`, a real program
+- Tool changes are disabled for the G-code cases: they emit `M0`, a real program
   pause that an interpreter blocks on forever.
 - The GRBL arc radius check (`0.005 mm`, `0.5 mm`, `0.1 %` of radius) is
   byte-identical in 0.9j and 1.1h — verified against both sources.

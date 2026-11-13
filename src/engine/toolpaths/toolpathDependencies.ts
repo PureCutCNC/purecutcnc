@@ -37,6 +37,7 @@
  * (`modelAssetsEquivalent` below).
  */
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import type {
   Bounds2D,
   FeatureInstance,
@@ -46,7 +47,8 @@ import type {
   ProjectMeta,
   SketchProfile,
 } from '../../types/project'
-import { getProfileBounds, getStockBounds } from '../../types/project'
+import { getProfileBounds, getStockBounds, isRotaryOperationKind } from '../../types/project'
+import { isBarStock } from '../../types/barStock'
 import { projectsEqual } from '../../store/helpers/normalize'
 import { isConstruction, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
@@ -105,6 +107,9 @@ export function featureInstanceComputationEquals(a: FeatureInstance, b: FeatureI
   return (
     a.definitionId === b.definitionId
     && a.name === b.name
+    // Which face a feature is authored on decides which setups may target it
+    // (issue #944), so it invalidates like any other targeting input.
+    && a.authoringFace === b.authoringFace
     && transformEqual
     && (a.constraints === b.constraints || projectsEqual(a.constraints, b.constraints))
     // The baseline bends the run's geometry, so a changed layout has to
@@ -291,6 +296,16 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
  * reach me", which is the right question for an ownership change too. Stated
  * here because this comment previously claimed no such dependency existed, and
  * that claim is what let the fold ship with a cache that ignored it.
+ *
+ * A plasma operation has a second: its outline-before-hole warning reads the
+ * plasma operations that run after it, and its cut order starts from the
+ * machine origin (issue #958). Both are captured the same way, outside this
+ * model, by `plasmaCutOrderInputs` in `cacheInputsValid`.
+ *
+ * Around-the-bar rotary rough/finish are the one place the region is not the
+ * target's box grown by the tool: since rn-a they read every model that
+ * overlaps their along span, wherever it stands across the bar, so their
+ * region is that along span with no across limit (`rotaryReadBounds`).
  */
 export interface OperationFootprint {
   /** World XY region in which a feature change can affect this operation. `null` = unknown. */
@@ -313,6 +328,12 @@ export interface OperationFootprint {
  *   is expressed in tool diameters, so a diameter-less tool has no measure).
  */
 export function operationFootprint(project: Project, operation: Operation): OperationFootprint {
+  // Plasma reads all neighbouring outlines and holes; editable leads/start XY
+  // have no milling-sized spatial bound. Keep every feature edit invalidating.
+  if (operation.kind === 'plasma_profile') {
+    return { bounds: null, targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []), readsWholeModel: false }
+  }
+
   // Stock-targeted surface operations cut the whole model: no per-feature
   // narrowing applies. `bounds` carries the stock's world rectangle so the
   // `bounds === null` rule in `operationAffectedByChange` never fires for
@@ -353,6 +374,18 @@ export function operationFootprint(project: Project, operation: Operation): Oper
     return { bounds: null, targetFeatureIds, readsWholeModel: false }
   }
 
+  // An around-the-bar rotary rough or finish also reads every neighbour model
+  // on the bar (#1155 rn-b), which the target's own box does not cover. Its
+  // footprint is a different shape, with its own reasoning — see
+  // `rotaryReadBounds`.
+  if (isRotaryOperationKind(operation.kind)) {
+    return {
+      bounds: rotaryReadBounds(project, targetUnion),
+      targetFeatureIds,
+      readsWholeModel: false,
+    }
+  }
+
   // Reach through chained non-target subtracts (#751 §3).
   //
   // Discovery is transitive: a subtract touching a subtract touching the target
@@ -381,9 +414,7 @@ export function operationFootprint(project: Project, operation: Operation): Oper
     ? growBoundsThroughTouchingSubtracts(project, targetUnion, targetFeatureIds)
     : targetUnion
 
-  const tool = operation.toolRef
-    ? project.tools.find((candidate) => candidate.id === operation.toolRef) ?? null
-    : null
+  const tool = findMillingOperationTool(project, operation)
   if (!tool) {
     return { bounds: null, targetFeatureIds, readsWholeModel: false }
   }
@@ -583,6 +614,55 @@ function growBoundsThroughTouchingSubtracts(
     const joinedIds = new Set(joined.map((entry) => entry.id))
     remaining = remaining.filter((entry) => !joinedIds.has(entry.id))
   }
+}
+
+/**
+ * The world region an around-the-bar rotary rough or finish reads (#1155 rn-b,
+ * corrected in fix 1).
+ *
+ * Since rn-a these kinds sample every STL model whose along extent overlaps
+ * their cut range, not only the models they target, and the cut range is
+ * clamped to the target's own along extent. The generator's neighbour cull
+ * (`rotaryNeighbourModels` in `rotaryOperation.ts`) tests **only** that along
+ * overlap: a model's across position never excludes it. So the read set is the
+ * along span with **no across restriction at all**.
+ *
+ * The along figure is the resolved targets' own profile-bounds extent, the same
+ * source `featureWorldBounds` measures a changed feature with, so both sides of
+ * the test live in one frame, and the generator's cut range lies inside it
+ * (`rotaryAlongRange` clamps to the target extent). It is deliberately *not*
+ * widened: the generator's overlap cull is exact, so a model wholly outside the
+ * span is not read, and a change to it must stay free.
+ *
+ * The across direction must not be bounded by the stock's rectangle, and that
+ * was fix 1's defect: Y on the Around face is the unrolled sheet's across
+ * coordinate, one circumference wide (`π·diameter`, centred on the bar's
+ * centreline — `aroundFrame`), not the stock's own across extent. A neighbour
+ * moved to across 15 on a Ø20 bar sits outside the stock rectangle yet squarely
+ * on the sheet, still overlaps the along span, and still changes the regenerated
+ * path; the stock-clipped bound reported both cache checks valid. Leaving the
+ * across direction open is the exact inverse of the generator's cull — it can
+ * over-invalidate only for a model the generator would still join, which is the
+ * conservative direction.
+ *
+ * A non-bar stock names no cross-section, and the rotary generator refuses such
+ * an operation anyway, so the footprint is unknown and the change invalidates.
+ */
+function rotaryReadBounds(project: Project, targetUnion: Bounds2D): Bounds2D | null {
+  if (!isBarStock(project.stock)) return null
+  return project.stock.axis === 'x'
+    ? {
+        minX: targetUnion.minX,
+        maxX: targetUnion.maxX,
+        minY: Number.NEGATIVE_INFINITY,
+        maxY: Number.POSITIVE_INFINITY,
+      }
+    : {
+        minX: Number.NEGATIVE_INFINITY,
+        maxX: Number.POSITIVE_INFINITY,
+        minY: targetUnion.minY,
+        maxY: targetUnion.maxY,
+      }
 }
 
 /** Union of profile bounds; `null` when `profiles` is empty. */

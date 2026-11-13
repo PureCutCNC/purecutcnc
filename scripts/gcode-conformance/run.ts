@@ -30,9 +30,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { CORPUS, caseExtension, renderCase } from './corpus'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { FABMO_COMMIT } from './fabmo-opensbp/validate'
+import { CORPUS, caseExtension, caseRunsOnValidator, renderCase } from './corpus'
 import type { CorpusCase } from './corpus'
 
 const ROOT_DIR = resolve(process.cwd(), '.gcode-conformance')
@@ -45,6 +47,10 @@ const VALIDATOR_DIR = process.env.GCODE_VALIDATOR_DIR
 
 interface Validator {
   name: string
+  /** Syntax-only interpreters use language-specific positive/negative probes. */
+  syntaxProbes?: { valid: string; invalid: Record<string, string> }
+  installedFile?: string
+  required?: boolean
   /** What this binary actually is, for the skip message. */
   description: string
   binary: string
@@ -68,8 +74,11 @@ const VALIDATORS: Validator[] = [
     binary: join(VALIDATOR_DIR, 'gvalidate.exe'),
     // Determined empirically: grbl parses these dialects, but rejects mach3
     // and uccnc output on the %% wrapper, O program number and N line numbers
-    // long before reaching any arc.
-    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc'],
+    // long before reaching any arc. grbl-plasma is grbl word syntax plus the
+    // G38.2/G10 L20 touch-off and M3/M5 torch words (issue #983).
+    // `grbl-rotary` is the borrowed-motor machine (#1153): its angle is a Y or X
+    // word Grbl reads. The own-axis rotary machines write A, which Grbl rejects.
+    machines: ['grbl', 'grblhal', 'generic', 'linuxcnc', 'grbl-plasma', 'grbl-rotary'],
     args: (file) => [file],
     rejection: (output, status) => {
       // gvalidate prints `error:NN` and exits with that code.
@@ -82,13 +91,43 @@ const VALIDATORS: Validator[] = [
     name: 'linuxcnc-rs274',
     description: "LinuxCNC's standalone RS-274NGC interpreter",
     binary: process.env.RS274_BIN ?? 'rs274',
-    machines: ['linuxcnc', 'generic'],
+    // grblHAL's rotary dialect is RS-274 too; reading it here proves syntax and
+    // G93, not grblHAL itself (#1153).
+    machines: ['linuxcnc', 'generic', 'linuxcnc-rotary', 'grblhal-rotary'],
     args: (file) => ['-g', file],
     rejection: (output, status) => {
       // rs274 reports parse failures on stderr and exits non-zero.
       if (status !== 0) {
         const line = output.split('\n').find((l) => /error|failed/i.test(l))
         return line?.trim() || `exited ${status}`
+      }
+      return null
+    },
+  },
+  {
+    name: 'fabmo-opensbp',
+    description: `FabMo OpenSBP grammar at ${FABMO_COMMIT} (syntax only)`,
+    binary: process.execPath,
+    installedFile: join(VALIDATOR_DIR, 'fabmo-opensbp', 'pin.json'),
+    required: process.env.FABMO_OPEN_SBP_REQUIRED === '1',
+    machines: ['shopbot'],
+    args: (file) => [
+      '--import', 'tsx',
+      join(dirname(fileURLToPath(import.meta.url)), 'fabmo-opensbp', 'validate.ts'),
+      join(VALIDATOR_DIR, 'fabmo-opensbp'), file,
+    ],
+    syntaxProbes: {
+      valid: 'SA\nMS,10,3\nJZ,5\nJ2,10,0\nM3,10,0,-1\nCG,,0,10,-10,0,T,-1\nCG,,10,0,0,-10,T,1\n&Tool=2\nC9\nTR,12000\nC6\nC7\nEND\n',
+      invalid: {
+        'malformed-CG': 'SA\nCG,,"unterminated,10,-10,0,T,1\nEND\n',
+        'malformed-MS': 'SA\nMS,"unterminated,3\nEND\n',
+      },
+    },
+    rejection: (output, status) => {
+      if (status !== 0) return output.trim() || `exited ${status}`
+      // Disclose the one unparsed construct, never count it as verified.
+      for (const line of output.split('\n').filter((line) => line.startsWith('EXCEPTION '))) {
+        console.log(`       ${line}`)
       }
       return null
     },
@@ -122,6 +161,7 @@ const ARC_PROBE_TIGHT_PREFIX = 'G21\nG90\nG0 X11.109 Y16.962\nG1 F600\n'
 const ARC_PROBE_TIGHT = `${ARC_PROBE_TIGHT_PREFIX}G3 X11.314 Y16.647 I0.339 J0.002\nM2\n`
 
 function binaryPresent(validator: Validator): boolean {
+  if (validator.installedFile) return existsSync(validator.installedFile)
   if (validator.binary.includes('/')) return existsSync(validator.binary)
   try {
     execFileSync('which', [validator.binary], { stdio: 'pipe' })
@@ -179,6 +219,7 @@ function runValidator(validator: Validator, file: string): string | null {
       // Run from the corpus dir so that artifact lands somewhere disposable
       // instead of the repo root.
       cwd: OUT_DIR,
+      timeout: validator.syntaxProbes ? 30_000 : undefined,
     })
     return validator.rejection(output, 0)
   } catch (error) {
@@ -186,6 +227,26 @@ function runValidator(validator: Validator, file: string): string | null {
     const output = `${err.stdout ?? ''}\n${err.stderr ?? ''}`
     return validator.rejection(output, err.status ?? 1)
   }
+}
+
+/**
+ * The file a validator actually parses.
+ *
+ * grbl-sim never triggers the probe pin — "set probe pin when probing" is an
+ * unfinished TODO in its interface — so a G38.x raises ALARM:4 and every later
+ * block is rejected with error:9. That is a simulator artefact, not a syntax
+ * verdict: the probe line itself is still parsed and reported. Inserting `$X`
+ * (Grbl's kill-alarm-lock realtime command) after each probe lets the parser
+ * reach the rest of the program, arcs included. The real program stays on
+ * disk; only the copy handed to the validator is altered.
+ */
+function validatorFile(validator: Validator, file: string): string {
+  if (validator.name !== 'grbl-gvalidate') return file
+  const gcode = readFileSync(file, 'utf8')
+  if (!/^\s*G38\.[0-9]/m.test(gcode)) return file
+  const unlockedFile = file.replace(/(\.[^.]+)$/, '-unlocked$1')
+  writeFileSync(unlockedFile, gcode.replace(/^(\s*G38\.[0-9].*)$/gm, '$1\n$X'), 'utf8')
+  return unlockedFile
 }
 
 function exportCorpus(): Array<{ entry: CorpusCase; file: string }> {
@@ -209,11 +270,31 @@ function main(): void {
 
   const present = VALIDATORS.filter(binaryPresent)
   const available: Array<{ validator: Validator; tier: ArcTier }> = []
+  let failures = 0
 
   for (const validator of VALIDATORS) {
     if (!present.includes(validator)) {
       console.log(`\nSKIP ${validator.name} — not installed (${validator.description})`)
       console.log('     install with: scripts/gcode-conformance/setup-validators.sh')
+      if (validator.required) {
+        failures += 1
+        console.error(`     FAIL ${validator.name} is required in this environment.`)
+      }
+      continue
+    }
+    if (validator.syntaxProbes) {
+      const { valid, invalid } = validator.syntaxProbes
+      const positiveError = probe(validator, 'syntax-valid', valid)
+      const survivors = Object.entries(invalid).filter(([label, program]) => (
+        probe(validator, label, program) === null
+      )).map(([label]) => label)
+      if (positiveError !== null || survivors.length > 0) {
+        failures += 1
+        console.error(`\nFAIL ${validator.name} probes: ${positiveError ?? `survivors: ${survivors.join(', ')}`}`)
+        continue
+      }
+      console.log(`\n${validator.name}: valid syntax accepted; malformed CG and MS rejected (syntax only).`)
+      available.push({ validator, tier: 'syntax-only' })
       continue
     }
     if (!smokeTestPasses(validator)) {
@@ -235,20 +316,22 @@ function main(): void {
 
   if (available.length === 0) {
     console.log('\nNo controller interpreters available; corpus exported but not validated.')
-    console.log('This is a pass, not a verification.')
+    console.log(failures > 0 ? 'Required validator checks failed.' : 'This is a pass, not a verification.')
+    if (failures > 0) process.exitCode = 1
     return
   }
 
-  let failures = 0
   const validated = new Set<string>()
   const arcVerified = new Set<string>()
   for (const { validator, tier } of available) {
     console.log(`\n── ${validator.name} (${tier}) ─────────────────────`)
     for (const { entry, file } of files) {
-      if (!validator.machines.includes(entry.machineId)) continue
+      // The machine claim plus, for a case that names validators, its own list
+      // (issue #393). A case with no list runs exactly where it used to.
+      if (!caseRunsOnValidator(entry, validator.name, validator.machines)) continue
       validated.add(entry.name)
       if (tier === 'strict') arcVerified.add(entry.name)
-      const rejection = runValidator(validator, file)
+      const rejection = runValidator(validator, validatorFile(validator, file))
       if (rejection) {
         failures += 1
         console.log(`  FAIL ${entry.name}: ${rejection}`)
@@ -282,7 +365,7 @@ function main(): void {
   console.log(`\n${arcVerified.size}/${files.length} cases verified against the strictest known controller rules`
     + `${strict.length > 0 ? ` (${strict.join(', ')})` : ''}.`)
   if (syntaxOnly.length > 0) {
-    console.log(`${syntaxOnly.length} further case(s) parsed cleanly but were not arc-verified:`)
+    console.log(`${syntaxOnly.length} further case(s) syntax-checked (with any exceptions reported above), not arc-verified:`)
     for (const { entry } of syntaxOnly) console.log(`  ${entry.name}`)
   }
 }

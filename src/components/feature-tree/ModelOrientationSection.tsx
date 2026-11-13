@@ -18,6 +18,13 @@
  * Post-import 3D orientation controls for an imported STL/OBJ model
  * (issue #241) — the answer to "my model came in lying on its side".
  *
+ * Offered only for a model whose mesh came from outside. A **generated** canned
+ * model (a Turn, a Polygon) gets no section at all (issue #1112 rt7-e): its
+ * solid is built from its parameters on the bar's pivot, so rotating it about
+ * X, Y or Z could only tip it off the bar axis, and turning it about the bar is
+ * the Polygon editor's Rotation field. Properties decides that; this component
+ * stays the imported-model controls it always was.
+ *
  * Numeric entry plus 90° quick-rotate rather than a drag gizmo: the real need
  * is quarter-turns, the app is precision-oriented, and the 3D viewport is a
  * preview with no manipulator infrastructure. Numeric entry is also tablet-safe
@@ -35,6 +42,8 @@ import { IDENTITY_MODEL_ORIENTATION, isIdentityModelOrientation } from '../../en
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import type { ModelOrientation } from '../../types/project'
+import { STOCK_ANGLES } from '../../store/helpers/activeFace'
+import type { FaceAngles } from '../../store/helpers/activeFace'
 
 type OrientationAxis = 'rx' | 'ry' | 'rz'
 
@@ -107,7 +116,16 @@ interface ModelOrientationSectionProps {
   units: 'mm' | 'inch'
   /** How many instances share this definition; > 1 re-orients them together. */
   linkedInstanceCount: number
+  /**
+   * How angles read on the face in view (issue #945). The stored orientation
+   * is in stock space; on Bottom the rotations about the axes the flip
+   * reverses are shown and typed with their sense reversed, so a positive
+   * angle turns the model the same way on screen as it does on Top.
+   */
+  face?: FaceAngles
 }
+
+const STOCK_AXIS: Record<OrientationAxis, 'x' | 'y' | 'z'> = { rx: 'x', ry: 'y', rz: 'z' }
 
 export function ModelOrientationSection({
   featureId,
@@ -116,6 +134,7 @@ export function ModelOrientationSection({
   zBottom,
   units,
   linkedInstanceCount,
+  face = STOCK_ANGLES,
 }: ModelOrientationSectionProps) {
   const { t, tPlural } = useI18n()
   // Re-deriving the silhouette, profile, and top view is a Z-slice projection
@@ -159,7 +178,7 @@ export function ModelOrientationSection({
   }
 
   function rotateBy(axis: OrientationAxis, delta: number) {
-    void applyOrientation({ ...current, [axis]: current[axis] + delta })
+    void applyOrientation({ ...current, [axis]: current[axis] + face.axisTurn(STOCK_AXIS[axis], delta) })
   }
 
   return (
@@ -172,9 +191,9 @@ export function ModelOrientationSection({
           <span>{t(labelKey)}</span>
           <div className="properties-axis-row">
             <AngleInput
-              value={current[axis]}
+              value={face.axisTurn(STOCK_AXIS[axis], current[axis])}
               disabled={busy}
-              onCommit={(next) => void applyOrientation({ ...current, [axis]: next })}
+              onCommit={(next) => void applyOrientation({ ...current, [axis]: face.axisTurn(STOCK_AXIS[axis], next) })}
             />
             <button
               className="feat-btn properties-axis-btn"

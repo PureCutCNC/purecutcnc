@@ -1342,13 +1342,23 @@ function movesAreCollinear3D(a: ToolpathMove, b: ToolpathMove, epsilon: number):
   return dot >= -epsilon
 }
 
-function simplifyContiguousCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
+/**
+ * Merge adjacent collinear cut moves, dropping zero-length ones.
+ *
+ * Exported for its own tests (issue #393): its generator emits no angles today,
+ * so the angle rules below cannot be reached through `generateFinishSurfaceWaterline`
+ * — but a rotary toolpath fed through here must not lose a turn.
+ */
+export function simplifyContiguousCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   if (moves.length < 2) return moves
   const epsilon = 1e-6
   const simplified: ToolpathMove[] = []
 
   for (const move of moves) {
-    if (move.kind === 'cut' && pointDistance3D(move.from, move.to) <= epsilon) {
+    // A zero-XYZ-length cut is dropped as nothing happening — but a move whose
+    // ends differ in angle is the stock turning, which is real motion even at a
+    // single point (issue #393). Absent is a value, so absent vs 0 counts.
+    if (move.kind === 'cut' && move.from.a === move.to.a && pointDistance3D(move.from, move.to) <= epsilon) {
       continue
     }
 
@@ -1357,6 +1367,12 @@ function simplifyContiguousCutMoves(moves: ToolpathMove[]): ToolpathMove[] {
       last
       && last.kind === 'cut'
       && move.kind === 'cut'
+      // Merging rewrites `last.to` with `move.to`, which would erase the angle
+      // the merged span turns through. Only angle-free cuts merge (issue #393).
+      && last.from.a === undefined
+      && last.to.a === undefined
+      && move.from.a === undefined
+      && move.to.a === undefined
       && movesAreContiguous(last, move, epsilon)
       && movesAreCollinear3D(last, move, epsilon)
       && last.source === move.source

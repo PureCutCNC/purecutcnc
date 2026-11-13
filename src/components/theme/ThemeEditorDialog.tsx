@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useWindowEvent } from '../../hooks/useEventListener'
 import { useI18n } from '../../i18n/i18nContext'
+import { formHasChanges } from '../common/formDraft'
 import { evaluateThemeContrast } from '../../theme/contrast'
 import {
   builtinTheme,
@@ -128,11 +129,13 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
 
   const nameInvalid = name.trim() === ''
   const blocked = contrast.blockers.length > 0
-  const dirty = name.trim() !== theme.name
-    || JSON.stringify(overrides) !== JSON.stringify(theme.overrides)
+  // Apply writes `working`, so an editor that still holds the theme it opened
+  // on has nothing to save and says so (issue #1112 F4). The comparison is by
+  // value: a rebuilt overrides object is not an edit.
+  const dirty = formHasChanges(theme, working)
 
   const handleApply = () => {
-    if (blocked || nameInvalid) return
+    if (blocked || nameInvalid || !dirty) return
     onApply(working)
   }
 
@@ -261,7 +264,7 @@ export function ThemeEditorDialog({ theme, onApply, onClose }: ThemeEditorDialog
             className="btn-primary"
             type="button"
             onClick={handleApply}
-            disabled={blocked || nameInvalid}
+            disabled={blocked || nameInvalid || !dirty}
             title={blocked
               ? t('themeEditor.fixBlockedTitle')
               : nameInvalid

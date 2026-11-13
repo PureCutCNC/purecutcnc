@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
 import { getProfileBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
@@ -36,7 +37,7 @@ function defaultAutoTabZTop(project: Project): number {
 
 function resolveToolDiameter(project: Project, operation: Operation): number | null {
   if (!operation.toolRef) return null
-  const tool = project.tools.find((entry) => entry.id === operation.toolRef) ?? null
+  const tool = findMillingOperationTool(project, operation)
   if (!tool || !(tool.diameter > 0)) return null
   return tool.units === project.meta.units
     ? tool.diameter

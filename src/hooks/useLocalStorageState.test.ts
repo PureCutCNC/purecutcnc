@@ -150,12 +150,15 @@ function testWriteToStorageSerializes() {
 }
 
 function testWriteToStorageNoStorageIsNoop() {
-  console.log('Testing writeToStorage is a no-op with no storage (SSR)...')
+  console.log('Testing writeToStorage is a non-durable no-op with no storage (SSR)...')
 
-  // Must not throw when storage is null (server render path).
-  writeToStorage(null, 'k', { a: 1 }, json)
+  // Must not throw when storage is null (server render path), and must not
+  // report durability: nothing reached storage, so a caller that compacts
+  // data away has to keep the source (#1119).
+  const reached = writeToStorage(null, 'k', { a: 1 }, json)
+  assert(reached === false, 'no storage is not a durable write')
 
-  console.log('writeToStorage no-storage no-op: PASSED')
+  console.log('writeToStorage no-storage non-durable: PASSED')
 }
 
 function testWriteToStorageSwallowsErrors() {

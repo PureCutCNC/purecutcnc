@@ -81,6 +81,17 @@ const BASE: Operation = {
 }
 
 const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
+  rotaryChuckSupport: { role: 'computation', change: { rotaryChuckSupport: 8 } },
+  rotaryTailSupport: { role: 'computation', change: { rotaryTailSupport: 7 } },
+  rotaryPassDirection: { role: 'computation', change: { rotaryPassDirection: 'around' } },
+  plasmaSide: { role: 'computation', change: { plasmaSide: 'inside' } },
+  plasmaReverseDirection: { role: 'computation', change: { plasmaReverseDirection: true } },
+  plasmaLeadIn: { role: 'computation', change: { plasmaLeadIn: 'line' } },
+  plasmaLeadInLength: { role: 'computation', change: { plasmaLeadInLength: 5 } },
+  plasmaLeadOut: { role: 'computation', change: { plasmaLeadOut: 'arc' } },
+  plasmaLeadOutLength: { role: 'computation', change: { plasmaLeadOutLength: 2 } },
+  plasmaStartPoint: { role: 'computation', change: { plasmaStartPoint: { x: 10, y: 5 } } },
+  plasmaStartPoints: { role: 'computation', change: { plasmaStartPoints: { 'feature-1': { x: 10, y: 5 } } } },
   id: { role: 'identity', change: { id: 'op-2' } },
   name: { role: 'display', change: { name: 'Renamed' } },
   description: { role: 'display', change: { description: 'note' } },
@@ -127,6 +138,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   dwellTime: { role: 'computation', change: { dwellTime: 1 } },
   countersinkDiameter: { role: 'computation', change: { countersinkDiameter: 6 } },
   retractHeight: { role: 'computation', change: { retractHeight: 5 } },
+  setupId: { role: 'computation', change: { setupId: 'setup-bottom' } },
   finishSlopeMin: { role: 'computation', change: { finishSlopeMin: 10 } },
   finishSlopeMax: { role: 'computation', change: { finishSlopeMax: 30 } },
   finishScallopHeight: { role: 'computation', change: { finishScallopHeight: 0.02 } },

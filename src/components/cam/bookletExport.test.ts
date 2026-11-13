@@ -19,6 +19,8 @@ import { test } from 'node:test'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { newProject } from '../../types/project'
+import { syncProjectSetups } from '../../store/helpers/setups'
+import { withBottomSetup } from '../../test/projectFixtures'
 import { bookletFileName, runBookletExport, type BookletExportSteps } from './bookletExport'
 
 const toolpath: ToolpathResult = { operationId: 'op', moves: [], warnings: [], bounds: null }
@@ -68,4 +70,16 @@ test('the file name keeps only safe characters, with fallbacks for empty names',
   const operation = { ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'stock' }, 0), name: '3D surface: finish' }
   assert.equal(bookletFileName(project, operation), 'LP_carved_top_3D_surface_finish_booklet')
   assert.equal(bookletFileName(newProject('!!!', 'inch'), { ...operation, name: ' ' }), 'project_operation_booklet')
+})
+
+test('with more than one setup the file name carries the setup, numbered as its program', () => {
+  const base = syncProjectSetups(newProject('Pin plate', 'mm'))
+  const operation = { ...defaultOperationForTarget(base, 'pocket', 'rough', { source: 'stock' }, 0), id: 'op1', name: 'Feet' }
+  const single = syncProjectSetups({ ...base, operations: [operation] })
+  assert.equal(bookletFileName(single, single.operations[0]), 'Pin_plate_Feet_booklet')
+
+  const top = withBottomSetup(single)
+  assert.equal(bookletFileName(top, top.operations[0]), 'Pin_plate_01_Top_Feet_booklet')
+  const bottom = withBottomSetup(single, { operationIds: ['op1'], setup: { name: 'Under side' } })
+  assert.equal(bookletFileName(bottom, bottom.operations[0]), 'Pin_plate_02_Under_side_Feet_booklet')
 })

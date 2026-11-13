@@ -24,7 +24,16 @@ import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
-import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
+import {
+  activeFace,
+  aroundSketchAuthoringAvailable,
+  aroundSketchAuthoringRefused,
+  aroundSheetTargetRefused,
+  aroundUnavailableReason,
+  faceArtworkTransform,
+  newFeatureSpan,
+} from '../helpers/activeFace'
+import { resolvedProjectFeatures, resolveFeatureInstance } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
 import {
@@ -57,6 +66,9 @@ export type PendingAddSlice = Pick<
   | 'startAddGearPlacement'
   | 'startAddRoundRectPlacement'
   | 'startAddChamferRectPlacement'
+  | 'beginCannedShapeEdit'
+  | 'startAddRotarySolidPlacement'
+  | 'startAddRotaryPatternPlacement'
   | 'cancelPendingAdd'
   | 'setPendingAddAnchor'
   | 'placePendingAddAt'
@@ -89,6 +101,34 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
   }
 }
 
+/**
+ * True when arming a drawing tool must be refused: the workspace is on a
+ * square blank's Around sheet, which is round-only for hand-drawn geometry
+ * (issue #1016 C2-U1). Clamps stay allowed (they are workholding, not sheet
+ * geometry) and the tab tool keeps its own Around refusal. A region or a
+ * construction line draws there — it never cuts the sheet, and a region is how
+ * a rotary operation is limited to part of it (issue #1112 decision 17) — so
+ * the answer follows the active creation target.
+ */
+function refusesSquareAroundSketch(state: Pick<ProjectStore, 'project' | 'creationTarget'>): boolean {
+  return aroundSheetTargetRefused(state.project, activeFace(state.project), state.creationTarget)
+}
+
+/**
+ * True when a text run must be refused: the workspace is on a square blank's
+ * Around sheet. Text is the one creation tool that does not author the selected
+ * creation target — {@link createTextFeatureAt} stamps the run's own operation
+ * (`add`/`subtract`) on it, so a placed run always cuts the sheet — and the
+ * placement writes its row directly instead of going through `addFeature`,
+ * whose operation guard would otherwise catch it. Judging it by the creation
+ * target therefore let a region or construction target arm the tool and place a
+ * cutting run on the sheet (rt2-c review finding 1), so text keeps the sheet
+ * rule itself: {@link aroundSketchAuthoringRefused}, at arming and completion.
+ */
+function refusesSquareAroundText(state: Pick<ProjectStore, 'project'>): boolean {
+  return aroundSketchAuthoringRefused(state.project, activeFace(state.project))
+}
+
 function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
   const session = nextPlacementSession()
   switch (current.shape) {
@@ -115,6 +155,12 @@ function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
       return { shape: 'composite', start: null, lastPoint: null, segments: [], currentMode: current.currentMode, pendingArcEnd: null, closed: false, session }
     case 'text':
       return { shape: 'text', config: current.config, session }
+    case 'canned-edit':
+      return { shape: 'canned-edit', featureId: current.featureId, session }
+    case 'rotary-solid':
+      return { shape: 'rotary-solid', kind: current.kind, session }
+    case 'rotary-pattern':
+      return { shape: 'rotary-pattern', kind: current.kind, session }
     case 'origin':
       return { shape: 'origin', session }
   }
@@ -128,7 +174,7 @@ export function createPendingAddSlice(
     pendingAdd: null,
 
     startAddRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'rect', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -138,7 +184,7 @@ export function createPendingAddSlice(
       })),
 
     startAddTabPlacement: () =>
-      set((s) => ({
+      set((s) => activeFace(s.project) === 'around' ? {} : ({
         pendingAdd: { shape: 'tab', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -172,7 +218,7 @@ export function createPendingAddSlice(
       })),
 
     startAddCirclePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'circle', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -182,7 +228,7 @@ export function createPendingAddSlice(
       })),
 
     startAddEllipsePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'ellipse', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -192,7 +238,7 @@ export function createPendingAddSlice(
       })),
 
     startAddPolygonPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'polygon', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -202,7 +248,7 @@ export function createPendingAddSlice(
       })),
 
     startAddSplinePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'spline', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -212,7 +258,7 @@ export function createPendingAddSlice(
       })),
 
     startAddCompositePlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: {
           shape: 'composite',
           start: null,
@@ -231,7 +277,7 @@ export function createPendingAddSlice(
       })),
 
     startAddTextPlacement: (config) =>
-      set((s) => ({
+      set((s) => refusesSquareAroundText(s) ? {} : ({
         pendingAdd: { shape: 'text', config, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -241,7 +287,7 @@ export function createPendingAddSlice(
       })),
 
     startAddSlotPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'slot', points: [], session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -251,7 +297,7 @@ export function createPendingAddSlice(
       })),
 
     startAddNgonPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'ngon', anchor: null, sides: 6, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -261,7 +307,7 @@ export function createPendingAddSlice(
       })),
 
     startAddGearPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: {
           shape: 'gear',
           anchor: null,
@@ -277,7 +323,7 @@ export function createPendingAddSlice(
       })),
 
     startAddRoundRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'roundrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
@@ -287,11 +333,77 @@ export function createPendingAddSlice(
       })),
 
     startAddChamferRectPlacement: () =>
-      set((s) => ({
+      set((s) => refusesSquareAroundSketch(s) ? {} : ({
         pendingAdd: { shape: 'chamferrect', anchor: null, corner: s.project.meta.units === 'mm' ? 5 : 0.2, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
         pendingOffset: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    /**
+     * Reopen an existing canned shape in the canvas creation side panel. The
+     * panel reads the stored parameters itself, so this only arms the pending
+     * session and selects the row; Apply is a single `updateFeature` write.
+     */
+    beginCannedShapeEdit: (featureId) =>
+      set((s) => {
+        const feature = resolveFeatureInstance(s.project, featureId)
+        if (!feature?.canned) return {}
+        return {
+          pendingAdd: { shape: 'canned-edit', featureId, session: nextPlacementSession() },
+          pendingMove: null,
+          pendingTransform: null,
+          pendingOffset: null,
+          pendingShapeAction: null,
+          pendingFeatureDistribution: null,
+          pendingTextLayout: null,
+          sketchEditSession: null,
+          selection: {
+            ...resetFeaturePlacementSelection(s.selection),
+            selectedFeatureId: featureId,
+            selectedFeatureIds: [featureId],
+            selectedNode: { type: 'feature', featureId },
+            mode: 'feature',
+          },
+        }
+      }),
+
+    /**
+     * Open the Turn/Polygon creation panel (issue #1112 rt2-b). The two canned
+     * models belong to the bar, not to a face, so the panel is offered on every
+     * face of a bar-stock rotary project — the model made from Top or Bottom is
+     * the same model and lands in the same feature-tree place as one made on
+     * Around (item 20). A block is still refused: there is no bar to turn.
+     */
+    startAddRotarySolidPlacement: (kind) =>
+      set((s) => aroundUnavailableReason(s.project) !== null ? {} : ({
+        pendingAdd: { shape: 'rotary-solid', kind, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        pendingTextLayout: null,
+        sketchEditSession: null,
+        selection: resetFeaturePlacementSelection(s.selection),
+      })),
+
+    /**
+     * Open the Thread/Flutes creation panel. These are unrolled-sheet geometry,
+     * so they keep the round-bar Around rule the dialog had: on any other face
+     * or a square blank the entry is absent and this arms nothing.
+     */
+    startAddRotaryPatternPlacement: (kind) =>
+      set((s) => (activeFace(s.project) !== 'around' || !aroundSketchAuthoringAvailable(s.project)) ? {} : ({
+        pendingAdd: { shape: 'rotary-pattern', kind, session: nextPlacementSession() },
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        pendingTextLayout: null,
         sketchEditSession: null,
         selection: resetFeaturePlacementSelection(s.selection),
       })),
@@ -326,6 +438,7 @@ export function createPendingAddSlice(
         const height = Math.max(Math.abs(y2 - y1), minSize)
 
         if (state.pendingAdd.shape === 'tab') {
+          if (activeFace(state.project) === 'around') return
           const id = nextUniqueGeneratedId(state.project, 'tb')
           const tabEntry: Tab = {
             id,
@@ -436,6 +549,13 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'text') {
         return []
       }
+      // A run started on a round bar and completed after the blank became
+      // square is refused here, before any project, history or selection write.
+      // The run's own operation cuts the sheet whatever target is selected, so
+      // this is the sheet rule and not the creation-target one.
+      if (refusesSquareAroundText(state)) {
+        return []
+      }
 
       const baseFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
       if (!baseFeature) {
@@ -447,7 +567,13 @@ export function createPendingAddSlice(
       // creation path. Without this, reference copies point at a missing
       // definition and become un-resolvable / un-selectable (issue #228).
       const minted = createDefinitionForFeature(state.project, baseFeature)
-      const createdFeature = createFeatureInstance(baseFeature, minted.definitionId)
+      // On Bottom the run is drawn on the turned-over stock: it belongs to
+      // that face and is mirrored once so it reads correctly from below (#945).
+      const createdFeature = createFeatureInstance(
+        { ...baseFeature, authoringFace: activeFace(state.project) },
+        minted.definitionId,
+        faceArtworkTransform(state.project, point) ?? undefined,
+      )
 
       set((s) => {
         const nextProject = syncFeatureTreeProject({
@@ -505,6 +631,7 @@ export function createPendingAddSlice(
     completePendingPolygon: () => {
       const state = get()
       if (!state.pendingAdd || !('points' in state.pendingAdd) || state.pendingAdd.points.length < 3) return
+      if (refusesSquareAroundSketch(state)) return
 
       const depth = Math.min(state.project.stock.thickness, 10)
       if (state.pendingAdd.shape === 'spline') {
@@ -527,6 +654,7 @@ export function createPendingAddSlice(
       const state = get()
       if (!state.pendingAdd || !('points' in state.pendingAdd)) return
       if (state.creationTarget === 'region') return
+      if (refusesSquareAroundSketch(state)) return
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const openPathOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
@@ -567,8 +695,7 @@ export function createPendingAddSlice(
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: lineTopZ,
-          z_bottom: 0,
+          ...newFeatureSpan(state.project, lineTopZ),
           visible: true,
           locked: false,
         }
@@ -604,8 +731,7 @@ export function createPendingAddSlice(
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: lineTopZ,
-          z_bottom: 0,
+          ...newFeatureSpan(state.project, lineTopZ),
           visible: true,
           locked: false,
         }
@@ -770,6 +896,7 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'composite' || !state.pendingAdd.start) {
         return
       }
+      if (refusesSquareAroundSketch(state)) return
 
       const closedSegments = resolveCompositeDraftSegments(state.pendingAdd)
       if (!closedSegments) {
@@ -800,6 +927,7 @@ export function createPendingAddSlice(
         return
       }
       if (state.creationTarget === 'region') return
+      if (refusesSquareAroundSketch(state)) return
 
       const openSegments = resolveOpenCompositeDraftSegments(state.pendingAdd)
       if (!openSegments) {
@@ -835,8 +963,7 @@ export function createPendingAddSlice(
           constraints: [],
         },
         operation: openCompositeOperation,
-        z_top: lineTopZ,
-        z_bottom: 0,
+        ...newFeatureSpan(state.project, lineTopZ),
         visible: true,
         locked: false,
       }
@@ -854,18 +981,24 @@ export function createPendingAddSlice(
       })),
 
     setPendingGearParams: (patch) =>
-      set((s) => ({
-        pendingAdd:
-          s.pendingAdd?.shape === 'gear'
-            ? {
-                ...s.pendingAdd,
-                params: normalizeGearCreationParams({
-                  ...s.pendingAdd.params,
-                  ...patch,
-                }),
-              }
-            : s.pendingAdd,
-      })),
+      set((s) => {
+        if (s.pendingAdd?.shape !== 'gear') return {}
+        const merged = { ...s.pendingAdd.params, ...patch }
+        const params = normalizeGearCreationParams(merged)
+        return {
+          pendingAdd: {
+            ...s.pendingAdd,
+            // A bore the user cleared over a value arrives as `NaN`: it is the
+            // draft-level refusal the gear validator reports (issue #1112 R2
+            // item 12), so the creation clamp must not turn it into a valid
+            // zero and hide the error. Every other value keeps its clamp, and a
+            // typed bore replaces the refusal in the same call.
+            params: Number.isFinite(merged.boreDiameter)
+              ? params
+              : { ...params, boreDiameter: Number.NaN },
+          },
+        }
+      }),
 
     setPendingGearRadiusAt: (point) =>
       set((s) => {
@@ -893,6 +1026,7 @@ export function createPendingAddSlice(
       if (state.pendingAdd?.shape !== 'gear' || !state.pendingAdd.anchor || state.pendingAdd.outsideRadius === null) {
         return []
       }
+      if (refusesSquareAroundSketch(state)) return []
       const depth = Math.min(state.project.stock.thickness, 10)
       const createdIds = state.addGearFeature(
         `Gear ${state.project.features.length + 1}`,

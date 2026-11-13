@@ -21,6 +21,7 @@ import {
   VIEW_PRESETS,
   VIEW_PRESET_ORDER,
   viewPresetMeta,
+  viewPresetSpherical,
   type ViewPreset,
 } from './viewPresets'
 
@@ -97,4 +98,23 @@ test('iso preset matches the default camera spherical orientation', () => {
   const iso = VIEW_PRESETS.iso
   assert.equal(iso.theta, Math.PI / 4)
   assert.equal(iso.phi, Math.PI / 3)
+})
+
+// Issue #947: the 3D preview stays in stock space, so a Bottom setup's passes
+// come from under the stock and its isometric view looks up at them.
+test('on the Bottom face the isometric view looks up from below, mirrored about eye level', () => {
+  const top = viewPresetSpherical('iso', 'top')
+  const bottom = viewPresetSpherical('iso', 'bottom')
+  assert.deepEqual(top, VIEW_PRESETS.iso)
+  assert.equal(bottom.theta, top.theta)
+  assert.ok(Math.abs(bottom.phi - (Math.PI - top.phi)) < 1e-12, `phi ${bottom.phi}`)
+  assert.ok(bottom.phi > Math.PI / 2, 'the camera is below the stock')
+  assert.deepEqual(bottom.up, top.up)
+})
+
+test('fixed-direction presets read the same on either face', () => {
+  for (const preset of ALL_PRESETS.filter((entry) => entry !== 'iso')) {
+    assert.deepEqual(viewPresetSpherical(preset, 'bottom'), VIEW_PRESETS[preset], preset)
+    assert.deepEqual(viewPresetSpherical(preset), VIEW_PRESETS[preset], preset)
+  }
 })

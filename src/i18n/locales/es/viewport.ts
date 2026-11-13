@@ -40,6 +40,7 @@ export const viewportEs: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.modeVisible': 'Visibles',
   'viewport.sim.detailLabel': 'Detalle',
   'viewport.sim.detailTitle': 'Detalle de simulación',
+  'viewport.sim.freshStockNote': '{setup} se simula sobre material nuevo: no se muestra el material eliminado por otras configuraciones.',
   'viewport.sim.playTool': 'Reproducción de la herramienta',
   'viewport.sim.playToolDisabledMode': 'Cambie al modo Seleccionado para usar la reproducción de la herramienta',
   'viewport.sim.playToolDisabledNoOp': 'Seleccione una operación con una trayectoria de herramienta válida para reproducir',

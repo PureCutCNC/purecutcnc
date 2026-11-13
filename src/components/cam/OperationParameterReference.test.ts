@@ -86,13 +86,22 @@ function testEveryKindRendersSvg(): void {
 // the value-aware switch produces geometry).
 function testVariantKindsRenderEveryOption(): void {
   const cases: Array<[OperationParamRefKind, readonly string[]]> = [
-    ['pattern', ['offset', 'parallel', 'waterline', 'seeded_offset']],
+    ['pattern', ['offset', 'parallel', 'waterline', 'seeded_offset', 'constant_scallop', 'trochoidal']],
     ['cutDirection', ['conventional', 'climb']],
     ['edgeStrategy', ['contour', 'trochoidal']],
     ['machiningOrder', ['level_first', 'feature_first']],
     ['entryStrategy', ['plunge', 'helix', 'ramp']],
     ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking', 'helical', 'countersink']],
     ['engagementMode', ['slots_only', 'engagement']],
+    // #1112 decision 7: the rotary Passes field shows the two directions, and
+    // the radial stock uses a rotary cross-section instead of the pocket wall.
+    ['passes', ['along', 'around']],
+    ['stockRadial', ['rotary', 'around']],
+    // #1165: the plasma selects and the reverse checkbox each switch the picture.
+    ['plasmaSide', ['auto', 'outside', 'inside']],
+    ['plasmaReverse', ['off', 'on']],
+    ['plasmaLeadIn', ['line', 'arc']],
+    ['plasmaLeadOut', ['line', 'arc']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {
@@ -104,6 +113,38 @@ function testVariantKindsRenderEveryOption(): void {
       )
     }
   }
+}
+
+// #1169: trochoidal used to fall through to the Offset picture.
+function testTrochoidalPatternHasOwnPicture(): void {
+  assert(
+    renderKind('pattern', 'trochoidal') !== renderKind('pattern', 'offset'),
+    'the trochoidal pattern must not borrow the offset picture',
+  )
+  const slots = renderKind('engagementMode', 'slots_only')
+  const engagement = renderKind('engagementMode', 'engagement')
+  assert(slots !== engagement, 'the two engagement modes draw different pictures')
+}
+
+// #1165: each plasma option draws a different picture, and Reverse flips the
+// travel from clockwise (standard consumables, outline viewed from above) to
+// counter-clockwise rather than redrawing the same arrows.
+function testPlasmaVariantsDiffer(): void {
+  const groups: Array<[OperationParamRefKind, readonly string[]]> = [
+    ['plasmaSide', ['auto', 'outside', 'inside']],
+    ['plasmaReverse', ['off', 'on']],
+    ['plasmaLeadIn', ['line', 'arc']],
+    ['plasmaLeadOut', ['line', 'arc']],
+  ]
+  for (const [kind, variants] of groups) {
+    const pictures = new Set(variants.map((variant) => renderKind(kind, variant)))
+    assert(pictures.size === variants.length, `kind ${kind} draws the same picture for two options`)
+  }
+  assert(renderKind('plasmaReverse', 'off').includes('data-arrow="cw"'), 'reverse off must run clockwise')
+  assert(renderKind('plasmaReverse', 'on').includes('data-arrow="ccw"'), 'reverse on must run counter-clockwise')
+  // A lead-in starts with a pierce in the scrap; a lead-out has none.
+  assert(renderKind('plasmaLeadIn', 'line').includes('<circle'), 'lead-in must show the pierce')
+  assert(!renderKind('plasmaLeadOut', 'line').includes('<circle'), 'lead-out must not show a pierce')
 }
 
 // The cut-direction arrow runs along the outside of the part's top edge. With a
@@ -122,11 +163,71 @@ function testCutDirectionArrowOrientation(): void {
   assert(!arrowPointsRight(renderKind('cutDirection', 'conventional')), 'conventional arrow must point left')
 }
 
+// The `data-arrow` marker names each rotary picture's signature arrow. Reading
+// the marked path's geometry (not just its presence) is what makes a swap of
+// the two pictures fail: the along arrow must be a straight run down the bar,
+// the around arrow an arc, and neither picture may carry the other's marker.
+function markedArrow(html: string, marker: string): string {
+  const path = html.split('<path ').find((part) => part.includes(`data-arrow="${marker}"`))
+  assert(path, `no data-arrow="${marker}" arrow in the picture`)
+  const d = /\bd="([^"]+)"/.exec(path)
+  assert(d, `data-arrow="${marker}" arrow has no path data`)
+  return d[1]
+}
+
+function testRotaryPicturesDiffer(): void {
+  const along = renderKind('passes', 'along')
+  const around = renderKind('passes', 'around')
+  assert(along !== around, 'passes along and around must not render the same picture')
+  assert(
+    along.includes(`aria-label="${operationParamRefLabel('passes')}"`)
+      && around.includes(`aria-label="${operationParamRefLabel('passes')}"`),
+    'both passes variants keep the same accessible label',
+  )
+
+  // Along the bar is one straight horizontal pass at the bar's centre line;
+  // around the bar is the same motion drawn as an arc, so swapping the two
+  // pictures (or their marked paths) fails here instead of merely differing.
+  const alongArrow = markedArrow(along, 'along-bar')
+  assert(
+    /^M[\d.]+ 17h\d+$/.test(alongArrow),
+    `the along picture needs the longitudinal arrow along the bar, got "${alongArrow}"`,
+  )
+  const aroundArrow = markedArrow(around, 'around-bar')
+  assert(
+    /[cCsS]/.test(aroundArrow),
+    `the around picture needs the rotational (curved) arrow, got "${aroundArrow}"`,
+  )
+  assert(!along.includes('data-arrow="around-bar"'), 'the along picture must not contain the around arrow')
+  assert(!around.includes('data-arrow="along-bar"'), 'the around picture must not contain the along arrow')
+
+  const wall = renderKind('stockRadial')
+  const rotary = renderKind('stockRadial', 'rotary')
+  const aroundPocket = renderKind('stockRadial', 'around')
+  assert(wall !== rotary, 'rotary stock-to-leave must not reuse the pocket-wall picture')
+  // The pocket-wall diagram is the rectangle in the default branch; the rotary
+  // one is the bar cross-section circle. Naming both makes the swap explicit.
+  assert(wall.includes('M8 7h42v20H8z'), 'the default stockRadial picture stays the pocket wall')
+  assert(rotary.includes('m-12 0a12 11'), 'the rotary stockRadial picture is a radial cross-section')
+  // #1112 decision 8.16: the rotary picture says the walls are radial, and an
+  // Around pocket keeps the pocket picture but carries the same note. A Top or
+  // Bottom pocket gets neither.
+  assert(rotary.includes('op-param-ref-note'), 'the rotary stockRadial picture carries its limit note')
+  assert(rotary.includes('Walls are radial'), 'the rotary note reads "Walls are radial"')
+  assert(wall.includes('M8 7h42v20H8z') && !wall.includes('op-param-ref-note'), 'the pocket-wall picture does not carry the rotary note')
+  assert(aroundPocket.includes('M8 7h42v20H8z'), 'an Around pocket keeps the pocket-wall picture')
+  assert(aroundPocket.includes('op-param-ref-note'), 'an Around pocket carries its radial-wall note')
+  assert(aroundPocket.includes('Walls are radial'), 'the Around note reads "Walls are radial"')
+}
+
 testNoDuplicateKinds()
 testAllKindsHaveNonEmptyLabel()
 testAllLabelsAreUnique()
 testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
 testCutDirectionArrowOrientation()
+testPlasmaVariantsDiffer()
+testTrochoidalPatternHasOwnPicture()
+testRotaryPicturesDiffer()
 
 console.log('OperationParameterReference tests passed')

@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 
+import { withCompatibleOperationTool } from '../toolPolicy'
 import {
   defaultOrigin,
+  isAroundSetup,
+  isRoundStock,
+  defaultTopSetup,
   type FeatureDefinition,
   type FeatureFolder,
   type FeatureInstance,
   type FeatureTreeEntry,
   type LocalConstraint,
   type MachineOrigin,
+  type MachiningSetup,
   type NamedDimension,
   type Operation,
   type PersistedImportedMesh,
@@ -31,10 +36,17 @@ import {
   type Tool, cloneTextLayout,
 } from '../types/project'
 import { cloneTextFeatureData } from '../types/project'
+import { isBarStock } from '../types/barStock'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
+import { rebuildCannedShapeModels } from '../cannedShapes/model'
+import { TURN_CANNED_KIND } from '../cannedShapes/generators/kinds'
+import type { CannedShapeData } from '../types/project'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
+import type { MachineLoadDiagnostic } from '../machine/diagnostics'
+import type { MachineDefinition } from '../engine/gcode/types'
+import { findSetupWithTurn, syncProjectSetups } from '../store/helpers/setups'
 
 export interface CamjInspection {
   /** Parsed source project. Always uses source units (not yet converted). */
@@ -49,6 +61,15 @@ export interface CamjInspection {
   /** True when source stock is derived from a feature (importable). */
   stockIsFeatureBased: boolean
   warnings: string[]
+  /**
+   * Machine diagnostics from decoding the source (#1119): a retained
+   * template-invalid machine, machines the file carried beyond its selected
+   * snapshot, duplicate consolidations and re-keyed ids. The import dialog
+   * shows these instead of the decode discarding them.
+   */
+  machineDiagnostics: MachineLoadDiagnostic[]
+  /** Custom definitions the source carried, for My Machines if the caller offers them. */
+  machineCustomDefinitions: MachineDefinition[]
 }
 
 export interface MergeCamjFoldersInput {
@@ -93,7 +114,8 @@ export function inspectCamjString(text: string): CamjInspection {
     throw new Error('Failed to parse .camj file: missing meta.')
   }
 
-  const { project, convertedLegacy, sourceVersion } = decodeProjectFormat(parsed)
+  const decoded = decodeProjectFormat(parsed)
+  const { project, convertedLegacy, sourceVersion } = decoded
   const sourceUnits: Units = project.meta.units === 'inch' ? 'inch' : 'mm'
 
   const featureCountByFolder = new Map<string, number>()
@@ -125,9 +147,14 @@ export function inspectCamjString(text: string): CamjInspection {
     folderFeatureCount,
     sourceUnits,
     stockIsFeatureBased,
-    warnings: convertedLegacy
-      ? [`Converted legacy file format ${sourceVersion ?? '1.0'} to 3.0 for import.`]
-      : [],
+    warnings: [
+      ...(convertedLegacy
+        ? [`Converted legacy file format ${sourceVersion ?? '1.0'} to 3.0 for import.`]
+        : []),
+      ...decoded.machineMigration.diagnostics.map((diagnostic) => diagnostic.message),
+    ],
+    machineDiagnostics: decoded.machineMigration.diagnostics,
+    machineCustomDefinitions: decoded.machineMigration.customDefinitions,
   }
 }
 
@@ -159,6 +186,7 @@ function collectExistingIds(project: Project): Set<string> {
     ...project.operations.map((o) => o.id),
     ...project.tabs.map((t) => t.id),
     ...project.clamps.map((c) => c.id),
+    ...(project.setups ?? []).map((s) => s.id),
     ...Object.keys(project.dimensions ?? {}),
     ...Object.keys(project.modelAssets ?? {}),
   ])
@@ -200,6 +228,56 @@ function remapConstraint(
 }
 
 /**
+ * A path run's baked `sourceFeatureId` names a row in the *source* project.
+ * Imported on its own it would dangle, or — worse — match an unrelated row in
+ * the target on an id collision, so point it at the imported copy and clear it
+ * when the source was not selected (issue #1112 DE2 review).
+ */
+function remapImportedTextLayout(
+  layout: FeatureInstance['textLayout'],
+  featureIdMap: Map<string, string>,
+): FeatureInstance['textLayout'] {
+  const cloned = cloneTextLayout(layout)
+  if (!cloned || cloned.kind !== 'path' || !cloned.sourceFeatureId) return cloned
+  const mapped = featureIdMap.get(cloned.sourceFeatureId)
+  if (mapped) {
+    cloned.sourceFeatureId = mapped
+  } else {
+    delete cloned.sourceFeatureId
+  }
+  return cloned
+}
+
+/**
+ * A Turn's copied profile remembers the feature it was picked from so the
+ * dialog can offer Refresh. That id names a row in the *source* project, so it
+ * must follow the imported copy for the same reason text-on-a-path does:
+ * imported on its own it dangles, and importing both would otherwise disable
+ * Refresh as "source missing". The copy itself is baked, so when the source
+ * was not selected there is nothing to point at and the stored id is left as
+ * it was (still refused as missing).
+ */
+function remapImportedCannedSource(
+  canned: CannedShapeData | null | undefined,
+  featureIdMap: Map<string, string>,
+): CannedShapeData | null | undefined {
+  if (!canned || canned.kind !== TURN_CANNED_KIND) return canned
+  const profile = canned.params.profile
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return canned
+  const sourceId = (profile as Record<string, unknown>).sourceFeatureId
+  if (typeof sourceId !== 'string') return canned
+  const mapped = featureIdMap.get(sourceId)
+  if (!mapped) return canned
+  return {
+    ...canned,
+    params: {
+      ...canned.params,
+      profile: { ...(profile as Record<string, unknown>), sourceFeatureId: mapped },
+    } as CannedShapeData['params'],
+  }
+}
+
+/**
  * Merge selected folders from a source .camj project into the current project.
  * Returns a new Project plus the ids that were created. The result is not yet
  * passed through syncFeatureTreeProject — the caller (store action) is
@@ -226,13 +304,40 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   const sourceProject =
     input.sourceProject.meta.units === currentProject.meta.units
       ? input.sourceProject
-      : convertProjectUnits(input.sourceProject, currentProject.meta.units)
+      : rebuildCannedShapeModels(convertProjectUnits(input.sourceProject, currentProject.meta.units))
 
   // 2. Identify features inside selected folders.
+  //
+  // Around content is imported only onto a bar it can be cut on (issue #395):
+  // its features store the unrolled sheet's coordinates and its operations
+  // keep the setup they were made for, so an imported Around feature on a bar
+  // lying along another axis (or on a block) would have its along-the-bar
+  // travel silently turned into rotation. Never re-axis: leave that content
+  // out, with a warning, and merge the rest of the source as before.
+  //
+  // Feature admission and operation admission are separate rules since #1016
+  // C2-U1. Hand-drawn Around sheet geometry is round-bar authoring only, so its
+  // admission keeps the round requirement. The Around setup's *operations* may
+  // also come onto a matching **square** blank, but only the generated-model
+  // rotary pair: the target model is an ordinary Top-authored STL whose own
+  // coordinates carry across unchanged, so nothing is transposed either.
+  const sourceAroundSetup = (sourceProject.setups ?? []).find(isAroundSetup)
+  const targetBarAxis = isBarStock(currentProject.stock) ? currentProject.stock.axis : null
+  const aroundAxisMatches = sourceAroundSetup !== undefined
+    && targetBarAxis !== null
+    && targetBarAxis === sourceAroundSetup.orientation.axis
+  const aroundFeaturesImportable = aroundAxisMatches && isRoundStock(currentProject.stock)
+  const aroundOperationsImportable = aroundAxisMatches
+  let aroundLeftOut = 0
+
   const sourceFolderById = new Map(sourceProject.featureFolders.map((f) => [f.id, f]))
   const importedFeatures: FeatureInstance[] = []
   for (const feature of sourceProject.features) {
     if (feature.folderId && selectedFolderIdSet.has(feature.folderId)) {
+      if (feature.authoringFace === 'around' && !aroundFeaturesImportable) {
+        aroundLeftOut += 1
+        continue
+      }
       importedFeatures.push(feature)
     }
   }
@@ -342,6 +447,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     mergedDefinitions[newDefId] = {
       ...sourceDef,
       id: newDefId,
+      canned: remapImportedCannedSource(sourceDef.canned, featureIdMap),
       profile: {
         start: { ...sourceDef.profile.start },
         segments: sourceDef.profile.segments.map((segment) => ({ ...segment })),
@@ -378,7 +484,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       name: featureName,
       definitionId: newDefinitionId,
       transform: { ...feature.transform },
-      textLayout: cloneTextLayout(feature.textLayout),
+      textLayout: remapImportedTextLayout(feature.textLayout, featureIdMap),
       constraints,
       folderId: sourceFolderId ? folderIdMap.get(sourceFolderId) ?? null : null,
       z_top: typeof feature.z_top === 'string' ? (dimensionIdMap.get(feature.z_top) ?? feature.z_top) : feature.z_top,
@@ -389,13 +495,61 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   // 7. Decide which operations to import. Only operations whose target is
   //    'features' AND all target featureIds are inside the imported set.
   const importedFeatureSourceIds = new Set(importedFeatures.map((f) => f.id))
+  const importedFeatureById = new Map(importedFeatures.map((f) => [f.id, f]))
+  /**
+   * The generated-model rotary pair (issue #1016 C2-B/U1): an ordinary
+   * Top-authored STL model is the only Around-setup target that carries onto a
+   * square blank. Anything else in the source Around setup is hand-drawn sheet
+   * work and stays round-bar only.
+   */
+  const isRotaryModelOperation = (operation: Operation): boolean => (
+    (operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish')
+    && operation.target.source === 'features'
+    && operation.target.featureIds.length > 0
+    && operation.target.featureIds.every((id) => {
+      const feature = importedFeatureById.get(id)
+      const definition = feature === undefined ? undefined : sourceProject.featureDefinitions[feature.definitionId]
+      return feature !== undefined
+        && definition !== undefined
+        && definition.kind === 'stl'
+        && definition.operation === 'model'
+        && (feature.authoringFace ?? 'top') === 'top'
+    })
+  )
+  const sourceSetupById = new Map((sourceProject.setups ?? []).map((setup) => [setup.id, setup]))
   const operationsToImport: Operation[] = []
   for (const operation of sourceProject.operations) {
     if (operation.target.source !== 'features') continue
     const targetIds = operation.target.featureIds
     if (targetIds.length === 0) continue
     if (!targetIds.every((id) => importedFeatureSourceIds.has(id))) continue
-    operationsToImport.push(operation)
+    // The Around setup is left out with its features when the bars disagree,
+    // and on a matching square blank everything but the generated-model rotary
+    // pair is hand-drawn sheet work that cannot transpose.
+    if (sourceAroundSetup !== undefined && operation.setupId === sourceAroundSetup.id
+      && (!aroundOperationsImportable || (!aroundFeaturesImportable && !isRotaryModelOperation(operation)))) {
+      aroundLeftOut += 1
+      continue
+    }
+    // An operation naming a setup its own project does not define has no
+    // known orientation, so there is no face to import it onto.
+    if (operation.setupId !== undefined && !sourceSetupById.has(operation.setupId)) {
+      warnings.push(`Operation "${operation.name}" was not imported: its setup is missing from the source project.`)
+      continue
+    }
+    operationsToImport.push(withCompatibleOperationTool(sourceProject, operation))
+  }
+
+  if (aroundLeftOut > 0 && sourceAroundSetup !== undefined) {
+    const axis = sourceAroundSetup.orientation.axis.toUpperCase()
+    warnings.push(
+      aroundAxisMatches
+        ? `Around content was not imported: this project's blank is square, whose Around sheet takes generated rotary models only (a bar lying along ${axis} carries the generated-model pair). `
+          + `The rest of the source was imported; mount a round bar along ${axis} to import hand-drawn Around work.`
+        : `Around content was not imported: the source's "Around" setup is for a bar lying along ${axis}, `
+          + `and this project has no round bar on that axis. The rest of the source was imported; `
+          + `move this project's bar onto that axis, or re-author the Around work here.`,
+    )
   }
 
   // 8. Decide which tools to import: any tool referenced by an imported
@@ -419,6 +573,42 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   }
 
   // 9. Build new operations with remapped refs.
+  //
+  // An imported operation keeps the turn it was made for (issue #944). Setup
+  // ids are per project, so each source setup maps onto the setup here that
+  // is turned the same way; when there is none, a setup with that turn is
+  // added. The operation never lands on another face or another flip axis:
+  // that would be a move, and a move is an explicit, validated action. An
+  // operation from a project saved before setups existed was made for Top,
+  // whichever setup this project happens to be on.
+  let nextSetups: MachiningSetup[] = currentProject.setups
+  const setupIdFor = (operation: Operation): string => {
+    const sourceSetup = operation.setupId === undefined ? undefined : sourceSetupById.get(operation.setupId)
+    const template = sourceSetup ?? defaultTopSetup()
+    // Either bar shape re-axes an imported Around setup (issue #1016 C2-U1).
+    // `findSetupWithTurn` below still refuses to borrow an Around turn across
+    // axes; the matched-axis cases never transpose geometry.
+    const orientation = template.kind === 'around' && isBarStock(currentProject.stock)
+      ? { axis: currentProject.stock.axis, angleDeg: 0 } : template.orientation
+    // `findSetupWithTurn` matches an Around setup only on the same axis: an
+    // Around turn is never borrowed across axes, because the imported
+    // features keep their own coordinates (issue #395).
+    const existing = findSetupWithTurn(nextSetups, orientation, template.kind)
+    if (existing) return existing.id
+    const created: MachiningSetup = {
+      id: nextId('su'),
+      name: uniqueName(template.name, nextSetups.map((setup) => setup.name)),
+      ...(template.kind === 'around' ? { kind: 'around' as const } : {}),
+      orientation: { ...orientation },
+      indexing: 'manual',
+      registration: [],
+      notes: '',
+      operationIds: [],
+    }
+    nextSetups = [...nextSetups, created]
+    warnings.push(`Added setup "${created.name}" for the imported operations.`)
+    return created.id
+  }
   const existingOperationNames = currentProject.operations.map((o) => o.name)
   const reservedOperationNames: string[] = []
   const newOperations: Operation[] = []
@@ -433,12 +623,23 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
         }
       : operation.target
     const toolRef = operation.toolRef ? (toolIdMap.get(operation.toolRef) ?? null) : null
+    const plasmaStartPoints = operation.plasmaStartPoints === undefined ? undefined : Object.fromEntries(
+      Object.entries(operation.plasmaStartPoints).map(([contourId, point]) => {
+        const parentId = operation.target.source === 'features'
+          ? operation.target.featureIds.find((id) => contourId.startsWith(`${id}:text:`)) : undefined
+        const id = featureIdMap.get(contourId) ?? (parentId
+          ? `${featureIdMap.get(parentId) ?? parentId}${contourId.slice(parentId.length)}` : contourId)
+        return [id, point]
+      }),
+    )
     newOperations.push({
       ...operation,
       id: newOpId,
       name: opName,
       target,
       toolRef,
+      setupId: setupIdFor(operation),
+      ...(plasmaStartPoints === undefined ? {} : { plasmaStartPoints }),
     })
   }
 
@@ -504,10 +705,12 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     featureTree: [...currentProject.featureTree, ...newTreeEntries],
     tools: [...currentProject.tools, ...newTools],
     operations: [...currentProject.operations, ...newOperations],
+    setups: nextSetups,
   }
 
   return {
-    project: mergedProject,
+    // Reconciled so each setup lists the operations it just received.
+    project: syncProjectSetups(mergedProject),
     createdFolderIds: newFolders.map((f) => f.id),
     createdFeatureIds: newFeatures.map((f) => f.id),
     stockReplaced,

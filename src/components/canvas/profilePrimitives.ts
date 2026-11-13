@@ -16,7 +16,7 @@
 
 import { segmentEndPoint } from '../../types/project'
 import type { Point, Segment, SketchProfile } from '../../types/project'
-import { worldToCanvas } from './viewTransform'
+import { worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 
 export function anchorPointForIndex(profile: SketchProfile, index: number): Point {
@@ -80,7 +80,7 @@ export function appendProfilePath(
       const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
       const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
       const endAngle = startAngle + (segment.clockwise ? -Math.PI * 2 : Math.PI * 2)
-      ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+      ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, segment.clockwise, vt))
       current = profile.start
       continue
     }
@@ -90,7 +90,7 @@ export function appendProfilePath(
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
     const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
 
-    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+    ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, segment.clockwise, vt))
     current = segment.to
   }
 

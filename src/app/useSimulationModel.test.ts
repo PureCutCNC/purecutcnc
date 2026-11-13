@@ -25,6 +25,8 @@ import type { ToolpathResult } from '../engine/toolpaths'
 import type { Operation, Project, Tool } from '../types/project'
 import { newProject } from '../types/project'
 import { useSimulationModel } from './useSimulationModel'
+import { computeSimulationResult } from './simulationCompute'
+import { applySimulationBuild, simulationResultForInput } from './simulationBuild'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -178,6 +180,55 @@ function makeTool(overrides: Partial<Tool> = {}): Tool {
   }
 }
 
+function testSimulationResultIsBuiltAfterTheTabCommits() {
+  console.log('Testing the simulation result is not built in the tab-switch render...')
+
+  const selectedOperation = makeOperation()
+  const project = { ...makeProject([selectedOperation]), tools: [makeTool()] }
+  const args = makeArgs({
+    project,
+    centerTab: 'simulation',
+    simulationMode: 'selected',
+    selectedOperation,
+    selectedToolpath: makeToolpath(selectedOperation.id),
+  })
+  // Static rendering runs the component body but never an effect. A result that
+  // appeared here would be the synchronous tab-switch replay this regression is
+  // about; the panel must instead commit with its loading state and build after.
+  const result = renderUseSimulationModel(args)
+  assert(result.simulationResult === null, 'the tab-switch render must not build the selected replay')
+  assert(result.simulationInputPending === true, 'the panel is in its loading state before the build lands')
+
+  console.log('simulation result deferred past the tab-switch render: PASSED')
+}
+
+function testStaleSimulationBuildIsIgnored() {
+  console.log('Testing a simulation build that finishes after the selection changed is ignored...')
+
+  const operationA = makeOperation({ id: 'op-a' })
+  const operationB = makeOperation({ id: 'op-b' })
+  const project = { ...makeProject([operationA, operationB]), tools: [makeTool()] }
+  const inputA = {
+    setupInput: null,
+    project,
+    simulationMode: 'selected' as const,
+    simulationDetailCells: 280,
+    selectedInSetup: operationA,
+    paths: new Map(),
+  }
+  const inputB = { ...inputA, selectedInSetup: operationB }
+  const resultA = computeSimulationResult(inputA)
+
+  const completed = applySimulationBuild(null, inputA, inputA, resultA)
+  assert(simulationResultForInput(completed, inputA) === resultA, 'the matching build is shown')
+
+  const afterStale = applySimulationBuild(completed, inputB, inputA, resultA)
+  assert(afterStale === completed, 'a completion for older inputs leaves the build untouched')
+  assert(simulationResultForInput(afterStale, inputB) === null, 'the newer selection waits for its own build')
+
+  console.log('stale simulation build ignored: PASSED')
+}
+
 function testPlaybackBaseGridIsLazyAndCached() {
   console.log('Testing playback base grid computes lazily and caches...')
 
@@ -202,6 +253,31 @@ function testPlaybackBaseGridIsLazyAndCached() {
   assert(second === first, 'repeat calls must return the cached grid, not replay again')
 
   console.log('lazy cached playback base grid: PASSED')
+}
+
+function testPlasmaOperationIsCountedAndPlayable() {
+  console.log('Testing a selected plasma operation is counted and gets playback input...')
+
+  const plasmaTool = makeTool({ id: 'torch-1', name: 'Plasma torch', type: 'plasma', diameter: 2 })
+  const plasmaOperation = makeOperation({ id: 'plasma-op', kind: 'plasma_profile', toolRef: 'torch-1' })
+  const project = { ...makeProject([plasmaOperation]), tools: [plasmaTool] }
+
+  const result = renderUseSimulationModel(makeArgs({
+    project,
+    centerTab: 'simulation',
+    simulationMode: 'selected',
+    selectedOperation: plasmaOperation,
+    selectedToolpath: makeToolpath(plasmaOperation.id),
+  }))
+
+  assert(result.simulationOperationCount === 1, 'a selected plasma operation is counted')
+
+  const playbackInput = result.simulationPlaybackInput
+  assert(playbackInput !== null, 'a selected plasma operation gets a playback input')
+  assert(playbackInput!.toolType === 'plasma', 'the playback input carries the torch')
+  assert(playbackInput!.toolRadius === 1, 'the playback radius is half the torch diameter')
+
+  console.log('selected plasma operation counted and playable: PASSED')
 }
 
 function testVisibleOperationCount() {
@@ -229,7 +305,10 @@ function testVisibleOperationCount() {
 try {
   testSimulationResultIsNullOffSimulationTab()
   testSelectedOperationCount()
+  testSimulationResultIsBuiltAfterTheTabCommits()
+  testStaleSimulationBuildIsIgnored()
   testPlaybackBaseGridIsLazyAndCached()
+  testPlasmaOperationIsCountedAndPlayable()
   testVisibleOperationCount()
   console.log('\nAll useSimulationModel tests PASSED.')
 } catch (e) {

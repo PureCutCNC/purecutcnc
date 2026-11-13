@@ -22,6 +22,7 @@
 
 import { useProjectStore } from './projectStore'
 import {
+  defaultTool,
   newProject,
   rectProfile,
   type Project,
@@ -29,6 +30,8 @@ import {
   type Tool,
 } from '../types/project'
 import type { ToolLibraryEntry } from '../toolLibrary'
+import { normalizeToolForProject } from '../engine/toolpaths/geometry'
+import { toolMatchesLibraryEntry } from '../components/cam/toolLibraryDialogModel'
 import { projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -56,11 +59,11 @@ function makeFeature(id: string, operation: SketchFeature['operation'], w: numbe
   }
 }
 
-function flatTool(id: string, diameter: number): Tool {
+function flatTool(id: string, diameter: number, units: Tool['units'] = 'inch'): Tool {
   return {
     id,
     name: id,
-    units: 'inch',
+    units,
     type: 'flat_endmill',
     diameter,
     vBitAngle: null,
@@ -90,6 +93,28 @@ const vBitLibraryEntry: ToolLibraryEntry = {
   defaultStepdown: 0.1,
   defaultStepover: 0.4,
   maxCutDepth: 0.5,
+}
+
+/** The shipped example torch, inch units, as `public/tool-library.json` carries it. */
+const plasmaLibraryEntry: ToolLibraryEntry = {
+  key: 'lib-plasma-inch',
+  name: 'Powermax45 XP 45 A — 2 mm mild steel (example) — inch units',
+  units: 'inch',
+  type: 'plasma',
+  diameter: 0.05511811023622047,
+  vBitAngle: null,
+  flutes: 0,
+  material: 'carbide',
+  defaultRpm: 0,
+  defaultFeed: 218.8976377952756,
+  // 300 mm/min: the example's drop feed (#983).
+  defaultPlungeFeed: 11.811023622047244,
+  defaultStepdown: 0,
+  defaultStepover: 0,
+  maxCutDepth: 0,
+  pierceHeight: 0.14960629921259844,
+  cutHeight: 0.05905511811023623,
+  pierceDelay: 0.2,
 }
 
 function seed(project: Project): void {
@@ -149,7 +174,7 @@ function testEngraveKeepsShallowDefault(): void {
   const base = newProject('t', 'mm')
   const project = projectWithFeatures({
     ...base,
-    tools: [flatTool('t-flat', 3)],
+    tools: [flatTool('t-flat', 3, 'mm')],
   }, [makeFeature('f', 'subtract', 40, 40)])
   seed(project)
 
@@ -182,9 +207,147 @@ function testAddPocketReusesExistingFlatNoImport(): void {
   assert(op?.toolRef === 't-flat', 'pocket should reference the existing flat endmill')
 }
 
+function testAddPlasmaImportsTorchWithConsumables(): void {
+  // The first-use path: a project with no torch, so adding a plasma operation
+  // imports one from the library. A G-code pierce program writes its pierce
+  // height, cut height and dwell from these fields, so an import that dropped
+  // them emitted a program that fired the torch at the sheet with no standoff
+  // and no dwell (#983).
+  const base = newProject('t', 'inch')
+  const project = projectWithFeatures({
+    ...base,
+    tools: [flatTool('t-flat', 0.25)],
+  }, [makeFeature('f', 'subtract', 2, 2)])
+  seed(project)
+
+  const opId = useProjectStore.getState().addOperation(
+    'plasma_profile',
+    'rough',
+    { source: 'features', featureIds: ['f'] },
+    [plasmaLibraryEntry],
+  )
+  assert(opId !== null, 'expected a plasma operation to be created')
+
+  const next = useProjectStore.getState().project
+  const torch = next.tools.find((tool) => tool.type === 'plasma')
+  assert(torch !== undefined, 'expected the plasma torch to be imported')
+  assert(torch.pierceHeight === plasmaLibraryEntry.pierceHeight, `pierce height survives the import, got ${torch.pierceHeight}`)
+  assert(torch.cutHeight === plasmaLibraryEntry.cutHeight, `cut height survives the import, got ${torch.cutHeight}`)
+  assert(torch.pierceDelay === plasmaLibraryEntry.pierceDelay, `pierce delay survives the import, got ${torch.pierceDelay}`)
+  assert(torch.defaultPlungeFeed === plasmaLibraryEntry.defaultPlungeFeed, `the drop feed survives the import, got ${torch.defaultPlungeFeed}`)
+  // Normalization must keep them: the same whitelist gap made them arrive absent
+  // and left normalization to turn absent into the unconfigured 0.
+  const normalized = normalizeToolForProject(torch, next)
+  assert(normalized.pierceHeight === plasmaLibraryEntry.pierceHeight, 'normalization keeps the pierce height')
+  assert(normalized.cutHeight === plasmaLibraryEntry.cutHeight, 'normalization keeps the cut height')
+  assert(normalized.pierceDelay === plasmaLibraryEntry.pierceDelay, 'normalization keeps the pierce delay')
+  const op = next.operations.find((operation) => operation.id === opId)
+  assert(op?.toolRef === torch.id, 'the operation references the imported torch')
+  assert(op.plungeFeed === plasmaLibraryEntry.defaultPlungeFeed, `the operation drops at the example feed, got ${op.plungeFeed}`)
+  // Imported as it is, the torch is still its library entry, so the library
+  // dialog does not offer the example a second time. It stops being that
+  // entry once the operator edits a value, the drop feed included.
+  assert(toolMatchesLibraryEntry(torch, plasmaLibraryEntry), 'the imported example torch matches its library entry')
+  assert(
+    !toolMatchesLibraryEntry({ ...torch, defaultPlungeFeed: 20 }, plasmaLibraryEntry),
+    'an edited drop feed makes it a different tool',
+  )
+
+  // A library value in another unit is never converted: the inch project gets
+  // no torch at all rather than a mm one (issue #1132). `selectToolForOperation`
+  // only considers entries written in the project's units.
+  seed(project)
+  const mmEntry: ToolLibraryEntry = {
+    ...plasmaLibraryEntry,
+    key: 'lib-plasma-mm',
+    units: 'mm',
+    diameter: 1.4,
+    defaultFeed: 5560,
+    defaultPlungeFeed: 300,
+    pierceHeight: 3.8,
+    cutHeight: 1.5,
+  }
+  const noTorchId = useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [mmEntry])
+  const withoutTorch = useProjectStore.getState().project
+  assert(noTorchId !== null, 'the operation is still created')
+  assert(
+    withoutTorch.tools.every((tool) => tool.type !== 'plasma'),
+    'a mm library torch is not imported into an inch project',
+  )
+  const noTorchOperation = withoutTorch.operations.find((operation) => operation.id === noTorchId)
+  assert(noTorchOperation?.toolRef === null, `the operation has no tool reference, got ${noTorchOperation?.toolRef}`)
+
+  // A genuinely zero library value stays zero: the import must not invent a
+  // physical standoff any more than normalization may.
+  seed(project)
+  const zeroEntry: ToolLibraryEntry = { ...plasmaLibraryEntry, key: 'lib-plasma-zero', pierceHeight: 0, cutHeight: 0, pierceDelay: 0, defaultPlungeFeed: 0 }
+  useProjectStore.getState().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['f'] }, [zeroEntry])
+  const zeroTorch = useProjectStore.getState().project.tools.find((tool) => tool.type === 'plasma')
+  assert(zeroTorch?.pierceHeight === 0 && zeroTorch?.cutHeight === 0 && zeroTorch?.pierceDelay === 0, 'a zero consumable stays zero')
+  // Nor a drop feed: a library torch that has none stays unconfigured, and a
+  // Grbl plasma export of it is blocked until the operator enters one.
+  assert(zeroTorch.defaultPlungeFeed === 0, `an absent drop feed stays unconfigured, got ${zeroTorch.defaultPlungeFeed}`)
+}
+
+function testAddPlasmaReusesTorchWithEditedPlungeFeed(): void {
+  // An operator who changes the example torch's plunge feed has a torch that
+  // differs from its library entry (#983). The next plasma operation must
+  // still use that torch rather than import the unedited example beside it.
+  const base = newProject('t', 'inch')
+  const torch: Tool = { ...plasmaLibraryEntry, id: 't-torch', defaultPlungeFeed: 80 }
+  const project = projectWithFeatures({
+    ...base,
+    tools: [torch],
+  }, [makeFeature('f', 'subtract', 2, 2), makeFeature('g', 'subtract', 3, 3)])
+  seed(project)
+
+  for (const featureId of ['f', 'g']) {
+    const opId = useProjectStore.getState().addOperation(
+      'plasma_profile',
+      'rough',
+      { source: 'features', featureIds: [featureId] },
+      [plasmaLibraryEntry],
+    )
+    const next = useProjectStore.getState().project
+    const torches = next.tools.filter((tool) => tool.type === 'plasma')
+    assert(torches.length === 1, `expected the edited torch to be reused, got ${torches.length} torches`)
+    assert(torches[0].defaultPlungeFeed === 80, 'the operator\'s plunge feed is untouched')
+    const op = next.operations.find((operation) => operation.id === opId)
+    assert(op?.toolRef === 't-torch', 'the operation references the existing torch')
+    assert(op.plungeFeed === 80, `the operation takes the torch's plunge feed, got ${op.plungeFeed}`)
+  }
+}
+
+function testOtherUnitToolsAreNeverTheFallback(): void {
+  // #1132: with no tool in the project's units and no library, the operation is
+  // created against the project-units default tool with no reference. The
+  // metric cutter already in the project must not be picked by the fallback
+  // either — that was Frank's reported path.
+  const base = newProject('t', 'inch')
+  const project = projectWithFeatures({
+    ...base,
+    tools: [flatTool('t-six-mm', 6, 'mm')],
+  }, [makeFeature('f', 'subtract', 2, 2)])
+  seed(project)
+
+  const opId = useProjectStore.getState().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f'] }, [])
+  const next = useProjectStore.getState().project
+  assert(next.tools.length === 1, 'no tool is imported or added')
+  const op = next.operations.find((operation) => operation.id === opId)
+  assert(op !== undefined, 'expected the pocket operation to exist')
+  assert(op.toolRef === null, `the metric cutter is never the fallback, got ${op.toolRef}`)
+  assert(
+    op.stepdown === defaultTool('inch', 1).defaultStepdown,
+    `defaults come from the inch default tool, got ${op.stepdown}`,
+  )
+}
+
 testAddVCarveImportsVBit()
 testAddPocketReusesExistingFlatNoImport()
+testAddPlasmaReusesTorchWithEditedPlungeFeed()
 testVCarveDepthFallsBackToStockThickness()
 testEngraveKeepsShallowDefault()
+testAddPlasmaImportsTorchWithConsumables()
+testOtherUnitToolsAreNeverTheFallback()
 
 console.log('addOperationTool tests passed')

@@ -41,12 +41,23 @@ import {
   foldsNonTargetSubtracts,
   operationAffectedByChange,
   operationFootprint,
+  plasmaCutOrderInputs,
   subtractsMachinedElsewhere,
   type OperationFootprint,
 } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
-import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../../types/project'
+import {
+  rotaryPrecedingRoughs,
+  type RotaryRoughDependency,
+} from '../../engine/toolpaths/rotaryOperation'
+import type { Clamp, Operation, Project, SetupOrientation, Stock, Tab, Tool } from '../../types/project'
+import {
+  aroundFrameForOperation,
+  aroundMaterialBands,
+  type AroundMaterialBand,
+} from '../../engine/aroundFrame'
 import { projectsEqual } from '../../store/helpers/normalize'
+import { operationTurnSurfaceRadius } from '../../store/helpers/turnedSheet'
 
 /**
  * Everything a generated result depends on, captured from the snapshot it was
@@ -77,6 +88,41 @@ export interface ToolpathCacheInputs {
    * own row.
    */
   machinedElsewhere: ReadonlySet<string>
+  /**
+   * How the operation's setup turns the stock (issue #946), or null for an
+   * operation without a setup.
+   *
+   * The operation row only names its setup. The turn lives on the setup, and
+   * changing a Bottom setup's flip axis keeps its id — so `setupId` comparing
+   * equal says nothing about whether the path was generated in the frame the
+   * setup has now.
+   */
+  setupOrientation: (SetupOrientation & { kind?: 'around' }) | null
+  /**
+   * The rotary finish's preceding-rough dependency (issue #1045).
+   *
+   * `rotaryFinishWithoutRough` reads every enabled `rotary_rough` before the
+   * finish in the setup and the STL models each one targets, so enabling,
+   * disabling, adding, removing, reordering or moving a rough changes the
+   * finish's advisory without moving a feature. Empty for every other
+   * operation kind: they never read it, and comparing it for them would
+   * invalidate on unrelated operation edits.
+   */
+  rotaryPrecedingRoughs: readonly RotaryRoughDependency[]
+  /**
+   * The material standing on the Around sheet for a Follow line's neighbour
+   * keep-out (issue #1112 rt6-e correction 1).
+   *
+   * `aroundMaterialBands` reads every model's placed along span and surface,
+   * across the whole unrolled sheet, so moving a Turn changes this path even
+   * when it never enters the guide's world-XY footprint: the guide is measured
+   * at its unrolled across coordinate (up to half a circumference from the
+   * zero line), while the model's silhouette is its side view around the bar.
+   * The spatial narrowing below cannot see that, so the read set itself is
+   * captured here and compared. Empty for every other operation kind and for
+   * an operation off the Around face, which never read it.
+   */
+  aroundMaterials: readonly AroundMaterialBand[]
 }
 
 /** Captured inputs plus the result they produced. */
@@ -91,6 +137,14 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
   if (a === b) return true
   return (
     a.kind === b.kind
+    && a.plasmaSide === b.plasmaSide
+    && a.plasmaReverseDirection === b.plasmaReverseDirection
+    && a.plasmaLeadIn === b.plasmaLeadIn
+    && a.plasmaLeadInLength === b.plasmaLeadInLength
+    && a.plasmaLeadOut === b.plasmaLeadOut
+    && a.plasmaLeadOutLength === b.plasmaLeadOutLength
+    && projectsEqual(a.plasmaStartPoint ?? null, b.plasmaStartPoint ?? null)
+    && projectsEqual(a.plasmaStartPoints ?? null, b.plasmaStartPoints ?? null)
     && a.pass === b.pass
     && a.target === b.target
     && a.toolRef === b.toolRef
@@ -115,6 +169,9 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.roundLinkCorners === b.roundLinkCorners
     && a.cleanWallCorners === b.cleanWallCorners
     && a.cornerRelief === b.cornerRelief
+    && (a.rotaryChuckSupport ?? 0) === (b.rotaryChuckSupport ?? 0)
+    && (a.rotaryTailSupport ?? 0) === (b.rotaryTailSupport ?? 0)
+    && (a.rotaryPassDirection ?? 'along') === (b.rotaryPassDirection ?? 'along')
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial
     && a.finishWalls === b.finishWalls
@@ -128,6 +185,8 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.dwellTime === b.dwellTime
     && a.countersinkDiameter === b.countersinkDiameter
     && a.retractHeight === b.retractHeight
+    // The setup decides the frame an operation is cut in (issue #944).
+    && a.setupId === b.setupId
     && a.debugToolpath === b.debugToolpath
     && a.debugShowRejectedCorners === b.debugShowRejectedCorners
     && a.finishSlopeMin === b.finishSlopeMin
@@ -139,6 +198,30 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.waterlineMaxRingsPerBand === b.waterlineMaxRingsPerBand
     && a.waterlineTipStepdown === b.waterlineTipStepdown
   )
+}
+
+/** The turn of the setup an operation belongs to; null when it names none that exists. */
+function operationSetupOrientation(project: Project, operation: Operation): (SetupOrientation & { kind?: 'around' }) | null {
+  if (operation.setupId === undefined) return null
+  const setup = project.setups?.find((setup) => setup.id === operation.setupId)
+  return setup ? { ...setup.orientation, kind: setup.kind } : null
+}
+
+function sameOrientation(a: (SetupOrientation & { kind?: 'around' }) | null, b: (SetupOrientation & { kind?: 'around' }) | null): boolean {
+  if (a === b) return true
+  return a !== null && b !== null && a.axis === b.axis && a.angleDeg === b.angleDeg && a.kind === b.kind
+}
+
+/**
+ * The material an Around Follow line's neighbour keep-out reads, captured at
+ * submission time; empty for every other operation.
+ */
+const NO_AROUND_MATERIALS: readonly AroundMaterialBand[] = []
+
+function aroundMaterialInputs(project: Project, operation: Operation): readonly AroundMaterialBand[] {
+  if (operation.kind !== 'follow_line') return NO_AROUND_MATERIALS
+  const frame = aroundFrameForOperation(project, operation)
+  return frame ? aroundMaterialBands(project, frame).bands : NO_AROUND_MATERIALS
 }
 
 /**
@@ -158,7 +241,56 @@ export function captureCacheInputs(project: Project, operation: Operation): Tool
     tabs: project.tabs,
     clamps: project.clamps,
     machinedElsewhere: subtractsMachinedElsewhere(project, operation),
+    setupOrientation: operationSetupOrientation(project, operation),
+    rotaryPrecedingRoughs: rotaryPrecedingRoughs(project, operation),
+    aroundMaterials: aroundMaterialInputs(project, operation),
   }
+}
+
+/** Whether two captured Around material read sets are the same inputs. */
+function sameAroundMaterials(
+  before: readonly AroundMaterialBand[],
+  after: readonly AroundMaterialBand[],
+): boolean {
+  if (before === after) return true
+  if (before.length !== after.length) return false
+  return before.every((band, index) => {
+    const other = after[index]
+    return other !== undefined
+      && band.kind === other.kind
+      && band.name === other.name
+      && band.alongMin === other.alongMin
+      && band.alongMax === other.alongMax
+      && band.surfaceZ === other.surfaceZ
+  })
+}
+
+/** Whether two captured preceding-rough dependency lists are the same inputs. */
+function sameRotaryPrecedingRoughs(
+  before: readonly RotaryRoughDependency[],
+  after: readonly RotaryRoughDependency[],
+): boolean {
+  const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
+    left.length === right.length && left.every((id, index) => id === right[index])
+  // #1096 re-review (P2): the mask is order-sensitive, so the composition
+  // order is an advisory input too. Comparing only the sorted include/exclude
+  // ids would serve a stale warning after a region is reordered.
+  const sameEntries = (
+    left: RotaryRoughDependency['regions']['entries'],
+    right: RotaryRoughDependency['regions']['entries'],
+  ): boolean => left.length === right.length
+    && left.every((entry, index) => entry.id === right[index].id && entry.mode === right[index].mode)
+  return before.length === after.length && before.every((entry, index) => {
+    const other = after[index]
+    return entry.setupId === other.setupId
+      && sameIds(entry.modelIds, other.modelIds)
+      // #1096: a rough's region decides whether it covers the finish, so both
+      // of its halves -- include and exclude -- are advisory inputs exactly as
+      // the models are (#1096 review, P2).
+      && sameIds(entry.regions.includeIds, other.regions.includeIds)
+      && sameIds(entry.regions.excludeIds, other.regions.excludeIds)
+      && sameEntries(entry.regions.entries, other.regions.entries)
+  })
 }
 
 /** Ids in exactly one of the two sets — the ownership that gained or lost an owner. */
@@ -187,6 +319,8 @@ export function cacheInputsValid(
     || inputs.stock !== project.stock
     || inputs.tabs !== project.tabs
     || inputs.clamps !== project.clamps
+    // The same setup id, turned another way, is another frame (issue #946).
+    || !sameOrientation(inputs.setupOrientation, operationSetupOrientation(project, operation))
   ) {
     return false
   }
@@ -217,6 +351,56 @@ export function cacheInputsValid(
   // live on the project, so an identical snapshot also means identical
   // ownership and the check below cannot have anything to say.
   if (inputs.project === project) return true
+
+  // An Around Follow line reads the material standing on the unrolled sheet
+  // (issue #1112 rt6-e correction 1). The bands run along the bar and across
+  // the whole sheet, so a neighbouring model that changes the keep-out can sit
+  // outside this operation's world-XY footprint: the guide is measured at its
+  // unrolled across coordinate, while the model's silhouette is its side view
+  // around the bar. Moving a larger Turn then leaves the old endpoint and the
+  // old warning in place. The footprint narrowing below cannot see that, so the
+  // read set itself is compared here. Only a Follow line has it; every other
+  // kind compares two empty lists and pays nothing.
+  if (
+    operation.kind === 'follow_line'
+    && !sameAroundMaterials(inputs.aroundMaterials, aroundMaterialInputs(project, operation))
+  ) {
+    return false
+  }
+
+  // Around work on a Turn is planned at the Turn's radius across the bar
+  // (#1131). The Turn is a model whose side-view silhouette need not overlap
+  // the work's world-XY footprint (the sheet's across coordinate is not the
+  // Turn's), so the diff below can miss a Turn whose diameter or span moved.
+  // The radius the generator would plan at is compared directly.
+  if (operationTurnSurfaceRadius(inputs.project, inputs.operation) !== operationTurnSurfaceRadius(project, operation)) {
+    return false
+  }
+
+  // Plasma cut order (issue #958) reads two things no check here covers: the
+  // machine origin, where the first cut is chosen from, and what later plasma
+  // operations cut, which decides the outline-before-hole warning. Neither
+  // moves a feature, so the diff below would pass a stale path. Compared
+  // against the entry's own snapshot, so the stamp needs no field of its own.
+  if (
+    operation.kind === 'plasma_profile'
+    && plasmaCutOrderInputs(inputs.project, inputs.operation) !== plasmaCutOrderInputs(project, operation)
+  ) {
+    return false
+  }
+
+  // A rotary finish's missing-rough advisory reads the roughs before it (issue
+  // #1045). Placed ahead of the feature diff for the same reason as the
+  // ownership check below: an operations-only edit moves no feature, so
+  // `changedFeatureIds` is empty and the early return would serve a stale
+  // warning. Only a finish has this input; every other kind keeps its cache
+  // behaviour unchanged.
+  if (
+    operation.kind === 'rotary_finish'
+    && !sameRotaryPrecedingRoughs(inputs.rotaryPrecedingRoughs, rotaryPrecedingRoughs(project, operation))
+  ) {
+    return false
+  }
 
   // Ownership: which subtracts *other* operations machine (issue #749).
   //

@@ -24,24 +24,56 @@ import { clampDomainMax, validateZEdits } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
 import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
+import { ChuckProperties } from './ChuckProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
-import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection, tabShape } from '../../types/project'
-import type { TabShape } from '../../types/project'
+import { defaultStock, getStockBounds, isRoundStock, profileExceedsStock, profileHasSelfIntersection, roundStockDiameter, roundStockLength, tabShape } from '../../types/project'
+import type { StockAxis, TabShape } from '../../types/project'
+import { barLength, isBarStock, isSquareStock } from '../../types/barStock'
 import { useProjectStore } from '../../store/projectStore'
+import { originAfterStockEdit, resizeRoundStock, resizeSquareStock } from '../../store/helpers/stockShape'
+import { defaultRoundWorkholding, isRoundWorkholding, roundWorkholdingDiameter } from '../../store/helpers/roundWorkholding'
+import {
+  projectMachineMismatch,
+  projectType,
+  stockShapesForProjectType,
+} from '../../store/helpers/projectType'
+import { machineOptionsForType, projectTypeLabelKey } from './projectTypeChoice'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
-import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
+import { getFeatureGeometryProfiles } from '../../text'
+import { TextToolDialog } from '../project/TextToolDialog'
+import { textPathRefreshState } from '../../store/helpers/textPathSource'
+import {
+  cannedShapeDepth,
+  cannedShapeEditorFor,
+  cannedShapeIsExpandable,
+  cannedShapeIsModel,
+  cannedShapeLabelKey,
+  cannedShapeSummary,
+  cannedShapeSurface,
+  cannedShapeZIsOwned,
+  isCannedFeature,
+} from '../../cannedShapes'
+import { CannedShapeSummaryLine } from './CannedShapeSummaryLine'
+import { rotaryPatternSurfaceOfFeature, rotarySurfaceZ } from '../../store/helpers/rotarySurface'
+import { aroundSurfaceStarts } from '../../store/helpers/turnedSheet'
+import { aroundSurfaceStartText } from './aroundSurfaceStartText'
 import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
-import { machineSnapshotStatus } from '../../machine/registry'
+import { machineCandidates, machineSnapshotStatus } from '../../machine/registry'
 import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
+import type { MessageKey } from '../../i18n/locales/en'
+import { activeFace, faceAngles, linkedCopiesOffFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { AuthoringFaceRow } from './FaceChip'
+import { FaceZRange } from './FaceZRange'
+import { rotaryProjectNeedsMm } from '../export/rotaryUnitsNotice'
 
 /**
  * Memoised because `App` subscribes to the whole store without a selector and
@@ -80,12 +112,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const startRotateBackdrop = useProjectStore((s) => s.startRotateBackdrop)
   const setGrid = useProjectStore((s) => s.setGrid)
   const setStock = useProjectStore((s) => s.setStock)
+  const setStockAndOrigin = useProjectStore((s) => s.setStockAndOrigin)
+  const setStockShape = useProjectStore((s) => s.setStockShape)
   const setStockSourceFeature = useProjectStore((s) => s.setStockSourceFeature)
   const updateTab = useProjectStore((s) => s.updateTab)
   const updateClamp = useProjectStore((s) => s.updateClamp)
   const updateFeatureFolder = useProjectStore((s) => s.updateFeatureFolder)
   const updateFeature = useProjectStore((s) => s.updateFeature)
   const updateFeatures = useProjectStore((s) => s.updateFeatures)
+  // The face rows appear only once the project uses both faces (issue #945).
+  const bothFaces = useProjectStore((s) => projectUsesBothFaces(s.project))
+  const workspaceFace = useProjectStore((s) => activeFace(s.project))
+  const face = faceAngles(project)
   const deleteFeature = useProjectStore((s) => s.deleteFeature)
   const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
   const beginHistoryTransaction = useProjectStore((s) => s.beginHistoryTransaction)
@@ -97,6 +135,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const deleteConstraint = useProjectStore((s) => s.deleteConstraint)
   const makeUnique = useProjectStore((s) => s.makeUnique)
   const expandTextFeature = useProjectStore((s) => s.expandTextFeature)
+  const expandCannedFeature = useProjectStore((s) => s.expandCannedFeature)
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const { t } = useI18n()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
@@ -157,8 +196,23 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     )
       ? selectedRegionFeatures[0]?.regionMaskMode ?? 'include'
       : '__mixed__'
-  const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
+  const selectedZEditableFeatures = allSelectedFeatures.filter(
+    (feature) => isMachinable(feature) && !cannedShapeZIsOwned(feature.canned),
+  )
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
+  // The rotary canned kinds have no Z control to share: their span comes from
+  // the parameter their Edit panel writes, so a multi-selection leaves them out
+  // of the shared editor (#1112 rt6-a, item 39). Since rt7-d a Thread's or
+  // Flutes' Depth is reported on its own Shape summary, which a multi-selection
+  // does not show — but the slot must still stay empty rather than fall through
+  // to the "follows stock" line below, because the span does come from the Edit
+  // panel (#1112 rt7-b). A Turn and a Polygon report nothing either, so a
+  // selection of kinds that all own their span stays empty too.
+  const selectedReportsCannedDepth = allSelectedFeatures.some(
+    (feature) => cannedShapeDepth(feature.canned) !== null,
+  )
+  const selectedAllOwnTheirZ = allSelectedFeatures.length > 0
+    && allSelectedFeatures.every((feature) => isMachinable(feature) && cannedShapeZIsOwned(feature.canned))
   // Line-operation features (including closed profiles) are treated as
   // open for Z purposes: they are engraved paths with bottom locked at
   // zero, never bottom-editable.
@@ -191,13 +245,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // application library, plus the embedded machine when it is not in it.
   const selectedMachine = getActiveMachineDefinition(project)
   const machineStatus = machineSnapshotStatus(selectedMachine, machineLibrary)
-  const machineOptions = [
-    { value: '', label: t('featureTree.properties.machine.none') },
-    ...machineLibrary.map((definition) => ({ value: definition.id, label: definition.name })),
-    ...(selectedMachine && !machineLibrary.some((definition) => definition.id === selectedMachine.id)
-      ? [{ value: selectedMachine.id, label: selectedMachine.name }]
-      : []),
-  ]
+  // One candidate list for the machine picker (issue #1028).
+  const machineOptionCandidates = machineCandidates(machineLibrary, selectedMachine)
+  // The type's own machines come first; the rest keep their place under a
+  // heading, so a machine that does not suit the type stays selectable.
+  const currentProjectType = projectType(project)
+  const machineOptions = machineOptionsForType(
+    machineOptionCandidates,
+    currentProjectType,
+    t('featureTree.properties.machine.none'),
+    t('featureTree.properties.machine.groupOther'),
+  )
+  const machineMismatch = projectMachineMismatch(project)
 
   function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -249,6 +308,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   const [showManager, setShowManager] = useState(false)
+  // The text dialog is owned here so "Edit text…" reopens it with the run's
+  // current values, the same way a canned shape reopens its own panel
+  // (issue #1112 slice E).
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
 
   function renderContent() {
 
@@ -295,6 +358,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               }}
             />
           </label>
+          <div className="properties-field properties-field--project-type">
+            <span>{t('featureTree.properties.projectType')}</span>
+            {/* Chosen once, in the New project dialog, and stored (issue #1046). */}
+            <strong data-testid="project-type">{t(projectTypeLabelKey(currentProjectType))}</strong>
+          </div>
           <label className="properties-check">
             <input
               type="checkbox"
@@ -357,7 +425,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 }
                 // Re-picking a machine that is only in the project keeps the
                 // embedded snapshot rather than clearing the selection.
-                const picked = machineLibrary.find((definition) => definition.id === value)
+                const picked = machineOptionCandidates.find((definition) => definition.id === value)
                   ?? (selectedMachine?.id === value ? selectedMachine : null)
                 setProjectMachine(picked)
               }}
@@ -382,6 +450,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               {selectedMachine.builtin ? (
                 <span className="properties-machine-hint">{t('featureTree.properties.machine.duplicateHint')}</span>
               ) : null}
+            </div>
+          ) : null}
+          {selectedMachine && rotaryProjectNeedsMm(project, selectedMachine) ? (
+            <div className="properties-field-message cam-field-message" role="note" data-testid="machine-rotary-mm-required">
+              {t('featureTree.properties.machine.rotaryMmRequired', { machine: selectedMachine.name })}
+            </div>
+          ) : null}
+          {machineMismatch ? (
+            <div className="properties-field-message cam-field-message" role="note" data-testid="machine-type-mismatch">
+              {t('featureTree.properties.machine.mismatch', { type: t(projectTypeLabelKey(machineMismatch.expected)) })}
             </div>
           ) : null}
           <div className="properties-actions">
@@ -462,6 +540,36 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     const bounds = getStockBounds(project.stock)
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
+    const round = isRoundStock(project.stock) ? project.stock : null
+    const square = isSquareStock(project.stock) ? project.stock : null
+    // The shape control offers only what the project type does (issue #1028):
+    // milling and plasma cut a block, rotary turns a bar — round or square
+    // (issue #1016 C2-U1). A shape the current stock already has stays listed,
+    // so a bar kept from an earlier type can still be converted instead of
+    // becoming an unreachable value.
+    const offeredShapes = stockShapesForProjectType(currentProjectType)
+    const currentShape: 'block' | 'round' | 'square' = round ? 'round' : square ? 'square' : 'block'
+    const shapeOptions: ReadonlyArray<'block' | 'round' | 'square'> = offeredShapes.includes(currentShape)
+      ? offeredShapes
+      : [...offeredShapes, currentShape]
+    const shapeLabelKey = (shape: 'block' | 'round' | 'square'): MessageKey => shape === 'block'
+      ? 'featureTree.properties.stock.block'
+      : shape === 'round'
+        ? 'featureTree.properties.stock.roundBar'
+        : 'featureTree.properties.stock.squareBlank'
+    const commitRound = (change: { diameter?: number; length?: number; axis?: StockAxis }) => {
+      if (!round) return
+      const next = resizeRoundStock(round, change)
+      setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
+    }
+    // A square blank is resized through its own helper: the side is the physical
+    // thickness, the true pivot is side / 2, and a manual origin or a custom
+    // workholding diameter is preserved rather than reset (issue #1016 C2-S2).
+    const commitSquare = (change: { side?: number; length?: number; axis?: StockAxis }) => {
+      if (!square) return
+      const next = resizeSquareStock(square, change)
+      setStockAndOrigin(next, originAfterStockEdit(project.origin, project.stock, next))
+    }
 
     if (isFeatureStock) {
       const sourceFeature = project.stock.sourceFeature!
@@ -537,81 +645,221 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             <DraftTextInput value={t('featureTree.properties.stock.nameDisabled')} disabled />
           </label>
           <label className="properties-field">
-            <span>{t("featureTree.properties.width")}</span>
-            <DraftNumberInput
-              key={`stock-width-${width}-${height}-${project.stock.thickness}`}
-              value={width}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(next, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
+            <span>{t('featureTree.properties.shape')}</span>
+            <div data-testid="stock-shape">
+              <Select
+                value={currentShape}
+                options={shapeOptions.map((shape) => ({
+                  value: shape,
+                  label: t(shapeLabelKey(shape)),
+                }))}
+                onChange={(value) => setStockShape(value)}
+                disabled={shapeOptions.length === 1}
+              />
+            </div>
           </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.height")}</span>
-            <DraftNumberInput
-              key={`stock-height-${width}-${height}-${project.stock.thickness}`}
-              value={height}
-              units={units}
-              min={minimumPanelSpan}
-              onCommit={(next) => {
-                const stock = defaultStock(width, next, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.thickness")}</span>
-            <DraftNumberInput
-              key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
-              value={project.stock.thickness}
-              units={units}
-              min={minimumLength}
-              onCommit={(next) => {
-                const stock = defaultStock(width, height, next)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.color")}</span>
-            <input
-              type="color"
-              value={project.stock.color}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = event.target.value
-                stock.visible = project.stock.visible
-                setStock(stock)
-              }}
-            />
-          </label>
-          <label className="properties-check">
-            <input
-              type="checkbox"
-              checked={project.stock.visible}
-              onChange={(event) => {
-                const stock = defaultStock(width, height, project.stock.thickness)
-                stock.material = project.stock.material
-                stock.color = project.stock.color
-                stock.visible = event.target.checked
-                setStock(stock)
-              }}
-            />
-            <span>{t("featureTree.properties.visible")}</span>
-          </label>
+          {round ? (
+            <>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.diameter')}</span>
+                <div data-testid="stock-diameter">
+                  <DraftNumberInput
+                    key={`stock-diameter-${roundStockDiameter(round)}`}
+                    value={roundStockDiameter(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ diameter: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.length')}</span>
+                <div data-testid="stock-length">
+                  <DraftNumberInput
+                    key={`stock-length-${roundStockLength(round)}`}
+                    value={roundStockLength(round)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitRound({ length: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.axis')}</span>
+                <div data-testid="stock-axis">
+                  <Select
+                    value={round.axis}
+                    options={[
+                      { value: 'x', label: t('featureTree.properties.axis.x') },
+                      { value: 'y', label: t('featureTree.properties.axis.y') },
+                    ]}
+                    onChange={(value) => commitRound({ axis: value })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    // Keep the bar: rebuild only the colour, never defaultStock.
+                    setStock({ ...project.stock, color: event.target.value })
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    setStock({ ...project.stock, visible: event.target.checked })
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          ) : square ? (
+            <>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.side')}</span>
+                <div data-testid="stock-side">
+                  <DraftNumberInput
+                    key={`stock-side-${square.thickness}`}
+                    value={square.thickness}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitSquare({ side: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.length')}</span>
+                <div data-testid="stock-length">
+                  <DraftNumberInput
+                    key={`stock-length-${barLength(square)}`}
+                    value={barLength(square)}
+                    units={units}
+                    min={minimumLength}
+                    onCommit={(next) => commitSquare({ length: next })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t('featureTree.properties.axis')}</span>
+                <div data-testid="stock-axis">
+                  <Select
+                    value={square.axis}
+                    options={[
+                      { value: 'x', label: t('featureTree.properties.axis.x') },
+                      { value: 'y', label: t('featureTree.properties.axis.y') },
+                    ]}
+                    onChange={(value) => commitSquare({ axis: value })}
+                  />
+                </div>
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    // Keep the blank: rebuild only the colour, never defaultStock.
+                    setStock({ ...square, color: event.target.value })
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    setStock({ ...square, visible: event.target.checked })
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.width")}</span>
+                <DraftNumberInput
+                  key={`stock-width-${width}-${height}-${project.stock.thickness}`}
+                  value={width}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(next, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.height")}</span>
+                <DraftNumberInput
+                  key={`stock-height-${width}-${height}-${project.stock.thickness}`}
+                  value={height}
+                  units={units}
+                  min={minimumPanelSpan}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, next, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.thickness")}</span>
+                <DraftNumberInput
+                  key={`stock-thickness-${width}-${height}-${project.stock.thickness}`}
+                  value={project.stock.thickness}
+                  units={units}
+                  min={minimumLength}
+                  onCommit={(next) => {
+                    const stock = defaultStock(width, height, next)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-field">
+                <span>{t("featureTree.properties.color")}</span>
+                <input
+                  type="color"
+                  value={project.stock.color}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = event.target.value
+                    stock.visible = project.stock.visible
+                    setStock(stock)
+                  }}
+                />
+              </label>
+              <label className="properties-check">
+                <input
+                  type="checkbox"
+                  checked={project.stock.visible}
+                  onChange={(event) => {
+                    const stock = defaultStock(width, height, project.stock.thickness)
+                    stock.material = project.stock.material
+                    stock.color = project.stock.color
+                    stock.visible = event.target.checked
+                    setStock(stock)
+                  }}
+                />
+                <span>{t("featureTree.properties.visible")}</span>
+              </label>
+            </>
+          )}
         </div>
       </div>
     )
@@ -755,13 +1003,14 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           <label className="properties-field">
             <span>{t("featureTree.properties.angle")}</span>
             <DraftTextInput
-              key={`backdrop-angle-${backdrop?.orientationAngle ?? 90}`}
-              value={String(Math.round((backdrop?.orientationAngle ?? 90) * 1000) / 1000)}
+              key={`backdrop-angle-${backdrop?.orientationAngle ?? 90}-${workspaceFace}`}
+              // Shown as the backdrop points on the face in view; stored in stock space (#945).
+              value={String(Math.round(face.direction(backdrop?.orientationAngle ?? 90) * 1000) / 1000)}
               disabled={!backdrop}
               onCommit={(next) => {
                 const parsed = Number(next)
                 if (Number.isFinite(parsed)) {
-                  updateBackdrop({ orientationAngle: parsed })
+                  updateBackdrop({ orientationAngle: face.direction(parsed) })
                 }
               }}
             />
@@ -865,7 +1114,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           </label>
         </div>
         <div className="properties-actions">
-          <button className="feat-btn" type="button" onClick={() => { startAddTabPlacement(); closeExpanded() }}>
+          <button
+            className="feat-btn"
+            type="button"
+            disabled={workspaceFace === 'around'}
+            title={workspaceFace === 'around' ? t('featureTree.treeRow.addEntry.tabAround') : undefined}
+            onClick={() => { startAddTabPlacement(); closeExpanded() }}
+          >
             {t('featureTree.properties.actions.addTab')}
           </button>
         </div>
@@ -917,11 +1172,34 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   if (selectedClamp) {
+    // A chuck and a tailstock are round about the bar's axis, so both bar
+    // shapes get the same workholding controls (issue #1016 C2 F1): on a
+    // square blank the helpers use the true pivot and a diameter that clears
+    // the corners, exactly as they do on a round bar.
+    const bar = isBarStock(project.stock) ? project.stock : null
+    const barWorkholding = bar && isRoundWorkholding(selectedClamp) ? bar : null
     const clampDomain = clampDomainMax(
       [selectedClamp.height],
       convertLength(5, 'mm', units),
       convertLength(5, 'mm', units),
     )
+    const clampType: 'clamp' | 'chuck' | 'tailstock' =
+      selectedClamp.type === 'chuck'
+        ? 'chuck'
+        : selectedClamp.type === 'tailstock'
+          ? 'tailstock'
+          : 'clamp'
+    // "Clamp" stands for every plain type; the two round types take their
+    // default place and size from the bar they sit on.
+    const chooseClampType = (value: 'clamp' | 'chuck' | 'tailstock') => {
+      if (value === 'clamp') {
+        updateClamp(selectedClamp.id, { type: 'step_clamp' })
+        return
+      }
+      if (bar) {
+        updateClamp(selectedClamp.id, defaultRoundWorkholding(value, bar, units))
+      }
+    }
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -933,19 +1211,53 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
             />
           </label>
-          <ZRangeSlider
-            selectionKey={`clamp-${selectedClamp.id}`}
-            zTop={selectedClamp.height}
-            zBottom={0}
-            domainMin={0}
-            domainMax={clampDomain}
-            units={units}
-            bottomLocked
-            onCommit={(patch) => {
-              if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
-              return true
-            }}
-          />
+          {bar ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.clampType')}</span>
+              <div data-testid="clamp-type">
+                <Select
+                  value={clampType}
+                  options={[
+                    { value: 'clamp', label: t('featureTree.properties.clampType.clamp') },
+                    { value: 'chuck', label: t('featureTree.properties.clampType.chuck') },
+                    { value: 'tailstock', label: t('featureTree.properties.clampType.tailstock') },
+                  ]}
+                  onChange={chooseClampType}
+                />
+              </div>
+            </label>
+          ) : null}
+          {barWorkholding && selectedClamp.type === 'chuck' ? (
+            <ChuckProperties clamp={selectedClamp} stock={barWorkholding} units={units} onChange={(patch) => updateClamp(selectedClamp.id, patch)} />
+          ) : barWorkholding ? (
+            <label className="properties-field">
+              <span>{t('featureTree.properties.diameter')}</span>
+              <div data-testid="clamp-diameter">
+                <DraftNumberInput
+                  key={`clamp-diameter-${selectedClamp.id}-${roundWorkholdingDiameter(selectedClamp, barWorkholding)}`}
+                  value={roundWorkholdingDiameter(selectedClamp, barWorkholding)}
+                  units={units}
+                  min={minimumLength}
+                  // The store derives the height from whatever size is set here.
+                  onCommit={(next) => updateClamp(selectedClamp.id, barWorkholding.axis === 'x' ? { h: next } : { w: next })}
+                />
+              </div>
+            </label>
+          ) : (
+            <ZRangeSlider
+              selectionKey={`clamp-${selectedClamp.id}`}
+              zTop={selectedClamp.height}
+              zBottom={0}
+              domainMin={0}
+              domainMax={clampDomain}
+              units={units}
+              bottomLocked
+              onCommit={(patch) => {
+                if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
+                return true
+              }}
+            />
+          )}
           <label className="properties-check">
             <input
               type="checkbox"
@@ -1124,7 +1436,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 />
               </label>
             ) : null}
-            {selectedZEditableFeatures.length > 0 ? (
+            {bothFaces ? <AuthoringFaceRow face={workspaceFace} featureIds={selectedFeatureIds} /> : null}
+            {selectedZEditableFeatures.length > 0 && workspaceFace === 'bottom' ? (
+              <FaceZRange features={selectedZEditableFeatures} />
+            ) : selectedZEditableFeatures.length > 0 ? (
               <ZRangeSlider
                 selectionKey={`features-${selectedZEditableFeatureIds.join(',')}`}
                 zTop={commonSelectedZTop}
@@ -1178,6 +1493,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                   return true
                 }}
               />
+            ) : selectedReportsCannedDepth || selectedAllOwnTheirZ ? (
+              // Nothing selected here has a shared Z to edit: either a Thread
+              // or Flutes reports a Depth, or every selected feature takes its
+              // span from its Edit panel — so the "follows stock" line below
+              // would be a wrong answer (#1112 rt6-a, item 39). No line here
+              // either: since rt7-d a Thread's or Flutes' Depth is part of its
+              // own Shape summary, which a multi-selection does not show, and a
+              // Turn and a Polygon report none (#1112 rt7-b).
+              null
             ) : (
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
@@ -1211,21 +1535,91 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const zBottom = typeof selectedFeature.z_bottom === 'number' ? selectedFeature.z_bottom : 0
   const isTextFeature = selectedFeature.kind === 'text' && !!selectedFeature.text
   const textFeature = isTextFeature ? selectedFeature.text : null
-  const hasSelfIntersection = isTextFeature ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
-  const exceedsStock = isTextFeature ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
-  const textFontOptions = textFeature ? getTextFontOptions(textFeature.style) : []
+  // A canned shape owns its geometry through parameters; its stored profile is
+  // only the placement frame, so the sketch-based readers below must not run on
+  // it (issue #1112).
+  const isCannedShape = isCannedFeature(selectedFeature)
+  const cannedSummary = isCannedShape ? cannedShapeSummary(selectedFeature.canned) : null
+  const cannedLabelKey = isCannedShape ? cannedShapeLabelKey(selectedFeature.canned) : null
+  // The one "Edit {shape}…" rule Properties and the feature context menu both
+  // read, so neither entry point can offer a shape the other refuses — on any
+  // face (issue #1112 rt7-c).
+  const cannedEditor = cannedShapeEditorFor(selectedFeature)
+  const cannedExpandable = isCannedShape && cannedShapeIsExpandable(selectedFeature.canned)
+  // The four rotary kinds build their span from a parameter of their own, so
+  // the Instance section shows no Z control that could only fight the regenerate
+  // (#1112 rt6-a, item 39). The kind is what hides the control, so a parameter
+  // set too corrupt to read a number from leaves the slot empty rather than
+  // bringing the slider back.
+  const cannedZOwned = isCannedShape && cannedShapeZIsOwned(selectedFeature.canned)
+  // A generated model's solid is its mesh, rebuilt from its parameters on the
+  // bar's pivot, so it gets no 3D orientation section (issue #1112 rt7-e): a
+  // rotation about any axis but the bar would tip it off the bar axis, and
+  // turning about the bar is the Polygon editor's Rotation field — while a
+  // regenerate would undo a manual rotation anyway. The registry is what says a
+  // canned kind is a model, so a kind this build does not know still counts as
+  // generated rather than falling back to the imported-model controls.
+  const isGeneratedModel = isCannedShape || cannedShapeIsModel(selectedFeature.canned)
+  // A Thread's or Flutes' Depth is reported on the Shape summary line, and since
+  // rt7-d it is measured from a surface there: the resolver the cut itself uses,
+  // plus the Z of that surface (#1112 rt6-c). Only this one row's surface is
+  // resolved — a multi-selection shows no summary to put it on.
+  const cannedDepth = isCannedShape ? cannedShapeDepth(selectedFeature.canned) : null
+  const cannedDepthSurface = cannedDepth !== null
+    ? rotaryPatternSurfaceOfFeature(project, selectedFeature.id)
+    : null
+  const cannedDepthSurfaceZ = cannedDepthSurface
+    ? rotarySurfaceZ(project.stock, cannedDepthSurface.diameter)
+    : null
+  // A Turn's diameter and a Polygon's across flats are the height Properties
+  // reports, so their summary line names the Z those surfaces reach: the axis
+  // plus the radius, from the same helper the Thread span uses (rt6-c).
+  // An Around shape whose depth starts above the Turn it sits on (#1131): the
+  // note offers the one-click fix that lowers it onto the surface, keeping its
+  // depth; across a diameter change there is no one surface, so no fix.
+  const surfaceStart = selectedFeature.authoringFace === 'around'
+    ? aroundSurfaceStarts(project, [selectedFeature.id]).get(selectedFeature.id) ?? null
+    : null
+  const cannedSurface = isCannedShape ? cannedShapeSurface(selectedFeature.canned) : null
+  const cannedSurfaceZ = cannedSurface ? rotarySurfaceZ(project.stock, cannedSurface.diameter) : null
+  const cannedShapesOpen = isCannedShape
+    ? getFeatureGeometryProfiles(selectedFeature).some((profile) => !profile.closed)
+    : !selectedFeature.sketch.profile.closed
+  const hasSelfIntersection = isTextFeature || isCannedShape ? false : profileHasSelfIntersection(selectedFeature.sketch.profile)
+  const exceedsStock = isTextFeature || isCannedShape ? false : profileExceedsStock(selectedFeature.sketch.profile, project.stock)
+  const textPathRefresh = isTextFeature ? textPathRefreshState(project, selectedFeature) : null
+  const textPathRefreshReason = textPathRefresh?.canRefresh === false ? textPathRefresh.reason : null
+  // A run with a vanished source still shows Refresh, disabled with the reason
+  // (decision 11: refuse with a reason, never silently do nothing).
+  const showTextPathRefresh = textPathRefresh?.canRefresh === true
+    || textPathRefreshReason === 'missing-source'
+    || textPathRefreshReason === 'empty-source'
 
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
   // don't count as base solids); imported STL models are locked as Model.
   // Subtract is withheld wherever choosing it would make this row the first
-  // solid — the store would turn it straight back into Add (#827). The other
+  // solid — the store would turn it straight back into Add (#827) — except in
+  // a rotary project, where the bar is already the material (#1054). The other
   // roles stay available.
   const subtractDisabled = selectedFeature.operation !== 'subtract'
-    && !canChooseSubtract(features, selectedFeature.id)
+    && !canChooseSubtract(features, selectedFeature.id, project)
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
   const hasLinkedInstances = linkedInstanceCount > 1
+  // Copies of this shape on the other face change with it (issue #945), and
+  // Around participates in no flat face, so it takes the generic "another
+  // face" wording whenever either side is Around (issue #395 review).
+  const selectedFace = selectedFeature.authoringFace ?? 'top'
+  const linkedOnOtherFace = hasLinkedInstances ? linkedCopiesOffFace(project, [selectedFeature.id], selectedFace) : 0
+  const linkedOnAround = hasLinkedInstances && project.features.some((feature) => (
+    feature.id !== selectedFeature.id
+    && getDefinitionId(feature) === selectedDefId
+    && (feature.authoringFace ?? 'top') === 'around'
+  ))
+  const linkedFaceKey = selectedFace === 'around' || linkedOnAround
+    ? 'around'
+    : selectedFace === 'top' ? 'bottom' : 'top'
 
   return (
     <div className="properties-panel">
@@ -1236,9 +1630,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         >
           <label className="properties-field">
             <span>{t("featureTree.properties.operation")}</span>
-            {!selectedFeature.sketch.profile.closed ? (
+            {cannedShapesOpen ? (
               // Open profiles convert between Line (engraved path) and
               // Construction (sketch reference) only — mirrors the tree menu.
+              // A canned shape's open lines are open by construction (#1112).
               <Select
                 value={selectedFeature.operation === 'construction' ? 'construction' : 'line'}
                 options={[
@@ -1300,49 +1695,153 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           ) : null}
           {textFeature ? (
             <>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.text")}</span>
-                <DraftTextInput
-                  key={`text-feature-text-${selectedFeature.id}-${textFeature.text}`}
-                  value={textFeature.text}
-                  onCommit={(next) =>
+              <p className="properties-note" data-testid="text-summary">
+                {t('featureTree.properties.text.summary', {
+                  text: textFeature.text,
+                  size: formatLength(textFeature.size, units),
+                })}
+              </p>
+              <div className="properties-actions" style={{ marginTop: '12px' }}>
+                <button
+                  className="feat-btn"
+                  type="button"
+                  disabled={selectedFeature.locked}
+                  onClick={() => setEditingTextId(selectedFeature.id)}
+                >
+                  {t('featureTree.properties.text.edit')}
+                </button>
+                {showTextPathRefresh ? (
+                  <button
+                    className="feat-btn"
+                    type="button"
+                    disabled={textPathRefresh?.canRefresh !== true}
+                    title={textPathRefresh?.canRefresh !== true
+                      ? t('featureTree.properties.text.path.refreshUnavailable')
+                      : undefined}
+                    onClick={() => {
+                      if (!textPathRefresh || !textPathRefresh.canRefresh) return
+                      // Re-read the source through the same guide-pick path the
+                      // canvas uses, then commit: the baked path stays baked,
+                      // and the whole refresh is one undo step.
+                      const store = useProjectStore.getState()
+                      store.startTextLayout('path')
+                      if (!useProjectStore.getState().pendingTextLayout) return
+                      useProjectStore.getState().setTextLayoutGuide(textPathRefresh.sourceFeatureId)
+                      useProjectStore.getState().completeTextLayout()
+                    }}
+                  >
+                    {t('featureTree.properties.text.path.refresh')}
+                  </button>
+                ) : null}
+              </div>
+              {textPathRefreshReason === 'missing-source' || textPathRefreshReason === 'empty-source' ? (
+                <p className="properties-note" data-testid="text-path-source-missing">
+                  {t('featureTree.properties.text.path.refreshUnavailable')}
+                </p>
+              ) : null}
+              {editingTextId === selectedFeature.id ? (
+                <TextToolDialog
+                  mode="edit"
+                  initial={{
+                    text: textFeature.text,
+                    style: textFeature.style,
+                    fontId: textFeature.fontId,
+                    size: textFeature.size,
+                    operation: selectedFeature.operation,
+                  }}
+                  onClose={() => setEditingTextId(null)}
+                  onConfirm={(config) => {
+                    // One write, one undo step — the same Properties path a
+                    // rename already takes (issue #1112).
                     updateFeature(selectedFeature.id, {
                       text: {
-                        ...textFeature,
-                        text: next.replace(/\s*\n+\s*/g, ' ').trim() || 'TEXT',
+                        text: config.text,
+                        style: config.style,
+                        fontId: config.fontId,
+                        size: config.size,
                       },
-                    })}
+                      operation: config.operation,
+                    })
+                    setEditingTextId(null)
+                  }}
                 />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.style")}</span>
-                <Select
-                  value={textFeature.style}
-                  options={[
-                    { value: 'skeleton', label: t('featureTree.properties.text.skeleton') },
-                    { value: 'outline', label: t('featureTree.properties.text.outline') },
-                  ]}
-                  onChange={(style) => updateFeature(selectedFeature.id, {
-                    text: {
-                      ...textFeature,
-                      style,
-                      fontId: defaultFontIdForStyle(style),
-                    },
-                  })}
-                />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.font")}</span>
-                <Select
-                  value={textFeature.fontId}
-                  options={textFontOptions.map((font) => ({ value: font.id, label: font.label }))}
-                  onChange={(fontId) => updateFeature(selectedFeature.id, {
-                    text: { ...textFeature, fontId },
-                  })}
-                />
-              </label>
+              ) : null}
             </>
           ) : null}
+          {isCannedShape ? (
+            <>
+              {/* The shape is generated from parameters rather than drawn, so
+                  the summary says what it is with a label instead of the
+                  drawing tools the reader would otherwise look for. One label
+                  per canned shape, every kind (issue #1112 rt7-h). */}
+              <span className="properties-canned-label" data-testid="canned-feature-label">
+                {t('featureTree.properties.canned.label')}
+              </span>
+              {cannedSummary ? (
+                <CannedShapeSummaryLine
+                  summary={cannedSummary}
+                  surface={cannedSurface && cannedSurfaceZ !== null
+                    ? { surface: cannedSurface, z: cannedSurfaceZ }
+                    : null}
+                  depth={cannedDepth}
+                  depthSurface={cannedDepthSurface && cannedDepthSurfaceZ !== null
+                    ? { surface: cannedDepthSurface, z: cannedDepthSurfaceZ }
+                    : null}
+                  units={units}
+                />
+              ) : (
+                <p className="properties-note" data-testid="canned-shape-unknown">
+                  {t('featureTree.properties.canned.unknown')}
+                </p>
+              )}
+              {cannedLabelKey ? (
+                <div className="properties-actions" style={{ marginTop: '12px' }}>
+                  <button
+                    className="feat-btn"
+                    type="button"
+                    disabled={!cannedEditor}
+                    title={cannedEditor ? undefined : t('featureTree.properties.canned.editUnavailable')}
+                    onClick={() => { if (cannedEditor) cannedEditor(selectedFeature.id) }}
+                  >
+                    {t('featureTree.properties.canned.edit', { shape: t(cannedLabelKey as MessageKey) })}
+                  </button>
+                  {cannedExpandable ? (
+                    <button
+                      className="feat-btn"
+                      type="button"
+                      onClick={() => {
+                        expandCannedFeature(selectedFeature.id)
+                        closeExpanded()
+                      }}
+                    >
+                      {t('featureTree.properties.canned.expand')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="properties-region-note">
+                <span className="properties-region-note__badge">{t('featureTree.properties.canned.noteBadge')}</span>
+                <span>{t(cannedExpandable ? 'featureTree.properties.canned.note' : 'featureTree.properties.canned.modelNote')}</span>
+              </div>
+            </>
+          ) : null}
+          {isCannedShape || isTextFeature ? null : (
+            // The one edit action Shape offers a drawn feature, in the place a
+            // generated shape's "Edit {shape}…" sits. A generated shape has its
+            // own editor in the block above, and so does a text run — its
+            // "Edit text…" reopens the run, so a sketch edit here would be a
+            // second, permanently disabled action (issue #1112 rt7-i). The
+            // bottom row is Delete alone now.
+            <div className="properties-actions" style={{ marginTop: '12px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.stock.editSketch')}
+              </button>
+            </div>
+          )}
           {isTextFeature ? (
             <div className="properties-actions" style={{ marginTop: '12px' }}>
               <button
@@ -1369,20 +1868,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               <span>{t('featureTree.properties.constructionNote.text')}</span>
             </div>
           ) : null}
-          {hasLinkedInstances ? (
-            <div className="properties-actions" style={{ marginTop: '8px' }}>
-              <button
-                className="feat-btn"
-                type="button"
-                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
-              >
-                {t('featureTree.properties.makeUnique')}
-              </button>
-            </div>
+          {linkedOnOtherFace > 0 ? (
+            <p className="properties-note" data-testid="linked-other-face-note">
+              {t(
+                `featureTree.face.linkedOtherFace.${linkedFaceKey}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+                { count: linkedOnOtherFace },
+              )}
+            </p>
           ) : null}
         </DisclosureSection>
-        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId ? (
+        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId && !isGeneratedModel ? (
           <ModelOrientationSection
+            face={face}
             featureId={selectedFeature.id}
             orientation={selectedFeature.stl.orientation}
             zTop={zTop}
@@ -1400,6 +1897,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateFeature(selectedFeature.id, { name: next })}
             />
           </label>
+          {bothFaces ? <AuthoringFaceRow face={selectedFeature.authoringFace} featureIds={[selectedFeature.id]} /> : null}
           {selectedFeature.operation === 'region' ? (
             <>
               <label className="properties-field">
@@ -1420,7 +1918,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 </div>
               </label>
             </>
-          ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
+          ) : selectedFeature.authoringFace === 'bottom' ? (
+            <FaceZRange features={[selectedFeature]} />
+          ) : cannedZOwned ? (
+            // Thread, Flutes, Turn and Polygon: the span is built from the
+            // parameter the Edit panel writes, so there is nothing here to edit
+            // — and since rt7-d nothing to report either. A Thread's and
+            // Flutes' Depth and the surface it is measured from are on the Shape
+            // summary line, one section up, with the Edit button right under it;
+            // a Turn and a Polygon already name their parameter and its surface
+            // Z on that same summary (#1112 rt7-b).
+            null
+          ) : cannedShapesOpen || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}
               zTop={zTop}
@@ -1471,6 +1980,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             />
             <span>{t("featureTree.properties.locked")}</span>
           </label>
+          {/* A shared shape's way out of the link is an instance decision, not a
+              property of the geometry, so it lives here rather than in Shape
+              (issue #1112 rt7-i). Visibility is unchanged: only while the shape
+              is shared. */}
+          {hasLinkedInstances ? (
+            <div className="properties-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="feat-btn"
+                type="button"
+                onClick={() => { makeUnique(selectedFeature.id); closeExpanded() }}
+              >
+                {t('featureTree.properties.makeUnique')}
+              </button>
+            </div>
+          ) : null}
         </DisclosureSection>
         {hasSelfIntersection ? (
           <div className="properties-warning">
@@ -1482,16 +2006,35 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             {t('featureTree.properties.warning.exceedsStock')}
           </div>
         ) : null}
+        {/* Outside the collapsed sections, like the other warnings: a cut that
+            starts in air must be seen without opening anything (#1131). */}
+        {surfaceStart ? (
+          <div className="properties-warning" data-testid="around-surface-start">
+            <p>{aroundSurfaceStartText(t, surfaceStart, project.meta.units)}</p>
+            {surfaceStart.kind === 'above' ? (
+              <button
+                className="feat-btn"
+                type="button"
+                data-testid="around-surface-start-fix"
+                onClick={() => updateFeature(selectedFeature.id, {
+                  z_top: surfaceStart.zTop,
+                  z_bottom: surfaceStart.zBottom,
+                })}
+              >
+                {t('featureTree.surfaceStart.fix')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div className="properties-actions">
-        <button className="feat-btn" type="button" onClick={() => { enterSketchEdit(selectedFeature.id); closeExpanded() }} disabled={isTextFeature}>
-          {t('featureTree.properties.stock.editSketch')}
-        </button>
+        {/* Delete is the one action left outside the sections: the edit action
+            sits in Shape and Make unique in Instance (issue #1112 rt7-i). */}
         <button className="feat-btn feat-btn--delete" type="button" onClick={() => { deleteFeature(selectedFeature.id); closeExpanded() }}>
           {t('featureTree.properties.deleteFeature')}
         </button>
       </div>
-      {selectedFeature.sketch.constraints.filter((c) => c.type === 'fixed_distance').length > 0 ? (
+      {!isCannedShape && selectedFeature.sketch.constraints.filter((c) => c.type === 'fixed_distance').length > 0 ? (
         <div className="properties-group">
           <span className="properties-section-title">{t('featureTree.properties.constraints.title')}</span>
           {selectedFeature.sketch.constraints

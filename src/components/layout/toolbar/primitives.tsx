@@ -26,7 +26,13 @@ type ToolbarActionButtonProps = {
   active?: boolean
   emphasized?: boolean
   disabled?: boolean
+  /** Shown in the tooltip and native title while disabled, so a refusal has a reason. */
+  disabledReason?: string
   tooltipSide?: 'bottom' | 'right'
+  /** Stable `data-command` hook, matching the top command bar's (e.g.
+   *  "export-model"). The accessible name changes with state, so tests and
+   *  command lookups must not key on it. */
+  command?: string
   onClick: () => void
 }
 
@@ -102,18 +108,23 @@ function ToolbarActionButton({
   active = false,
   emphasized = false,
   disabled = false,
+  disabledReason,
   tooltipSide = 'bottom',
+  command,
   onClick,
 }: ToolbarActionButtonProps) {
+  const tooltip = disabled && disabledReason ? `${label} — ${disabledReason}` : label
   return (
-    <ToolbarAction label={label} tooltipSide={tooltipSide}>
+    <ToolbarAction label={tooltip} tooltipSide={tooltipSide}>
       <button
         className={`toolbar-icon-btn ${active ? 'toolbar-icon-btn--active' : ''} ${emphasized ? 'toolbar-icon-btn--live' : ''}`}
+        data-command={command}
         onClick={(event) => {
           onClick()
           event.currentTarget.blur()
         }}
         aria-label={label}
+        title={disabled && disabledReason ? disabledReason : undefined}
         type="button"
         disabled={disabled}
       >

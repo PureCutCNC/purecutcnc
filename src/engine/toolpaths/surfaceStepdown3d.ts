@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, NormalizedTool, PocketToolpathResult, ResolvedPocketRegion } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -55,6 +56,7 @@ import {
 } from './modelProtection'
 import { addFeatureTopZs, buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
 import { appendAll } from './appendAll'
+import { barSectionAtZ, clipPathsToBarSection } from './barSection'
 import { appendUniqueWarning } from './warningDedup'
 
 export interface Resolved3DSurfaceLevel {
@@ -338,8 +340,7 @@ export function resolve3DSurfaceStepdown(
     }
   }
 
-  const toolRecord =
-    operation.toolRef ? project.tools.find((entry) => entry.id === operation.toolRef) ?? null : null
+  const toolRecord = findOperationTool(project, operation)
   if (!toolRecord) {
     return {
       ok: false,
@@ -836,6 +837,15 @@ export function resolve3DSurfaceStepdown(
         offsetClipperPaths(clearablePaths, -(cleanupEpsilon + appliedDecimation)),
         cleanupEpsilon,
       )
+      // A round bar only has material where its section at this Z does, so a
+      // level never cuts beside the bar (#1054 slice 3). The clip is on the
+      // material region, before the inset that carries the cutter radius, and
+      // on the same shape `roughSurface.ts` insets for its safe-link domain, so
+      // a link cannot be ruled safe across air the bar does not occupy.
+      const section = barSectionAtZ(project, z)
+      if (section) {
+        clearablePaths = section.halfWidth <= 0 ? [] : clipPathsToBarSection(section, clearablePaths)
+      }
     }
 
     if (operation.debugToolpath) {

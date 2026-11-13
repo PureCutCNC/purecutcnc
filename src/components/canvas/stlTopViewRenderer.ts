@@ -52,16 +52,20 @@ export function resolveStlTopViewPlacement(
   const width = maxX - minX
   const height = maxY - minY
   if (!(width > 1e-9) || !(height > 1e-9)) return null
+  const signX = vt.mirrorX === undefined ? 1 : -1
+  const signY = vt.mirrorY === undefined ? 1 : -1
 
   return {
     localBounds: { x: minX, y: minY, width, height },
+    // World → canvas is `offset + scale · (±w + mirror)`: the sign and the
+    // mirror offset are identity for a Top view (issue #945).
     canvasTransform: [
-      instanceTransform.a * vt.scale,
-      instanceTransform.b * vt.scale,
-      instanceTransform.c * vt.scale,
-      instanceTransform.d * vt.scale,
-      vt.offsetX + instanceTransform.e * vt.scale,
-      vt.offsetY + instanceTransform.f * vt.scale,
+      signX * instanceTransform.a * vt.scale,
+      signY * instanceTransform.b * vt.scale,
+      signX * instanceTransform.c * vt.scale,
+      signY * instanceTransform.d * vt.scale,
+      vt.offsetX + (signX * instanceTransform.e + (vt.mirrorX ?? 0)) * vt.scale,
+      vt.offsetY + (signY * instanceTransform.f + (vt.mirrorY ?? 0)) * vt.scale,
     ],
   }
 }
