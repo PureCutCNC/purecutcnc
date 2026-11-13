@@ -210,6 +210,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.rotaryMmNotice': '{machine} gira el eje rotativo solo en milímetros. Cambia las unidades del proyecto a mm para exportar las operaciones rotativas.',
   'dialogs.export.rotaryFollowsStockOwn': 'La orientación de A sigue al material: el eje rotativo gira alrededor de {axis}, el eje de la barra.',
   'dialogs.export.rotaryFollowsStockBorrowed': 'El eje rotativo sigue al material: gira alrededor de {axis} y lo mueve el motor {motor}.',
+  'dialogs.export.opensbpExperimental': 'Experimental: los archivos de pieza de ShopBot aún no se han probado en una ShopBot real. Ejecuta el archivo primero en vacío y envíanos tus comentarios.',
   'dialogs.export.error.generationFailed': 'La generación de "{operation}" ha fallado: {detail}',
   'dialogs.export.error.generationInterrupted': 'La generación de "{operation}" se ha cancelado o sustituido. Cambie la selección o una opción y vuelva a exportar.',
   'dialogs.export.error.missingTool': 'La operación "{operation}" no tiene ninguna herramienta asignada.',

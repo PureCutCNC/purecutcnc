@@ -474,6 +474,19 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               </div>
             )}
+            {/* The dialect's warning is the first export note (issue #1191). A
+                ShopBot export can also show the per-setup note below the
+                program list's heading, so this one renders ahead of it rather
+                than after: the operator reads what the file is before how many
+                programs it writes. */}
+            {dialectLabels.experimentalNote ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-experimental-note"
+              >
+                {t(dialectLabels.experimentalNote)}
+              </div>
+            ) : null}
             {showPrograms && programs.length > 0 ? (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">{td('dialogs.export.programs')}</label>

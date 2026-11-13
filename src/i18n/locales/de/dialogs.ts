@@ -235,6 +235,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.rotaryMmNotice': '{machine} dreht die Rundachse nur in Millimetern. Stelle die Projekteinheiten auf mm um, um Rundachsen-Operationen zu exportieren.',
   'dialogs.export.rotaryFollowsStockOwn': 'Die Ausrichtung von A folgt dem Rohteil: Die Rundachse dreht um {axis}, die Achse der Stange.',
   'dialogs.export.rotaryFollowsStockBorrowed': 'Die Rundachse folgt dem Rohteil: Sie dreht um {axis} und wird vom {motor}-Motor angetrieben.',
+  'dialogs.export.opensbpExperimental': 'Experimentell: ShopBot-Teilprogramme wurden noch nicht auf einer echten ShopBot getestet. Führe die Datei zuerst im Leerlauf aus und sende uns bitte Rückmeldung.',
   'dialogs.export.error.generationFailed': 'Generierung für „{operation}" fehlgeschlagen: {detail}',
   'dialogs.export.error.generationInterrupted': 'Die Generierung für „{operation}" wurde abgebrochen oder ersetzt. Ändern Sie die Auswahl oder eine Option und exportieren Sie erneut.',
   'dialogs.export.error.missingTool': 'Der Operation „{operation}" ist kein Werkzeug zugewiesen.',

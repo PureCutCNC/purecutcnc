@@ -210,6 +210,7 @@ export const dialogsFr: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.rotaryMmNotice': "{machine} pilote l'axe rotatif uniquement en millimètres. Passez les unités du projet en mm pour exporter les opérations rotatives.",
   'dialogs.export.rotaryFollowsStockOwn': "L'orientation de A suit le brut : l'axe rotatif tourne autour de {axis}, l'axe de la barre.",
   'dialogs.export.rotaryFollowsStockBorrowed': "L'axe rotatif suit le brut : il tourne autour de {axis} et il est entraîné par le moteur {motor}.",
+  'dialogs.export.opensbpExperimental': 'Expérimental : les fichiers de pièce ShopBot n’ont pas encore été testés sur une vraie ShopBot. Lancez d’abord le fichier à vide et envoyez-nous vos retours.',
   'dialogs.export.error.generationFailed': 'Échec de la génération de « {operation} » : {detail}',
   'dialogs.export.error.generationInterrupted': 'La génération de « {operation} » a été annulée ou remplacée. Modifiez la sélection ou une option, puis exportez à nouveau.',
   'dialogs.export.error.missingTool': 'Aucun outil n’est affecté à l’opération « {operation} ».',

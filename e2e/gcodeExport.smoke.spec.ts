@@ -34,6 +34,7 @@ import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
 import { getProject, seedProject } from './helpers'
 import { openMachineManager } from './machineLibrary.helpers'
+import type { MachiningSetup, Project } from '../src/types/project'
 import type { Page } from '@playwright/test'
 
 const ISSUE_1109_FIXTURE = new URL('../src/engine/test-fixtures/issue-1109-tab-ramp-original.camj', import.meta.url)
@@ -144,6 +145,7 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.root(app.page)).toBeVisible()
     await expect(ui.exportDialog.title(app.page)).toHaveText('Export G-code')
     await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (M6)')
+    await expect(ui.exportDialog.root(app.page).getByTestId('export-experimental-note')).toHaveCount(0)
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
@@ -224,6 +226,16 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (C9)')
     await expect(ui.exportDialog.root(app.page)).not.toContainText('(M6)')
 
+    // ShopBot output is unproven on real hardware, and the dialog says so as
+    // its first export note (issue #1191).
+    const experimentalNote = ui.exportDialog.root(app.page).getByTestId('export-experimental-note')
+    await expect(experimentalNote).toBeVisible()
+    await expect(experimentalNote).toHaveText(
+      'Experimental: ShopBot part files have not been tested on a real ShopBot yet. '
+      + 'Run the file in air first, and please send feedback.',
+    )
+    await expect(experimentalNote).toHaveClass(/export-setup-note/)
+
     // The file the button saves is a .sbp.
     await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
@@ -242,6 +254,44 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(preview).toContainText('MS,1.0000,0.5000')
     await expect(preview).toContainText(/^M3,-?[\d.]+,-?[\d.]+,-?[\d.]+$/m)
     await expect(preview).not.toContainText(/^(G0|G1|G21|G20|M30)\b/m)
+  })
+
+  test('the ShopBot experimental note is the first export note, ahead of a per-setup note', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page, { machineId: 'shopbot' })
+    // A second setup makes the export one program per setup, so the dialog
+    // shows its per-setup note as well (issue #1191). The part is fixtured
+    // twice on the same face, which a three-axis ShopBot can machine; the
+    // warning must still be the first export note rather than the last.
+    const project = await getProject(app.page) as unknown as Project
+    const top = project.setups[0]
+    const second: MachiningSetup = {
+      ...top,
+      id: 'setup-top-2',
+      name: 'Top second position',
+      operationIds: ['op-route-b'],
+    }
+    project.setups = [{ ...top, operationIds: ['op-route-a'] }, second]
+    project.operations = project.operations.map((operation) => (
+      operation.id === 'op-route-b' ? { ...operation, setupId: second.id } : operation
+    ))
+    await seedProject(app.page, JSON.stringify(project))
+
+    await ui.operations.headerExportButton(app.page).click()
+    const dialog = ui.exportDialog.root(app.page)
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByTestId('export-experimental-note')).toBeVisible()
+    await expect(dialog.locator('.export-setup-note').filter({ hasText: 'One program per setup' })).toBeVisible()
+
+    // Both notes are on screen, and the experimental warning comes first in the
+    // dialog's own note order. Reading the DOM order, not just visibility, is
+    // the assertion the first review found missing: with the warning rendered
+    // after the program list it would still be visible and still read right.
+    const notes = await dialog.locator('.export-setup-note').evaluateAll((elements) => elements.map((element) => ({
+      testId: element.getAttribute('data-testid'),
+      text: element.textContent?.trim() ?? '',
+    })))
+    expect(notes.some((note) => note.text.startsWith('One program per setup'))).toBe(true)
+    expect(notes[0].testId).toBe('export-experimental-note')
   })
 })
 
