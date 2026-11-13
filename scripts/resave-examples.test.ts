@@ -33,7 +33,13 @@
 import assert from 'node:assert/strict'
 
 import { announcesPort, waitForOwnDevServer } from './resave-examples'
-import { omittedOperations, parseArguments } from './resave-examples-check'
+import { emittedOperationIds, omittedOperations, parseArguments } from './resave-examples-check'
+import { exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../src/test/plasmaExportFixtures'
+import { runPostProcessor } from '../src/engine/gcode/postprocessor'
+import type { PostProcessorInput } from '../src/engine/gcode/types'
+import { defaultTool } from '../src/types/project'
+import { defaultOperationForTarget } from '../src/store/helpers/operationDefaults'
+import { normalizeToolForProject } from '../src/engine/toolpaths/geometry'
 import type { ExportOperationOption } from '../src/components/export/exportOperationSelection'
 import type { Operation, Project } from '../src/types/project'
 
@@ -181,6 +187,49 @@ function testFullyPostedProjectHasNoOmissions(): void {
   assert.deepEqual(omitted, [])
 }
 
+// The postprocessor can drop an entry it was handed: a plasma cut on a
+// non-plasma machine never reaches the emitter (#960). The check must read
+// what was emitted, not the input list (#1192 review round 2).
+function testPostprocessorSkippedOperationIsReported(): void {
+  const { input } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId: 'grbl' })
+  const mill = { ...defaultTool('mm'), id: 'mill', name: 'Mill' }
+  const withMill = { ...input.project, tools: [...input.project.tools, mill] }
+  const millEntry = (id: string): PostProcessorInput['operations'][number] => {
+    const milling = {
+      ...defaultOperationForTarget(withMill, 'pocket', 'rough', { source: 'features', featureIds: ['plate'] }, 0),
+      id, name: id, toolRef: 'mill',
+    }
+    return {
+      operation: milling,
+      tool: normalizeToolForProject(mill, withMill),
+      toolpath: { operationId: id, moves: [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 5, y: 5, z: 0 } }], warnings: [], bounds: null },
+    }
+  }
+  const [cut] = input.operations
+  const handedIn = [millEntry('mill-1'), cut, millEntry('mill-2')]
+  const result = runPostProcessor({
+    ...input,
+    project: withMill,
+    operations: handedIn,
+    options: { ...input.options, captureMotionTrace: true },
+  })
+  const emitted = emittedOperationIds(result, 'plasma-on-grbl')
+  assert.deepEqual(emitted, ['mill-1', 'mill-2'], 'the skipped plasma cut is not among the emitted operations')
+
+  const operations = handedIn.map((entry) => entry.operation)
+  const omitted = omittedOperations(
+    { ...withMill, operations },
+    operations.map((entry) => option(entry, true)),
+    emitted,
+  )
+  assert.deepEqual(omitted.map(({ id, reason }) => ({ id, reason })), [
+    { id: cut.operation.id, reason: 'not-posted' },
+  ], 'and the check reports it as not posted')
+
+  assert.throws(() => emittedOperationIds({}, 'no-traces'), /no motion traces/,
+    'a result without traces is an error, not full coverage')
+}
+
 // ── the CLI still parses as documented ───────────────────────────────────────
 
 function testParseArguments(): void {
@@ -202,6 +251,7 @@ testDisabledAndToolLessOperationsAreReported()
 testProjectTypeHiddenOperationIsReported()
 testExportableButUnpostedOperationIsReported()
 testFullyPostedProjectHasNoOmissions()
+testPostprocessorSkippedOperationIsReported()
 testParseArguments()
 
 console.log('resave-examples tests: OK')
