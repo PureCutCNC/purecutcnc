@@ -36,7 +36,7 @@ import {
   SLOPE_GRADIENT_GLSL,
   STEP_GLSL,
 } from './heightfieldShader'
-import { applyMoveToGrid } from './replay'
+import { applyMoveToGrid, replayItemsIntoGrid } from './replay'
 import type { SimulationGrid, SimulationReplayItem } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -499,15 +499,39 @@ function stampGrid(size: number, top = 20): SimulationGrid {
   }
 }
 
+/**
+ * The two ways crossings are recorded (issue #973): playback cuts move by move
+ * and records as it goes; a static view replays everything, then records them
+ * for the final outline. Every stamped test runs both.
+ */
+type StampMode = 'playback' | 'static'
+let stampMode: StampMode = 'playback'
+const pendingCuts = new WeakMap<SimulationGrid, SimulationReplayItem[]>()
+
 function cut(
   grid: SimulationGrid, from: { x: number; y: number }, to: { x: number; y: number }, z: number, radius: number,
   toolType: SimulationReplayItem['toolType'] = 'flat_endmill',
 ): void {
-  applyMoveToGrid(grid, { kind: 'cut', from: { ...from, z }, to: { ...to, z } }, radius, toolType, null)
+  const move = { kind: 'cut' as const, from: { ...from, z }, to: { ...to, z } }
+  if (stampMode === 'playback') {
+    applyMoveToGrid(grid, move, radius, toolType, null)
+    return
+  }
+  const items = pendingCuts.get(grid) ?? []
+  items.push({
+    operationId: 'test', operationName: 'test', toolRef: null, toolType, toolRadius: radius, vBitAngle: null,
+    toolpath: { moves: [move] } as unknown as SimulationReplayItem['toolpath'],
+  })
+  pendingCuts.set(grid, items)
 }
 
 /** The stamped grid's outline: heights clamp at the grid's edge like the texture, crossings read 0 there. */
 function stampedOutline(grid: SimulationGrid): ReturnType<typeof outlineOf> {
+  const pending = pendingCuts.get(grid)
+  if (pending) {
+    replayItemsIntoGrid(grid, pending)
+    pendingCuts.delete(grid)
+  }
   const inside = (value: number, count: number) => Math.min(count - 1, Math.max(0, value))
   return outlineOf(
     (col, row) => grid.topZ[inside(row, grid.rows) * grid.cols + inside(col, grid.cols)],
@@ -753,12 +777,16 @@ try {
   testGradientIsContinuousAndExact()
   testGradientLeavesStepsOut()
   testWideningAveragesNarrowScallopsOnly()
-  testCircularCutFollowsTheTool()
-  testStraightSlotAtAnyAngle()
-  testBallBottomingOutEndsOnItsRealEdge()
-  testMaterialCornersStaySharp()
-  testTabBridgeKeepsItsWidth()
-  testPassesAtOneDepthUnite()
+  for (const mode of ['playback', 'static'] as const) {
+    stampMode = mode
+    console.log(`\n— crossings recorded as in ${mode === 'playback' ? 'playback (move by move)' : 'a static view (after the replay)'} —`)
+    testCircularCutFollowsTheTool()
+    testStraightSlotAtAnyAngle()
+    testBallBottomingOutEndsOnItsRealEdge()
+    testMaterialCornersStaySharp()
+    testTabBridgeKeepsItsWidth()
+    testPassesAtOneDepthUnite()
+  }
   testWithoutCrossingsNothingMoves()
   console.log('\nAll heightfield shader tests PASSED.')
 } catch (e) {

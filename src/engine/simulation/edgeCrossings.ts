@@ -346,3 +346,99 @@ export function stampEdgeCrossings(
   }
   return written
 }
+
+/** Neighbour direction bits in an outline mask: east, west, south, north. */
+const OUTLINE_EAST = 1
+const OUTLINE_WEST = 2
+const OUTLINE_SOUTH = 4
+const OUTLINE_NORTH = 8
+
+/**
+ * Which neighbours of each cell rise from it by what the shared step test could
+ * call a wall: the cheap test `edgeMayBeStep` makes on the GPU — one side on
+ * the stock bottom, or a rise steeper than `SHALLOW_SLOPE_CELLS`. One bit per
+ * neighbour (east, west, south, north); 0 for a cell on no outline.
+ */
+export function outlineMasks(topZ: Float32Array, cols: number, rows: number, cellSize: number, stockBottomZ: number): Uint8Array {
+  const masks = new Uint8Array(cols * rows)
+  const rise = SHALLOW_SLOPE_CELLS * cellSize
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const index = row * cols + col
+      const height = topZ[index]
+      const through = height <= stockBottomZ + 1e-6
+      let mask = 0
+      if (col + 1 < cols) {
+        const next = topZ[index + 1]
+        if (next > height + 1e-9 && (through || next - height > rise)) mask |= OUTLINE_EAST
+      }
+      if (col > 0) {
+        const next = topZ[index - 1]
+        if (next > height + 1e-9 && (through || next - height > rise)) mask |= OUTLINE_WEST
+      }
+      if (row + 1 < rows) {
+        const next = topZ[index + cols]
+        if (next > height + 1e-9 && (through || next - height > rise)) mask |= OUTLINE_SOUTH
+      }
+      if (row > 0) {
+        const next = topZ[index - cols]
+        if (next > height + 1e-9 && (through || next - height > rise)) mask |= OUTLINE_NORTH
+      }
+      masks[index] = mask
+    }
+  }
+  return masks
+}
+
+/**
+ * After a replay, the crossings of one outline cell `(col, row)` from one move
+ * that cut it to its final height `heightA`: for each rising neighbour in
+ * `mask`, where this move's boundary crosses toward it, kept only if it
+ * reaches further than the crossing already there (the union of every pass
+ * that reached this depth). Same placement as `stampEdgeCrossings`, judged
+ * against the final heights instead of the heights mid-replay, so no search is
+ * spent on a neighbour a later move cuts anyway.
+ */
+export function refineEdgeCrossings(
+  crossings: Uint8Array,
+  topZ: Float32Array,
+  cols: number,
+  originX: number,
+  originY: number,
+  cellSize: number,
+  stockBottomZ: number,
+  cutter: SweptCutter,
+  col: number,
+  row: number,
+  heightA: number,
+  mask: number,
+): void {
+  const ax = originX + (col + 0.5) * cellSize
+  const ay = originY + (row + 0.5) * cellSize
+  const throughA = heightA <= stockBottomZ + 1e-6
+  for (let bit = OUTLINE_EAST; bit <= OUTLINE_NORTH; bit <<= 1) {
+    if ((mask & bit) === 0) continue
+    const horizontal = bit === OUTLINE_EAST || bit === OUTLINE_WEST
+    const step = bit === OUTLINE_EAST || bit === OUTLINE_SOUTH ? 1 : -1
+    const nCol = horizontal ? col + step : col
+    const nRow = horizontal ? row : row + step
+    const heightN = topZ[nRow * cols + nCol]
+    const level = throughA ? stockBottomZ + 1e-6 : (heightA + heightN) / 2
+    const nx = horizontal ? ax + step * cellSize : ax
+    const ny = horizontal ? ay : ay + step * cellSize
+    const ownerCol = step > 0 ? col : nCol
+    const ownerRow = step > 0 ? row : nRow
+    const offset = (ownerRow * cols + ownerCol) * EDGE_CROSSING_STRIDE + (horizontal ? EDGE_CROSSING_EAST : EDGE_CROSSING_SOUTH)
+    const existing = crossings[offset]
+    if (existing !== EDGE_CROSSING_NONE) {
+      // Only a move reaching past the crossing already there can change it;
+      // one probe a code step further out says whether this one does.
+      const existingFromA = step > 0 ? decodeCrossingPosition(existing) : 1 - decodeCrossingPosition(existing)
+      const probe = existingFromA + 1 / 254
+      if (probe >= 1 || cutter.cutAt(ax + (nx - ax) * probe, ay + (ny - ay) * probe) > level) continue
+    }
+    const fraction = cutter.exitFraction(ax, ay, nx, ny, level)
+    crossings[offset] = encodeCrossingPosition(step > 0 ? fraction : 1 - fraction)
+    crossings[offset + 1] = cutter.exitAngleCode
+  }
+}

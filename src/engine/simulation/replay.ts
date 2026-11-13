@@ -19,7 +19,7 @@ import type { Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
-import { stampEdgeCrossings, SweptCutter } from './edgeCrossings'
+import { outlineMasks, refineEdgeCrossings, stampEdgeCrossings, SweptCutter } from './edgeCrossings'
 import { createSimulationGrid } from './grid'
 import { cutterRayIntervalInPlace } from './tools'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
@@ -42,6 +42,14 @@ export interface ApplyMoveResult {
   changedCount: number
   dirtyRegion: DirtyRegion | null
 }
+
+/**
+ * Grids whose static replay records crossings after the fact
+ * (`CrossingFinalizer`); the kernel skips recording for them. A set rather
+ * than removing the grid's array, which would turn the grid into a slow
+ * dictionary-mode object for the hot loop.
+ */
+const DEFERRING_CROSSINGS = new WeakSet<SimulationGrid>()
 
 /** Reused for every move: the crossing search allocates nothing per move. */
 const SHARED_CUTTER = new SweptCutter()
@@ -90,12 +98,7 @@ function applyMoveKernel(
   // `isBall`/`isVBit`, the profile is chosen once per move, not per cell.
   const isPlasma = toolType === 'plasma'
   const toolRadiusSq = toolRadius * toolRadius
-  let vBitInvSlope = 0
-  if (isVBit) {
-    const includedAngle = Math.max(1, Math.min(179, vBitAngle ?? 60))
-    const slope = Math.tan((includedAngle * Math.PI) / 360)
-    vBitInvSlope = slope > 1e-9 ? 1 / slope : 0
-  }
+  const vBitInvSlope = isVBit ? vBitInverseSlope(vBitAngle) : 0
 
   const topZ = grid.topZ
   const stockBottomZ = grid.stockBottomZ
@@ -107,7 +110,7 @@ function applyMoveKernel(
   // cells near the rim of its reach, or (for a ball or V-bit) where it reaches
   // the stock bottom, can sit beside a wall it makes; the rest skip on one
   // compare. A grid without `edgeCrossings` (rotary) pays nothing.
-  const crossings = grid.edgeCrossings
+  const crossings = DEFERRING_CROSSINGS.has(grid) ? undefined : grid.edgeCrossings
   const rimDistance = Math.max(0, toolRadius - cellSize)
   const rimDistanceSq = rimDistance * rimDistance
   const shapedTip = isBall || isVBit
@@ -1124,6 +1127,168 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
   }
 }
 
+/** Outline cells are listed per square tile of this many cells. */
+const OUTLINE_TILE_CELLS = 16
+
+/**
+ * The edge crossings of a finished static replay (issue #973), worked out once
+ * the heights are final instead of move by move. Recording them while cutting
+ * spends most of its searches at each move's leading edge, against a neighbour
+ * the next move cuts anyway; that doubled the replay. Here only cells that end
+ * on an outline are searched, and a move only visits the outline cells inside
+ * its own reach, found through a coarse tile index.
+ *
+ * Playback keeps recording while it cuts (`stampEdgeCrossings`): it applies a
+ * handful of moves a frame and must show each one at once.
+ */
+class CrossingFinalizer {
+  private readonly masks: Uint8Array
+  private readonly tileCols: number
+  private readonly tileRows: number
+  private readonly tileStart: Int32Array
+  private readonly tileCells: Int32Array
+  /** The highest final height of any outline cell in each tile. */
+  private readonly tileTop: Float32Array
+  private readonly cutter = new SweptCutter()
+  private readonly grid: SimulationGrid
+  private readonly crossings: Uint8Array
+  private readonly tileSpan: number
+
+  constructor(grid: SimulationGrid, crossings: Uint8Array) {
+    this.grid = grid
+    this.crossings = crossings
+    const { cols, rows } = grid
+    crossings.fill(0)
+    this.masks = outlineMasks(grid.topZ, cols, rows, grid.cellSize, grid.stockBottomZ)
+    this.tileCols = Math.ceil(cols / OUTLINE_TILE_CELLS)
+    this.tileRows = Math.ceil(rows / OUTLINE_TILE_CELLS)
+    this.tileSpan = grid.cellSize * OUTLINE_TILE_CELLS
+    const tileCount = this.tileCols * this.tileRows
+    const counts = new Int32Array(tileCount + 1)
+    this.tileTop = new Float32Array(tileCount).fill(-Infinity)
+    for (let index = 0; index < this.masks.length; index += 1) {
+      if (this.masks[index] === 0) continue
+      const col = index % cols
+      const row = (index - col) / cols
+      const tile = Math.floor(row / OUTLINE_TILE_CELLS) * this.tileCols + Math.floor(col / OUTLINE_TILE_CELLS)
+      counts[tile + 1] += 1
+      if (grid.topZ[index] > this.tileTop[tile]) this.tileTop[tile] = grid.topZ[index]
+    }
+    for (let tile = 1; tile < counts.length; tile += 1) counts[tile] += counts[tile - 1]
+    this.tileStart = counts
+    this.tileCells = new Int32Array(counts[counts.length - 1])
+    const fill = counts.slice(0, tileCount)
+    for (let index = 0; index < this.masks.length; index += 1) {
+      if (this.masks[index] === 0) continue
+      const col = index % cols
+      const row = (index - col) / cols
+      this.tileCells[fill[Math.floor(row / OUTLINE_TILE_CELLS) * this.tileCols + Math.floor(col / OUTLINE_TILE_CELLS)]++] = index
+    }
+  }
+
+  /** Refine the crossings of every outline cell this move cut to its final height. */
+  move(move: ToolpathMove, toolRadius: number, toolType: SimulationReplayItem['toolType'], vBitAngle: number | null): void {
+    const grid = this.grid
+    // The deepest this move cuts anywhere: no outline cell in a tile that is
+    // all higher than every cell the move reaches can have it as its bound.
+    const lowest = toolType === 'plasma' ? grid.stockBottomZ : Math.min(move.from.z, move.to.z)
+    const minX = (move.from.x < move.to.x ? move.from.x : move.to.x) - toolRadius - grid.originX
+    const maxX = (move.from.x > move.to.x ? move.from.x : move.to.x) + toolRadius - grid.originX
+    const minY = (move.from.y < move.to.y ? move.from.y : move.to.y) - toolRadius - grid.originY
+    const maxY = (move.from.y > move.to.y ? move.from.y : move.to.y) + toolRadius - grid.originY
+    const tileColStart = Math.max(0, Math.floor(minX / this.tileSpan))
+    const tileColEnd = Math.min(this.tileCols - 1, Math.floor(maxX / this.tileSpan))
+    const tileRowStart = Math.max(0, Math.floor(minY / this.tileSpan))
+    const tileRowEnd = Math.min(this.tileRows - 1, Math.floor(maxY / this.tileSpan))
+    let configured = false
+    for (let tileRow = tileRowStart; tileRow <= tileRowEnd; tileRow += 1) {
+      for (let tileCol = tileColStart; tileCol <= tileColEnd; tileCol += 1) {
+        const tile = tileRow * this.tileCols + tileCol
+        if (this.tileTop[tile] < lowest - 1e-9) continue
+        const end = this.tileStart[tile + 1]
+        for (let k = this.tileStart[tile]; k < end; k += 1) {
+          const index = this.tileCells[k]
+          const height = grid.topZ[index]
+          if (height < lowest - 1e-9) continue
+          const col = index % grid.cols
+          const row = (index - col) / grid.cols
+          const x = grid.originX + (col + 0.5) * grid.cellSize
+          const y = grid.originY + (row + 0.5) * grid.cellSize
+          if (x < minX + grid.originX || x > maxX + grid.originX || y < minY + grid.originY || y > maxY + grid.originY) continue
+          if (!configured) {
+            configureCutter(this.cutter, move, toolRadius, toolType, vBitAngle, grid.stockBottomZ)
+            configured = true
+          }
+          const cut = this.cutter.cutAt(x, y)
+          // Only a move that cut this cell to its final height bounds it.
+          if ((cut > grid.stockBottomZ ? cut : grid.stockBottomZ) > height + 1e-9) continue
+          refineEdgeCrossings(
+            this.crossings, grid.topZ, grid.cols, grid.originX, grid.originY, grid.cellSize, grid.stockBottomZ,
+            this.cutter, col, row, height, this.masks[index],
+          )
+        }
+      }
+    }
+  }
+}
+
+function vBitInverseSlope(vBitAngle: number | null): number {
+  const includedAngle = Math.max(1, Math.min(179, vBitAngle ?? 60))
+  const slope = Math.tan((includedAngle * Math.PI) / 360)
+  return slope > 1e-9 ? 1 / slope : 0
+}
+
+/** Point `cutter` at one move, with the same profile math as `applyMoveKernel`. */
+function configureCutter(
+  cutter: SweptCutter, move: ToolpathMove, toolRadius: number,
+  toolType: SimulationReplayItem['toolType'], vBitAngle: number | null, stockBottomZ: number,
+): void {
+  const segDx = move.to.x - move.from.x
+  const segDy = move.to.y - move.from.y
+  const segLengthSq = segDx * segDx + segDy * segDy
+  const stationary = segLengthSq <= 1e-12
+  const reach = toolRadius + 1e-9
+  cutter.set(
+    move.from.x, move.from.y, move.from.z, segDx, segDy, move.to.z - move.from.z,
+    stationary ? 0 : 1 / segLengthSq, stationary, Math.min(move.from.z, move.to.z),
+    reach * reach, toolRadius,
+    toolType === 'ball_endmill' ? 1 : toolType === 'v_bit' ? 2 : toolType === 'plasma' ? 3 : 0,
+    toolType === 'v_bit' ? vBitInverseSlope(vBitAngle) : 0, stockBottomZ,
+  )
+}
+
+/**
+ * A static replay: every item's moves into the grid, then the edge crossings of
+ * the final outline (`CrossingFinalizer`). What `simulateOperationHeightfield`
+ * and `simulateReplayItemsHeightfield` run; exported for the tests.
+ */
+export function replayItemsIntoGrid(
+  grid: SimulationGrid,
+  items: readonly SimulationReplayItem[],
+): { processedMoveCount: number; warnings: ToolpathWarning[] } {
+  const warnings: ToolpathWarning[] = []
+  let processedMoveCount = 0
+  DEFERRING_CROSSINGS.add(grid)
+  try {
+    for (const item of items) {
+      const replay = replayItemIntoGrid(grid, item)
+      processedMoveCount += replay.processedMoveCount
+      warnings.push(...replay.warnings)
+    }
+  } finally {
+    DEFERRING_CROSSINGS.delete(grid)
+  }
+  if (grid.edgeCrossings) {
+    const finalizer = new CrossingFinalizer(grid, grid.edgeCrossings)
+    for (const item of items) {
+      for (const move of item.toolpath.moves) {
+        if (moveIsMaterialRemoving(move)) finalizer.move(move, item.toolRadius, item.toolType, item.vBitAngle)
+      }
+    }
+  }
+  return { processedMoveCount, warnings }
+}
+
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
@@ -1145,14 +1310,7 @@ export function simulateReplayItemsHeightfield(
   options: SimulationBuildOptions = {},
 ): SimulationResult {
   const grid = createSimulationGrid(project, options)
-  const warnings: ToolpathWarning[] = []
-  let processedMoveCount = 0
-
-  for (const item of items) {
-    const replay = replayItemIntoGrid(grid, item)
-    processedMoveCount += replay.processedMoveCount
-    warnings.push(...replay.warnings)
-  }
+  const { processedMoveCount, warnings } = replayItemsIntoGrid(grid, items)
 
   return {
     grid,
@@ -1177,7 +1335,7 @@ export function simulateOperationHeightfield(
   }
 
   const tool = normalizeToolForProject(toolRecord, project)
-  const replay = replayItemIntoGrid(grid, replayItemFor(operation, toolRecord, tool, toolpath))
+  const replay = replayItemsIntoGrid(grid, [replayItemFor(operation, toolRecord, tool, toolpath)])
   warnings.push(...replay.warnings)
 
   return {
@@ -1250,18 +1408,45 @@ async function replayItemsIntoGridChunked(
   await yieldToPaint()
   if (options.signal?.aborted) return null
 
-  for (const item of items) {
-    for (const move of item.toolpath.moves) {
-      if (!moveIsMaterialRemoving(move)) {
-        continue
-      }
-      if (options.signal?.aborted) return null
-      applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
-      processedMoveCount += 1
-      if (Date.now() - sliceStart >= sliceMs) {
-        await yieldToPaint()
+  // Crossings are recorded once the heights are final (see CrossingFinalizer).
+  const crossings = grid.edgeCrossings
+  DEFERRING_CROSSINGS.add(grid)
+  try {
+    for (const item of items) {
+      for (const move of item.toolpath.moves) {
+        if (!moveIsMaterialRemoving(move)) {
+          continue
+        }
         if (options.signal?.aborted) return null
-        sliceStart = Date.now()
+        applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
+        processedMoveCount += 1
+        if (Date.now() - sliceStart >= sliceMs) {
+          await yieldToPaint()
+          if (options.signal?.aborted) return null
+          sliceStart = Date.now()
+        }
+      }
+    }
+  } finally {
+    DEFERRING_CROSSINGS.delete(grid)
+  }
+
+  if (crossings) {
+    const finalizer = new CrossingFinalizer(grid, crossings)
+    let sinceClock = 0
+    for (const item of items) {
+      for (const move of item.toolpath.moves) {
+        if (!moveIsMaterialRemoving(move)) continue
+        finalizer.move(move, item.toolRadius, item.toolType, item.vBitAngle)
+        // Most moves cost a few compares here; reading the clock every move
+        // would cost more than they do.
+        if (++sinceClock < 256) continue
+        sinceClock = 0
+        if (Date.now() - sliceStart >= sliceMs) {
+          await yieldToPaint()
+          if (options.signal?.aborted) return null
+          sliceStart = Date.now()
+        }
       }
     }
   }

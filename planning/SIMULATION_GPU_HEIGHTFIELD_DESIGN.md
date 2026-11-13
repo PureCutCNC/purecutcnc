@@ -67,9 +67,16 @@ The shipped implementation plan and playback experiments are preserved in
   replay kernel records it while it stamps: for the lines from a cell's centre
   to its east and south neighbours' centres, where the tool's swept boundary
   crossed and which way it faced (`edgeCrossings.ts`; 4 bytes per cell in
-  `grid.edgeCrossings`, beside `topZ`, whose layout is unchanged). Only cells
-  near the rim of a move's reach, or where a ball or V-bit reaches the stock
-  bottom, are searched, and only edges the shared step test could call a wall.
+  `grid.edgeCrossings`, beside `topZ`, whose layout is unchanged). A static
+  replay (Selected, Visible, the playback base) records them once the heights
+  are final: only cells that end on an outline are searched, and each move
+  visits only the outline cells in its reach, through a 16-cell tile index
+  (`CrossingFinalizer`). Recording them while cutting instead spends most of
+  its searches at each move's leading edge on neighbours the next move cuts
+  anyway, which made the static build ~50 % slower. Playback (Play tool)
+  records them as it cuts, for cells near the rim of a move's reach or where a
+  ball or V-bit reaches the stock bottom. Either way only edges the shared step
+  test could call a wall are searched.
   Beside a through cut the crossing is where the tool leaves the stock bottom;
   between two floors, halfway up the rise. A move that lowers a cell replaces
   its crossings; one that only matches the depth keeps whichever reaches
