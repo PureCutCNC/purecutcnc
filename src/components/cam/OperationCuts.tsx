@@ -37,7 +37,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { useI18n } from '../../i18n/i18nContext'
 import { Icon } from '../Icon'
 import { camT } from './camI18n'
-import { operationCutGroups, operationCutRows, cutRemovalTarget, type OperationCutRow } from './operationCuts'
+import { operationCutGroups, operationCutRows, cutRemovalTarget, type OperationCutRow } from './operationCutsModel'
 import type { Operation, Project } from '../../types/project'
 
 export function OperationCuts({ project, operation }: { project: Project; operation: Operation }) {
