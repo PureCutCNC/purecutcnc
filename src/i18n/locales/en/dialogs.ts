@@ -239,6 +239,7 @@ export const dialogsEn = {
   'dialogs.export.rotaryMmNotice': '{machine} turns the rotary in millimetres only. Change the project units to mm to export rotary operations.',
   'dialogs.export.rotaryFollowsStockOwn': "The A orientation follows the stock: the rotary turns about {axis}, the bar's axis.",
   'dialogs.export.rotaryFollowsStockBorrowed': 'The rotary follows the stock: it turns about {axis} and is driven by the {motor} motor.',
+  'dialogs.export.opensbpExperimental': 'Experimental: ShopBot part files have not been tested on a real ShopBot yet. Run the file in air first, and please send feedback.',
   'dialogs.export.error.generationFailed': 'Generation failed for "{operation}": {detail}',
   'dialogs.export.error.generationInterrupted': 'Generation for "{operation}" was cancelled or superseded. Change the selection or an option, then export again.',
   'dialogs.export.error.missingTool': 'Operation "{operation}" has no tool assigned.',

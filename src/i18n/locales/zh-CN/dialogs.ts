@@ -241,6 +241,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.rotaryMmNotice': '{machine} 仅以毫米驱动旋转轴。请将项目单位改为 mm 以导出旋转工序。',
   'dialogs.export.rotaryFollowsStockOwn': 'A 的方向跟随毛坯：旋转轴绕 {axis}（棒料的轴线）旋转。',
   'dialogs.export.rotaryFollowsStockBorrowed': '旋转轴跟随毛坯：绕 {axis} 旋转，由 {motor} 电机驱动。',
+  'dialogs.export.opensbpExperimental': '实验性：ShopBot 零件文件尚未在真实的 ShopBot 上测试。请先在空运行状态下执行该文件，并欢迎反馈。',
   'dialogs.export.error.generationFailed': '“{operation}”的生成失败：{detail}',
   'dialogs.export.error.generationInterrupted': '“{operation}”的生成已取消或被取代。请更改选择或某个选项，然后重新导出。',
   'dialogs.export.error.missingTool': '加工操作“{operation}”未指定刀具。',

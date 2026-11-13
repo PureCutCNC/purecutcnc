@@ -144,6 +144,7 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.root(app.page)).toBeVisible()
     await expect(ui.exportDialog.title(app.page)).toHaveText('Export G-code')
     await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (M6)')
+    await expect(ui.exportDialog.root(app.page).getByTestId('export-experimental-note')).toHaveCount(0)
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
@@ -223,6 +224,16 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.title(app.page)).toHaveText('Export ShopBot part file')
     await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (C9)')
     await expect(ui.exportDialog.root(app.page)).not.toContainText('(M6)')
+
+    // ShopBot output is unproven on real hardware, and the dialog says so as
+    // its first export note (issue #1191).
+    const experimentalNote = ui.exportDialog.root(app.page).getByTestId('export-experimental-note')
+    await expect(experimentalNote).toBeVisible()
+    await expect(experimentalNote).toHaveText(
+      'Experimental: ShopBot part files have not been tested on a real ShopBot yet. '
+      + 'Run the file in air first, and please send feedback.',
+    )
+    await expect(experimentalNote).toHaveClass(/export-setup-note/)
 
     // The file the button saves is a .sbp.
     await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')

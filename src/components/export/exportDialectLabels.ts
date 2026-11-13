@@ -33,6 +33,9 @@ export interface ExportDialectLabels {
   emitToolChanges: MessageKey
   /** The exported layer in the exported-motion debug view. */
   exportedLayer: MessageKey
+  /** Warning shown first among the dialog's export notes while the dialect is
+   *  unproven on real hardware (issue #1191). Unset once it is. */
+  experimentalNote?: MessageKey
   /** CAM panel: tooltip of the per-operation export button. */
   exportForOperation: CamKey
   /** CAM panel: that button's accessible name while no operation is selected. */
@@ -59,6 +62,7 @@ const LABELS: Record<OutputDialect, ExportDialectLabels> = {
     title: 'dialogs.export.titleOpensbp',
     emitToolChanges: 'dialogs.export.emitToolChangesOpensbp',
     exportedLayer: 'dialogs.motionDebug.layerExportedOpensbp',
+    experimentalNote: 'dialogs.export.opensbpExperimental',
     exportForOperation: 'cam.panel.exportGcodeForOperationOpensbp',
     exportForSelected: 'cam.panel.exportGcodeForSelectedOpensbp',
     exportFor: 'cam.panel.exportGcodeForOpensbp',

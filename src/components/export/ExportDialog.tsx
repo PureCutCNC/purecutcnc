@@ -505,6 +505,14 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               </div>
             ) : null}
+            {dialectLabels.experimentalNote ? (
+              <div
+                className="export-setup-note"
+                data-testid="export-experimental-note"
+              >
+                {t(dialectLabels.experimentalNote)}
+              </div>
+            ) : null}
             {rotaryMmNotice && activeDefinition ? (
               <div
                 className="export-setup-note"
