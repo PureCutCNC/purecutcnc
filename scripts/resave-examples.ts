@@ -76,17 +76,67 @@ function freePort(): Promise<number> {
   })
 }
 
-async function waitForServer(url: string, timeoutMs = 120_000): Promise<void> {
-  const started = Date.now()
-  for (;;) {
+/**
+ * What this run knows about the dev server it started itself, as opposed to
+ * whichever process happens to answer on the port (#1192 review finding 1).
+ */
+export interface OwnDevServer {
+  /** Why this run's server stopped, or null while it is still alive. */
+  failure(): string | null
+  /** Whether this run's own output announced a server on the port. */
+  announcedPort(): boolean
+}
+
+/** Does `output` announce a dev server on `port`? Vite prints `Local: http://localhost:<port>/`. */
+export function announcesPort(output: string, port: number): boolean {
+  return new RegExp(`https?://[^\\s]*:${port}(?:[/\\s]|$)`).test(output)
+}
+
+/**
+ * Wait until the dev server **this script started** answers, not merely until
+ * the URL does (#1192 review finding 1).
+ *
+ * A port another server already holds makes `--strictPort` stop Vite, but the
+ * foreign server still answers a plain HTTP probe; accepting any 200 would then
+ * drive that server and write its downloads over this worktree's examples.
+ * Readiness is three facts together: our process is alive, its output announced
+ * the port, and the URL answers. The check runs again every poll, so a server
+ * that dies after announcing is caught before the next step.
+ */
+export async function waitForOwnDevServer(options: {
+  url: string
+  port: number
+  server: OwnDevServer
+  timeoutMs?: number
+  probe?: (url: string) => Promise<boolean>
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+}): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 120_000
+  const now = options.now ?? (() => Date.now())
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
+  const probe = options.probe ?? (async (url: string) => {
     try {
-      const response = await fetch(url)
-      if (response.ok) return
+      return (await fetch(url)).ok
     } catch {
-      // not up yet
+      return false
     }
-    if (Date.now() - started > timeoutMs) throw new Error(`dev server did not answer on ${url}`)
-    await new Promise((done) => setTimeout(done, 250))
+  })
+  const started = now()
+  let answered = false
+  for (;;) {
+    const failure = options.server.failure()
+    if (failure) throw new Error(failure)
+    if (await probe(options.url)) {
+      answered = true
+      if (options.server.announcedPort()) return
+    }
+    if (now() - started > timeoutMs) {
+      throw new Error(answered
+        ? `${options.url} answered, but this run's dev server never announced port ${options.port}; another server may hold it`
+        : `dev server did not answer on ${options.url}`)
+    }
+    await sleep(250)
   }
 }
 
@@ -200,6 +250,8 @@ async function main(): Promise<void> {
 
   const server = startServer(port)
   let serverOutput = ''
+  let spawnError: string | null = null
+  server.on('error', (error) => { spawnError = error.message })
   server.stdout?.on('data', (chunk: Buffer) => { serverOutput += chunk.toString() })
   server.stderr?.on('data', (chunk: Buffer) => { serverOutput += chunk.toString() })
 
@@ -208,7 +260,21 @@ async function main(): Promise<void> {
 
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
   try {
-    await waitForServer(url)
+    await waitForOwnDevServer({
+      url,
+      port,
+      server: {
+        failure: () => {
+          if (spawnError) return `the dev server could not be started: ${spawnError}`
+          if (server.exitCode === null && server.signalCode === null) return null
+          const how = server.signalCode
+            ? `was killed by ${server.signalCode}`
+            : `exited with code ${server.exitCode}`
+          return `this run's dev server ${how} before ${url} was ready; another server may already hold that port (server output above)`
+        },
+        announcedPort: () => announcesPort(serverOutput, port),
+      },
+    })
     browser = await chromium.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -254,7 +320,12 @@ async function main(): Promise<void> {
   console.log(`re-saved ${manifest.length} example(s) in ${examplesDir}`)
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+const invokedDirectly = process.argv[1] !== undefined
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (invokedDirectly) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}
