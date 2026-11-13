@@ -222,7 +222,7 @@ function testLegacyMigration(): void {
 }
 
 function testFixtureFilesMigrate(): void {
-  console.log('Testing every checked-in project file loads as one Top setup...')
+  console.log('Testing every checked-in project file loads with its setups, or migrates to one Top setup...')
   const directories = [
     new URL('../engine/test-fixtures/', import.meta.url),
     new URL('../../public/examples/', import.meta.url),
@@ -231,9 +231,20 @@ function testFixtureFilesMigrate(): void {
   for (const directory of directories) {
     for (const name of readdirSync(directory).filter((entry) => entry.endsWith('.camj')).sort()) {
       const raw = JSON.parse(readFileSync(new URL(name, directory), 'utf8')) as ProjectFormatInput
-      assert(!('setups' in raw), `${name}: fixture predates setups`)
       const decoded = decodeProjectFormat(raw).project
-      assertSingleTopSetup(decoded, name)
+      // The bundled examples are re-saved by the current app (#1192), so they
+      // now carry their own setup. Every other checked-in project predates
+      // setups and must still migrate to the single Top one.
+      if (Array.isArray(raw.setups) && raw.setups.length > 0) {
+        assertEqual(
+          decoded.setups.map((setup) => setup.id),
+          raw.setups.map((setup) => setup.id),
+          `${name}: keeps the setups it was saved with`,
+        )
+        assertEqual(decoded.activeSetupId, raw.activeSetupId, `${name}: keeps its active setup`)
+      } else {
+        assertSingleTopSetup(decoded, name)
+      }
       assertEqual(
         decoded.operations.map((operation) => operation.id),
         raw.operations.map((operation) => operation.id),
