@@ -93,7 +93,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': 'L’entrée trochoïdale près de ({x}, {y}) ne tient pas dans le budget de points restant de l’opération. Augmentez l’avance par boucle, augmentez la profondeur de passe pour avoir moins de niveaux en Z ou utilisez une fraise plus grande.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Le fraisage trochoïdal exige une entrée hélicoïdale lorsque des attaches sont actives.',
   'warnings.edgeTrochoidalTabUnsafe': 'Le dégagement de l’attache trochoïdale est dangereux près de ({x}, {y}).',
-  'warnings.edgeVerticalOvercut': '{operation} : surcoupe verticale de {amount} sous le fond prévu. L’outil entrera dans la martyre.',
+  'warnings.edgeVerticalOvercut': '{operation} : surcoupe verticale de {amount} sous la face inférieure du brut. L’outil entrera dans la martyre.',
   'warnings.edgeVerticalOvercutInvalid': '{operation} : la surcoupe verticale {amount} n’est pas autorisée. Elle doit être nulle ou positive et ne pas dépasser la profondeur maximale de coupe dans la martyre du projet ({limit}). Aucun parcours n’est généré tant qu’elle n’est pas corrigée.',
   'warnings.edgeTrochoidalSmoothTabFallback': 'L’attache « {name} » est définie sur Lisse, mais le contournage trochoïdal l’usine comme Rectangulaire. Le parcours d’outil franchit cette attache par paliers au lieu de monter en rampe.',
   'warnings.edgeTrochoidalSkippedSpan': 'Le tronçon trochoïdal près de ({x}, {y}) est trop court pour une entrée hélicoïdale sûre et a été ignoré.',

@@ -93,7 +93,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': 'La entrada trocoidal cerca de ({x}, {y}) no cabe en el presupuesto de puntos que le queda a la operación. Aumente el avance por vuelta, aumente la profundidad de pasada para tener menos niveles en Z o use una fresa más grande.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'El fresado trocoidal requiere entrada helicoidal cuando hay pestañas activas.',
   'warnings.edgeTrochoidalTabUnsafe': 'La holgura de la pestaña trocoidal no es segura cerca de ({x}, {y}).',
-  'warnings.edgeVerticalOvercut': '{operation}: sobrecorte vertical de {amount} por debajo del fondo previsto. La fresa entrará en el tablero de sacrificio.',
+  'warnings.edgeVerticalOvercut': '{operation}: sobrecorte vertical de {amount} por debajo de la cara inferior del material. La fresa entrará en el tablero de sacrificio.',
   'warnings.edgeVerticalOvercutInvalid': '{operation}: el sobrecorte vertical {amount} no está permitido. Debe ser cero o mayor y no superar la profundidad máxima de corte en el tablero de sacrificio del proyecto ({limit}). No se genera trayectoria hasta corregirlo.',
   'warnings.edgeTrochoidalSmoothTabFallback': 'La pestaña "{name}" está configurada como Suave, pero el contorneado trocoidal la mecaniza como Rectangular. La trayectoria salta esta pestaña en escalón en lugar de subir en rampa.',
   'warnings.edgeTrochoidalSkippedSpan': 'El tramo trocoidal cerca de ({x}, {y}) es demasiado corto para una entrada helicoidal segura y se omitió.',

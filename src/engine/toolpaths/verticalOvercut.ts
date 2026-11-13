@@ -43,8 +43,8 @@ export type VerticalOvercutInvalidReason = 'negative' | 'nonFinite' | 'overLimit
 export type VerticalOvercutStatus =
   /** No overcut: absent, zero, or not an Edge Route. Motion is unchanged. */
   | { kind: 'none' }
-  /** A valid overcut. `floorZ` is the deepest Z the overcut may take a cut to. */
-  | { kind: 'ok'; amount: number; limit: number; floorZ: number }
+  /** A valid overcut, `amount` and `limit` both measured down from the stock bottom. */
+  | { kind: 'ok'; amount: number; limit: number }
   /** A value that must not produce motion. `amount`/`limit` are raw inputs, possibly non-finite. */
   | { kind: 'invalid'; reason: VerticalOvercutInvalidReason; amount: unknown; limit: unknown }
 
@@ -76,18 +76,51 @@ export function resolveVerticalOvercut(project: Pick<Project, 'meta'>, operation
   const limit = projectSpoilboardLimit(project)
   if (limit === null) return { kind: 'invalid', reason: 'limitInvalid', amount: raw, limit: limitRaw }
   if (raw > limit + LIMIT_EPSILON) return { kind: 'invalid', reason: 'overLimit', amount: raw, limit }
-  return { kind: 'ok', amount: raw, limit, floorZ: -limit }
+  return { kind: 'ok', amount: raw, limit }
 }
 
 /**
- * The final bottom an Edge Route cuts to, given the bottom it would cut to
- * without overcut. The overcut deepens the bottom by its amount but never
- * past the spoilboard floor; a bottom that is already below the floor (a
- * target modelled below the stock) is left exactly where it was.
+ * The stock bottom in the frame an Edge Route is generated in. Generation
+ * always runs top-down on the operation's setup frame (`projectInSetupFrame`),
+ * and every flat setup turns the stock about its mid-thickness, so the turned
+ * stock still occupies `[0, thickness]`: the bottom is Z 0 in every setup.
+ * Every overcut depth is measured from here, so this is the one place that
+ * says where it is: the stock stores a thickness, never a bottom offset.
  */
-export function overcutBottomZ(effectiveBottom: number, status: VerticalOvercutStatus): number {
+export const STOCK_BOTTOM_Z = 0
+
+/**
+ * Whether a target whose nominal bottom is `nominalBottom` cuts through to the
+ * stock bottom. Only such a target is overcut; a pocket-like target that stops
+ * inside the material is left exactly as it was.
+ */
+export function cutsThroughStockBottom(nominalBottom: number, stockBottom: number): boolean {
+  return nominalBottom <= stockBottom + LIMIT_EPSILON
+}
+
+/**
+ * The final bottom an Edge Route cuts a descending target to (issue #834).
+ *
+ * - `nominalBottom` is the target's modelled bottom; `effectiveBottom` is the
+ *   bottom it would cut to without overcut (the nominal raised by the axial
+ *   stock to leave).
+ * - A target that does not cut through to the stock bottom is not overcut.
+ * - A through target's final level goes to `stockBottom - amount`, measured
+ *   from the stock bottom, so the axial leave cannot eat into the overcut. A
+ *   target modelled deeper than that keeps its own depth, and nothing the
+ *   overcut adds goes below the spoilboard floor `stockBottom - limit`.
+ * - The result is never shallower than `effectiveBottom`.
+ */
+export function overcutBottomZ(
+  nominalBottom: number,
+  effectiveBottom: number,
+  status: VerticalOvercutStatus,
+  stockBottom: number,
+): number {
   if (status.kind !== 'ok') return effectiveBottom
-  return Math.min(effectiveBottom, Math.max(effectiveBottom - status.amount, status.floorZ))
+  if (!cutsThroughStockBottom(nominalBottom, stockBottom)) return effectiveBottom
+  const requested = Math.min(nominalBottom, stockBottom - status.amount)
+  return Math.min(effectiveBottom, Math.max(requested, stockBottom - status.limit))
 }
 
 function unitSuffix(units: Units): string {
@@ -105,7 +138,7 @@ function formatValue(value: unknown, units: Units): string {
  * units, the units the operator set it in.
  */
 export function verticalOvercutCommentText(amount: number, units: Units): string {
-  return `WARNING: vertical overcut ${formatValue(amount, units)} below the intended bottom - cuts into the spoilboard`
+  return `WARNING: vertical overcut ${formatValue(amount, units)} below the stock bottom - cuts into the spoilboard`
 }
 
 /**

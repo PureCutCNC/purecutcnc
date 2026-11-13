@@ -137,6 +137,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.value.indexingTop': 'Régler A sur 0° avant de lancer. Dégager la broche de la barre avant de tourner A.',
   'booklet.value.indexingBottom': 'Régler A sur 180° (tourner la barre autour de son axe) avant de lancer. Dégager la broche de la barre avant de tourner A.',
   'booklet.value.registrationNone': 'Aucune déclarée',
+  'booklet.value.verticalOvercutNotApplied': '{amount} (non appliquée : aucune cible ne traverse jusqu’à la face inférieure du brut)',
   'booklet.registration.dowel': 'Pion',
   'booklet.registration.fence': 'Butée',
   'booklet.registration.corner': 'Coin',

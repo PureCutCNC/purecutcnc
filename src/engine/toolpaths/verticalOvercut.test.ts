@@ -35,7 +35,8 @@ import { computeOperationToolpath } from './generateOperation'
 import { generateEdgeRouteToolpath } from './edge'
 import { normalizeToolForProject } from './geometry'
 import { warningSeverity } from './warningCodes'
-import { overcutBottomZ, resolveVerticalOvercut } from './verticalOvercut'
+import { overcutBottomZ, resolveVerticalOvercut, STOCK_BOTTOM_Z } from './verticalOvercut'
+import { edgeRouteOvercutApplies } from './verticalOvercutTargets'
 import type { ToolpathMove, ToolpathResult } from './types'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
@@ -232,21 +233,92 @@ test('edge_route_outside trochoidal: the overcut reaches the orbits too', () => 
 
 // ── The spoilboard floor ─────────────────────────────────────────────
 
-test('the overcut never takes a cut past the spoilboard floor', () => {
-  // A part modelled 0.8 below the stock: 0.5 more would reach -1.3, past -1.
-  const floored = toolpath(
+test('the overcut is measured from the stock bottom, and never past the spoilboard floor', () => {
+  // A part modelled 0.8 below the stock is already deeper than 0.5 below the
+  // stock bottom, so the overcut adds nothing to it.
+  const deeper = toolpath(
     project({ operation: 'add', zBottom: -0.8, maxSpoilboardCutDepth: 1 }),
     edgeOperation('edge_route_outside', { verticalOvercut: 0.5 }),
   )
-  assert.ok(Math.abs(minCutZ(floored) + 1) <= 1e-9, `stops at the floor, got ${minCutZ(floored)}`)
+  assert.ok(Math.abs(minCutZ(deeper) + 0.8) <= 1e-9, `keeps its own bottom, got ${minCutZ(deeper)}`)
+  // A part modelled 0.2 below the stock goes to 0.5 below the stock bottom.
+  const shallower = toolpath(
+    project({ operation: 'add', zBottom: -0.2, maxSpoilboardCutDepth: 1 }),
+    edgeOperation('edge_route_outside', { verticalOvercut: 0.5 }),
+  )
+  assert.ok(Math.abs(minCutZ(shallower) + 0.5) <= 1e-9, `goes to -0.5, got ${minCutZ(shallower)}`)
   // A part already modelled below the floor keeps exactly its own bottom.
   const below = toolpath(
     project({ operation: 'add', zBottom: -2, maxSpoilboardCutDepth: 1 }),
     edgeOperation('edge_route_outside', { verticalOvercut: 0.5 }),
   )
   assert.equal(minCutZ(below), -2)
-  assert.equal(overcutBottomZ(-2, { kind: 'ok', amount: 0.5, limit: 1, floorZ: -1 }), -2)
-  assert.equal(overcutBottomZ(3, { kind: 'ok', amount: 0.5, limit: 1, floorZ: -1 }), 2.5, 'a shallow bottom is deepened by the amount')
+  const ok = { kind: 'ok' as const, amount: 0.5, limit: 1 }
+  assert.equal(STOCK_BOTTOM_Z, 0)
+  assert.equal(overcutBottomZ(-2, -2, ok, 0), -2, 'below the floor: untouched')
+  assert.equal(overcutBottomZ(0, 0.4, ok, 0), -0.5, 'the leave does not eat into the overcut')
+  assert.equal(overcutBottomZ(3, 3, ok, 0), 3, 'a target above the stock bottom is not overcut')
+  assert.equal(overcutBottomZ(10, 10.5, ok, 10), 9.5, 'measured from whatever the stock bottom is')
+  assert.equal(overcutBottomZ(10, 10, { kind: 'ok', amount: 1, limit: 1 }, 10), 9, 'at the limit reaches the floor exactly')
+})
+
+// ── Axial stock to leave does not eat into the overcut ───────────────
+
+for (const kind of KINDS) {
+  for (const { leave, label } of [
+    { leave: 0.5, label: 'leave > overcut' },
+    { leave: 0.1, label: 'leave < overcut' },
+    { leave: 0, label: 'leave = 0' },
+  ]) {
+    test(`${kind}: ${label} — the final level is 0.3 below the stock bottom`, () => {
+      const result = toolpath(
+        project({ operation: featureOperationFor(kind), maxSpoilboardCutDepth: 1 }),
+        edgeOperation(kind, { verticalOvercut: 0.3, stockToLeaveAxial: leave }),
+      )
+      assert.ok(Math.abs(minCutZ(result) + 0.3) <= 1e-9, `final level at -0.3, got ${minCutZ(result)}`)
+      const levels = cutLevels(result)
+      assert.equal(levels[levels.length - 1], -0.3)
+      // The leave still applies above: without overcut the route stops at the leave.
+      const plain = toolpath(project({ operation: featureOperationFor(kind) }), edgeOperation(kind, { stockToLeaveAxial: leave }))
+      assert.ok(Math.abs(minCutZ(plain) - leave) <= 1e-9, `without overcut the leave holds, got ${minCutZ(plain)}`)
+      assert.deepEqual(levels.slice(0, -1).filter((z) => z > leave + 1e-9), cutLevels(plain).filter((z) => z > leave + 1e-9), 'the levels above the leave do not move')
+      const warning = result.warnings.find((entry) => entry.code === 'edgeVerticalOvercut')
+      assert.equal(warning?.params?.amount, '0.3 mm', 'the warning states the real depth below the stock bottom')
+    })
+  }
+}
+
+// ── A target that stops inside the material is not overcut ───────────
+
+for (const kind of KINDS) {
+  test(`${kind}: a target above the stock bottom keeps its motion and announces no spoilboard cut`, () => {
+    const plain = toolpath(project({ operation: featureOperationFor(kind), zBottom: 5 }), edgeOperation(kind))
+    const projectValue = project({ operation: featureOperationFor(kind), zBottom: 5, maxSpoilboardCutDepth: 1 })
+    const operation = edgeOperation(kind, { verticalOvercut: 0.3 })
+    const set = toolpath(projectValue, operation)
+    assert.ok(plain.moves.length > 0)
+    assert.deepEqual(set.moves, plain.moves, 'motion is unchanged')
+    assert.ok(!codes(set).includes('edgeVerticalOvercut'), 'no spoilboard warning')
+    assert.equal(edgeRouteOvercutApplies(projectValue, operation), false)
+    assert.deepEqual(
+      verticalOvercutFieldNotice(projectValue, operation),
+      { tone: 'info', key: 'cam.operation.verticalOvercutNotApplied', params: { amount: '0.3 mm' } },
+      'the CAM panel notes the overcut is set but not applied',
+    )
+  })
+}
+
+test('through-ness is read in the operation\'s setup frame', () => {
+  // Modelled from the top down to Z 3: not through on the Top setup, but on a
+  // Bottom setup the stock is turned over and the same target reaches the
+  // stock bottom of that frame.
+  const base = project({ operation: 'add', zBottom: 3, maxSpoilboardCutDepth: 1 })
+  const operation = edgeOperation('edge_route_outside', { verticalOvercut: 0.3, setupId: 'setup-bottom' })
+  const topOperation = { ...operation, setupId: base.setups[0].id }
+  assert.equal(edgeRouteOvercutApplies(base, topOperation), false, 'not through on Top')
+  const bottomSetup = { ...base.setups[0], id: 'setup-bottom', name: 'Bottom', orientation: { axis: 'x' as const, angleDeg: 180 }, operationIds: [] }
+  const flipped = { ...base, setups: [...base.setups, bottomSetup] }
+  assert.equal(edgeRouteOvercutApplies(flipped, operation), true, 'through on Bottom')
 })
 
 // ── Refused values produce no motion ─────────────────────────────────
@@ -336,7 +408,7 @@ test('edge_route_outside: with no overcut a tab is handled exactly as before', (
 
 test('an inch project states the amount in inches', () => {
   const notice = verticalOvercutFieldNotice(
-    { meta: { ...newProject().meta, units: 'inch', maxSpoilboardCutDepth: 0.04 } },
+    project({ operation: 'add', units: 'inch', maxSpoilboardCutDepth: 0.04 }),
     edgeOperation('edge_route_outside', { verticalOvercut: 0.02 }),
   )
   assert.deepEqual(notice, { tone: 'warning', key: 'cam.operation.verticalOvercutNotice', params: { amount: '0.02 in' } })
@@ -345,7 +417,7 @@ test('an inch project states the amount in inches', () => {
 // ── CAM panel notice ─────────────────────────────────────────────────
 
 test('the CAM field notice is a warning for a valid overcut and an error for a refused one', () => {
-  const meta = { meta: { ...newProject().meta, units: 'mm' as const, maxSpoilboardCutDepth: 1 } }
+  const meta = project({ operation: 'subtract', maxSpoilboardCutDepth: 1 })
   assert.equal(verticalOvercutFieldNotice(meta, edgeOperation('edge_route_outside')), null, 'no notice without an overcut')
   assert.equal(verticalOvercutFieldNotice(meta, edgeOperation('edge_route_outside', { verticalOvercut: 0 })), null)
   assert.deepEqual(
@@ -380,7 +452,7 @@ for (const definitionId of ['generic', 'shopbot']) {
     const warning = result.warnings.find((entry) => entry.code === 'edgeVerticalOvercut')
     assert.equal(warning?.params?.amount, '0.5 mm')
     assert.ok(!result.warnings.some((entry) => warningSeverity(entry.code) === 'error'), 'a valid overcut exports')
-    assert.match(result.gcode, /WARNING: vertical overcut 0\.5 mm below the intended bottom/)
+    assert.match(result.gcode, /WARNING: vertical overcut 0\.5 mm below the stock bottom/)
   })
 
   test(`${definitionId}: no overcut, no notice and no comment`, () => {
@@ -397,6 +469,15 @@ for (const definitionId of ['generic', 'shopbot']) {
     const refusal = result.warnings.find((entry) => entry.code === 'edgeVerticalOvercutInvalid')
     assert.ok(refusal, 'the refusal is in the program warnings')
     assert.equal(warningSeverity(refusal.code), 'error', 'and it is an error, which disables Save')
+  })
+}
+
+for (const definitionId of ['generic', 'shopbot']) {
+  test(`${definitionId}: an overcut with no through target is not announced in the export`, () => {
+    const projectValue = project({ operation: 'add', zBottom: 5, maxSpoilboardCutDepth: 1 })
+    const result = post(projectValue, edgeOperation('edge_route_outside', { verticalOvercut: 0.5 }), definitionId)
+    assert.ok(!result.warnings.some((entry) => entry.code.startsWith('edgeVerticalOvercut')), 'no spoilboard warning')
+    assert.doesNotMatch(result.gcode, /vertical overcut/i, 'no spoilboard comment')
   })
 }
 
@@ -427,6 +508,23 @@ test('the booklet prints the overcut row and the warning', () => {
     generatedAt: new Date(0),
   })
   assert.ok(!plainReport.settingRows.some((entry) => entry.label === 'Vertical overcut'), 'no row without an overcut')
+})
+
+test('the booklet says an overcut with no through target is not applied', () => {
+  const projectValue = project({ operation: 'add', zBottom: 5, maxSpoilboardCutDepth: 1 })
+  const tool = normalizeToolForProject(projectValue.tools[0], projectValue)
+  const operation = edgeOperation('edge_route_outside', { verticalOvercut: 0.5 })
+  const withOp = { ...projectValue, operations: [operation] }
+  const report = buildOperationBookletReport({
+    project: withOp,
+    operation,
+    tool,
+    toolpath: generateEdgeRouteToolpath(withOp, operation),
+    generatedAt: new Date(0),
+  })
+  const row = report.settingRows.find((entry) => entry.label === 'Vertical overcut')
+  assert.equal(row?.value, '0.5 mm (not applied: no target cuts through to the stock bottom)')
+  assert.ok(!report.warnings.some((text) => text.toLowerCase().includes('spoilboard')), 'no spoilboard warning')
 })
 
 console.log(`\n  verticalOvercut: ${passed} passed, ${failed} failed`)

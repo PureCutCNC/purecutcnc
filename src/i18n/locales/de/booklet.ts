@@ -140,6 +140,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.value.indexingTop': 'A vor dem Start auf 0° stellen. Die Spindel vor dem Drehen von A klar vom Stab zurückziehen.',
   'booklet.value.indexingBottom': 'A vor dem Start auf 180° stellen (Stab um seine Achse drehen). Die Spindel vor dem Drehen von A klar vom Stab zurückziehen.',
   'booklet.value.registrationNone': 'Keine angegeben',
+  'booklet.value.verticalOvercutNotApplied': '{amount} (nicht angewendet: kein Ziel schneidet bis zur Rohteilunterseite durch)',
   'booklet.registration.dowel': 'Passstift',
   'booklet.registration.fence': 'Anschlag',
   'booklet.registration.corner': 'Ecke',

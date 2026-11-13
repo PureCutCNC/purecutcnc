@@ -135,6 +135,7 @@ export const bookletEn = {
   'booklet.value.indexingTop': 'Set A to 0° before running. Retract the spindle clear of the bar before turning A.',
   'booklet.value.indexingBottom': 'Set A to 180° (turn the bar about its axis) before running. Retract the spindle clear of the bar before turning A.',
   'booklet.value.registrationNone': 'None declared',
+  'booklet.value.verticalOvercutNotApplied': '{amount} (not applied: no target cuts through to the stock bottom)',
   'booklet.registration.dowel': 'Dowel',
   'booklet.registration.fence': 'Fence',
   'booklet.registration.corner': 'Corner',

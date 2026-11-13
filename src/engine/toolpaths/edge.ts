@@ -101,7 +101,8 @@ import {
   type XyLeadOptions,
 } from './xyLead'
 import { appendAll } from './appendAll'
-import { overcutBottomZ, resolveVerticalOvercut, verticalOvercutWarning } from './verticalOvercut'
+import { overcutBottomZ, resolveVerticalOvercut, STOCK_BOTTOM_Z, verticalOvercutWarning } from './verticalOvercut'
+import { edgeRouteOvercutApplies } from './verticalOvercutTargets'
 
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
 
@@ -445,16 +446,20 @@ function routeObstacleCandidates(project: Project): RouteObstacleCandidates {
 
 /**
  * The final bottom an edge route cuts a target to: its Z bottom raised by the
- * axial stock to leave, then lowered by any vertical overcut (issue #834). The
- * overcut only moves the final level down; the stepdown levels above it, the
- * entry and the retract are planned from this bottom exactly as before.
+ * axial stock to leave. A target that cuts through to the stock bottom with a
+ * vertical overcut instead goes to the stock bottom less the overcut, whatever
+ * the leave (issue #834). The overcut only moves the final level down; the
+ * stepdown levels above it, the entry and the retract are planned from this
+ * bottom exactly as before.
  */
 function resolveEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
   const bottom = resolveNominalEffectiveBottom(feature, project, operation)
   if (bottom === null) return null
   const span = resolveFeatureZSpan(project, feature)
   // Only a target cut downward has a bottom for the overcut to deepen.
-  return span.bottom < span.top ? overcutBottomZ(bottom, resolveVerticalOvercut(project, operation)) : bottom
+  return span.bottom < span.top
+    ? overcutBottomZ(span.bottom, bottom, resolveVerticalOvercut(project, operation), STOCK_BOTTOM_Z)
+    : bottom
 }
 
 function resolveNominalEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
@@ -1265,9 +1270,12 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
   // A vertical overcut that is negative, non-finite or past the project's
   // spoilboard limit refuses the whole operation (issue #834): no motion is
   // safer than a clamped depth nobody asked for. A valid one is announced once
-  // for the operation, however many targets it is split into.
+  // for the operation, however many targets it is split into — and only when
+  // a target cuts through to the stock bottom, the only place it is applied.
   const overcut = resolveVerticalOvercut(project, operation)
-  const overcutWarning = verticalOvercutWarning(project, operation, overcut)
+  const overcutWarning = overcut.kind === 'ok' && !edgeRouteOvercutApplies(project, operation)
+    ? null
+    : verticalOvercutWarning(project, operation, overcut)
   if (overcut.kind === 'invalid') {
     return {
       operationId: operation.id,
@@ -1904,7 +1912,7 @@ function generateEdgeRouteToolpathSingle(
       const bandBottom = resolveBandBottomZ(band, operation)
       // Only a band cut downward has a bottom for the overcut to deepen (#834).
       const effectiveBottom = bandBottom !== null && band.bottomZ < band.topZ
-        ? overcutBottomZ(bandBottom, overcut)
+        ? overcutBottomZ(band.bottomZ, bandBottom, overcut, STOCK_BOTTOM_Z)
         : bandBottom
       if (effectiveBottom === null) {
         warnings.push({ code: 'edgeBandNoCutDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })

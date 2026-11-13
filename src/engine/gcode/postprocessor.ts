@@ -15,6 +15,7 @@
  */
 
 import { resolveVerticalOvercut, verticalOvercutCommentText, verticalOvercutWarning } from '../toolpaths/verticalOvercut'
+import { edgeRouteOvercutApplies } from '../toolpaths/verticalOvercutTargets'
 import type {
   MachineDefinition,
   PostProcessorInput,
@@ -226,8 +227,12 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   // and one whose overcut is refused blocks it (issue #834). This is decided
   // from the operation rows themselves, not from the toolpath's warnings, so
   // a refused value cannot reach a saved file even through a stale path.
+  // An overcut with no target cut through to the stock bottom is not applied,
+  // so the export says nothing about a spoilboard cut that does not happen.
   const overcutWarnings = input.operations.flatMap(({ operation }) => {
-    const warning = verticalOvercutWarning(input.project, operation)
+    const status = resolveVerticalOvercut(input.project, operation)
+    if (status.kind === 'ok' && !edgeRouteOvercutApplies(input.project, operation)) return []
+    const warning = verticalOvercutWarning(input.project, operation, status)
     return warning ? [warning] : []
   })
   return overcutWarnings.length === 0 ? result : withWarnings(result, overcutWarnings)
@@ -1340,7 +1345,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     // An intentional spoilboard cut is said in the program too, where the
     // operator at the machine reads it (issue #834). No overcut, no line.
     const overcut = resolveVerticalOvercut(project, operation)
-    if (overcut.kind === 'ok') {
+    if (overcut.kind === 'ok' && edgeRouteOvercutApplies(project, operation)) {
       emitLine(`${definition.program.commentPrefix} ${safeCommentText(verticalOvercutCommentText(overcut.amount, project.meta.units), definition)}${definition.program.commentSuffix}`)
     }
 

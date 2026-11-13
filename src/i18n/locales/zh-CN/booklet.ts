@@ -137,6 +137,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.value.indexingTop': '运行前将 A 设为 0°。转动 A 前先将主轴抬离棒料。',
   'booklet.value.indexingBottom': '运行前将 A 设为 180°（绕棒料自身轴线转动）。转动 A 前先将主轴抬离棒料。',
   'booklet.value.registrationNone': '未声明',
+  'booklet.value.verticalOvercutNotApplied': '{amount}（未应用：没有目标切穿到毛坯底面）',
   'booklet.registration.dowel': '定位销',
   'booklet.registration.fence': '靠山',
   'booklet.registration.corner': '角点',

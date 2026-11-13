@@ -1951,7 +1951,7 @@ export function CAMPanel({
               <div className="properties-field">
                 <span />
                 <span
-                  className={notice.tone === 'warning' ? 'cam-field-message cam-field-message--warning' : 'cam-field-message'}
+                  className={notice.tone === 'error' ? 'cam-field-message' : `cam-field-message cam-field-message--${notice.tone}`}
                   data-testid="vertical-overcut-notice"
                   role={notice.tone === 'error' ? 'alert' : undefined}
                 >

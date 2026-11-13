@@ -24,21 +24,29 @@
 import type { Operation, Project } from '../../types/project'
 import type { MessageParams } from '../../i18n/catalog'
 import { resolveVerticalOvercut, verticalOvercutWarning } from '../../engine/toolpaths/verticalOvercut'
+import { edgeRouteOvercutApplies } from '../../engine/toolpaths/verticalOvercutTargets'
 
 export interface VerticalOvercutFieldNotice {
-  tone: 'warning' | 'error'
-  key: 'cam.operation.verticalOvercutNotice' | 'cam.operation.verticalOvercutInvalid'
+  tone: 'info' | 'warning' | 'error'
+  key: 'cam.operation.verticalOvercutNotice' | 'cam.operation.verticalOvercutNotApplied' | 'cam.operation.verticalOvercutInvalid'
   params: MessageParams
 }
 
-export function verticalOvercutFieldNotice(project: Pick<Project, 'meta'>, operation: Operation): VerticalOvercutFieldNotice | null {
+export function verticalOvercutFieldNotice(project: Project, operation: Operation): VerticalOvercutFieldNotice | null {
   const status = resolveVerticalOvercut(project, operation)
   // The engine's own warning carries the formatted amount and limit, so the
   // panel, the export and the booklet print the same numbers.
   const warning = verticalOvercutWarning(project, operation, status)
   if (!warning) return null
   const params: MessageParams = { amount: String(warning.params?.amount ?? '') }
-  if (status.kind === 'ok') return { tone: 'warning', key: 'cam.operation.verticalOvercutNotice', params }
+  if (status.kind === 'ok') {
+    // Set but not applied: no target cuts through to the stock bottom, so
+    // there is no spoilboard cut to warn about — only a note that the
+    // setting does nothing here.
+    return edgeRouteOvercutApplies(project, operation)
+      ? { tone: 'warning', key: 'cam.operation.verticalOvercutNotice', params }
+      : { tone: 'info', key: 'cam.operation.verticalOvercutNotApplied', params }
+  }
   return {
     tone: 'error',
     key: 'cam.operation.verticalOvercutInvalid',

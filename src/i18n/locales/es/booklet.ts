@@ -137,6 +137,7 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   'booklet.value.indexingTop': 'Ajuste A a 0° antes de ejecutar. Retire el husillo de la barra antes de girar A.',
   'booklet.value.indexingBottom': 'Ajuste A a 180° (gire la barra sobre su eje) antes de ejecutar. Retire el husillo de la barra antes de girar A.',
   'booklet.value.registrationNone': 'Ninguno declarado',
+  'booklet.value.verticalOvercutNotApplied': '{amount} (no aplicado: ningún objetivo corta hasta la cara inferior del material)',
   'booklet.registration.dowel': 'Pasador',
   'booklet.registration.fence': 'Tope',
   'booklet.registration.corner': 'Esquina',

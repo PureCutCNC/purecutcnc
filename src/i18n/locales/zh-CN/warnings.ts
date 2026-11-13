@@ -97,7 +97,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': '({x}, {y}) 附近的摆线入口已超出该操作剩余的点数预算。请提高每圈推进量、增大下刀步距以减少 Z 层数，或改用更大的刀具。',
   'warnings.edgeTrochoidalTabsRequireHelix': '启用连接桥时，摆线加工需要螺旋进入。',
   'warnings.edgeTrochoidalTabUnsafe': '({x}, {y}) 附近的摆线连接桥间隙不安全。',
-  'warnings.edgeVerticalOvercut': '{operation}：垂直过切 {amount}，低于预定底面。刀具将切入垫板。',
+  'warnings.edgeVerticalOvercut': '{operation}：垂直过切 {amount}，低于毛坯底面。刀具将切入垫板。',
   'warnings.edgeVerticalOvercutInvalid': '{operation}：垂直过切 {amount} 不被允许。它必须不小于零，且不大于项目的最大垫板切削深度（{limit}）。修正之前不会生成刀路。',
   'warnings.edgeTrochoidalSmoothTabFallback': '凸台“{name}”设置为平滑，但摆线轮廓加工按矩形方式切削。刀路在此凸台上采用阶梯抬刀，而非斜坡过渡。',
   'warnings.edgeTrochoidalSkippedSpan': '({x}, {y}) 附近的摆线路段太短，无法安全螺旋进入，已跳过。',

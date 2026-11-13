@@ -15,6 +15,7 @@
  */
 
 import { resolveVerticalOvercut, verticalOvercutWarning } from '../toolpaths/verticalOvercut'
+import { edgeRouteOvercutApplies } from '../toolpaths/verticalOvercutTargets'
 import type { CornerReliefStyle, Operation, OperationKind, OperationPass, Project } from '../../types/project'
 // Presentation exception: the booklet report is a user-facing document, so
 // it maps structured warnings to localized text here via the i18n layer.
@@ -372,8 +373,14 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   // warning says the rest.
   const overcut = resolveVerticalOvercut(project, operation)
   if (overcut.kind !== 'none') {
-    const amount = verticalOvercutWarning(project, operation, overcut)?.params?.amount
-    rows.push({ label: translate('booklet.label.verticalOvercut'), value: String(amount ?? '') })
+    const amount = String(verticalOvercutWarning(project, operation, overcut)?.params?.amount ?? '')
+    // Set but not applied (no target cuts through to the stock bottom): the
+    // row says so rather than announce a spoilboard cut that does not happen.
+    const applied = overcut.kind !== 'ok' || edgeRouteOvercutApplies(project, operation)
+    rows.push({
+      label: translate('booklet.label.verticalOvercut'),
+      value: applied ? amount : translate('booklet.value.verticalOvercutNotApplied', { amount }),
+    })
   }
 
   // Trochoidal Engrave derives its orbit sense from cutDirection, so the
