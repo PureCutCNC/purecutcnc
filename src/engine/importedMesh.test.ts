@@ -469,6 +469,32 @@ function testLoadPersistedBufferGeometryChunksInvariant(): void {
 }
 
 /**
+ * #1204: outside a browser window (Node here, a Web Worker in the app) the
+ * persisted mesh must decode through `globalThis.atob` byte-for-byte, and a
+ * payload `atob` refuses must still decode the way the old fallback did, by
+ * dropping the characters it does not know.
+ */
+function testPersistedMeshDecodeWithoutWindow(): void {
+  assert(typeof (globalThis as { window?: unknown }).window === 'undefined', 'test expects no window')
+  const positions = new Float32Array([0, 0, 0, 1.5, -2.25, 3e-7, 1e6, 0.1, -0.3])
+  const index = new Uint32Array([0, 1, 2])
+  const persisted = serializeImportedMesh(makeTriangleMesh(positions, index), 'stl')
+
+  const decoded = loadPersistedTriangleMesh(persisted)
+  if (!decoded) throw new Error('expected a decoded mesh')
+  assert(decoded.positions.every((value, i) => Object.is(value, positions[i])), 'positions must round-trip exactly')
+  assert(decoded.index.every((value, i) => value === index[i]), 'indices must round-trip exactly')
+
+  const tainted = `${persisted.positions.slice(0, 4)}-${persisted.positions.slice(4)}`
+  let refused = false
+  try { atob(tainted) } catch { refused = true }
+  assert(refused, 'atob should refuse the tainted payload')
+  const fallback = loadPersistedTriangleMesh({ ...persisted, positions: tainted })
+  if (!fallback) throw new Error('expected the fallback decoder to accept the tainted payload')
+  assert(fallback.positions.every((value, i) => Object.is(value, positions[i])), 'fallback must strip the bad character')
+}
+
+/**
  * Build an axis-aligned cube triangle mesh (12 triangles, 8 vertices) at the
  * given origin and with the given side length. Vertices are pre-shared, so the
  * resulting mesh forms a single connected component under union-find without
@@ -672,6 +698,7 @@ testObjFaceSyntaxAndTriangulation()
 testObjInvalidFaces()
 testObjGeometryCloneCache()
 testPersistedMeshRoundTrip()
+testPersistedMeshDecodeWithoutWindow()
 testChunkerSmallMeshSingleUint16Chunk()
 testChunkerLargeMeshSplits()
 testChunkerVertexShared()
