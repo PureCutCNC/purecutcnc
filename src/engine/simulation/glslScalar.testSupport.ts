@@ -52,6 +52,9 @@ const BUILTINS = {
   mix: (a: number, b: number, t: number): number => a * (1 - t) + b * t,
   clamp: (x: number, low: number, high: number): number => Math.min(Math.max(x, low), high),
   ceil: Math.ceil,
+  floor: Math.floor,
+  // GLSL float(x) of an int is exact here: JavaScript has one number type.
+  toFloat: (x: number): number => x,
   // GLSL's two-argument atan(y, x) is atan2.
   atan: (y: number, x?: number): number => (x === undefined ? Math.atan(y) : Math.atan2(y, x)),
   // GLSL int() truncates toward zero, exactly as Math.trunc does.
@@ -90,6 +93,7 @@ export function compileScalarGlsl(
   const script = withFunctions
     .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\[(\\d+)\\];`, 'g'), 'let $1 = new Array($2);')
     .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*=`, 'g'), 'let $1 =')
+    .replace(/\bfloat\(/g, 'toFloat(')
 
   // `int`/`ivec2` are supported here (`int(x)` is a builtin, an `ivec2` is an
   // object); every other vector/matrix type is not.

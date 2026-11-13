@@ -619,33 +619,43 @@ test('simulation keeps a wall crisp above half a cell and shades a step at or be
 
 test('simulation draws a slanted wall straight, with tops, walls and underside sharing its outline', async ({ app }) => {
   // Issue #973: a wall at 45° to the grid is sampled as a one-cell sawtooth.
-  // The outline corner pass moves the grid corners at those jogs onto the
-  // outline, and the tops, both wall strips and the underside read the same
-  // texel; only rendered pixels show whether they moved them alike. The cut
-  // is made in two halves, the second through a partial refresh, as playback
-  // does it.
+  // The replay kernel records where the tool's edge crossed between cell
+  // centres, the corner pass places the grid corners on that edge, and the
+  // tops, both wall strips and the underside read the same texel; only
+  // rendered pixels show whether they moved them alike. The cut lands in two
+  // halves, the second through a partial refresh, as playback does it.
   await app.page.addScriptTag({ type: 'module', content: `
     import * as THREE from '/node_modules/.vite/deps/three.js';
     import { buildSimulationStockScene } from '/src/engine/simulation/simulationScene.ts';
+    import { applyMoveToGrid } from '/src/engine/simulation/replay.ts';
 
-    // 20 mm material where a cell's centre lies past the line z = x + 0.3, cut
-    // through elsewhere. Drawn on cell edges the wall zigzags between
-    // z - x = 0 and 1; on the outline it is the straight line z - x = 0.5.
+    // A through cut by a large flat cutter whose edge runs along z = x + 0.5:
+    // material where a cell's centre lies past it. Drawn on cell edges the
+    // wall zigzags between z - x = 0 and 1; on the tool's edge it is the
+    // straight line z - x = 0.5.
     const cols = 24;
     const rows = 24;
-    const heights = new Float32Array(cols * rows).fill(20);
+    const blank = () => ({
+      originX: 0, originY: 0, cellSize: 1, cols, rows, stockBottomZ: 0, stockTopZ: 20,
+      topZ: new Float32Array(cols * rows).fill(20), edgeCrossings: new Uint8Array(cols * rows * 4),
+    });
+    const finished = blank();
+    const offset = 0.5 - 50 * Math.SQRT2;
+    applyMoveToGrid(finished, {
+      kind: 'cut', from: { x: -60, y: -60 + offset, z: -1 }, to: { x: 84, y: 84 + offset, z: -1 },
+    }, 50, 'flat_endmill', null);
+    const grid = blank();
+    // Copy the finished cut's columns in, heights and crossings alike.
     const cut = (colMin, colMax) => {
       for (let row = 0; row < rows; row += 1) {
         for (let col = colMin; col <= colMax; col += 1) {
-          if (row - col <= 0.3) heights[row * cols + col] = 0;
+          const index = row * cols + col;
+          grid.topZ[index] = finished.topZ[index];
+          grid.edgeCrossings.set(finished.edgeCrossings.subarray(index * 4, index * 4 + 4), index * 4);
         }
       }
     };
     cut(0, 11);
-    const grid = {
-      originX: 0, originY: 0, cellSize: 1, cols, rows,
-      stockBottomZ: 0, stockTopZ: 20, topZ: heights,
-    };
     const built = buildSimulationStockScene(grid, new THREE.Color('#c8c8c8'));
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
@@ -785,36 +795,30 @@ test('simulation draws a slanted wall straight, with tops, walls and underside s
   expect(outline.underside.brightestOutside).toBeLessThan(10)
 })
 
-test('simulation lights a gently sloped wall evenly across its jogs', async ({ app }) => {
+test('simulation lights a gently sloped wall evenly along its length', async ({ app }) => {
   // Issue #973: a wall at a small angle to the grid is long axis-aligned runs
-  // joined by one-cell jogs. Moving the jog corners turns each jog into a short
-  // slanted face; lit by its own face normal every one is a band. The wall
-  // strips light with the outline's direction smoothed along it instead. The
-  // same scene lit by face normals (every corner's smoothed code set to
-  // "none") is the comparison.
+  // joined by one-cell jogs; drawn on cell edges each jog is a face at right
+  // angles to the runs, and lights as a band. Placed and lit from the edge
+  // crossings the replay kernel records, it is one straight face. The same
+  // heights with no crossings recorded (cell edges) are the comparison.
   await app.page.addScriptTag({ type: 'module', content: `
     import * as THREE from '/node_modules/.vite/deps/three.js';
     import { buildSimulationStockScene } from '/src/engine/simulation/simulationScene.ts';
-    import { createInstancedBoundaryGroup } from '/src/engine/simulation/instancedBoundary.ts';
+    import { applyMoveToGrid } from '/src/engine/simulation/replay.ts';
 
-    // Material past the line z = x / 6 + 0.3, cut through before it.
+    // A through cut by a large flat cutter whose edge runs along z = x / 6 + 0.3.
     const cols = 48;
     const rows = 24;
-    const heights = new Float32Array(cols * rows);
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        heights[row * cols + col] = row + 0.5 - (col + 0.5) / 6 > 0.3 ? 20 : 0;
-      }
-    }
-    const grid = { originX: 0, originY: 0, cellSize: 1, cols, rows, stockBottomZ: 0, stockTopZ: 20, topZ: heights };
+    const grid = {
+      originX: 0, originY: 0, cellSize: 1, cols, rows, stockBottomZ: 0, stockTopZ: 20,
+      topZ: new Float32Array(cols * rows).fill(20), edgeCrossings: new Uint8Array(cols * rows * 4),
+    };
+    const normal = { x: 1 / Math.hypot(1, 6), y: -6 / Math.hypot(1, 6) };
+    const at = (x) => ({ x: x + 50 * normal.x, y: x / 6 + 0.3 + 50 * normal.y, z: -1 });
+    applyMoveToGrid(grid, { kind: 'cut', from: at(-80), to: at(130) }, 50, 'flat_endmill', null);
     const color = new THREE.Color('#c8c8c8');
     const built = buildSimulationStockScene(grid, color);
-    const faceLit = new THREE.DataTexture(new Uint8Array((cols + 1) * (rows + 1)).fill(255), cols + 1, rows + 1, THREE.RedFormat);
-    faceLit.needsUpdate = true;
-    const faceBoundary = createInstancedBoundaryGroup(
-      built.heightfieldTexture, grid, color, undefined, undefined, undefined, undefined,
-      { texture: built.outline.texture, normals: faceLit },
-    );
+    const onCellEdges = buildSimulationStockScene({ ...grid, edgeCrossings: new Uint8Array(cols * rows * 4) }, color);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
     scene.add(built.group);
@@ -833,36 +837,34 @@ test('simulation lights a gently sloped wall evenly across its jogs', async ({ a
       gl.readPixels(Math.floor((point.x + 1) * 300), Math.floor((point.y + 1) * 200), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
       return pixel[0] + pixel[1] + pixel[2];
     };
-    const wallRange = () => {
-      built.outline.update(renderer);
+    const wallRange = (scene, outline) => {
+      outline.update(renderer);
       renderer.render(scene, camera);
       gl.finish();
       let darkest = 1000;
       let brightest = 0;
       for (let x = 10; x < 38; x += 0.29) {
-        const value = brightnessAt(x, 10, x / 6 + 0.5);
+        const value = brightnessAt(x, 10, x / 6 + 0.3);
         darkest = Math.min(darkest, value);
         brightest = Math.max(brightest, value);
       }
       return { darkest, brightest };
     };
-    const smoothed = wallRange();
+    const smoothed = wallRange(scene, built.outline);
     scene.remove(built.group);
-    scene.add(built.surface);
-    scene.add(faceBoundary);
-    const faces = wallRange();
+    scene.add(onCellEdges.group);
+    const faces = wallRange(scene, onCellEdges.outline);
 
-    for (const object of [built.group, faceBoundary]) {
-      object.traverse((child) => {
+    for (const each of [built, onCellEdges]) {
+      each.group.traverse((child) => {
         if (child.isMesh) {
           child.geometry.dispose();
           child.material.dispose();
         }
       });
+      each.outline.dispose();
+      each.heightfieldTexture.dispose();
     }
-    faceLit.dispose();
-    built.outline.dispose();
-    built.heightfieldTexture.dispose();
     renderer.dispose();
     document.body.dataset.wallLight973 = JSON.stringify({ smoothed, faces });
   ` })
@@ -874,8 +876,8 @@ test('simulation lights a gently sloped wall evenly across its jogs', async ({ a
   // Every sample lands on the lit wall, in both renders.
   expect(result.smoothed.darkest).toBeGreaterThan(200)
   expect(result.faces.darkest).toBeGreaterThan(200)
-  // Smoothed, the wall shades evenly along its whole length (measured: 12 of
-  // 450). Lit face by face, the jogs band it (measured: 141).
+  // On the tool's edge the wall shades evenly along its whole length; on cell
+  // edges the jogs band it.
   const smoothedRange = result.smoothed.brightest - result.smoothed.darkest
   const faceRange = result.faces.brightest - result.faces.darkest
   expect(smoothedRange).toBeLessThanOrEqual(0.05 * result.smoothed.brightest)

@@ -62,24 +62,37 @@ The shipped implementation plan and playback experiments are preserved in
   surface's own normal code. Collapsing them leaves a slit between two flat
   tops that shows the stock underside; lighting them as walls draws the cell
   grid.
-- Walls follow the cut outline, not only cell edges (issue #973). A grid
-  corner where exactly two walls meet at a right angle, and the outline turns
-  back at the next corner, is a jog of a slanted edge: it moves a quarter cell
-  on both axes into the turn, so a 45° staircase is drawn as one straight wall
-  through the edge midpoints. Real corners, junctions and one-cell islands or
-  holes stay where they are (one-cell tab bridges keep their walls and tops,
-  #829). The surface tops, both wall strips and the underside read the same
-  per-corner offset, so tops meet walls with no gap or overlap. A sharp corner
-  rounds only where a jog lies right next to it, by up to 0.25·√2 ≈ 0.35 cell.
-- The rule is not run per vertex. GPU passes evaluate it once per grid corner
-  into a `(cols+1) × (rows+1)` texture whenever heights change (the whole grid
-  on build, the dirty rectangle plus the rule's reach during playback), and a
-  second pass walks the outline up to 8 corners each way to store a smoothed
-  wall direction. Wall strips light with that direction, so a gently curved
-  wall shades evenly across its jogs; real corners and junctions keep their
-  faces' own normals. Lighting only: no geometry reads it. Wrapped (Around)
-  grids keep cell-edge walls; their periodic seam would need its own corner
-  lookup.
+- Walls follow the cut outline, not only cell edges (issue #973). A cell's
+  height cannot say where between two cell centres the cut ended, so the flat
+  replay kernel records it while it stamps: for the lines from a cell's centre
+  to its east and south neighbours' centres, where the tool's swept boundary
+  crossed and which way it faced (`edgeCrossings.ts`; 4 bytes per cell in
+  `grid.edgeCrossings`, beside `topZ`, whose layout is unchanged). Only cells
+  near the rim of a move's reach, or where a ball or V-bit reaches the stock
+  bottom, are searched, and only edges the shared step test could call a wall.
+  Beside a through cut the crossing is where the tool leaves the stock bottom;
+  between two floors, halfway up the rise. A move that lowers a cell replaces
+  its crossings; one that only matches the depth keeps whichever reaches
+  further (the union of the cuts).
+- Corners are placed by dual contouring. A GPU pass solves each grid corner
+  once per height change: the least-squares point on the boundary lines through
+  the crossings of the walls that leave it, pulled weakly toward the corner,
+  kept within half a cell (if the lines meet outside that square, the
+  crossings' average). Curves come out as curves (a stamped circle's corners
+  within 0.02 cell of the tool's edge, against 0.37 cell rms on cell edges),
+  and where two cuts' edges meet at an angle the corner lands on their
+  intersection and stays sharp. Which edges are walls is still `edgeIsStep`
+  (one predicate, #829); a stamped one-cell tab bridge keeps its walls, tops
+  and real width. A wall edge with no crossing (the grid's own edge, data from
+  before) stays on its cell edge. The tops, both wall strips and the underside
+  read the same per-corner offset, so tops meet walls with no gap or overlap.
+- The pass writes one RGBA8 `(cols+1) × (rows+1)` texture: the corner's X and
+  Z offset and the wall's direction there (the sum of the crossing normals),
+  which the wall strips light with. It runs over the whole grid on build and
+  over the dirty rectangle plus its reach during playback, after the dirty
+  crossings are uploaded. Wrapped (Around) and square-blank grids record no
+  crossings and keep cell-edge walls; their periodic seam would need its own
+  corner lookup.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and

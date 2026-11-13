@@ -19,6 +19,7 @@ import type { Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
+import { stampEdgeCrossings, SweptCutter } from './edgeCrossings'
 import { createSimulationGrid } from './grid'
 import { cutterRayIntervalInPlace } from './tools'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
@@ -41,6 +42,9 @@ export interface ApplyMoveResult {
   changedCount: number
   dirtyRegion: DirtyRegion | null
 }
+
+/** Reused for every move: the crossing search allocates nothing per move. */
+const SHARED_CUTTER = new SweptCutter()
 
 function applyMoveKernel(
   grid: SimulationGrid,
@@ -99,6 +103,26 @@ function applyMoveKernel(
   const originX = grid.originX
   const originY = grid.originY
 
+  // Issue #973: where this move's boundary falls between cell centres. Only
+  // cells near the rim of its reach, or (for a ball or V-bit) where it reaches
+  // the stock bottom, can sit beside a wall it makes; the rest skip on one
+  // compare. A grid without `edgeCrossings` (rotary) pays nothing.
+  const crossings = grid.edgeCrossings
+  const rimDistance = Math.max(0, toolRadius - cellSize)
+  const rimDistanceSq = rimDistance * rimDistance
+  const shapedTip = isBall || isVBit
+  const crossingCutter = crossings ? SHARED_CUTTER : null
+  if (crossingCutter) {
+    crossingCutter.set(
+      x0, y0, z0, segDx, segDy, segDz, invSegLengthSq, xyStationary, stationaryZ,
+      radiusSqWithTolerance, toolRadius, isBall ? 1 : isVBit ? 2 : isPlasma ? 3 : 0, vBitInvSlope, stockBottomZ,
+    )
+  }
+  let crossColMin = grid.cols
+  let crossColMax = -1
+  let crossRowMin = grid.rows
+  let crossRowMax = -1
+
   for (let row = rowStart; row <= rowEnd; row += 1) {
     const y = originY + (row + 0.5) * cellSize
     const rowBase = row * grid.cols
@@ -138,7 +162,8 @@ function applyMoveKernel(
 
       const idx = rowBase + col
       const nextZ = cutZ > stockBottomZ ? cutZ : stockBottomZ
-      if (nextZ < topZ[idx] - 1e-9) {
+      const lowered = nextZ < topZ[idx] - 1e-9
+      if (lowered) {
         topZ[idx] = nextZ
         changed += 1
         if (col < dirtyColMin) dirtyColMin = col
@@ -146,12 +171,38 @@ function applyMoveKernel(
         if (row < dirtyRowMin) dirtyRowMin = row
         if (row > dirtyRowMax) dirtyRowMax = row
       }
+      if (
+        crossingCutter !== null
+        && (distanceSq > rimDistanceSq || (shapedTip && cutZ <= stockBottomZ))
+        && nextZ <= topZ[idx] + 1e-9
+      ) {
+        const written = stampEdgeCrossings(
+          crossings!, topZ, grid.cols, grid.rows, originX, originY, cellSize, stockBottomZ,
+          crossingCutter, col, row, topZ[idx], lowered, ddx, ddy,
+        )
+        if (written !== 0) {
+          // The edge is stored on its low-index cell, which may be the
+          // neighbour on the low side; widen by one so an upload covers it.
+          if (col - 1 < crossColMin) crossColMin = col - 1
+          if (col > crossColMax) crossColMax = col
+          if (row - 1 < crossRowMin) crossRowMin = row - 1
+          if (row > crossRowMax) crossRowMax = row
+        }
+      }
     }
   }
 
+  // A crossing can move with no height changing (a second pass at the same
+  // depth reaching a little further), so the dirty region covers both.
+  if (crossColMax >= 0) {
+    dirtyColMin = Math.min(dirtyColMin, Math.max(0, crossColMin))
+    dirtyColMax = Math.max(dirtyColMax, crossColMax)
+    dirtyRowMin = Math.min(dirtyRowMin, Math.max(0, crossRowMin))
+    dirtyRowMax = Math.max(dirtyRowMax, crossRowMax)
+  }
   return {
     changedCount: changed,
-    dirtyRegion: changed > 0 ? { colMin: dirtyColMin, colMax: dirtyColMax, rowMin: dirtyRowMin, rowMax: dirtyRowMax } : null,
+    dirtyRegion: changed > 0 || crossColMax >= 0 ? { colMin: dirtyColMin, colMax: dirtyColMax, rowMin: dirtyRowMin, rowMax: dirtyRowMax } : null,
   }
 }
 

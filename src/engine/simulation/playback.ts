@@ -65,7 +65,8 @@ export interface PlaybackPose {
 }
 
 /**
- * Copy a grid for playback: the mutable `topZ` is duplicated, while every
+ * Copy a grid for playback: the mutable `topZ` (and a flat grid's edge
+ * crossings, issue #973) are duplicated, while every
  * immutable field — including a square blank's `initialTopZ` baseline — rides
  * along by reference. A square grid therefore needs no special state here; its
  * playback is the round bar's clone, seek and reset (issue #1016 C2).
@@ -74,6 +75,7 @@ export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
   return {
     ...source,
     topZ: new Float32Array(source.topZ),
+    ...(source.edgeCrossings ? { edgeCrossings: new Uint8Array(source.edgeCrossings) } : {}),
   }
 }
 
@@ -244,6 +246,9 @@ export class PlaybackController {
 
   reset(): void {
     this.liveGrid.topZ.set(this.baseGrid.topZ)
+    if (this.liveGrid.edgeCrossings && this.baseGrid.edgeCrossings) {
+      this.liveGrid.edgeCrossings.set(this.baseGrid.edgeCrossings)
+    }
     this.moveIndex = 0
     this.moveFraction = 0
     this.distanceTraveled = 0

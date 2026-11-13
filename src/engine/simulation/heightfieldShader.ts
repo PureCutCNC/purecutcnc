@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import type { AroundFrame } from '../aroundFrame'
 import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundShader, aroundUniforms } from './aroundWrap'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
+import { SHALLOW_SLOPE_CELLS } from './stepThreshold'
 
 // theme-exempt: scene lighting reference — matches SimulationViewport light rig
 // Shared lighting code matching the scene lights in SimulationViewport:
@@ -37,22 +38,9 @@ export const LIGHTING_GLSL = /* glsl */ `
   }
 `
 
-/**
- * A height change at or below this many cells across one edge, between two
- * cells that both still hold material, is always shaded as a slope. A ball
- * finish on large stock samples each scallop with only two or three cells, so
- * the gradient reverses at nearly every edge and no neighbor "continues" it;
- * without this bound those edges were drawn as risers and the finished surface
- * turned into a grid of flat squares (issue #939). The steepest edge a scallop
- * can produce is stepover / tool diameter cells tall, so half a cell covers
- * ball finishing up to roughly 45 % stepover.
- *
- * The heights cannot tell a scallop from a real step that shallow, so the rule
- * covers both: a pocket at or below half a cell deep, or a tab within half a
- * cell of the part's top, keeps its riser but has it lit as surface rather than
- * as a crisp wall. A step onto a through cut is exempt and always a wall.
- */
-export const SHALLOW_SLOPE_CELLS = 0.5
+// The bound lives in its own module so the replay kernel can share it
+// without importing three.
+export { SHALLOW_SLOPE_CELLS }
 
 /** How much steeper than its neighbor an edge may be and still continue a slope. */
 export const SLOPE_CONTINUATION_RATIO = 4
@@ -234,48 +222,59 @@ export const CELL_HEIGHT_GLSL = /* glsl */ `
   }
 `
 
+/** Offset code steps per cell: offsets of up to half a cell fit 0..254 around 127. */
+export const OUTLINE_OFFSET_SCALE = 254
+
 /**
- * How far a grid corner moves, in cells on each axis, when the wall outline
- * turns there as part of a stair jog (issue #973).
+ * How strongly a corner is pulled toward where it was, against the boundary
+ * lines' unit weight. Weak enough to leave a corner between two crossing lines
+ * on their intersection; it only decides where along a straight wall a corner
+ * sits (where it was), and stops a lone line from moving it along itself.
  */
-export const OUTLINE_CORNER_SHIFT_CELLS = 0.25
+export const OUTLINE_CORNER_PULL = 0.05
+
+/**
+ * The corner texture's direction code meaning "no smoothed direction": the
+ * walls there keep their own face normal.
+ */
+export const OUTLINE_NORMAL_NONE = 255
 
 /**
  * Walls along the cut outline instead of along cell edges (issue #973).
  *
- * A wall that is not grid-aligned is sampled as a staircase: a fine sawtooth
- * near 45°, long runs with one-cell jogs nearer an axis, drawn as alternating
- * X- and Y-facing faces that read as streaks. The heights cannot say where
- * inside a cell the real edge ran — a cell is either cut or not — but the
- * pattern of walls around a corner can: where the outline turns one way and
- * turns back a cell later, the corner is a jog of a slanted edge, not a real
- * corner of the part.
+ * A wall that is not grid-aligned is sampled as a staircase: drawn on cell
+ * edges it zigzags, and its faces light as alternating X- and Y-facing streaks.
+ * A cell's height cannot say where between two cell centres the cut really
+ * ended, but the replay kernel knows: it records, per cell, where the tool's
+ * boundary crossed the lines to its east and south neighbours' centres and
+ * which way the boundary faced (`edgeCrossings.ts`).
  *
- * So the geometry stays exactly as it is and only grid corners move. A corner
- * where the outline turns as part of a jog moves a quarter cell on both axes
- * into the turn — halfway to the midpoints of the two wall edges that meet
- * there. Every top quad, wall quad and underside hole touching that corner
- * reads the same offset, so tops and walls still meet with no gap and no
- * overlap, and a 45° staircase comes out as one straight wall.
+ * So the geometry stays exactly as it is and only grid corners move. Each
+ * corner is placed by dual contouring: the point nearest, in least squares, to
+ * the boundary lines through the crossings on the walls that leave it, pulled
+ * slightly toward the corner itself so a straight wall keeps its corners'
+ * spacing along it. A curve comes out as the curve, and where two boundary
+ * lines meet at an angle — a real corner of the part — the corner lands on
+ * their intersection and stays sharp. A corner stays within half a cell of
+ * where it was. Every top quad, wall quad and underside hole touching a corner
+ * reads the same position, so tops and walls still meet with no gap and no
+ * overlap.
  *
- * A corner is such a turn only when:
- *  - exactly two of its four edges are walls by `edgeIsStep`, at a right angle,
- *    so the surface and the walls still agree which edges are walls;
- *  - the outline turns back at the next corner along one of those walls. A lone
- *    turn is a real corner and stays sharp; four turns the same way around one
- *    cell are a one-cell island or hole, which must not shrink (a tab bridge
- *    can be one cell wide, issue #829).
+ * Which edges are walls is still `edgeIsStep`, the one predicate the surface
+ * uses (issue #829). A wall edge with no recorded crossing — the grid's own
+ * edge, or a step the kernel left to slope rules — keeps a crossing at its
+ * cell edge, so it stays where it was drawn before.
  *
- * The rule is not run per vertex: `outlineCorners.ts` evaluates it once per
- * corner into a texture whenever the heightfield changes, and the meshes read
- * that texture through `OUTLINE_CORNER_GLSL`. Evaluated per vertex it took the
- * guitar render from 12.4 to 32.3 ms on a Radeon Pro 560X (issue #939 part 2).
+ * Nothing here runs per vertex: `outlineCorners.ts` solves every corner once
+ * into a texture whenever the heights change, and the meshes read it through
+ * `OUTLINE_CORNER_GLSL`. A per-vertex outline rule took the guitar render from
+ * 12.4 to 32.3 ms on a Radeon Pro 560X (issue #939 part 2).
  *
- * Written with scalar arguments and one lookup, `cellHeightAt(x, z)`, so the
- * unit tests can run this source against a height field of their own. Needs
- * `STEP_GLSL` and `cellHeightAt`.
+ * Written in the scalar subset against two lookups, `cellHeightAt(x, z)` and
+ * `cellCrossing(x, z, channel)` (the byte, 0..255), so the unit tests can run
+ * this source against fields of their own. Needs `STEP_GLSL`.
  */
-export const OUTLINE_TURN_GLSL = /* glsl */ `
+export const OUTLINE_WALL_GLSL = /* glsl */ `
   // Cheap, and never false for an edge edgeIsStep calls a step.
   bool edgeMayBeStep(float hNear, float hFar, float stockBottomZ, float cellSize) {
     if (hNear == hFar) {
@@ -307,210 +306,111 @@ export const OUTLINE_TURN_GLSL = /* glsl */ `
     );
   }
 
-  // Which way a corner moves: 0 not at all, 1 toward +X +Z, 2 toward -X +Z,
-  // 3 toward +X -Z, 4 toward -X -Z. Four lookups for nearly every corner; the
-  // rest only where two edges could be walls.
-  //
-  // The eight wall tests run through one loop on purpose: shader compilers
-  // inline every call, and written out call by call the rule took seconds to
-  // compile on a software renderer.
-  int outlineCornerTurn(int cornerX, int cornerZ, float stockBottomZ, float cellSize) {
-    float northWest = cellHeightAt(cornerX - 1, cornerZ - 1);
-    float northEast = cellHeightAt(cornerX, cornerZ - 1);
-    float southWest = cellHeightAt(cornerX - 1, cornerZ);
-    float southEast = cellHeightAt(cornerX, cornerZ);
-    // A turn needs a wall leaving the corner along each axis. A straight wall,
-    // by far the commonest corner that has walls at all, fails this.
-    bool mayTurn =
-      (edgeMayBeStep(northEast, southEast, stockBottomZ, cellSize) || edgeMayBeStep(northWest, southWest, stockBottomZ, cellSize)) &&
-      (edgeMayBeStep(southWest, southEast, stockBottomZ, cellSize) || edgeMayBeStep(northWest, northEast, stockBottomZ, cellSize));
-    int turn = 0;
-    if (mayTurn) {
-      // Tests 0..3: the walls leaving this corner east, west, south, north.
-      // Tests 4..7: at the next corner along each of its two walls, the wall
-      // that turns back and the wall that runs on.
-      bool wall[8];
-      int turnX = 0;
-      int turnZ = 0;
-      for (int test = 0; test < 8; test += 1) {
-        int fromX = cornerX;
-        int fromZ = cornerZ;
-        int dirX = 0;
-        int dirZ = 0;
-        if (test == 0) {
-          dirX = 1;
-        } else if (test == 1) {
-          dirX = -1;
-        } else if (test == 2) {
-          dirZ = 1;
-        } else if (test == 3) {
-          dirZ = -1;
-        } else {
-          if (test == 4) {
-            // A turn has a wall along exactly one direction on each axis.
-            // Anything else leaves turnX or turnZ at zero.
-            turnX = wall[0] == wall[1] ? 0 : (wall[0] ? 1 : -1);
-            turnZ = wall[2] == wall[3] ? 0 : (wall[2] ? 1 : -1);
-          }
-          if (test == 4) {
-            fromX += turnX;
-            dirZ = -turnZ;
-          } else if (test == 5) {
-            fromX += turnX;
-            dirX = turnX;
-          } else if (test == 6) {
-            fromZ += turnZ;
-            dirX = -turnX;
-          } else {
-            fromZ += turnZ;
-            dirZ = turnZ;
-          }
-        }
-        wall[test] = wallFrom(fromX, fromZ, dirX, dirZ, stockBottomZ, cellSize);
+  // The corner's position and wall direction, packed into one exact number:
+  // x offset code + 256 * z offset code + 65536 * direction code. An offset code
+  // is offset * ${OUTLINE_OFFSET_SCALE} + 127 (0..254, 127 = unmoved); the
+  // direction code is the wall's line angle over pi in 0..254, or
+  // ${OUTLINE_NORMAL_NONE} where the corner has no wall or no one direction.
+  float outlineCornerSolve(int cornerX, int cornerZ, float stockBottomZ, float cellSize) {
+    // Least squares on the boundary lines, plus a weak pull toward the corner.
+    float a11 = ${OUTLINE_CORNER_PULL.toFixed(4)};
+    float a12 = 0.0;
+    float a22 = ${OUTLINE_CORNER_PULL.toFixed(4)};
+    float b1 = 0.0;
+    float b2 = 0.0;
+    float normalSumX = 0.0;
+    float normalSumZ = 0.0;
+    float pointSumX = 0.0;
+    float pointSumZ = 0.0;
+    int walls = 0;
+    // Sides 0..3: the walls leaving the corner east, west, south, north.
+    for (int side = 0; side < 4; side += 1) {
+      int dirX = side == 0 ? 1 : (side == 1 ? -1 : 0);
+      int dirZ = side == 2 ? 1 : (side == 3 ? -1 : 0);
+      if (!wallFrom(cornerX, cornerZ, dirX, dirZ, stockBottomZ, cellSize)) {
+        continue;
       }
-      // A jog turns back at the next corner, the other way, instead of running on.
-      bool backAlongX = wall[4] && !wall[5];
-      bool backAlongZ = wall[6] && !wall[7];
-      if (turnX != 0 && turnZ != 0 && (backAlongX || backAlongZ)) {
-        turn = turnX > 0 ? (turnZ > 0 ? 1 : 3) : (turnZ > 0 ? 2 : 4);
+      walls += 1;
+      // An east or west wall is crossed by the north-south line between the
+      // cells either side of it, stored as the south line of the northern cell;
+      // a south or north wall by the east line of the western cell.
+      bool alongX = side < 2;
+      int ownerX = side == 0 ? cornerX : cornerX - 1;
+      int ownerZ = side == 2 ? cornerZ : cornerZ - 1;
+      int position = cellCrossing(ownerX, ownerZ, alongX ? 2 : 0);
+      float along = position == 0 ? 0.5 : float(position - 1) / 254.0;
+      // The crossing, relative to the corner, in cells.
+      float pointX = alongX ? (side == 0 ? 0.5 : -0.5) : along - 0.5;
+      float pointZ = alongX ? along - 0.5 : (side == 2 ? 0.5 : -0.5);
+      float normalX = 0.0;
+      float normalZ = 0.0;
+      if (position == 0) {
+        // No crossing: the cell edge itself, facing the taller cell.
+        float rise = alongX
+          ? cellHeightAt(ownerX, ownerZ + 1) - cellHeightAt(ownerX, ownerZ)
+          : cellHeightAt(ownerX + 1, ownerZ) - cellHeightAt(ownerX, ownerZ);
+        float facing = rise >= 0.0 ? 1.0 : -1.0;
+        normalX = alongX ? 0.0 : facing;
+        normalZ = alongX ? facing : 0.0;
+      } else {
+        float angle = float(cellCrossing(ownerX, ownerZ, alongX ? 3 : 1)) * (6.283185307179586 / 256.0);
+        normalX = cos(angle);
+        normalZ = sin(angle);
       }
+      float distance = normalX * pointX + normalZ * pointZ;
+      a11 += normalX * normalX;
+      a12 += normalX * normalZ;
+      a22 += normalZ * normalZ;
+      b1 += normalX * distance;
+      b2 += normalZ * distance;
+      normalSumX += normalX;
+      normalSumZ += normalZ;
+      pointSumX += pointX;
+      pointSumZ += pointZ;
     }
-    return turn;
-  }
-
-  // Which of the four edges leaving a corner are walls, as bits: 1 east (+X),
-  // 2 west, 4 south (+Z), 8 north. The outline walk follows these.
-  int outlineCornerWallMask(int cornerX, int cornerZ, float stockBottomZ, float cellSize) {
-    int mask = 0;
-    if (wallFrom(cornerX, cornerZ, 1, 0, stockBottomZ, cellSize)) {
-      mask += 1;
+    float determinant = a11 * a22 - a12 * a12;
+    float offsetX = (a22 * b1 - a12 * b2) / determinant;
+    float offsetZ = (a11 * b2 - a12 * b1) / determinant;
+    // A corner stays within half a cell. The crossings lie on the edges of
+    // that square, so where the lines meet outside it the crossings' average
+    // is still on the outline (on it exactly for a straight wall), where
+    // clamping the solution would pull it off.
+    if (walls > 0 && (abs(offsetX) > 0.5 || abs(offsetZ) > 0.5)) {
+      offsetX = pointSumX / float(walls);
+      offsetZ = pointSumZ / float(walls);
     }
-    if (wallFrom(cornerX, cornerZ, -1, 0, stockBottomZ, cellSize)) {
-      mask += 2;
+    float xCode = floor(offsetX * ${OUTLINE_OFFSET_SCALE.toFixed(1)} + 127.5);
+    float zCode = floor(offsetZ * ${OUTLINE_OFFSET_SCALE.toFixed(1)} + 127.5);
+    float direction = ${OUTLINE_NORMAL_NONE.toFixed(1)};
+    // Walls facing opposite ways (both sides of something thin) have no one
+    // direction; they keep their own face normals.
+    if (walls > 0 && normalSumX * normalSumX + normalSumZ * normalSumZ > 0.01) {
+      // The line runs at right angles to the normal; its angle in [0, pi).
+      float angle = atan(normalSumZ, normalSumX) + 1.5707963267948966;
+      if (angle < 0.0) {
+        angle += 3.141592653589793;
+      }
+      if (angle >= 3.141592653589793) {
+        angle -= 3.141592653589793;
+      }
+      if (angle >= 3.141592653589793) {
+        angle -= 3.141592653589793;
+      }
+      direction = min(floor(angle * (254.0 / 3.141592653589793) + 0.5), 254.0);
     }
-    if (wallFrom(cornerX, cornerZ, 0, 1, stockBottomZ, cellSize)) {
-      mask += 4;
-    }
-    if (wallFrom(cornerX, cornerZ, 0, -1, stockBottomZ, cellSize)) {
-      mask += 8;
-    }
-    return mask;
+    return xCode + 256.0 * zCode + 65536.0 * direction;
   }
 `
 
 /**
- * How many corners the wall-lighting walk follows the outline each way
- * (issue #973). Long enough to span the runs between jogs on a gently curved
- * wall, so its lighting turns gradually instead of in bands.
- */
-export const OUTLINE_SMOOTH_STEPS = 8
-
-/**
- * The direction a wall runs at a corner, smoothed along the outline, for
- * lighting only (issue #973). Moving jog corners puts a short 45° face between
- * long axis-aligned runs on a gently curved wall; lit by its own face normal
- * each one shows as a band. Instead the corner pass walks the outline up to
- * `OUTLINE_SMOOTH_STEPS` corners each way from a wall corner and takes the
- * chord between the two ends, through the moved corner positions.
- *
- * Real corners keep crisp lighting: a corner with no walls, with more than two
- * (a junction), or with two at a right angle that the rule did not move (a
- * corner of the part) returns -1, and the walls there use their own face
- * normal. A walk ends where it reaches such a corner, or a wall's end.
- *
- * Returns the chord's angle in [0, π) — a line direction; each wall orients it
- * away from its taller side — or -1 for none. Written in the scalar subset,
- * against four lookups the shader supplies: `cornerWallMask`, `cornerTurn`,
- * and the moved corner's position `cornerPositionX` / `cornerPositionZ` in
- * cells.
- */
-export const OUTLINE_TANGENT_GLSL = /* glsl */ `
-  int wallBitCount(int mask) {
-    return ((mask & 1) != 0 ? 1 : 0) + ((mask & 2) != 0 ? 1 : 0) + ((mask & 4) != 0 ? 1 : 0) + ((mask & 8) != 0 ? 1 : 0);
-  }
-
-  int lowestWallBit(int mask) {
-    return (mask & 1) != 0 ? 1 : ((mask & 2) != 0 ? 2 : ((mask & 4) != 0 ? 4 : ((mask & 8) != 0 ? 8 : 0)));
-  }
-
-  int wallBitX(int bit) {
-    return bit == 1 ? 1 : (bit == 2 ? -1 : 0);
-  }
-
-  int wallBitZ(int bit) {
-    return bit == 4 ? 1 : (bit == 8 ? -1 : 0);
-  }
-
-  // Two walls at a right angle that the jog rule left in place: a corner of the part.
-  bool outlineRealCorner(int mask, int turn) {
-    return wallBitCount(mask) == 2 && (mask & 3) != 0 && (mask & 12) != 0 && turn == 0;
-  }
-
-  float outlineTangentAngle(int cornerX, int cornerZ) {
-    int mask = cornerWallMask(cornerX, cornerZ);
-    int count = wallBitCount(mask);
-    if (count == 0 || count > 2 || outlineRealCorner(mask, cornerTurn(cornerX, cornerZ))) {
-      return -1.0;
-    }
-    float endX[2];
-    float endZ[2];
-    for (int side = 0; side < 2; side += 1) {
-      int bit = lowestWallBit(mask);
-      if (side == 1) {
-        bit = lowestWallBit(mask - bit);
-      }
-      int x = cornerX;
-      int z = cornerZ;
-      int dirX = wallBitX(bit);
-      int dirZ = wallBitZ(bit);
-      int steps = bit == 0 ? 0 : ${OUTLINE_SMOOTH_STEPS};
-      for (int step = 0; step < steps; step += 1) {
-        x += dirX;
-        z += dirZ;
-        int here = cornerWallMask(x, z);
-        int back = dirX == 1 ? 2 : (dirX == -1 ? 1 : (dirZ == 1 ? 8 : 4));
-        int onward = here - (here & back);
-        if (wallBitCount(onward) != 1 || outlineRealCorner(here, cornerTurn(x, z))) {
-          break;
-        }
-        dirX = wallBitX(onward);
-        dirZ = wallBitZ(onward);
-      }
-      endX[side] = cornerPositionX(x, z);
-      endZ[side] = cornerPositionZ(x, z);
-    }
-    float tangentX = endX[0] - endX[1];
-    float tangentZ = endZ[0] - endZ[1];
-    if (tangentX == 0.0 && tangentZ == 0.0) {
-      return -1.0;
-    }
-    float angle = atan(tangentZ, tangentX);
-    if (angle < 0.0) {
-      angle += 3.141592653589793;
-    }
-    if (angle >= 3.141592653589793) {
-      angle -= 3.141592653589793;
-    }
-    return angle;
-  }
-`
-
-/**
- * The smoothed wall direction as `outlineCorners.ts` stores it: an R8 texel,
- * the angle over π in 0..254, and 255 where the wall keeps its own face
- * normal.
- */
-export const OUTLINE_NORMAL_NONE = 255
-
-/**
- * A wall's lighting normal at one of its corners: the outline's smoothed
- * direction where the corner has one, turned to face the same way as the
- * wall's own face normal; otherwise that face normal. Needs `uOutlineNormals`.
+ * A wall's lighting normal at one of its corners: the boundary's direction
+ * from the corner texture where it has one, turned to face the same way as the
+ * wall's own face normal; otherwise that face normal. Needs `uOutlineCorners`.
  */
 export const OUTLINE_NORMAL_GLSL = /* glsl */ `
   vec3 outlineWallNormal(ivec2 corner, vec3 faceNormal) {
-    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineNormals, 0) - ivec2(1));
-    int code = int(texelFetch(uOutlineNormals, inside, 0).r * 255.0 + 0.5);
+    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
+    int code = int(texelFetch(uOutlineCorners, inside, 0).b * 255.0 + 0.5);
     if (code >= ${OUTLINE_NORMAL_NONE} || inside != corner) {
       return faceNormal;
     }
@@ -520,18 +420,12 @@ export const OUTLINE_NORMAL_GLSL = /* glsl */ `
   }
 `
 
-/** The lookup `OUTLINE_TURN_GLSL` reads cells through. Needs `CELL_HEIGHT_GLSL`. */
+/** The lookup `OUTLINE_WALL_GLSL` reads cells through. Needs `CELL_HEIGHT_GLSL`. */
 export const OUTLINE_LOOKUP_GLSL = /* glsl */ `
   float cellHeightAt(int x, int z) {
     return cellHeight(ivec2(x, z));
   }
 `
-
-/**
- * The turn code `outlineCorners.ts` stores per corner, in an R8 texel: the
- * code over 255, so a texel reads back as an exact integer.
- */
-export const OUTLINE_CODE_SCALE = 255
 
 /**
  * The offset of a grid corner, read from the precomputed corner texture. Every
@@ -543,14 +437,11 @@ export const OUTLINE_CORNER_GLSL = /* glsl */ `
   // Offset of a grid corner in cells.
   vec2 outlineCornerOffset(ivec2 corner) {
     ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
-    int turn = int(texelFetch(uOutlineCorners, inside, 0).r * ${OUTLINE_CODE_SCALE.toFixed(1)} + 0.5);
-    if (turn == 0 || inside != corner) {
+    if (inside != corner) {
       return vec2(0.0);
     }
-    return ${OUTLINE_CORNER_SHIFT_CELLS.toFixed(4)} * vec2(
-      turn == 1 || turn == 3 ? 1.0 : -1.0,
-      turn == 1 || turn == 2 ? 1.0 : -1.0
-    );
+    vec2 code = floor(texelFetch(uOutlineCorners, inside, 0).rg * 255.0 + 0.5);
+    return (code - 127.0) / ${OUTLINE_OFFSET_SCALE.toFixed(1)};
   }
 `
 
@@ -567,7 +458,7 @@ export const OUTLINE_CELL_GLSL = /* glsl */ `
   }
 
   // positionInCells is in cell units from the grid origin. A corner moves at
-  // most a quarter cell, so a point that left its own cell's quad lies in the
+  // most half a cell, so a point that left its own cell's quad lies in the
   // quad of the neighbor across the edge it crossed.
   ivec2 outlineCellAt(vec2 positionInCells, ivec2 lastCell) {
     ivec2 cell = clamp(ivec2(floor(positionInCells)), ivec2(0), lastCell);

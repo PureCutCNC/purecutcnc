@@ -15,49 +15,43 @@
  */
 
 /**
- * The wall-outline corner textures (issue #973).
+ * The wall-outline corner texture (issue #973).
  *
- * Two textures of one texel per grid corner, `(cols + 1) × (rows + 1)`:
+ * One RGBA8 texel per grid corner, `(cols + 1) × (rows + 1)`: R and G hold the
+ * corner's offset on X and Z, B the wall's direction there (for lighting), from
+ * `outlineCornerSolve` in `OUTLINE_WALL_GLSL`. The top surface, both wall
+ * strips and the underside place corners from R and G; the wall strips light
+ * from B.
  *
- * - the corner texture (RG8): R holds the turn code `OUTLINE_TURN_GLSL` gives
- *   the corner — 0 where it stays on the grid, 1..4 for the diagonal it moves
- *   along — and G the bits of which of its four edges are walls. The top
- *   surface, both wall strips and the underside place corners from R;
- * - the normal texture (R8): the wall's direction at the corner, smoothed along
- *   the outline by `OUTLINE_TANGENT_GLSL` from the first texture. The wall
- *   strips light themselves with it. Lighting only: no geometry reads it.
+ * The solve reads the heights and the grid's edge crossings (`edgeCrossings.ts`),
+ * which this module keeps on the GPU as a `cols × rows` RGBA8 texture backed by
+ * the grid's own array. A GPU pass solves the corners whenever the heightfield
+ * changes — the whole grid when the scene is built, the dirty rectangle plus
+ * the solve's reach after a playback upload — and the meshes only read the
+ * result. Evaluated per vertex instead, an outline rule tripled the guitar
+ * project's frame time (issue #939 part 2).
  *
- * GPU passes compute both whenever the heightfield changes — the whole grid
- * when the scene is built, the dirty rectangle plus the rule's reach after a
- * playback upload — and the meshes only read them. Evaluated per vertex
- * instead, the corner rule alone tripled the guitar project's frame time
- * (issue #939 part 2).
- *
- * The corner pass compiles the very `STEP_GLSL` the meshes use, so "which
- * edges are walls" stays one decision (issue #829). The heightfield texture,
- * the grid and its memory layout are untouched; these are derived textures.
+ * The pass compiles the very `STEP_GLSL` the meshes use, so "which edges are
+ * walls" stays one decision (issue #829). The heightfield texture and the
+ * height data's memory layout are untouched.
  */
 
 import * as THREE from 'three'
+import { EDGE_CROSSING_STRIDE } from './edgeCrossings'
+import { uploadTextureRegion } from './gpuMesh'
 import {
   CELL_HEIGHT_GLSL,
-  OUTLINE_CODE_SCALE,
-  OUTLINE_CORNER_GLSL,
   OUTLINE_LOOKUP_GLSL,
-  OUTLINE_NORMAL_NONE,
-  OUTLINE_SMOOTH_STEPS,
-  OUTLINE_TANGENT_GLSL,
-  OUTLINE_TURN_GLSL,
+  OUTLINE_WALL_GLSL,
   STEP_GLSL,
 } from './heightfieldShader'
 import type { DirtyRegion, SimulationGrid } from './types'
 
 /**
- * How many cells away a height change can still change a corner's turn code.
- * The rule reads cells from three below a corner to two above it on each axis
- * (`wallFrom` at the next corner along, plus `edgeIsStep`'s cells beyond), so
- * cell `c` affects corners `c - 2 .. c + 3`: this reach either side of the
- * cell, plus the corner on its far edge. `outlineCorners.test.ts` fails at 1.
+ * How many cells away a height change can still change a corner. The solve
+ * reads `wallFrom` on the four edges leaving a corner, which reads two cells
+ * beyond each edge (`edgeIsStep`), so cell `c` affects corners `c - 1 .. c + 2`.
+ * Kept at 2, with a cell to spare: `outlineCorners.test.ts` fails at 0.
  */
 export const OUTLINE_REACH_CELLS = 2
 
@@ -67,9 +61,10 @@ const passVertexShader = /* glsl */ `
   }
 `
 
-/** The corner pass: one fragment per grid corner writes its turn code and wall bits. */
+/** The corner pass: one fragment per grid corner writes its offset and wall direction. */
 export const OUTLINE_PASS_FRAGMENT_GLSL = /* glsl */ `
   uniform sampler2D uHeightfield;
+  uniform sampler2D uEdgeCrossings;
   uniform float uStockBottomZ;
   uniform float uCellSize;
   out vec4 fragColor;
@@ -77,59 +72,30 @@ export const OUTLINE_PASS_FRAGMENT_GLSL = /* glsl */ `
   ${STEP_GLSL}
   ${CELL_HEIGHT_GLSL}
   ${OUTLINE_LOOKUP_GLSL}
-  ${OUTLINE_TURN_GLSL}
+
+  // One byte of a cell's edge crossings; 0 (none) outside the grid.
+  int cellCrossing(int x, int z, int channel) {
+    ivec2 cell = ivec2(x, z);
+    ivec2 inside = clamp(cell, ivec2(0), textureSize(uEdgeCrossings, 0) - ivec2(1));
+    if (inside != cell) {
+      return 0;
+    }
+    vec4 bytes = texelFetch(uEdgeCrossings, inside, 0);
+    float value = channel == 0 ? bytes.r : (channel == 1 ? bytes.g : (channel == 2 ? bytes.b : bytes.a));
+    return int(value * 255.0 + 0.5);
+  }
+
+  ${OUTLINE_WALL_GLSL}
 
   void main() {
     // One fragment per corner: texel (x, z) is the corner at the low-X low-Z
     // corner of cell (x, z), the same indexing the heightfield uses.
     ivec2 corner = ivec2(gl_FragCoord.xy);
-    int turn = outlineCornerTurn(corner.x, corner.y, uStockBottomZ, uCellSize);
-    int walls = outlineCornerWallMask(corner.x, corner.y, uStockBottomZ, uCellSize);
-    fragColor = vec4(
-      float(turn) / ${OUTLINE_CODE_SCALE.toFixed(1)},
-      float(walls) / ${OUTLINE_CODE_SCALE.toFixed(1)},
-      0.0,
-      1.0
-    );
-  }
-`
-
-/** The normal pass: one fragment per corner writes the smoothed wall direction. */
-export const OUTLINE_NORMAL_PASS_FRAGMENT_GLSL = /* glsl */ `
-  uniform sampler2D uOutlineCorners;
-  out vec4 fragColor;
-
-  ${OUTLINE_CORNER_GLSL}
-
-  int cornerWallMask(int x, int z) {
-    ivec2 corner = ivec2(x, z);
-    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
-    return inside == corner ? int(texelFetch(uOutlineCorners, inside, 0).g * ${OUTLINE_CODE_SCALE.toFixed(1)} + 0.5) : 0;
-  }
-
-  int cornerTurn(int x, int z) {
-    ivec2 corner = ivec2(x, z);
-    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
-    return inside == corner ? int(texelFetch(uOutlineCorners, inside, 0).r * ${OUTLINE_CODE_SCALE.toFixed(1)} + 0.5) : 0;
-  }
-
-  float cornerPositionX(int x, int z) {
-    return float(x) + outlineCornerOffset(ivec2(x, z)).x;
-  }
-
-  float cornerPositionZ(int x, int z) {
-    return float(z) + outlineCornerOffset(ivec2(x, z)).y;
-  }
-
-  ${OUTLINE_TANGENT_GLSL}
-
-  void main() {
-    ivec2 corner = ivec2(gl_FragCoord.xy);
-    float angle = outlineTangentAngle(corner.x, corner.y);
-    float code = angle < 0.0
-      ? ${OUTLINE_NORMAL_NONE.toFixed(1)}
-      : min(floor(angle * (254.0 / 3.141592653589793) + 0.5), 254.0);
-    fragColor = vec4(code / 255.0, 0.0, 0.0, 1.0);
+    float packed = outlineCornerSolve(corner.x, corner.y, uStockBottomZ, uCellSize);
+    float direction = floor(packed / 65536.0);
+    float zCode = floor((packed - direction * 65536.0) / 256.0);
+    float xCode = packed - direction * 65536.0 - zCode * 256.0;
+    fragColor = vec4(xCode, zCode, direction, 255.0) / 255.0;
   }
 `
 
@@ -142,16 +108,15 @@ interface CornerRect {
 }
 
 export interface OutlineCorners {
-  /** The corner texture (turn code, wall bits) the meshes place corners from. */
+  /** The corner texture (offset, wall direction) the meshes read. */
   readonly texture: THREE.Texture
-  /** The smoothed wall-direction texture the wall strips light from. */
-  readonly normals: THREE.Texture
   /**
-   * Mark corners stale after a height change: a dirty cell rectangle, or the
-   * whole grid when no region is given (a full re-upload, a lost context).
+   * Mark corners stale after the heights or edge crossings change: a dirty cell
+   * rectangle, or the whole grid when no region is given (a full re-upload, a
+   * lost context). The crossings in that rectangle are uploaded on `update`.
    */
   invalidate(region?: DirtyRegion): void
-  /** Run the passes over whatever is stale; a no-op when nothing is. */
+  /** Upload stale crossings and solve whatever corners are stale; a no-op when nothing is. */
   update(renderer: THREE.WebGLRenderer): void
   /** True while a change waits for `update`. */
   readonly pending: boolean
@@ -178,53 +143,33 @@ export function outlineCornerRect(
   }
 }
 
-/**
- * The corners whose smoothed direction can change when the corners in `rect`
- * do: a walk reaches `OUTLINE_SMOOTH_STEPS` corners each way. Exported for the
- * tests.
- */
-export function outlineNormalRect(grid: Pick<SimulationGrid, 'cols' | 'rows'>, rect: CornerRect): CornerRect {
-  return {
-    xMin: Math.max(0, rect.xMin - OUTLINE_SMOOTH_STEPS),
-    xMax: Math.min(grid.cols, rect.xMax + OUTLINE_SMOOTH_STEPS),
-    yMin: Math.max(0, rect.yMin - OUTLINE_SMOOTH_STEPS),
-    yMax: Math.min(grid.rows, rect.yMax + OUTLINE_SMOOTH_STEPS),
-  }
-}
-
-function union(a: CornerRect | null, b: CornerRect): CornerRect {
+function unionRect<T extends CornerRect | DirtyRegion>(a: T | null, b: T, keys: [keyof T, keyof T, keyof T, keyof T]): T {
   if (!a) return b
+  const [minA, maxA, minB, maxB] = keys
   return {
-    xMin: Math.min(a.xMin, b.xMin),
-    xMax: Math.max(a.xMax, b.xMax),
-    yMin: Math.min(a.yMin, b.yMin),
-    yMax: Math.max(a.yMax, b.yMax),
+    ...a,
+    [minA]: Math.min(a[minA] as number, b[minA] as number),
+    [maxA]: Math.max(a[maxA] as number, b[maxA] as number),
+    [minB]: Math.min(a[minB] as number, b[minB] as number),
+    [maxB]: Math.max(a[maxB] as number, b[maxB] as number),
   }
 }
 
-function cornerTarget(width: number, height: number, format: THREE.PixelFormat, name: string): THREE.WebGLRenderTarget {
-  const target = new THREE.WebGLRenderTarget(width, height, {
-    format,
-    type: THREE.UnsignedByteType,
-    minFilter: THREE.NearestFilter,
-    magFilter: THREE.NearestFilter,
-    depthBuffer: false,
-    stencilBuffer: false,
-    generateMipmaps: false,
-  })
-  target.texture.name = name
-  return target
-}
-
-function passMaterial(fragmentShader: string, uniforms: Record<string, THREE.IUniform>): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: passVertexShader,
-    fragmentShader,
-    glslVersion: THREE.GLSL3,
-    depthTest: false,
-    depthWrite: false,
-  })
+/** The texture a flat grid's edge crossings live in; a lone "none" texel without them. */
+function createCrossingTexture(grid: SimulationGrid): THREE.DataTexture {
+  const data = grid.edgeCrossings ?? new Uint8Array(EDGE_CROSSING_STRIDE)
+  const texture = new THREE.DataTexture(
+    data,
+    grid.edgeCrossings ? grid.cols : 1,
+    grid.edgeCrossings ? grid.rows : 1,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  )
+  texture.minFilter = THREE.NearestFilter
+  texture.magFilter = THREE.NearestFilter
+  texture.name = 'simulationEdgeCrossings'
+  texture.needsUpdate = true
+  return texture
 }
 
 export function createOutlineCorners(
@@ -233,18 +178,32 @@ export function createOutlineCorners(
 ): OutlineCorners {
   const width = grid.cols + 1
   const height = grid.rows + 1
-  const cornerRT = cornerTarget(width, height, THREE.RGFormat, 'simulationOutlineCorners')
-  const normalRT = cornerTarget(width, height, THREE.RedFormat, 'simulationOutlineNormals')
+  const cornerRT = new THREE.WebGLRenderTarget(width, height, {
+    format: THREE.RGBAFormat,
+    type: THREE.UnsignedByteType,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+  })
+  cornerRT.texture.name = 'simulationOutlineCorners'
+  const crossingTexture = createCrossingTexture(grid)
 
-  const cornerMaterial = passMaterial(OUTLINE_PASS_FRAGMENT_GLSL, {
-    uHeightfield: { value: heightfieldTexture },
-    uStockBottomZ: { value: grid.stockBottomZ },
-    uCellSize: { value: grid.cellSize },
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uHeightfield: { value: heightfieldTexture },
+      uEdgeCrossings: { value: crossingTexture },
+      uStockBottomZ: { value: grid.stockBottomZ },
+      uCellSize: { value: grid.cellSize },
+    },
+    vertexShader: passVertexShader,
+    fragmentShader: OUTLINE_PASS_FRAGMENT_GLSL,
+    glslVersion: THREE.GLSL3,
+    depthTest: false,
+    depthWrite: false,
   })
-  const normalMaterial = passMaterial(OUTLINE_NORMAL_PASS_FRAGMENT_GLSL, {
-    uOutlineCorners: { value: cornerRT.texture },
-  })
-  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), cornerMaterial)
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material)
   quad.frustumCulled = false
   const scene = new THREE.Scene()
   scene.add(quad)
@@ -252,47 +211,51 @@ export function createOutlineCorners(
   const full: CornerRect = { xMin: 0, xMax: width - 1, yMin: 0, yMax: height - 1 }
 
   let staleCorners: CornerRect | null = full
-  let staleNormals: CornerRect | null = full
-
-  const run = (renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, material: THREE.ShaderMaterial, rect: CornerRect) => {
-    quad.material = material
-    target.viewport.set(0, 0, width, height)
-    target.scissor.set(rect.xMin, rect.yMin, rect.xMax - rect.xMin + 1, rect.yMax - rect.yMin + 1)
-    target.scissorTest = true
-    renderer.setRenderTarget(target)
-    renderer.render(scene, camera)
-  }
+  // Crossings already go up whole with the texture's first use.
+  let staleCrossings: DirtyRegion | null = null
+  let crossingsWhole = false
 
   return {
     texture: cornerRT.texture,
-    normals: normalRT.texture,
     get pending() {
-      return staleCorners !== null || staleNormals !== null
+      return staleCorners !== null
     },
     invalidate(region?: DirtyRegion) {
-      const corners = region ? outlineCornerRect(grid, region) : full
-      staleCorners = union(staleCorners, corners)
-      staleNormals = union(staleNormals, outlineNormalRect(grid, corners))
+      staleCorners = unionRect(staleCorners, region ? outlineCornerRect(grid, region) : full, ['xMin', 'xMax', 'yMin', 'yMax'])
+      if (!grid.edgeCrossings) return
+      if (region) staleCrossings = unionRect(staleCrossings, region, ['colMin', 'colMax', 'rowMin', 'rowMax'])
+      else crossingsWhole = true
     },
     update(renderer: THREE.WebGLRenderer) {
-      if (!staleCorners && !staleNormals) return
+      if (!staleCorners) return
+      if (grid.edgeCrossings && (crossingsWhole || staleCrossings)) {
+        const gl = renderer.getContext()
+        const uploaded = !crossingsWhole && staleCrossings !== null && uploadTextureRegion(
+          renderer, crossingTexture, grid.cols, grid.rows, staleCrossings,
+          gl.RGBA, gl.UNSIGNED_BYTE, grid.edgeCrossings,
+        )
+        // No GL texture yet, or a whole-grid change: three uploads it all on use.
+        if (!uploaded) crossingTexture.needsUpdate = true
+        staleCrossings = null
+        crossingsWhole = false
+      }
       const previousTarget = renderer.getRenderTarget()
       const previousAutoClear = renderer.autoClear
-      // Every texel in a rectangle is written, so nothing needs clearing.
+      // Every texel in the rectangle is written, so nothing needs clearing.
       renderer.autoClear = false
-      // Corners first: the normal pass walks the corner texture.
-      if (staleCorners) run(renderer, cornerRT, cornerMaterial, staleCorners)
-      if (staleNormals) run(renderer, normalRT, normalMaterial, staleNormals)
+      cornerRT.viewport.set(0, 0, width, height)
+      cornerRT.scissor.set(staleCorners.xMin, staleCorners.yMin, staleCorners.xMax - staleCorners.xMin + 1, staleCorners.yMax - staleCorners.yMin + 1)
+      cornerRT.scissorTest = true
+      renderer.setRenderTarget(cornerRT)
+      renderer.render(scene, camera)
       staleCorners = null
-      staleNormals = null
       renderer.setRenderTarget(previousTarget)
       renderer.autoClear = previousAutoClear
     },
     dispose() {
       cornerRT.dispose()
-      normalRT.dispose()
-      cornerMaterial.dispose()
-      normalMaterial.dispose()
+      crossingTexture.dispose()
+      material.dispose()
       quad.geometry.dispose()
     },
   }

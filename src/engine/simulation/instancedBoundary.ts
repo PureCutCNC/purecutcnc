@@ -55,12 +55,11 @@ import {
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 
 /**
- * The outline textures the boundary reads (issue #973): `texture` places the
- * corners, `normals` lights the walls. `OutlineCorners` provides both.
+ * The outline texture the boundary reads (issue #973): its R and G place the
+ * corners, its B lights the walls. `OutlineCorners` provides it.
  */
 export interface OutlineTextures {
   texture: THREE.Texture
-  normals: THREE.Texture
 }
 
 /**
@@ -111,9 +110,8 @@ export const ROUND_BAR_WALL_JOIN_GLSL = /* glsl */ `
 const wallVertexShader = (flatRoundBar: boolean, squareBlank: boolean, outline: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
 ${outline ? `  // Issue #973: each grid corner's offset onto the wall outline, and the
-  // wall's direction there smoothed along the outline for lighting.
+  // wall's direction there for lighting.
   uniform sampler2D uOutlineCorners;
-  uniform sampler2D uOutlineNormals;
 ${OUTLINE_CORNER_GLSL}
 ${OUTLINE_NORMAL_GLSL}` : ''}  uniform float uStockBottomZ;
   // The lowest Y a heightfield wall may reach. The stock bottom for every
@@ -543,7 +541,7 @@ export function createInstancedWallMaterial(
         : {}),
       ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
       ...(outline
-        ? { uOutlineCorners: { value: outline.texture }, uOutlineNormals: { value: outline.normals } }
+        ? { uOutlineCorners: { value: outline.texture } }
         : {}),
     },
     vertexShader: aroundShader(wallVertexShader(roundBar, blankSide !== undefined, outline !== undefined), frame),
