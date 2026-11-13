@@ -88,6 +88,7 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   'booklet.xyLead.arc': 'Arco tangente',
   'booklet.label.cleanWallCorners': 'Redondear esquinas de pared',
   'booklet.label.cornerRelief': 'Relieve de esquinas',
+  'booklet.label.verticalOvercut': 'Sobrecorte vertical',
   'booklet.label.pattern': 'Patrón',
   'booklet.label.pocketAngle': 'Ángulo de la cajera',
   'booklet.label.slotFeed': 'Avance de ranura',

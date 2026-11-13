@@ -73,6 +73,8 @@ import { foldsNonTargetSubtracts } from './resolver'
  */
 export const MACHINING_META_FIELDS = [
   'units', 'maxTravelZ', 'operationClearanceZ', 'clampClearanceXY', 'clampClearanceZ',
+  // Bounds an Edge Route's vertical overcut (issue #834).
+  'maxSpoilboardCutDepth',
 ] as const
 
 // Compare only the fields toolpath generation reads through the resolver

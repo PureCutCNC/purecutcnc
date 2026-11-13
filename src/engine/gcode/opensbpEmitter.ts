@@ -64,6 +64,7 @@ import { pinRotaryAxis } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import { resolveVerticalOvercut, verticalOvercutCommentText } from '../toolpaths/verticalOvercut'
 import { getOperationSafeZ } from '../toolpaths/geometry'
 import { setupFrameForOperation, setupToCanonicalPoint } from '../setupOrientation'
 import { resolveEmittedArc } from './arcFitting'
@@ -218,6 +219,9 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
       emitComment(`Description: ${descriptionLine}`)
     }
     emitComment(`Tool ${toolNumber}: ${commentText(tool.name)}`)
+    // An intentional spoilboard cut is said where the operator reads it (#834).
+    const overcut = resolveVerticalOvercut(project, operation)
+    if (overcut.kind === 'ok') emitComment(commentText(verticalOvercutCommentText(overcut.amount, project.meta.units)))
 
     // ── Motion plan (shared by every dialect) ──
     // Drilling takes this path too: there are no canned cycles to emit, so a

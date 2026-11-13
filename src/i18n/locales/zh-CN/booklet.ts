@@ -88,6 +88,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.xyLead.arc': '相切圆弧',
   'booklet.label.cleanWallCorners': '圆角处理侧壁转角',
   'booklet.label.cornerRelief': '拐角让位',
+  'booklet.label.verticalOvercut': '垂直过切',
   'booklet.label.pattern': '路径图案',
   'booklet.label.pocketAngle': '挖槽角度',
   'booklet.label.slotFeed': '槽进给',

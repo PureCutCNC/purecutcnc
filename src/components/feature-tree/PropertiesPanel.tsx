@@ -411,6 +411,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => setProjectClearances({ clampClearanceZ: next })}
             />
           </label>
+          <label className="properties-field">
+            <span>{t('featureTree.properties.maxSpoilboardCutDepth')}</span>
+            {/* The ceiling for every Edge Route's vertical overcut (issue #834). Absent reads as 0. */}
+            <DraftNumberInput
+              key={`project-max-spoilboard-cut-depth-${project.meta.maxSpoilboardCutDepth ?? 0}`}
+              value={project.meta.maxSpoilboardCutDepth ?? 0}
+              units={units}
+              min={0}
+              onCommit={(next) => setProjectClearances({ maxSpoilboardCutDepth: next })}
+            />
+          </label>
           <label className="properties-field properties-field--machine">
             <div className="properties-field-label-row">
               <span>{t("featureTree.properties.machine")}</span>

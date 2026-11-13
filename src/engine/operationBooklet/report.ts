@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { resolveVerticalOvercut, verticalOvercutWarning } from '../toolpaths/verticalOvercut'
 import type { CornerReliefStyle, Operation, OperationKind, OperationPass, Project } from '../../types/project'
 // Presentation exception: the booklet report is a user-facing document, so
 // it maps structured warnings to localized text here via the i18n layer.
@@ -363,6 +364,16 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     if (!isTrochoidalEdgeRoughing(operation)) {
       rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
     }
+  }
+
+  // A spoilboard overcut is printed whenever one is set, valid or refused: the
+  // sheet is read at the machine, and an operation that cuts into the
+  // spoilboard must say so before it runs (issue #834). The toolpath's own
+  // warning says the rest.
+  const overcut = resolveVerticalOvercut(project, operation)
+  if (overcut.kind !== 'none') {
+    const amount = verticalOvercutWarning(project, operation, overcut)?.params?.amount
+    rows.push({ label: translate('booklet.label.verticalOvercut'), value: String(amount ?? '') })
   }
 
   // Trochoidal Engrave derives its orbit sense from cutDirection, so the

@@ -101,6 +101,7 @@ import {
   type XyLeadOptions,
 } from './xyLead'
 import { appendAll } from './appendAll'
+import { overcutBottomZ, resolveVerticalOvercut, verticalOvercutWarning } from './verticalOvercut'
 
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
 
@@ -442,7 +443,21 @@ function routeObstacleCandidates(project: Project): RouteObstacleCandidates {
   }
 }
 
+/**
+ * The final bottom an edge route cuts a target to: its Z bottom raised by the
+ * axial stock to leave, then lowered by any vertical overcut (issue #834). The
+ * overcut only moves the final level down; the stepdown levels above it, the
+ * entry and the retract are planned from this bottom exactly as before.
+ */
 function resolveEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
+  const bottom = resolveNominalEffectiveBottom(feature, project, operation)
+  if (bottom === null) return null
+  const span = resolveFeatureZSpan(project, feature)
+  // Only a target cut downward has a bottom for the overcut to deepen.
+  return span.bottom < span.top ? overcutBottomZ(bottom, resolveVerticalOvercut(project, operation)) : bottom
+}
+
+function resolveNominalEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
   const span = resolveFeatureZSpan(project, feature)
   const descending = span.bottom < span.top
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
@@ -1247,6 +1262,27 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     }
   }
 
+  // A vertical overcut that is negative, non-finite or past the project's
+  // spoilboard limit refuses the whole operation (issue #834): no motion is
+  // safer than a clamped depth nobody asked for. A valid one is announced once
+  // for the operation, however many targets it is split into.
+  const overcut = resolveVerticalOvercut(project, operation)
+  const overcutWarning = verticalOvercutWarning(project, operation, overcut)
+  if (overcut.kind === 'invalid') {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: overcutWarning ? [overcutWarning] : [],
+      bounds: null,
+    }
+  }
+  const result = generateEdgeRouteToolpathUnchecked(project, operation)
+  return overcutWarning && result.moves.length > 0
+    ? { ...result, warnings: [overcutWarning, ...result.warnings] }
+    : result
+}
+
+function generateEdgeRouteToolpathUnchecked(project: Project, operation: Operation): ToolpathResult {
   const isTrochoidal = isTrochoidalEdgeRoughing(operation)
   if (isFeatureFirst(operation)) {
     // Trochoidal needs two things the contour path gets for free.
@@ -1333,6 +1369,8 @@ function generateEdgeRouteToolpathSingle(
       bounds: null,
     }
   }
+  // Refused upstream in generateEdgeRouteToolpath when invalid (issue #834).
+  const overcut = resolveVerticalOvercut(project, operation)
 
   if (!(operation.stepdown > 0)) {
     return {
@@ -1863,7 +1901,11 @@ function generateEdgeRouteToolpathSingle(
     const insideInset = isTrochoidal ? trochoidalGuideOffset : tool.radius + radialLeave
 
     for (const band of resolved.bands) {
-      const effectiveBottom = resolveBandBottomZ(band, operation)
+      const bandBottom = resolveBandBottomZ(band, operation)
+      // Only a band cut downward has a bottom for the overcut to deepen (#834).
+      const effectiveBottom = bandBottom !== null && band.bottomZ < band.topZ
+        ? overcutBottomZ(bandBottom, overcut)
+        : bandBottom
       if (effectiveBottom === null) {
         warnings.push({ code: 'edgeBandNoCutDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
         continue

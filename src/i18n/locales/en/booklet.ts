@@ -86,6 +86,7 @@ export const bookletEn = {
   'booklet.xyLead.arc': 'Tangent arc',
   'booklet.label.cleanWallCorners': 'Round wall corners',
   'booklet.label.cornerRelief': 'Corner relief',
+  'booklet.label.verticalOvercut': 'Vertical overcut',
   'booklet.label.pattern': 'Pattern',
   'booklet.label.pocketAngle': 'Pocket angle',
   'booklet.label.slotFeed': 'Slot feed',

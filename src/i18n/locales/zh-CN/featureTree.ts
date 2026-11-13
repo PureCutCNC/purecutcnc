@@ -187,6 +187,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.opClearZ': '操作净空 Z',
   'featureTree.properties.clampClearXY': '夹具净空 XY',
   'featureTree.properties.clampClearZ': '夹具净空 Z',
+  'featureTree.properties.maxSpoilboardCutDepth': '最大垫板切削深度',
   'featureTree.properties.machine': '机床',
   'featureTree.properties.gridExtent': '网格范围',
   'featureTree.properties.majorLines': '主刻度线',

@@ -3886,6 +3886,11 @@
   letter-spacing: normal;
 }
 
+/* An intentional but notable setting, e.g. a spoilboard overcut (#834). */
+.cam-field-message.cam-field-message--warning {
+  color: var(--warning-text);
+}
+
 .cam-field-note-list {
   display: grid;
   gap: 6px;

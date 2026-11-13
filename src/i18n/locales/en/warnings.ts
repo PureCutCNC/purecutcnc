@@ -103,6 +103,8 @@ export const warningsEn = {
   'warnings.edgeTrochoidalEntryBudget': 'The trochoidal entry near ({x}, {y}) does not fit in what is left of the operation point budget. Raise the advance per loop, raise the stepdown so there are fewer Z levels, or use a larger cutter.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Trochoidal routing requires Helix entry when tabs are active.',
   'warnings.edgeTrochoidalTabUnsafe': 'Trochoidal tab clearance is unsafe near ({x}, {y}).',
+  'warnings.edgeVerticalOvercut': '{operation}: vertical overcut of {amount} below the intended bottom. The cutter will go into the spoilboard.',
+  'warnings.edgeVerticalOvercutInvalid': "{operation}: vertical overcut {amount} is not allowed. It must be zero or more and no greater than the project's maximum spoilboard cut depth ({limit}). No toolpath is generated until it is corrected.",
   'warnings.edgeTrochoidalSmoothTabFallback': 'Tab "{name}" is set to Smooth, but trochoidal edge route cuts it as Rectangular. The toolpath steps over this tab instead of ramping.',
   'warnings.edgeTrochoidalSkippedSpan': 'The trochoidal span near ({x}, {y}) is too short for a safe helical entry and was skipped.',
   'warnings.edgeTrochoidalNoSurvivingSpan': 'No trochoidal guide span near ({x}, {y}) can safely establish an entry cavity.',

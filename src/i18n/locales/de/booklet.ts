@@ -91,6 +91,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.xyLead.arc': 'Tangentialer Bogen',
   'booklet.label.cleanWallCorners': 'Wandecken runden',
   'booklet.label.cornerRelief': 'Eckenfreistellung',
+  'booklet.label.verticalOvercut': 'Vertikaler Überschnitt',
   'booklet.label.pattern': 'Muster',
   'booklet.label.pocketAngle': 'Taschenwinkel',
   'booklet.label.slotFeed': 'Nutvorschub',

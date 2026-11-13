@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { verticalOvercutFieldNotice } from './verticalOvercutNotice'
 import { isRotaryOperationKind } from '../../types/project'
 import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import { PlasmaOperationFields } from './PlasmaOperationFields'
@@ -1930,6 +1931,37 @@ export function CAMPanel({
           <OperationParameterReference kind="stockAxial" />
         </label>
       ),
+      verticalOvercut: () => {
+        // Spoilboard overcut of the final bottom (issue #834). No `max`: a value
+        // past the project limit is said and refused, never quietly rejected.
+        const notice = verticalOvercutFieldNotice(project, operation)
+        const stored: unknown = operation.verticalOvercut
+        return (
+          <>
+            <label className="properties-field">
+              <span>{camT('cam.operation.verticalOvercut')}</span>
+              <DraftLengthInput
+                value={stored === undefined ? 0 : typeof stored === 'number' ? stored : Number.NaN}
+                units={project.meta.units}
+                min={0}
+                onCommit={(value) => updateOperation(operation.id, { verticalOvercut: value })}
+              />
+            </label>
+            {notice ? (
+              <div className="properties-field">
+                <span />
+                <span
+                  className={notice.tone === 'warning' ? 'cam-field-message cam-field-message--warning' : 'cam-field-message'}
+                  data-testid="vertical-overcut-notice"
+                  role={notice.tone === 'error' ? 'alert' : undefined}
+                >
+                  {camT(notice.key, notice.params)}
+                </span>
+              </div>
+            ) : null}
+          </>
+        )
+      },
     }
 
     const rotaryHint = rotaryOperationHint(project, operation)

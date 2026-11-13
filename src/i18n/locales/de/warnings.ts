@@ -103,6 +103,8 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': 'Der trochoidale Einstieg nahe ({x}, {y}) passt nicht mehr in das verbleibende Punktbudget der Operation. Erhöhen Sie den Vorschub pro Umlauf, erhöhen Sie die Zustellung für weniger Z-Ebenen oder verwenden Sie einen größeren Fräser.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Trochoidales Fräsen erfordert bei Stegen einen Helix-Einstieg.',
   'warnings.edgeTrochoidalTabUnsafe': 'Der Sicherheitsabstand am trochoidalen Steg ist nahe ({x}, {y}) unsicher.',
+  'warnings.edgeVerticalOvercut': '{operation}: vertikaler Überschnitt von {amount} unter dem vorgesehenen Boden. Das Werkzeug schneidet in die Opferplatte.',
+  'warnings.edgeVerticalOvercutInvalid': '{operation}: vertikaler Überschnitt {amount} ist nicht zulässig. Er muss mindestens null und höchstens die maximale Opferplatten-Schnitttiefe des Projekts ({limit}) betragen. Bis zur Korrektur wird keine Werkzeugbahn erzeugt.',
   'warnings.edgeTrochoidalSmoothTabFallback': 'Haltesteg „{name}" ist auf Sanft gesetzt, wird bei trochoidaler Kantenbearbeitung aber als Rechteckig gefräst. Der Werkzeugweg stuft über diesen Steg, statt zu rampen.',
   'warnings.edgeTrochoidalSkippedSpan': 'Die trochoidale Strecke nahe ({x}, {y}) ist für einen sicheren Helix-Einstieg zu kurz und wurde übersprungen.',
   'warnings.edgeTrochoidalNoSurvivingSpan': 'Keine trochoidale Führungsstrecke nahe ({x}, {y}) kann sicher eine Einstiegskavität herstellen.',
