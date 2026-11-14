@@ -69,6 +69,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - [designPrint/](designPrint/INDEX.md) — vector renderer for the 2D design view: page/scale layout math + SVG/HTML generation for printing (issue #254) and the geometry-only SVG export (issue #257)
 - [operationBooklet/](operationBooklet/INDEX.md) — per-operation report model and PDF booklet generation
 - [simulation/](simulation/INDEX.md) — heightfield-based material removal sim for flat, round and square stock: one radial grid, replay/stepping, GPU heightfield mesh + shaders
+- [modelRecognition/](modelRecognition/INDEX.md) — pockets and holes of an imported mesh as 2.5D cavities (#1206): candidate levels, nested sections, bands and tracks, reach and overhang checks, circle and arc fitting. Takes a mesh already in one face's frame; no caller yet
 - [nesting/](nesting/INDEX.md) — sheet nesting (#741): pure packer that places copies of part footprints on a sheet with a caller-supplied gap (no-fit polygons over convex pieces, bottom-left fill)
 
 ## Conventions
