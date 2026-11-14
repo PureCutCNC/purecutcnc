@@ -41,6 +41,7 @@ import {
   getCachedHeightMap,
   modelSilhouettePathsForFinishSurface,
   safeToolTipZAt,
+  smoothToolTipZAt,
   type FinishSurfaceParallelCacheHost,
   type HeightMap,
 } from './finishSurfaceParallel'
@@ -278,7 +279,7 @@ function liftFragment(
   // The Z this pass gives a vertex, for the cliff refinement to add its own
   // with (issue #938).
   const vertexZ = (x: number, y: number): number => {
-    const surfaceZ = safeToolTipZAt(x, y, heightMap, tool)
+    const surfaceZ = smoothToolTipZAt(x, y, heightMap, tool)
     return Number.isFinite(surfaceZ) ? Math.max(surfaceZ + axialLeave, minCutZAtPoint({ x, y })) : surfaceZ
   }
   const flush = (closed = false): void => {
@@ -289,7 +290,7 @@ function liftFragment(
     previousFloor = null
   }
   for (const point of fragment.points) {
-    const surfaceZ = safeToolTipZAt(point.x, point.y, heightMap, tool)
+    const surfaceZ = smoothToolTipZAt(point.x, point.y, heightMap, tool)
     if (!Number.isFinite(surfaceZ)) {
       flush()
       continue
