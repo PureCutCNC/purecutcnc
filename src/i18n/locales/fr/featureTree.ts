@@ -146,6 +146,7 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.opClearZ': 'Z de dégagement de l’opération',
   'featureTree.properties.clampClearXY': 'Dégagement XY des brides',
   'featureTree.properties.clampClearZ': 'Dégagement Z des brides',
+  'featureTree.properties.maxSpoilboardCutDepth': 'Profondeur max. dans la martyre',
   'featureTree.properties.machine': 'Machine',
   'featureTree.properties.gridExtent': 'Étendue de la grille',
   'featureTree.properties.majorLines': 'Lignes principales',

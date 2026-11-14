@@ -181,6 +181,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.opClearZ': 'Op-Freifahr-Z',
   'featureTree.properties.clampClearXY': 'Spannzwingen-Freiraum XY',
   'featureTree.properties.clampClearZ': 'Spannzwingen-Freiraum Z',
+  'featureTree.properties.maxSpoilboardCutDepth': 'Max. Schnitttiefe in Opferplatte',
   'featureTree.properties.machine': 'Maschine',
   'featureTree.properties.gridExtent': 'Rasterausdehnung',
   'featureTree.properties.majorLines': 'Hauptlinien',

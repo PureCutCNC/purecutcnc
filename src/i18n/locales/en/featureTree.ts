@@ -186,6 +186,7 @@ export const featureTreeEn = {
   'featureTree.properties.opClearZ': 'Op clear Z',
   'featureTree.properties.clampClearXY': 'Clamp clear XY',
   'featureTree.properties.clampClearZ': 'Clamp clear Z',
+  'featureTree.properties.maxSpoilboardCutDepth': 'Max spoilboard cut depth',
   'featureTree.properties.machine': 'Machine',
   'featureTree.properties.gridExtent': 'Grid extent',
   'featureTree.properties.majorLines': 'Major lines',

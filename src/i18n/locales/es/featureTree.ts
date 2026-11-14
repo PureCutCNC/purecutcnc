@@ -146,6 +146,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.opClearZ': 'Holgura Z de operación',
   'featureTree.properties.clampClearXY': 'Holgura XY de mordaza',
   'featureTree.properties.clampClearZ': 'Holgura Z de mordaza',
+  'featureTree.properties.maxSpoilboardCutDepth': 'Profundidad máx. en tablero de sacrificio',
   'featureTree.properties.machine': 'Máquina',
   'featureTree.properties.gridExtent': 'Extensión de la cuadrícula',
   'featureTree.properties.majorLines': 'Líneas principales',

@@ -75,6 +75,7 @@ type FieldClass = 'compare' | 'ignore'
 
 const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   // display / lifecycle only — never read by a resolver
+  verticalOvercut: 'compare',
   rotaryChuckSupport: 'compare',
   rotaryTailSupport: 'compare',
   rotaryPassDirection: 'compare',

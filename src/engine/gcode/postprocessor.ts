@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { resolveVerticalOvercut, verticalOvercutCommentText, verticalOvercutWarning } from '../toolpaths/verticalOvercut'
+import { edgeRouteOvercutApplies } from '../toolpaths/verticalOvercutTargets'
 import type {
   MachineDefinition,
   PostProcessorInput,
@@ -220,6 +222,23 @@ function templateHasMandatoryStop(content: string, outputDialect: string | undef
  * dialect and no dialect is special-cased inside another's emitter.
  */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  const result = runPostProcessorUnchecked(input)
+  // Every Edge Route that overcuts into the spoilboard says so in the export,
+  // and one whose overcut is refused blocks it (issue #834). This is decided
+  // from the operation rows themselves, not from the toolpath's warnings, so
+  // a refused value cannot reach a saved file even through a stale path.
+  // An overcut with no target cut through to the stock bottom is not applied,
+  // so the export says nothing about a spoilboard cut that does not happen.
+  const overcutWarnings = input.operations.flatMap(({ operation }) => {
+    const status = resolveVerticalOvercut(input.project, operation)
+    if (status.kind === 'ok' && !edgeRouteOvercutApplies(input.project, operation)) return []
+    const warning = verticalOvercutWarning(input.project, operation, status)
+    return warning ? [warning] : []
+  })
+  return overcutWarnings.length === 0 ? result : withWarnings(result, overcutWarnings)
+}
+
+function runPostProcessorUnchecked(input: PostProcessorInput): PostProcessorResult {
   // A machine that still breaks a template rule produces no program at all
   // (#1119). The refusal is decided from the definition alone, before either
   // dialect emitter runs and before the operation plan is built, so turning
@@ -1322,6 +1341,12 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       emitTemplateLines(definition.program.operationHeader, operationContext, descriptionLines)
     } else {
       emitLine(`${definition.program.commentPrefix} Operation: ${operationContext.operationName}${definition.program.commentSuffix}`)
+    }
+    // An intentional spoilboard cut is said in the program too, where the
+    // operator at the machine reads it (issue #834). No overcut, no line.
+    const overcut = resolveVerticalOvercut(project, operation)
+    if (overcut.kind === 'ok' && edgeRouteOvercutApplies(project, operation)) {
+      emitLine(`${definition.program.commentPrefix} ${safeCommentText(verticalOvercutCommentText(overcut.amount, project.meta.units), definition)}${definition.program.commentSuffix}`)
     }
 
     if (step.plasma && plasma) {

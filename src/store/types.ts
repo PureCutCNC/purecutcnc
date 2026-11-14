@@ -391,7 +391,7 @@ export interface ProjectStore {
   setShowFeatureInfo: (visible: boolean) => void
   setShowDimensions: (visible: boolean) => void
   setCopyMode: (mode: 'reference' | 'independent') => void
-  setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ'>>) => void
+  setProjectClearances: (patch: Partial<Pick<Project['meta'], 'maxTravelZ' | 'operationClearanceZ' | 'clampClearanceXY' | 'clampClearanceZ' | 'maxSpoilboardCutDepth'>>) => void
   setOrigin: (origin: Project['origin']) => void
   startPlaceOrigin: () => void
   placeOriginAt: (point: Point) => void

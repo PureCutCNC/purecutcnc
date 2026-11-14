@@ -356,6 +356,9 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
     plungeFeed: convertLength(operation.plungeFeed, from, to),
+    // Only a number converts: a stored null or other non-number stays exactly
+    // as it was, so it is still refused after a unit change (issue #834).
+    ...(typeof operation.verticalOvercut === 'number' ? { verticalOvercut: convertLength(operation.verticalOvercut, from, to) } : {}),
     ...(operation.rotaryChuckSupport === undefined ? {} : { rotaryChuckSupport: convertLength(operation.rotaryChuckSupport, from, to) }),
     ...(operation.rotaryTailSupport === undefined ? {} : { rotaryTailSupport: convertLength(operation.rotaryTailSupport, from, to) }),
     stockToLeaveRadial: convertLength(operation.stockToLeaveRadial, from, to),
@@ -465,6 +468,9 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
       operationClearanceZ: convertLength(project.meta.operationClearanceZ, fromUnits, toUnits),
       clampClearanceXY: convertLength(project.meta.clampClearanceXY, fromUnits, toUnits),
       clampClearanceZ: convertLength(project.meta.clampClearanceZ, fromUnits, toUnits),
+      ...(typeof project.meta.maxSpoilboardCutDepth === 'number'
+        ? { maxSpoilboardCutDepth: convertLength(project.meta.maxSpoilboardCutDepth, fromUnits, toUnits) }
+        : {}),
     },
     grid: convertGrid(project.grid, fromUnits, toUnits),
     stock: convertStock(project.stock, fromUnits, toUnits),
