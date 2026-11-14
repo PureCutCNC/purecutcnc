@@ -20,12 +20,14 @@
  * The step/slope rule, the lighting gradient and the Around cell wrap live in
  * GLSL, where a unit test cannot reach them. A TypeScript copy would only prove
  * the copy, so the shader source keeps those functions to a scalar subset —
- * `float`/`bool`/`int`/`ivec2` parameters and locals, arithmetic, comparisons,
- * `if`, the ternary, and the builtins listed below — which reads as JavaScript
+ * `float`/`bool`/`int`/`ivec2` parameters, locals and fixed-size arrays,
+ * arithmetic, comparisons, `if`, `for`, the ternary, and the builtins listed
+ * below — which reads as JavaScript
  * once the type names are dropped. An `ivec2` is a plain `{ x, y }` object, so
  * a GLSL function that wraps one index and leaves the other alone can be run
  * and checked directly. Uniforms the function reads are passed as `globals`
- * (issue #395 G3). The tests then call the very text the GPU compiles, for
+ * (issue #395 G3), and so is a function the shader supplies itself, such as
+ * the wall outline's cell lookup (issue #973). The tests then call the very text the GPU compiles, for
  * those functions.
  *
  * That is all it covers. The vector code around them — texture lookups, which
@@ -50,6 +52,11 @@ const BUILTINS = {
   mix: (a: number, b: number, t: number): number => a * (1 - t) + b * t,
   clamp: (x: number, low: number, high: number): number => Math.min(Math.max(x, low), high),
   ceil: Math.ceil,
+  floor: Math.floor,
+  // GLSL float(x) of an int is exact here: JavaScript has one number type.
+  toFloat: (x: number): number => x,
+  // GLSL's two-argument atan(y, x) is atan2.
+  atan: (y: number, x?: number): number => (x === undefined ? Math.atan(y) : Math.atan2(y, x)),
   // GLSL int() truncates toward zero, exactly as Math.trunc does.
   int: Math.trunc,
 }
@@ -64,7 +71,7 @@ const TYPE = '(?:float|bool|int|ivec2)'
  */
 export function compileScalarGlsl(
   source: string,
-  globals: Record<string, number | boolean> = {},
+  globals: Record<string, number | boolean | ((...args: number[]) => ScalarValue)> = {},
 ): Record<string, ScalarFunction> {
   const names: string[] = []
   const withFunctions = source.replace(
@@ -83,7 +90,10 @@ export function compileScalarGlsl(
       return `function ${name}(${parameterNames.join(', ')}) {`
     },
   )
-  const script = withFunctions.replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*=`, 'g'), 'let $1 =')
+  const script = withFunctions
+    .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\[(\\d+)\\];`, 'g'), 'let $1 = new Array($2);')
+    .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*=`, 'g'), 'let $1 =')
+    .replace(/\bfloat\(/g, 'toFloat(')
 
   // `int`/`ivec2` are supported here (`int(x)` is a builtin, an `ivec2` is an
   // object); every other vector/matrix type is not.

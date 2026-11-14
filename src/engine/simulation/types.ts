@@ -92,6 +92,13 @@ export interface SimulationGrid {
    */
   initialTopZ?: Float32Array
   topZ: Float32Array
+  /**
+   * Where the cut really ends between neighbouring cell centres, 4 bytes per
+   * cell (issue #973; layout in `edgeCrossings.ts`). Written by the flat replay
+   * kernel next to `topZ`, read by the wall-outline corner pass. Absent on a
+   * wrapped (rotary) grid, whose walls stay on the cell edges.
+   */
+  edgeCrossings?: Uint8Array
 }
 
 export interface DirtyRegion {

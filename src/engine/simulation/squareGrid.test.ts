@@ -180,7 +180,10 @@ function testOldGridsKeepExactKeysAndValues(): void {
   assert(flat.stockTopZ === topZ, `flat stock top must stay thickness ${topZ}, got ${flat.stockTopZ}`)
   const keys = Object.keys(flat).sort()
   const expected = ['cellSize', 'cols', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ'].sort()
-  assert(keys.length === expected.length && keys.every((key, i) => key === expected[i]), `flat grid keys drifted: ${keys.join(',')}`)
+  // A flat grid gains exactly one key, its edge crossings (issue #973).
+  const expectedFlat = [...expected, 'edgeCrossings'].sort()
+  assert(keys.length === expectedFlat.length && keys.every((key, i) => key === expectedFlat[i]), `flat grid keys drifted: ${keys.join(',')}`)
+  assert(flat.edgeCrossings?.length === flat.cols * flat.rows * 4 && flat.edgeCrossings.every((byte) => byte === 0), 'a flat grid starts with no crossings recorded')
 
   const wrap = { axis: 'y' as const, period: Math.PI * project.stock.thickness }
   const wrapped = createSimulationGrid(project, { targetLongAxisCells: 48, wrap })

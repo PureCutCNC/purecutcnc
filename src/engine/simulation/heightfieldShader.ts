@@ -18,6 +18,7 @@ import * as THREE from 'three'
 import type { AroundFrame } from '../aroundFrame'
 import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundShader, aroundUniforms } from './aroundWrap'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
+import { SHALLOW_SLOPE_CELLS } from './stepThreshold'
 
 // theme-exempt: scene lighting reference — matches SimulationViewport light rig
 // Shared lighting code matching the scene lights in SimulationViewport:
@@ -37,22 +38,9 @@ export const LIGHTING_GLSL = /* glsl */ `
   }
 `
 
-/**
- * A height change at or below this many cells across one edge, between two
- * cells that both still hold material, is always shaded as a slope. A ball
- * finish on large stock samples each scallop with only two or three cells, so
- * the gradient reverses at nearly every edge and no neighbor "continues" it;
- * without this bound those edges were drawn as risers and the finished surface
- * turned into a grid of flat squares (issue #939). The steepest edge a scallop
- * can produce is stepover / tool diameter cells tall, so half a cell covers
- * ball finishing up to roughly 45 % stepover.
- *
- * The heights cannot tell a scallop from a real step that shallow, so the rule
- * covers both: a pocket at or below half a cell deep, or a tab within half a
- * cell of the part's top, keeps its riser but has it lit as surface rather than
- * as a crisp wall. A step onto a through cut is exempt and always a wall.
- */
-export const SHALLOW_SLOPE_CELLS = 0.5
+// The bound lives in its own module so the replay kernel can share it
+// without importing three.
+export { SHALLOW_SLOPE_CELLS }
 
 /** How much steeper than its neighbor an edge may be and still continue a slope. */
 export const SLOPE_CONTINUATION_RATIO = 4
@@ -234,6 +222,264 @@ export const CELL_HEIGHT_GLSL = /* glsl */ `
   }
 `
 
+/** Offset code steps per cell: offsets of up to half a cell fit 0..254 around 127. */
+export const OUTLINE_OFFSET_SCALE = 254
+
+/**
+ * How strongly a corner is pulled toward where it was, against the boundary
+ * lines' unit weight. Weak enough to leave a corner between two crossing lines
+ * on their intersection; it only decides where along a straight wall a corner
+ * sits (where it was), and stops a lone line from moving it along itself.
+ */
+export const OUTLINE_CORNER_PULL = 0.05
+
+/**
+ * The corner texture's direction code meaning "no smoothed direction": the
+ * walls there keep their own face normal.
+ */
+export const OUTLINE_NORMAL_NONE = 255
+
+/**
+ * Walls along the cut outline instead of along cell edges (issue #973).
+ *
+ * A wall that is not grid-aligned is sampled as a staircase: drawn on cell
+ * edges it zigzags, and its faces light as alternating X- and Y-facing streaks.
+ * A cell's height cannot say where between two cell centres the cut really
+ * ended, but the replay kernel knows: it records, per cell, where the tool's
+ * boundary crossed the lines to its east and south neighbours' centres and
+ * which way the boundary faced (`edgeCrossings.ts`).
+ *
+ * So the geometry stays exactly as it is and only grid corners move. Each
+ * corner is placed by dual contouring: the point nearest, in least squares, to
+ * the boundary lines through the crossings on the walls that leave it, pulled
+ * slightly toward the corner itself so a straight wall keeps its corners'
+ * spacing along it. A curve comes out as the curve, and where two boundary
+ * lines meet at an angle — a real corner of the part — the corner lands on
+ * their intersection and stays sharp. A corner stays within half a cell of
+ * where it was. Every top quad, wall quad and underside hole touching a corner
+ * reads the same position, so tops and walls still meet with no gap and no
+ * overlap.
+ *
+ * Which edges are walls is still `edgeIsStep`, the one predicate the surface
+ * uses (issue #829). A wall edge with no recorded crossing — the grid's own
+ * edge, or a step the kernel left to slope rules — keeps a crossing at its
+ * cell edge, so it stays where it was drawn before.
+ *
+ * Nothing here runs per vertex: `outlineCorners.ts` solves every corner once
+ * into a texture whenever the heights change, and the meshes read it through
+ * `OUTLINE_CORNER_GLSL`. A per-vertex outline rule took the guitar render from
+ * 12.4 to 32.3 ms on a Radeon Pro 560X (issue #939 part 2).
+ *
+ * Written in the scalar subset against two lookups, `cellHeightAt(x, z)` and
+ * `cellCrossing(x, z, channel)` (the byte, 0..255), so the unit tests can run
+ * this source against fields of their own. Needs `STEP_GLSL`.
+ */
+export const OUTLINE_WALL_GLSL = /* glsl */ `
+  // Cheap, and never false for an edge edgeIsStep calls a step.
+  bool edgeMayBeStep(float hNear, float hFar, float stockBottomZ, float cellSize) {
+    if (hNear == hFar) {
+      return false;
+    }
+    return min(hNear, hFar) <= stockBottomZ + 0.000001
+      || abs(hFar - hNear) > ${SHALLOW_SLOPE_CELLS.toFixed(4)} * cellSize;
+  }
+
+  // Is the grid edge that leaves corner (cornerX, cornerZ) in direction
+  // (dirX, dirZ) a wall? One of dirX, dirZ is +1 or -1, the other 0. A corner
+  // is the lattice point at a cell's low-X low-Z corner.
+  bool wallFrom(int cornerX, int cornerZ, int dirX, int dirZ, float stockBottomZ, float cellSize) {
+    // The two cells the edge separates differ by (acrossX, acrossZ).
+    int acrossX = dirZ != 0 ? 1 : 0;
+    int acrossZ = dirX != 0 ? 1 : 0;
+    int farX = cornerX + min(dirX, 0);
+    int farZ = cornerZ + min(dirZ, 0);
+    float hNear = cellHeightAt(farX - acrossX, farZ - acrossZ);
+    float hFar = cellHeightAt(farX, farZ);
+    if (!edgeMayBeStep(hNear, hFar, stockBottomZ, cellSize)) {
+      return false;
+    }
+    return edgeIsStep(
+      hNear, hFar,
+      cellHeightAt(farX - 2 * acrossX, farZ - 2 * acrossZ),
+      cellHeightAt(farX + acrossX, farZ + acrossZ),
+      stockBottomZ, cellSize
+    );
+  }
+
+  // The corner's position and wall direction, packed into one exact number:
+  // x offset code + 256 * z offset code + 65536 * direction code. An offset code
+  // is offset * ${OUTLINE_OFFSET_SCALE} + 127 (0..254, 127 = unmoved); the
+  // direction code is the wall's line angle over pi in 0..254, or
+  // ${OUTLINE_NORMAL_NONE} where the corner has no wall or no one direction.
+  float outlineCornerSolve(int cornerX, int cornerZ, float stockBottomZ, float cellSize) {
+    // Least squares on the boundary lines, plus a weak pull toward the corner.
+    float a11 = ${OUTLINE_CORNER_PULL.toFixed(4)};
+    float a12 = 0.0;
+    float a22 = ${OUTLINE_CORNER_PULL.toFixed(4)};
+    float b1 = 0.0;
+    float b2 = 0.0;
+    float normalSumX = 0.0;
+    float normalSumZ = 0.0;
+    float pointSumX = 0.0;
+    float pointSumZ = 0.0;
+    int walls = 0;
+    // Sides 0..3: the walls leaving the corner east, west, south, north.
+    for (int side = 0; side < 4; side += 1) {
+      int dirX = side == 0 ? 1 : (side == 1 ? -1 : 0);
+      int dirZ = side == 2 ? 1 : (side == 3 ? -1 : 0);
+      if (!wallFrom(cornerX, cornerZ, dirX, dirZ, stockBottomZ, cellSize)) {
+        continue;
+      }
+      walls += 1;
+      // An east or west wall is crossed by the north-south line between the
+      // cells either side of it, stored as the south line of the northern cell;
+      // a south or north wall by the east line of the western cell.
+      bool alongX = side < 2;
+      int ownerX = side == 0 ? cornerX : cornerX - 1;
+      int ownerZ = side == 2 ? cornerZ : cornerZ - 1;
+      int position = cellCrossing(ownerX, ownerZ, alongX ? 2 : 0);
+      float along = position == 0 ? 0.5 : float(position - 1) / 254.0;
+      // The crossing, relative to the corner, in cells.
+      float pointX = alongX ? (side == 0 ? 0.5 : -0.5) : along - 0.5;
+      float pointZ = alongX ? along - 0.5 : (side == 2 ? 0.5 : -0.5);
+      float normalX = 0.0;
+      float normalZ = 0.0;
+      if (position == 0) {
+        // No crossing: the cell edge itself, facing the taller cell.
+        float rise = alongX
+          ? cellHeightAt(ownerX, ownerZ + 1) - cellHeightAt(ownerX, ownerZ)
+          : cellHeightAt(ownerX + 1, ownerZ) - cellHeightAt(ownerX, ownerZ);
+        float facing = rise >= 0.0 ? 1.0 : -1.0;
+        normalX = alongX ? 0.0 : facing;
+        normalZ = alongX ? facing : 0.0;
+      } else {
+        float angle = float(cellCrossing(ownerX, ownerZ, alongX ? 3 : 1)) * (6.283185307179586 / 256.0);
+        normalX = cos(angle);
+        normalZ = sin(angle);
+      }
+      float distance = normalX * pointX + normalZ * pointZ;
+      a11 += normalX * normalX;
+      a12 += normalX * normalZ;
+      a22 += normalZ * normalZ;
+      b1 += normalX * distance;
+      b2 += normalZ * distance;
+      normalSumX += normalX;
+      normalSumZ += normalZ;
+      pointSumX += pointX;
+      pointSumZ += pointZ;
+    }
+    float determinant = a11 * a22 - a12 * a12;
+    float offsetX = (a22 * b1 - a12 * b2) / determinant;
+    float offsetZ = (a11 * b2 - a12 * b1) / determinant;
+    // A corner stays within half a cell. The crossings lie on the edges of
+    // that square, so where the lines meet outside it the crossings' average
+    // is still on the outline (on it exactly for a straight wall), where
+    // clamping the solution would pull it off.
+    if (walls > 0 && (abs(offsetX) > 0.5 || abs(offsetZ) > 0.5)) {
+      offsetX = pointSumX / float(walls);
+      offsetZ = pointSumZ / float(walls);
+    }
+    float xCode = floor(offsetX * ${OUTLINE_OFFSET_SCALE.toFixed(1)} + 127.5);
+    float zCode = floor(offsetZ * ${OUTLINE_OFFSET_SCALE.toFixed(1)} + 127.5);
+    float direction = ${OUTLINE_NORMAL_NONE.toFixed(1)};
+    // Walls facing opposite ways (both sides of something thin) have no one
+    // direction; they keep their own face normals.
+    if (walls > 0 && normalSumX * normalSumX + normalSumZ * normalSumZ > 0.01) {
+      // The line runs at right angles to the normal; its angle in [0, pi).
+      float angle = atan(normalSumZ, normalSumX) + 1.5707963267948966;
+      if (angle < 0.0) {
+        angle += 3.141592653589793;
+      }
+      if (angle >= 3.141592653589793) {
+        angle -= 3.141592653589793;
+      }
+      if (angle >= 3.141592653589793) {
+        angle -= 3.141592653589793;
+      }
+      direction = min(floor(angle * (254.0 / 3.141592653589793) + 0.5), 254.0);
+    }
+    return xCode + 256.0 * zCode + 65536.0 * direction;
+  }
+`
+
+/**
+ * A wall's lighting normal at one of its corners: the boundary's direction
+ * from the corner texture where it has one, turned to face the same way as the
+ * wall's own face normal; otherwise that face normal. Needs `uOutlineCorners`.
+ */
+export const OUTLINE_NORMAL_GLSL = /* glsl */ `
+  vec3 outlineWallNormal(ivec2 corner, vec3 faceNormal) {
+    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
+    int code = int(texelFetch(uOutlineCorners, inside, 0).b * 255.0 + 0.5);
+    if (code >= ${OUTLINE_NORMAL_NONE} || inside != corner) {
+      return faceNormal;
+    }
+    float angle = float(code) * (3.141592653589793 / 254.0);
+    vec3 smoothed = vec3(-sin(angle), 0.0, cos(angle));
+    return dot(smoothed, faceNormal) < 0.0 ? -smoothed : smoothed;
+  }
+`
+
+/** The lookup `OUTLINE_WALL_GLSL` reads cells through. Needs `CELL_HEIGHT_GLSL`. */
+export const OUTLINE_LOOKUP_GLSL = /* glsl */ `
+  float cellHeightAt(int x, int z) {
+    return cellHeight(ivec2(x, z));
+  }
+`
+
+/**
+ * The offset of a grid corner, read from the precomputed corner texture. Every
+ * mesh that places a corner — the top surface, both wall strips and the
+ * underside — goes through this one function, so they cannot disagree on where
+ * a corner is. Needs `uOutlineCorners`, a `(cols + 1) × (rows + 1)` texture.
+ */
+export const OUTLINE_CORNER_GLSL = /* glsl */ `
+  // Offset of a grid corner in cells.
+  vec2 outlineCornerOffset(ivec2 corner) {
+    ivec2 inside = clamp(corner, ivec2(0), textureSize(uOutlineCorners, 0) - ivec2(1));
+    if (inside != corner) {
+      return vec2(0.0);
+    }
+    vec2 code = floor(texelFetch(uOutlineCorners, inside, 0).rg * 255.0 + 0.5);
+    return (code - 127.0) / ${OUTLINE_OFFSET_SCALE.toFixed(1)};
+  }
+`
+
+/**
+ * Which cell's top covers a point, once the corners have moved: the stock
+ * underside asks this per fragment so its holes end on the same outline as the
+ * walls above them. Needs `OUTLINE_CORNER_GLSL`.
+ */
+export const OUTLINE_CELL_GLSL = /* glsl */ `
+  float outlineSide(vec2 from, vec2 to, vec2 point) {
+    vec2 edge = to - from;
+    vec2 offset = point - from;
+    return edge.x * offset.y - edge.y * offset.x;
+  }
+
+  // positionInCells is in cell units from the grid origin. A corner moves at
+  // most half a cell, so a point that left its own cell's quad lies in the
+  // quad of the neighbor across the edge it crossed.
+  ivec2 outlineCellAt(vec2 positionInCells, ivec2 lastCell) {
+    ivec2 cell = clamp(ivec2(floor(positionInCells)), ivec2(0), lastCell);
+    vec2 northWest = vec2(cell) + outlineCornerOffset(cell);
+    vec2 northEast = vec2(cell + ivec2(1, 0)) + outlineCornerOffset(cell + ivec2(1, 0));
+    vec2 southWest = vec2(cell + ivec2(0, 1)) + outlineCornerOffset(cell + ivec2(0, 1));
+    vec2 southEast = vec2(cell + ivec2(1, 1)) + outlineCornerOffset(cell + ivec2(1, 1));
+    if (outlineSide(northWest, southWest, positionInCells) > 0.0) {
+      cell.x -= 1;
+    } else if (outlineSide(northEast, southEast, positionInCells) < 0.0) {
+      cell.x += 1;
+    }
+    if (outlineSide(northWest, northEast, positionInCells) < 0.0) {
+      cell.y -= 1;
+    } else if (outlineSide(southWest, southEast, positionInCells) > 0.0) {
+      cell.y += 1;
+    }
+    return cell;
+  }
+`
+
 /**
  * The slight darkening of deeper cuts, shared by every stock surface so a
  * riser inside a slope, the heightfield tops and the round bar's static lower
@@ -386,9 +632,11 @@ export const SURFACE_NORMAL_GLSL = /* glsl */ `
 
 ${DEPTH_DARKEN_GLSL}`
 
-const vertexShader = (flatRoundBar: boolean, squareBlank: boolean): string => /* glsl */ `
+const vertexShader = (flatRoundBar: boolean, squareBlank: boolean, outline: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
-  uniform vec2 uOrigin;
+${outline ? `  // Issue #973: each grid corner's offset onto the wall outline.
+  uniform sampler2D uOutlineCorners;
+${OUTLINE_CORNER_GLSL}` : ''}  uniform vec2 uOrigin;
   uniform float uCellSize;
 ${flatRoundBar ? `  // Which world axis runs across the bar (0 = X, 1 = Z).
   uniform float uBarAxis;
@@ -412,12 +660,21 @@ ${flatRoundBar ? `  // World coordinate across the bar, so the top can stop on i
     float height = texelFetch(uHeightfield, vCell, 0).r;
     vHeight = height;
 
+${outline ? `    // The top stays flat at its own height; its corners follow the wall
+    // outline, exactly as the wall mesh's and the underside's do (issue #973).
+    ivec2 corner = vCell + ivec2(int(position.y + 0.5), int(position.z + 0.5));
+    vec2 cornerInCells = vec2(corner) + outlineCornerOffset(corner);
     vec3 displaced = vec3(
+      uOrigin.x + cornerInCells.x * uCellSize,
+      height,
+      uOrigin.y + cornerInCells.y * uCellSize
+    );
+` : `    vec3 displaced = vec3(
       uOrigin.x + (position.x + position.y) * uCellSize,
       height,
       uOrigin.y + (float(gl_InstanceID) + position.z) * uCellSize
     );
-
+`}
 #ifdef AROUND_WRAP
     displaced = aroundClampSheet(displaced);
 ${squareBlank ? `    // A square blank's section is widest at its cell centres, so the drawn quad
@@ -494,8 +751,12 @@ export function createHeightfieldMaterial(
   frame?: AroundFrame,
   flatRoundBar?: FlatRoundBarDescriptor,
   squareBlankSide?: number,
+  outlineCorners?: THREE.Texture,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
+  // Sub-cell walls (issue #973) are a flat-sheet feature: a wrapped grid's
+  // seam would need its own periodic corner lookup, so it keeps cell edges.
+  const outline = frame === undefined ? outlineCorners : undefined
   // Only the wrapped bar view of a square blank has a silhouette to clamp to;
   // a block, a flat setup or a round bar compiles exactly the shader it did.
   const blankSide = frame === undefined ? undefined : squareBlankSide
@@ -517,8 +778,9 @@ export function createHeightfieldMaterial(
           }
         : {}),
       ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
+      ...(outline ? { uOutlineCorners: { value: outline } } : {}),
     },
-    vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined), frame),
+    vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined, outline !== undefined), frame),
     fragmentShader: aroundShader(fragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,

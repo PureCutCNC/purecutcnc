@@ -114,6 +114,27 @@ export function uploadHeightfieldRegion(
   region: DirtyRegion,
 ): boolean {
   const gl = renderer.getContext()
+  if (!(gl instanceof WebGL2RenderingContext)) return false
+  return uploadTextureRegion(renderer, texture, grid.cols, grid.rows, region, gl.RED, gl.FLOAT, grid.topZ)
+}
+
+/**
+ * Upload a dirty sub-rectangle of any per-cell texture backed by a
+ * `cols × rows` array — the heightfield, or a flat grid's edge crossings (RGBA
+ * bytes, issue #973) — the same way `uploadHeightfieldRegion` does. Returns
+ * false when the GL texture does not exist yet or the context is not WebGL2.
+ */
+export function uploadTextureRegion(
+  renderer: THREE.WebGLRenderer,
+  texture: THREE.DataTexture,
+  cols: number,
+  rows: number,
+  region: DirtyRegion,
+  format: number,
+  type: number,
+  data: ArrayBufferView,
+): boolean {
+  const gl = renderer.getContext()
   if (!(gl instanceof WebGL2RenderingContext) || gl.isContextLost()) {
     return false
   }
@@ -124,20 +145,20 @@ export function uploadHeightfieldRegion(
     return false
   }
 
-  const colMin = Math.max(0, Math.min(region.colMin, grid.cols - 1))
-  const colMax = Math.max(colMin, Math.min(region.colMax, grid.cols - 1))
-  const rowMin = Math.max(0, Math.min(region.rowMin, grid.rows - 1))
-  const rowMax = Math.max(rowMin, Math.min(region.rowMax, grid.rows - 1))
+  const colMin = Math.max(0, Math.min(region.colMin, cols - 1))
+  const colMax = Math.max(colMin, Math.min(region.colMax, cols - 1))
+  const rowMin = Math.max(0, Math.min(region.rowMin, rows - 1))
+  const rowMax = Math.max(rowMin, Math.min(region.rowMax, rows - 1))
   const width = colMax - colMin + 1
   const height = rowMax - rowMin + 1
 
   const previousBinding = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null
   gl.bindTexture(gl.TEXTURE_2D, glTexture)
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
-  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, grid.cols)
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, cols)
   gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, colMin)
   gl.pixelStorei(gl.UNPACK_SKIP_ROWS, rowMin)
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, colMin, rowMin, width, height, gl.RED, gl.FLOAT, grid.topZ)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, colMin, rowMin, width, height, format, type, data)
   gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0)
   gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0)
   gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0)

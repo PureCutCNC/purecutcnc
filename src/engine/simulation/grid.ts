@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { EDGE_CROSSING_STRIDE } from './edgeCrossings'
 import type { Project, Point } from '../../types/project'
 import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
 import type { FlatRoundBarDescriptor, SimulationBuildOptions, SimulationGrid, SquareBarDescriptor } from './types'
@@ -254,6 +255,7 @@ export function createSimulationGrid(
       ...(options.wrap ? { wrap: options.wrap } : {}),
       initialTopZ,
       topZ,
+      ...crossingsFor(spec, options),
     }
   }
 
@@ -269,6 +271,7 @@ export function createSimulationGrid(
       ...(options.wrap ? { wrap: options.wrap } : {}),
       initialTopZ,
       topZ,
+      // Only ever drawn wrapped (Around), so no edge crossings (issue #973).
     }
   }
 
@@ -299,5 +302,11 @@ export function createSimulationGrid(
     ...spec,
     ...(options.wrap ? { wrap: options.wrap } : {}),
     topZ,
+    ...crossingsFor(spec, options),
   }
+}
+
+/** A flat grid records edge crossings (issue #973); a wrapped one does not. */
+function crossingsFor(spec: SimulationGridSpec, options: SimulationBuildOptions): { edgeCrossings?: Uint8Array } {
+  return options.wrap ? {} : { edgeCrossings: new Uint8Array(spec.cols * spec.rows * EDGE_CROSSING_STRIDE) }
 }

@@ -18,6 +18,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import * as THREE from 'three'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
+import type { OutlineCorners } from '../../engine/simulation/outlineCorners'
 import { buildSimulationStockScene } from '../../engine/simulation/simulationScene'
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
@@ -147,6 +148,18 @@ export interface SimulationViewportHandle {
 }
 
 const SIMULATION_DETAIL_MIN = 240
+
+/**
+ * Refresh the wall-outline corner textures that went stale since the last
+ * draw (issue #973). Runs ahead of every `renderer.render`, so a draw never
+ * reads corners computed from older heights than the ones it shows.
+ */
+function updateSimulationOutlines(
+  renderer: THREE.WebGLRenderer,
+  ...outlines: Array<{ current: OutlineCorners | null }>
+): void {
+  for (const outline of outlines) outline.current?.update(renderer)
+}
 const SIMULATION_DETAIL_MAX = 1500
 const SIMULATION_DETAIL_STEP = 40
 
@@ -403,6 +416,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const scene = sceneRef.current
       const camera = cameraRef.current
       if (renderer && scene && camera) {
+        updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef)
         renderer.render(scene, camera)
       }
     }
@@ -428,6 +442,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   const playbackMaterialMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackBoundaryMeshRef = useRef<THREE.Object3D | null>(null)
   const playbackHeightfieldTextureRef = useRef<THREE.DataTexture | null>(null)
+  // The wall-outline corner passes of the static and playback scenes (issue
+  // #973): refreshed before a draw whenever their heightfield changed.
+  const staticOutlineRef = useRef<OutlineCorners | null>(null)
+  const playbackOutlineRef = useRef<OutlineCorners | null>(null)
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
@@ -487,6 +505,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(staticSceneGroupRef.current)
       staticSceneGroupRef.current = null
     }
+    staticOutlineRef.current?.dispose()
+    staticOutlineRef.current = null
     objectRef.current = null
     boundaryMeshRef.current = null
     flatRoundBarLowerHalfRef.current = null
@@ -501,6 +521,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       disposeSceneObject(playbackSceneGroupRef.current)
       playbackSceneGroupRef.current = null
     }
+    playbackOutlineRef.current?.dispose()
+    playbackOutlineRef.current = null
     playbackMaterialMeshRef.current = null
     playbackBoundaryMeshRef.current = null
     playbackFlatRoundBarLowerHalfRef.current = null
@@ -646,6 +668,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         // three rebuilds its GL state itself and re-uploads textures/geometry
         // from CPU-side data on the next animate() frame — only the overlay
         // needs clearing (plus a render request, since draws are on-demand).
+        // The outline corner textures are render targets, which three cannot
+        // re-upload from CPU data: recompute them from the restored heights.
+        staticOutlineRef.current?.invalidate()
+        playbackOutlineRef.current?.invalidate()
         needsRenderRef.current = true
         setWebglStatus('ok')
       },
@@ -660,6 +686,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Draw only when something changed (or playback animates every frame).
       if (!needsRenderRef.current && !isPlayingRef.current) return
       needsRenderRef.current = false
+      updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef)
       renderer.render(scene, camera)
     }
     animate()
@@ -756,6 +783,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // what the builder returned, so a dropped mount cannot read as mounted.
     const sceneMounted = built.group.parent === parent
     staticSceneGroupRef.current = built.group
+    staticOutlineRef.current = built.outline
     objectRef.current = built.surface
     boundaryMeshRef.current = built.boundary
     flatRoundBarLowerHalfRef.current = built.lowerHalf
@@ -805,6 +833,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (!uploaded) {
       updateHeightfieldTexture(texture)
     }
+    // The wall outline follows the new heights: the corners near the cells
+    // that changed, or every corner after a full re-upload (issue #973).
+    playbackOutlineRef.current?.invalidate(uploaded ? region : undefined)
     controller.clearDirtyRegion()
     needsRenderRef.current = true
   }, [])
@@ -932,6 +963,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const sceneMounted = built.group.parent === parent
       playbackSceneGroupRef.current = built.group
       playbackHeightfieldTextureRef.current = built.heightfieldTexture
+      playbackOutlineRef.current = built.outline
       playbackMaterialMeshRef.current = built.surface
       playbackBoundaryMeshRef.current = built.boundary
       playbackFlatRoundBarLowerHalfRef.current = built.lowerHalf

@@ -43,6 +43,9 @@ import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundBounds, aroundShader, around
 import {
   CELL_HEIGHT_GLSL,
   LIGHTING_GLSL,
+  OUTLINE_CELL_GLSL,
+  OUTLINE_CORNER_GLSL,
+  OUTLINE_NORMAL_GLSL,
   ROUND_BAR_SILHOUETTE_GLSL,
   SLOPE_GRADIENT_GLSL,
   SQUARE_BLANK_SILHOUETTE_GLSL,
@@ -50,6 +53,14 @@ import {
   SURFACE_NORMAL_GLSL,
 } from './heightfieldShader'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
+
+/**
+ * The outline texture the boundary reads (issue #973): its R and G place the
+ * corners, its B lights the walls. `OutlineCorners` provides it.
+ */
+export interface OutlineTextures {
+  texture: THREE.Texture
+}
 
 /**
  * One instance per interior + perimeter grid edge: vertical edges separate
@@ -96,9 +107,13 @@ export const ROUND_BAR_WALL_JOIN_GLSL = /* glsl */ `
   }
 `
 
-const wallVertexShader = (flatRoundBar: boolean, squareBlank: boolean): string => /* glsl */ `
+const wallVertexShader = (flatRoundBar: boolean, squareBlank: boolean, outline: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
-  uniform float uStockBottomZ;
+${outline ? `  // Issue #973: each grid corner's offset onto the wall outline, and the
+  // wall's direction there for lighting.
+  uniform sampler2D uOutlineCorners;
+${OUTLINE_CORNER_GLSL}
+${OUTLINE_NORMAL_GLSL}` : ''}  uniform float uStockBottomZ;
   // The lowest Y a heightfield wall may reach. The stock bottom for every
   // block, square and Around grid; for a flat round bar it is the equator,
   // where the static lower half takes over (issue #1049).
@@ -165,7 +180,21 @@ ${flatRoundBar ? ROUND_BAR_WALL_JOIN_GLSL : ''}
       edgePerp = vec3(0.0, 0.0, 1.0);
       perpStep = ivec2(0, 1);
     }
-
+${outline ? `
+    // The edge runs between two grid corners, each moved onto the wall outline
+    // by the same texel the top surface reads (issue #973), so a wall and the
+    // tops on either side of it still share their corners. Its normal follows
+    // the moved edge.
+    ivec2 startCorner = ivec2(edgeCol, edgeRow);
+    ivec2 endCorner = startCorner + (uVertical > 0.5 ? ivec2(0, 1) : ivec2(1, 0));
+    vec2 startInCells = vec2(startCorner) + outlineCornerOffset(startCorner);
+    vec2 edgeInCells = vec2(endCorner) + outlineCornerOffset(endCorner) - startInCells;
+    edgeStart = vec3(uOrigin.x + startInCells.x * uCellSize, 0.0, uOrigin.y + startInCells.y * uCellSize);
+    edgeAlong = vec3(edgeInCells.x * uCellSize, 0.0, edgeInCells.y * uCellSize);
+    // Perpendicular to the edge, pointing from the near cell to the far one.
+    vec2 perpInCells = uVertical > 0.5 ? vec2(edgeInCells.y, -edgeInCells.x) : vec2(-edgeInCells.y, edgeInCells.x);
+    edgePerp = normalize(vec3(perpInCells.x, 0.0, perpInCells.y));
+` : ''}
     float hNear = cellHeight(nearCell);
     float hFar = cellHeight(farCell);
     float top = max(hNear, hFar);
@@ -227,7 +256,15 @@ ${flatRoundBar ? '' : `    vec3 pos = edgeStart + edgeAlong * position.y;
     float direction = hNear >= hFar ? 1.0 : -1.0;
 ${flatRoundBar ? `    // A flat round bar lights in world space like the lower half and the tops,
     // so the two surfaces meet at the equator under one normal (issue #1049).
-` : ''}    vNormal = normalize(${flatRoundBar ? 'mat3(modelMatrix)' : 'normalMatrix'} * (direction * edgePerp));
+` : ''}${outline ? `    // Lit by the outline's smoothed direction at this end of the wall, so a
+    // gently curved wall shades smoothly across its jogs; a real corner or a
+    // junction keeps the face's own normal (issue #973). Lighting only.
+    vec3 lightNormal = outlineWallNormal(
+      position.y > 0.5 ? endCorner : startCorner,
+      direction * edgePerp
+    );
+    vNormal = normalize(${flatRoundBar ? 'mat3(modelMatrix)' : 'normalMatrix'} * lightNormal);
+` : `    vNormal = normalize(${flatRoundBar ? 'mat3(modelMatrix)' : 'normalMatrix'} * (direction * edgePerp));`}
     vWallHeight = top - bottom;
     vHeight = pos.y;
     vSlope = collapsed || isStep ? 0.0 : 1.0;
@@ -332,9 +369,11 @@ const floorVertexShader = /* glsl */ `
   }
 `
 
-const floorFragmentShader = /* glsl */ `
+const floorFragmentShader = (outline: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
-  uniform float uStockBottomZ;
+${outline ? `  uniform sampler2D uOutlineCorners;
+${OUTLINE_CORNER_GLSL}
+${OUTLINE_CELL_GLSL}` : ''}  uniform float uStockBottomZ;
   uniform vec3 uColor;
   uniform int uCols;
   uniform int uRows;
@@ -347,13 +386,18 @@ const floorFragmentShader = /* glsl */ `
   ${LIGHTING_GLSL}
 
   void main() {
-    ivec2 cell = clamp(
+${outline ? `    // The cell whose top covers this point: a hole in the underside ends on
+    // the same outline as the walls that come down to it (issue #973).
+    ivec2 cell = outlineCellAt(vUv * vec2(float(uCols), float(uRows)), ivec2(uCols - 1, uRows - 1));
+    ivec2 inside = clamp(cell, ivec2(0), ivec2(uCols - 1, uRows - 1));
+    float cellTopZ = inside == cell ? texelFetch(uHeightfield, inside, 0).r : uStockBottomZ;
+` : `    ivec2 cell = clamp(
       ivec2(vUv * vec2(float(uCols), float(uRows))),
       ivec2(0),
       ivec2(uCols - 1, uRows - 1)
     );
     float cellTopZ = texelFetch(uHeightfield, cell, 0).r;
-    if (cellTopZ <= uStockBottomZ + 0.000001) {
+`}    if (cellTopZ <= uStockBottomZ + 0.000001) {
       // Cut through (or outside the stock profile) — the underside is a hole.
       discard;
     }
@@ -470,8 +514,12 @@ export function createInstancedWallMaterial(
   wallFloorZ?: number,
   flatRoundBar?: FlatRoundBarDescriptor,
   squareBlankSide?: number,
+  outlineTextures?: OutlineTextures,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
+  // Sub-cell walls are flat-sheet only (issue #973); a wrapped grid keeps its
+  // walls on cell edges.
+  const outline = frame === undefined ? outlineTextures : undefined
   // The wrapped bar view of a square blank is the only scene that can draw a
   // wall outside the blank; everything else compiles the shader it always has.
   const blankSide = frame === undefined ? undefined : squareBlankSide
@@ -492,8 +540,11 @@ export function createInstancedWallMaterial(
           }
         : {}),
       ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
+      ...(outline
+        ? { uOutlineCorners: { value: outline.texture } }
+        : {}),
     },
-    vertexShader: aroundShader(wallVertexShader(roundBar, blankSide !== undefined), frame),
+    vertexShader: aroundShader(wallVertexShader(roundBar, blankSide !== undefined, outline !== undefined), frame),
     fragmentShader: aroundShader(wallFragmentShader(roundBar), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
@@ -505,12 +556,18 @@ export function createFloorMaterial(
   grid: SimulationGrid,
   stockColor: THREE.Color,
   frame?: AroundFrame,
+  outlineTextures?: OutlineTextures,
 ): THREE.ShaderMaterial {
+  const outline = frame === undefined ? outlineTextures?.texture : undefined
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
-    uniforms: { ...sharedUniforms(heightfieldTexture, grid, stockColor), ...aroundUniforms(frame) },
+    uniforms: {
+      ...sharedUniforms(heightfieldTexture, grid, stockColor),
+      ...aroundUniforms(frame),
+      ...(outline ? { uOutlineCorners: { value: outline } } : {}),
+    },
     vertexShader: aroundShader(floorVertexShader, frame),
-    fragmentShader: aroundShader(floorFragmentShader, frame),
+    fragmentShader: aroundShader(floorFragmentShader(outline !== undefined), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
@@ -544,6 +601,7 @@ export function createInstancedBoundaryGroup(
   wallFloorZ?: number,
   flatRoundBar?: FlatRoundBarDescriptor,
   squareBlankSide?: number,
+  outlineTextures?: OutlineTextures,
 ): THREE.Group {
   const roundBar = flatRoundBar !== undefined
   const group = new THREE.Group()
@@ -552,7 +610,7 @@ export function createInstancedBoundaryGroup(
   // Vertical edges: (cols+1) per row × rows instances.
   const verticalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols + 1, grid.rows),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ, flatRoundBar, squareBlankSide),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, true, frame, wallFloorZ, flatRoundBar, squareBlankSide, outlineTextures),
   )
   verticalWalls.frustumCulled = false
   group.add(verticalWalls)
@@ -560,7 +618,7 @@ export function createInstancedBoundaryGroup(
   // Horizontal edges: cols per row boundary × (rows+1) instances.
   const horizontalWalls = new THREE.Mesh(
     createWallStripTemplate(grid, grid.cols, grid.rows + 1),
-    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ, flatRoundBar, squareBlankSide),
+    createInstancedWallMaterial(heightfieldTexture, grid, stockColor, false, frame, wallFloorZ, flatRoundBar, squareBlankSide, outlineTextures),
   )
   horizontalWalls.frustumCulled = false
   group.add(horizontalWalls)
@@ -570,7 +628,7 @@ export function createInstancedBoundaryGroup(
   if (!roundBar) {
     const floor = new THREE.Mesh(
       createFloorGeometry(grid),
-      createFloorMaterial(heightfieldTexture, grid, stockColor, frame),
+      createFloorMaterial(heightfieldTexture, grid, stockColor, frame, outlineTextures),
     )
     group.add(floor)
   }

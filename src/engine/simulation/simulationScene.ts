@@ -25,8 +25,9 @@
  * piece the builder mounted, and the lower half is in the same group as the
  * surfaces it belongs to.
  *
- * The group owns its children only; the caller owns the group and the returned
- * heightfield texture, and disposes them with the grid.
+ * The group owns its children only; the caller owns the group, the returned
+ * heightfield texture and the outline corner pass, and disposes them with the
+ * grid.
  */
 
 import * as THREE from 'three'
@@ -35,6 +36,7 @@ import { createFlatRoundBarLowerHalf } from './flatRoundBarLowerHalf'
 import { createHeightfieldTexture, createStockPlaneGeometries } from './gpuMesh'
 import { createHeightfieldMaterial } from './heightfieldShader'
 import { createInstancedBoundaryGroup } from './instancedBoundary'
+import { createOutlineCorners, type OutlineCorners } from './outlineCorners'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 
 /** Everything one simulation scene mounts, so a caller cannot drop a piece. */
@@ -49,6 +51,12 @@ export interface SimulationStockScene {
   lowerHalf: THREE.Mesh | null
   /** The grid's height texture; dispose it with the scene. */
   heightfieldTexture: THREE.DataTexture
+  /**
+   * The wall-outline corner pass (issue #973), or null for a wrapped grid,
+   * whose walls stay on cell edges. Invalidate it with every heightfield
+   * upload, `update` it before each draw, and dispose it with the scene.
+   */
+  outline: OutlineCorners | null
 }
 
 function buildHeightfieldSurfaceObject(
@@ -85,7 +93,10 @@ export function buildSimulationStockScene(
   squareBlankSide?: number,
 ): SimulationStockScene {
   const heightfieldTexture = createHeightfieldTexture(grid)
-  const material = createHeightfieldMaterial(heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide)
+  const outline = frame === undefined ? createOutlineCorners(heightfieldTexture, grid) : null
+  const material = createHeightfieldMaterial(
+    heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide, outline?.texture,
+  )
   const surface = buildHeightfieldSurfaceObject(grid, material, frame)
   const boundary = createInstancedBoundaryGroup(
     heightfieldTexture,
@@ -95,6 +106,7 @@ export function buildSimulationStockScene(
     flatRoundBar?.pivot,
     flatRoundBar,
     squareBlankSide,
+    outline ?? undefined,
   )
   const lowerHalf = createFlatRoundBarLowerHalf(grid, flatRoundBar, stockColor)
 
@@ -104,5 +116,5 @@ export function buildSimulationStockScene(
   group.add(boundary)
   if (lowerHalf) group.add(lowerHalf)
 
-  return { group, surface, boundary, lowerHalf, heightfieldTexture }
+  return { group, surface, boundary, lowerHalf, heightfieldTexture, outline }
 }
