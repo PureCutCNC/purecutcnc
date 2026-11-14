@@ -189,7 +189,7 @@ function applyMoveKernel(
         if (row < dirtyRowMin) dirtyRowMin = row
         if (row > dirtyRowMax) dirtyRowMax = row
         if (winners !== undefined) winners[idx] = winner
-      } else if (winnerTable !== undefined && nextZ <= topZ[idx] + 1e-9) {
+      } else if (winnerTable !== undefined && Math.fround(nextZ) <= topZ[idx] + 1e-9) {
         const current = winners![idx]
         if (current !== winner && current < WINNER_UNKNOWN) {
           // Same cutter (the usual tie, passes of one operation): compare
@@ -218,7 +218,8 @@ function applyMoveKernel(
       if (
         crossingCutter !== null
         && (distanceSq > rimDistanceSq || (shapedTip && cutZ <= stockBottomZ))
-        && nextZ <= topZ[idx] + 1e-9
+        // topZ is float32: a depth that rounds down in it still matches.
+        && Math.fround(nextZ) <= topZ[idx] + 1e-9
       ) {
         const written = stampEdgeCrossings(
           crossings!, topZ, grid.cols, grid.rows, originX, originY, cellSize, stockBottomZ,
@@ -1243,7 +1244,10 @@ class CrossingFinalizer {
     const grid = this.grid
     // The deepest this move cuts anywhere: no outline cell in a tile that is
     // all higher than every cell the move reaches can have it as its bound.
-    const lowest = toolType === 'plasma' ? grid.stockBottomZ : Math.min(move.from.z, move.to.z)
+    // Heights are float32: compare against the move's depths rounded the same
+    // way, or a level whose float32 rounds down never matches the move that
+    // cut it (a third of a rough's terrace walls lost their crossings).
+    const lowest = Math.fround(toolType === 'plasma' ? grid.stockBottomZ : Math.min(move.from.z, move.to.z))
     const minX = (move.from.x < move.to.x ? move.from.x : move.to.x) - toolRadius - grid.originX
     const maxX = (move.from.x > move.to.x ? move.from.x : move.to.x) + toolRadius - grid.originX
     const minY = (move.from.y < move.to.y ? move.from.y : move.to.y) - toolRadius - grid.originY
@@ -1273,7 +1277,7 @@ class CrossingFinalizer {
           }
           const cut = this.cutter.cutAt(x, y)
           // Only a move that cut this cell to its final height bounds it.
-          if ((cut > grid.stockBottomZ ? cut : grid.stockBottomZ) > height + 1e-9) continue
+          if (Math.fround(cut > grid.stockBottomZ ? cut : grid.stockBottomZ) > height + 1e-9) continue
           refineEdgeCrossings(
             this.crossings, grid.topZ, grid.cols, grid.originX, grid.originY, grid.cellSize, grid.stockBottomZ,
             this.cutter, col, row, height, this.masks[index],
