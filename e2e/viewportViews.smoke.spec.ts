@@ -883,3 +883,101 @@ test('simulation lights a gently sloped wall evenly along its length', async ({ 
   expect(smoothedRange).toBeLessThanOrEqual(0.05 * result.smoothed.brightest)
   expect(faceRange).toBeGreaterThan(4 * Math.max(smoothedRange, 1))
 })
+
+test('simulation shades the exact cut inside a cell from its winner moves', async ({ app }) => {
+  // Issue #1209: a cell's height is sampled at its centre, so a ball scallop
+  // whose passes run along cell edges samples flat, and a through cut that ends
+  // inside a cell either hides that cell's remaining material or none of the
+  // cut. The flat kernel records the move that set each cell, and the surface
+  // shader evaluates those moves exactly at every pixel once a cell spans two
+  // pixels or more.
+  await app.page.addScriptTag({ type: 'module', content: `
+    import * as THREE from '/node_modules/.vite/deps/three.js';
+    import { buildSimulationStockScene } from '/src/engine/simulation/simulationScene.ts';
+    import { applyMoveToGrid } from '/src/engine/simulation/replay.ts';
+    import { appendMoveTableEntry, createMoveTable, moveTableToolSlot } from '/src/engine/simulation/moveTable.ts';
+
+    const cols = 20;
+    const rows = 20;
+    const grid = {
+      originX: 0, originY: 0, cellSize: 1, cols, rows, stockBottomZ: 0, stockTopZ: 10,
+      topZ: new Float32Array(cols * rows).fill(10),
+      winners: new Uint32Array(cols * rows).fill(0xffffffff),
+      moveTable: createMoveTable(),
+    };
+    const cut = (move, toolType, radius) => {
+      const slot = moveTableToolSlot(grid.moveTable, { toolType, toolRadius: radius, vBitAngle: null });
+      const index = appendMoveTableEntry(grid.moveTable, move, slot);
+      applyMoveToGrid(grid, move, radius, toolType, null, move, 1, index);
+    };
+    // Ball passes 1 apart along the cell edges x = k: every cell centre sits
+    // halfway between two passes, so every cell samples the same height.
+    for (let k = -1; k <= cols + 1; k += 1) {
+      cut({ kind: 'cut', from: { x: k, y: -2, z: 7 }, to: { x: k, y: rows + 2, z: 7 } }, 'ball_endmill', 1);
+    }
+    // A flat through cut that ends at x = 4.7: cell 4's centre is cut through,
+    // the strip x = 4.7 .. 5 of that cell is not.
+    cut({ kind: 'cut', from: { x: 1.7, y: -5, z: -1 }, to: { x: 1.7, y: rows + 5, z: -1 } }, 'flat_endmill', 3);
+
+    const built = buildSimulationStockScene(grid, new THREE.Color('#c8c8c8'));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.add(built.group);
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(400, 400, false);
+    const gl = renderer.getContext();
+    const above = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
+    above.up.set(0, 0, -1);
+    above.position.set(6, 60, 10);
+    above.lookAt(6, 0, 10);
+    above.updateProjectionMatrix();
+    above.updateMatrixWorld();
+    built.outline?.update(renderer);
+    built.winners?.update(renderer);
+    renderer.render(scene, above);
+    gl.finish();
+    const brightnessAt = (x, z) => {
+      const point = new THREE.Vector3(x, 7, z).project(above);
+      const pixel = new Uint8Array(4);
+      gl.readPixels(Math.floor((point.x + 1) * 200), Math.floor((point.y + 1) * 200), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return pixel[0] + pixel[1] + pixel[2];
+    };
+    const result = {
+      hasWinners: built.winners !== null,
+      sampledFlat: grid.topZ[10 * cols + 7] === grid.topZ[10 * cols + 8],
+      // One scallop, on either side of its bottom: opposite slopes.
+      scallopWest: brightnessAt(8.2, 10),
+      scallopEast: brightnessAt(8.8, 10),
+      // Cell 4: material past x = 4.7, cut through before it.
+      skin: brightnessAt(4.85, 10),
+      cut: brightnessAt(4.55, 10),
+      top: brightnessAt(7.5, 10),
+    };
+    built.group.traverse((object) => {
+      if (object.isMesh) {
+        object.geometry.dispose();
+        object.material.dispose();
+      }
+    });
+    built.outline?.dispose();
+    built.winners?.dispose();
+    built.heightfieldTexture.dispose();
+    renderer.dispose();
+    document.body.dataset.winners1209 = JSON.stringify(result);
+  ` })
+  await expect(app.page.locator('body')).toHaveAttribute('data-winners1209', /scallopWest/)
+  const result = JSON.parse(await app.page.locator('body').getAttribute('data-winners1209') ?? '{}') as {
+    hasWinners: boolean; sampledFlat: boolean; scallopWest: number; scallopEast: number; skin: number; cut: number; top: number
+  }
+  expect(result.hasWinners).toBe(true)
+  // The cell samples cannot see the scallop: every centre has the same height.
+  expect(result.sampledFlat).toBe(true)
+  expect(result.top).toBeGreaterThan(200)
+  // The exact surface does: the two flanks of one scallop are lit differently.
+  expect(Math.abs(result.scallopWest - result.scallopEast)).toBeGreaterThan(0.04 * result.top)
+  // The material left inside a through-cut cell is drawn, and the cut beside it
+  // inside the same cell is open.
+  expect(result.skin).toBeGreaterThan(0.5 * result.top)
+  expect(result.cut).toBeLessThan(10)
+})
