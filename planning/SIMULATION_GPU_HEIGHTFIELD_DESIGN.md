@@ -100,6 +100,42 @@ The shipped implementation plan and playback experiments are preserved in
   crossings are uploaded. Wrapped (Around) and square-blank grids record no
   crossings and keep cell-edge walls; their periodic seam would need its own
   corner lookup.
+- Inside a cell, a flat block's surface is exact once the cell spans two
+  pixels or more (issue #1209). The flat kernel records, beside `topZ`, the
+  move that set each cell's height (`grid.winners`, 4 bytes per cell, indexing
+  `grid.moveTable`, `moveTable.ts`); a lowered cell takes the move, and a move
+  that leaves a cell at the same height (a shared floor, the stock bottom)
+  takes it only if the cell's centre lies more deeply inside its footprint,
+  the lower table index on a tie, so the winner never depends on move order.
+  Heights are unchanged by this. The surface shader then evaluates, at the
+  fragment's exact sheet position, the cutter surfaces of the winners of the
+  2×2 cells whose centres surround it plus each winner's neighbour on either
+  side in cut order (the next segment of the same pass), with the kernel's
+  own per-move formula (`WINNER_CUT_GLSL` in `winnerShader.ts`), and takes
+  height, slope and cut-through from their minimum. A cell whose centre is cut
+  through draws its top too, so a thin skin inside it shows; one with no
+  material beside it is skipped up front. Below two pixels per cell the
+  shipped stencil path runs unchanged. On the guitar this rebuilt the exact
+  height within 1e-4 in at all but about 0.1 % of sub-cell points on the
+  finished surface and 1 % on the through-cut rim (P1, #1209), against 83 %
+  and 33 % for the cell sample.
+- The move table is a texture of two RGBA32F texels per move (from, tool slot,
+  to), at most `MOVE_TABLE_TEXTURE_MAX_ROWS` rows of
+  `MOVE_TABLE_TEXTURE_WIDTH` (WebGL2's guaranteed size, about 2.1 M moves); a
+  longer program falls back to cell-sampled shading and logs why. Winners are
+  an R32UI texture uploaded with the heightfield's dirty region
+  (`winnerShading.ts`). Playback appends its pieces to the prior operations'
+  table, so base winners keep their meaning, records each piece's own index,
+  and passes how far through the table the cut has got: entries past it are
+  ignored and the current one is clamped to its elapsed fraction, so nothing
+  shows ahead of the tool. A ramp played in part already leaves heights a
+  little below a whole-move replay (the kernel takes Z at the closest point of
+  the piece it is given); there the analytic surface follows the piece, not
+  the cell sample, by the same small amount.
+- Only a flat block records winners. Around, square blanks and flat round bars
+  keep `winners` undefined and compile exactly the shader they had; a cell a
+  non-rectangular stock profile leaves empty, or one lowered without a table
+  index, is marked unknown and keeps the sampled surface around it.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and

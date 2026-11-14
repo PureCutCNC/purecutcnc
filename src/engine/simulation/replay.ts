@@ -21,6 +21,7 @@ import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathMove, ToolpathResult } from '../toolpaths/types'
 import { outlineMasks, refineEdgeCrossings, stampEdgeCrossings, SweptCutter } from './edgeCrossings'
 import { createSimulationGrid } from './grid'
+import { appendMoveTableEntry, moveTableDistanceSq, moveTableRadius, moveTableReach, moveTableToolSlot, reserveMoveTable, WINNER_UNKNOWN } from './moveTable'
 import { cutterRayIntervalInPlace } from './tools'
 import type { DirtyRegion, SimulationBuildOptions, SimulationGrid, SimulationReplayItem, SimulationResult, SimulationStats } from './types'
 
@@ -60,6 +61,7 @@ function applyMoveKernel(
   toolRadius: number,
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
+  winnerIndex: number | undefined,
 ): ApplyMoveResult {
   const minX = Math.min(move.from.x, move.to.x) + -toolRadius
   const maxX = Math.max(move.from.x, move.to.x) + toolRadius
@@ -126,6 +128,19 @@ function applyMoveKernel(
   let crossRowMin = grid.rows
   let crossRowMax = -1
 
+  // Issue #1209: which move set each cell's height. A lowered cell takes this
+  // move. A cell this move leaves at the same height (a shared floor, the stock
+  // bottom) keeps whichever move contains its centre more deeply, the lower
+  // index on a tie, so the winner never depends on the order moves arrive in.
+  // A move without an index marks what it lowers unknown.
+  const winners = grid.winners
+  const winnerTable = winnerIndex === undefined ? undefined : grid.moveTable
+  const winner = winnerIndex ?? WINNER_UNKNOWN
+  let winnerColMin = grid.cols
+  let winnerColMax = -1
+  let winnerRowMin = grid.rows
+  let winnerRowMax = -1
+
   for (let row = rowStart; row <= rowEnd; row += 1) {
     const y = originY + (row + 0.5) * cellSize
     const rowBase = row * grid.cols
@@ -173,6 +188,32 @@ function applyMoveKernel(
         if (col > dirtyColMax) dirtyColMax = col
         if (row < dirtyRowMin) dirtyRowMin = row
         if (row > dirtyRowMax) dirtyRowMax = row
+        if (winners !== undefined) winners[idx] = winner
+      } else if (winnerTable !== undefined && nextZ <= topZ[idx] + 1e-9) {
+        const current = winners![idx]
+        if (current !== winner && current < WINNER_UNKNOWN) {
+          // Same cutter (the usual tie, passes of one operation): compare
+          // squared distances and skip both roots.
+          let deeper: boolean
+          let level: boolean
+          if (moveTableRadius(winnerTable, current) === toolRadius) {
+            const currentSq = moveTableDistanceSq(winnerTable, current, x, y)
+            deeper = distanceSq < currentSq - 1e-18
+            level = !deeper && distanceSq <= currentSq + 1e-18
+          } else {
+            const reach = toolRadius - Math.sqrt(distanceSq)
+            const currentReach = moveTableReach(winnerTable, current, x, y)
+            deeper = reach > currentReach + 1e-12
+            level = !deeper && reach >= currentReach - 1e-12
+          }
+          if (deeper || (level && winner < current)) {
+            winners![idx] = winner
+            if (col < winnerColMin) winnerColMin = col
+            if (col > winnerColMax) winnerColMax = col
+            if (row < winnerRowMin) winnerRowMin = row
+            if (row > winnerRowMax) winnerRowMax = row
+          }
+        }
       }
       if (
         crossingCutter !== null
@@ -195,6 +236,13 @@ function applyMoveKernel(
     }
   }
 
+  // A winner can change with no height changing (the tie rule above).
+  if (winnerColMax >= 0) {
+    crossColMin = Math.min(crossColMin, winnerColMin)
+    crossColMax = Math.max(crossColMax, winnerColMax)
+    crossRowMin = Math.min(crossRowMin, winnerRowMin)
+    crossRowMax = Math.max(crossRowMax, winnerRowMax)
+  }
   // A crossing can move with no height changing (a second pass at the same
   // depth reaching a little further), so the dirty region covers both.
   if (crossColMax >= 0) {
@@ -1035,6 +1083,9 @@ function applyWrappedMoveKernel(
  * `sweep` a playback piece has reached (1 for a batch replay); a partial
  * application resolves the cutter at the reached pose and uses the full move
  * only as the depth it may not pass (issue #1048). The wrapped kernel folds the
+ * `winnerIndex` names `move`'s entry in the grid's move table (issue #1209);
+ * without one, a flat block grid marks the cells it lowers as unknown.
+ * The wrapped kernel folds the
  * periodic copies into one cell pass and reaches the order-independent fixed
  * point over all the source move's images (F8b), so a subdivided, partial or
  * re-applied playback finishes exactly equal to the batch replay of the same
@@ -1049,6 +1100,7 @@ export function applyMoveToGrid(
   vBitAngle: number | null,
   sweep: ToolpathMove = move,
   elapsed: number = 1,
+  winnerIndex?: number,
 ): ApplyMoveResult {
   // A torch is a one-kerf flat through-cut with no rotary solid to resolve, and
   // a flat grid is already exact: both keep the original kernel.
@@ -1056,7 +1108,7 @@ export function applyMoveToGrid(
     return applyWrappedMoveKernel(grid, move, toolRadius, toolType, vBitAngle, sweep, elapsed)
   }
 
-  const result = applyMoveKernel(grid, move, toolRadius, toolType, vBitAngle)
+  const result = applyMoveKernel(grid, move, toolRadius, toolType, vBitAngle, winnerIndex)
   if (!grid.wrap) return result
   // Periodic cutter overlap is dispatched outside the unchanged cell kernel.
   const { axis, period } = grid.wrap
@@ -1072,7 +1124,7 @@ export function applyMoveToGrid(
       from: { ...move.from, [axis]: move.from[axis] + shift },
       to: { ...move.to, [axis]: move.to[axis] + shift },
     }
-    const copy = applyMoveKernel(grid, shifted, toolRadius, toolType, vBitAngle)
+    const copy = applyMoveKernel(grid, shifted, toolRadius, toolType, vBitAngle, undefined)
     result.changedCount += copy.changedCount
     if (copy.dirtyRegion) {
       const region = result.dirtyRegion
@@ -1268,6 +1320,7 @@ export function replayItemsIntoGrid(
 ): { processedMoveCount: number; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
+  reserveReplayMoves(grid, items)
   DEFERRING_CROSSINGS.add(grid)
   try {
     for (const item of items) {
@@ -1289,15 +1342,37 @@ export function replayItemsIntoGrid(
   return { processedMoveCount, warnings }
 }
 
+/** Size the grid's move table for a whole replay at once. */
+function reserveReplayMoves(grid: SimulationGrid, items: readonly SimulationReplayItem[]): void {
+  if (!grid.moveTable) return
+  let count = 0
+  for (const item of items) for (const move of item.toolpath.moves) if (moveIsMaterialRemoving(move)) count += 1
+  reserveMoveTable(grid.moveTable, count)
+}
+
+/**
+ * The move-table slot of a replay item's cutter, or -1 when the grid records
+ * no winners (or the table has no slot left, which leaves its cells unknown).
+ */
+function replayToolSlot(grid: SimulationGrid, item: SimulationReplayItem): number {
+  return grid.moveTable ? moveTableToolSlot(grid.moveTable, item) : -1
+}
+
+/** Add a replayed move to the grid's table: its winner index, or undefined. */
+function replayWinnerIndex(grid: SimulationGrid, slot: number, move: ToolpathMove): number | undefined {
+  return slot >= 0 && grid.moveTable ? appendMoveTableEntry(grid.moveTable, move, slot) : undefined
+}
+
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
+  const slot = replayToolSlot(grid, item)
   for (const move of item.toolpath.moves) {
     if (!moveIsMaterialRemoving(move)) {
       continue
     }
 
-    applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
+    applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle, move, 1, replayWinnerIndex(grid, slot, move))
     processedMoveCount += 1
   }
 
@@ -1410,15 +1485,17 @@ async function replayItemsIntoGridChunked(
 
   // Crossings are recorded once the heights are final (see CrossingFinalizer).
   const crossings = grid.edgeCrossings
+  reserveReplayMoves(grid, items)
   DEFERRING_CROSSINGS.add(grid)
   try {
     for (const item of items) {
+      const slot = replayToolSlot(grid, item)
       for (const move of item.toolpath.moves) {
         if (!moveIsMaterialRemoving(move)) {
           continue
         }
         if (options.signal?.aborted) return null
-        applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle)
+        applyMoveToGrid(grid, move, item.toolRadius, item.toolType, item.vBitAngle, move, 1, replayWinnerIndex(grid, slot, move))
         processedMoveCount += 1
         if (Date.now() - sliceStart >= sliceMs) {
           await yieldToPaint()

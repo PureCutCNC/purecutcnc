@@ -17,6 +17,7 @@
 import type { ToolType } from '../../types/project'
 import type { ToolpathMove } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import { appendMoveTableEntry, extendMoveTable, moveTableToolSlot } from './moveTable'
 import { applyMoveToGrid } from './replay'
 import type { DirtyRegion, SimulationGrid } from './types'
 
@@ -76,6 +77,8 @@ export function cloneSimulationGrid(source: SimulationGrid): SimulationGrid {
     ...source,
     topZ: new Float32Array(source.topZ),
     ...(source.edgeCrossings ? { edgeCrossings: new Uint8Array(source.edgeCrossings) } : {}),
+    // Winners are mutable; the move table they index is shared (issue #1209).
+    ...(source.winners ? { winners: new Uint32Array(source.winners) } : {}),
   }
 }
 
@@ -188,6 +191,12 @@ export class PlaybackController {
 
   /** The source move behind each playback piece, for a split-independent cut. */
   private readonly parents: ToolpathMove[]
+  /**
+   * Each piece's index in the live grid's move table (issue #1209), or the
+   * index the next cutting piece takes for one that does not cut. Empty when
+   * the grid records no winners.
+   */
+  private readonly tableIndex: Int32Array
   private moveIndex = 0
   private moveFraction = 0
   private distanceTraveled = 0
@@ -209,6 +218,7 @@ export class PlaybackController {
     const segments = subdivideSegments(moves, maxSegmentLength)
     this.moves = segments.map((segment) => segment.move)
     this.parents = segments.map((segment) => segment.parent)
+    this.tableIndex = this.appendPiecesToMoveTable(tool)
     this.tool = tool
     this.totalPathLength = this.moves.reduce((sum, move) => sum + moveLength(move), 0)
     this.referenceFeedPerSecond = options.referenceFeedPerSecond && options.referenceFeedPerSecond > 0
@@ -244,8 +254,53 @@ export class PlaybackController {
     return Math.max(feed / this.referenceFeedPerSecond, 1e-3)
   }
 
+  /**
+   * The live grid's move table is the base grid's (the prior operations) with
+   * this playback's cutting pieces appended, so the base winners keep their
+   * meaning. Pieces, not source moves: a piece is what the kernel applies, so
+   * the shader's surface for a winner is exactly the cut that set it.
+   */
+  private appendPiecesToMoveTable(tool: PlaybackToolInfo): Int32Array {
+    if (!this.liveGrid.winners) return new Int32Array(0)
+    const cutting = this.moves.reduce((count, move) => count + (isCuttingMove(move) ? 1 : 0), 0)
+    const table = extendMoveTable(this.baseGrid.moveTable, cutting)
+    this.liveGrid.moveTable = table
+    const slot = moveTableToolSlot(table, tool)
+    const indices = new Int32Array(this.moves.length)
+    for (let i = 0; i < this.moves.length; i += 1) {
+      indices[i] = slot >= 0 && isCuttingMove(this.moves[i]) ? appendMoveTableEntry(table, this.moves[i], slot) : -1
+    }
+    // A piece that does not cut points at the next entry, which is what the
+    // shader's "entries before this one are complete" test needs.
+    let next = table.count
+    for (let i = this.moves.length - 1; i >= 0; i -= 1) {
+      if (indices[i] < 0) indices[i] = next
+      else next = indices[i]
+    }
+    return slot >= 0 ? indices : new Int32Array(0)
+  }
+
+  /** The table index to pass the kernel for piece `i`; undefined records unknown. */
+  private winnerIndexAt(i: number): number | undefined {
+    return this.tableIndex.length > 0 ? this.tableIndex[i] : undefined
+  }
+
+  /**
+   * How far through the live move table the cut has got (issue #1209): every
+   * entry below `index` is complete, entry `index` has reached `fraction` of
+   * its length, and later entries have not started. A finished playback reports
+   * the whole table.
+   */
+  getWinnerProgress(): { index: number; fraction: number } {
+    const count = this.liveGrid.moveTable?.count ?? 0
+    if (this.finished || this.tableIndex.length === 0) return { index: count, fraction: 1 }
+    const index = this.tableIndex[this.moveIndex]
+    return { index, fraction: isCuttingMove(this.moves[this.moveIndex]) ? this.moveFraction : 0 }
+  }
+
   reset(): void {
     this.liveGrid.topZ.set(this.baseGrid.topZ)
+    if (this.liveGrid.winners && this.baseGrid.winners) this.liveGrid.winners.set(this.baseGrid.winners)
     if (this.liveGrid.edgeCrossings && this.baseGrid.edgeCrossings) {
       this.liveGrid.edgeCrossings.set(this.baseGrid.edgeCrossings)
     }
@@ -372,10 +427,13 @@ export class PlaybackController {
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
             elapsedFractionOf(move, this.parents[this.moveIndex]),
+            this.winnerIndexAt(this.moveIndex),
           )
-          if (result.changedCount > 0) {
+          // A winner or crossing can change with no height changing; the
+          // dirty region carries those too, so it is what gets uploaded.
+          if (result.dirtyRegion) {
             gridChanged = true
-            this.expandDirtyRegion(result.dirtyRegion!)
+            this.expandDirtyRegion(result.dirtyRegion)
           }
           this.lastMoveApplied = this.moveIndex
         }
@@ -400,10 +458,13 @@ export class PlaybackController {
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
             elapsedFractionOf(move, this.parents[this.moveIndex]),
+            this.winnerIndexAt(this.moveIndex),
           )
-          if (result.changedCount > 0) {
+          // A winner or crossing can change with no height changing; the
+          // dirty region carries those too, so it is what gets uploaded.
+          if (result.dirtyRegion) {
             gridChanged = true
-            this.expandDirtyRegion(result.dirtyRegion!)
+            this.expandDirtyRegion(result.dirtyRegion)
           }
           this.lastMoveApplied = this.moveIndex
         }
@@ -431,10 +492,13 @@ export class PlaybackController {
             this.tool.vBitAngle,
             this.parents[this.moveIndex],
             elapsedFractionOf(partial, this.parents[this.moveIndex]),
+            this.winnerIndexAt(this.moveIndex),
           )
-          if (result.changedCount > 0) {
+          // A winner or crossing can change with no height changing; the
+          // dirty region carries those too, so it is what gets uploaded.
+          if (result.dirtyRegion) {
             gridChanged = true
-            this.expandDirtyRegion(result.dirtyRegion!)
+            this.expandDirtyRegion(result.dirtyRegion)
           }
         }
 
