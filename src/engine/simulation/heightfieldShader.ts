@@ -19,6 +19,8 @@ import type { AroundFrame } from '../aroundFrame'
 import { AROUND_CELL_GLSL, AROUND_FRAME_GLSL, aroundShader, aroundUniforms } from './aroundWrap'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
 import { SHALLOW_SLOPE_CELLS } from './stepThreshold'
+import { WINNER_CUT_GLSL, WINNER_SURFACE_GLSL } from './winnerShader'
+import type { WinnerShading } from './winnerShading'
 
 // theme-exempt: scene lighting reference — matches SimulationViewport light rig
 // Shared lighting code matching the scene lights in SimulationViewport:
@@ -632,7 +634,7 @@ export const SURFACE_NORMAL_GLSL = /* glsl */ `
 
 ${DEPTH_DARKEN_GLSL}`
 
-const vertexShader = (flatRoundBar: boolean, squareBlank: boolean, outline: boolean): string => /* glsl */ `
+const vertexShader = (flatRoundBar: boolean, squareBlank: boolean, outline: boolean, winners: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
 ${outline ? `  // Issue #973: each grid corner's offset onto the wall outline.
   uniform sampler2D uOutlineCorners;
@@ -651,7 +653,9 @@ ${flatRoundBar ? `  // Which world axis runs across the bar (0 = X, 1 = Z).
   // Position inside the cell, 0..1 on both axes.
   out vec2 vLocal;
   out float vHeight;
-${flatRoundBar ? `  // World coordinate across the bar, so the top can stop on its silhouette.
+${winners ? `  // Issue #1209: the fragment's sheet position, where its winners are evaluated.
+  out vec2 vSheet;
+` : ''}${flatRoundBar ? `  // World coordinate across the bar, so the top can stop on its silhouette.
   out float vAcrossWorld;
 ` : ''}
   void main() {
@@ -675,7 +679,8 @@ ${outline ? `    // The top stays flat at its own height; its corners follow the
       uOrigin.y + (float(gl_InstanceID) + position.z) * uCellSize
     );
 `}
-#ifdef AROUND_WRAP
+${winners ? `    vSheet = displaced.xz;
+` : ''}#ifdef AROUND_WRAP
     displaced = aroundClampSheet(displaced);
 ${squareBlank ? `    // A square blank's section is widest at its cell centres, so the drawn quad
     // can reach past the blank's flats near a corner: clamp it back onto the
@@ -689,7 +694,7 @@ ${flatRoundBar ? `    vAcrossWorld = uBarAxis < 0.5 ? displaced.z : displaced.x;
   }
 `
 
-const fragmentShader = (flatRoundBar: boolean): string => /* glsl */ `
+const fragmentShader = (flatRoundBar: boolean, winners: boolean): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec3 uColor;
   uniform float uStockBottomZ;
@@ -705,7 +710,11 @@ const fragmentShader = (flatRoundBar: boolean): string => /* glsl */ `
   flat in ivec2 vCell;
   in vec2 vLocal;
   in float vHeight;
-${flatRoundBar ? `  in float vAcrossWorld;
+${winners ? `  in vec2 vSheet;
+  uniform vec2 uOrigin;
+${WINNER_CUT_GLSL}
+${WINNER_SURFACE_GLSL}
+` : ''}${flatRoundBar ? `  in float vAcrossWorld;
   uniform float uBarCentre;
   uniform float uBarRadius;
 ` : ''}  out vec4 fragColor;
@@ -721,7 +730,34 @@ ${flatRoundBar ? `  ${ROUND_BAR_SILHOUETTE_GLSL}
 ` : ''}
   void main() {
     float threshold = uStockBottomZ + 0.000001;
-    if (vHeight <= threshold) {
+${winners ? `    // Issue #1209: once a cell spans two pixels or more, the surface is the
+    // exact cutter surface of the moves that won the cells around this point,
+    // not the cell's sampled height. A cell whose centre is cut through still
+    // draws here, so material inside it (a thin skin) shows; one with no
+    // material beside it at all is skipped before any of that work.
+    vec2 cellPos = (vSheet - uOrigin) / uCellSize;
+    float cellsPerPixel = max(length(dFdx(cellPos)), length(dFdy(cellPos)));
+    if (cellsPerPixel < 0.5) {
+      bool skip = false;
+      if (vHeight <= threshold) {
+        ivec2 size = textureSize(uHeightfield, 0);
+        float near = 0.0;
+        for (int k = 0; k < 4; k += 1) {
+          ivec2 cell = clamp(vCell + ivec2(k == 0 ? 1 : k == 1 ? -1 : 0, k == 2 ? 1 : k == 3 ? -1 : 0), ivec2(0), size - 1);
+          near = max(near, texelFetch(uHeightfield, cell, 0).r);
+        }
+        skip = near <= threshold;
+      }
+      float exactHeight;
+      vec2 exactSlope;
+      if (!skip && winnerSurface(vSheet, cellPos, uStockTopZ, uStockBottomZ, exactHeight, exactSlope)) {
+        if (exactHeight <= threshold) discard;
+        vec3 exactLighting = calcLighting(normalize(vec3(-exactSlope.x, 1.0, -exactSlope.y)));
+        fragColor = vec4(uColor * exactLighting * depthDarken(exactHeight, uStockTopZ), 1.0);
+        return;
+      }
+    }
+` : ''}    if (vHeight <= threshold) {
       discard;
     }
 ${flatRoundBar ? `    // The flat top is part of the bar's silhouette: an outermost cell that
@@ -752,6 +788,7 @@ export function createHeightfieldMaterial(
   flatRoundBar?: FlatRoundBarDescriptor,
   squareBlankSide?: number,
   outlineCorners?: THREE.Texture,
+  winnerShading?: WinnerShading | null,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
   // Sub-cell walls (issue #973) are a flat-sheet feature: a wrapped grid's
@@ -760,6 +797,9 @@ export function createHeightfieldMaterial(
   // Only the wrapped bar view of a square blank has a silhouette to clamp to;
   // a block, a flat setup or a round bar compiles exactly the shader it did.
   const blankSide = frame === undefined ? undefined : squareBlankSide
+  // Winner-move shading (issue #1209) is a flat-block feature; every other
+  // scene compiles exactly the shader it had.
+  const winners = frame === undefined && !roundBar && blankSide === undefined ? winnerShading ?? null : null
   return new THREE.ShaderMaterial({
     ...(frame ? { defines: { AROUND_WRAP: 1 } } : {}),
     uniforms: {
@@ -779,9 +819,10 @@ export function createHeightfieldMaterial(
         : {}),
       ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
       ...(outline ? { uOutlineCorners: { value: outline } } : {}),
+      ...(winners ? winners.uniforms : {}),
     },
-    vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined, outline !== undefined), frame),
-    fragmentShader: aroundShader(fragmentShader(roundBar), frame),
+    vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined, outline !== undefined, winners !== null), frame),
+    fragmentShader: aroundShader(fragmentShader(roundBar, winners !== null), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })

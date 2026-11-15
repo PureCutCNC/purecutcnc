@@ -42,9 +42,10 @@ import {
   outlineCornerRect,
 } from './outlineCorners'
 import { PlaybackController } from './playback'
-import { applyMoveToGrid } from './replay'
+import { applyMoveToGrid, replayItemsIntoGrid } from './replay'
 import { buildSimulationStockScene } from './simulationScene'
-import type { SimulationGrid } from './types'
+import type { SimulationGrid, SimulationReplayItem } from './types'
+import type { ToolpathResult } from '../toolpaths/types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -266,8 +267,51 @@ function testRefreshRectangleCoversTheSolvesReach(): void {
   console.log(`refresh rectangles: PASSED (${moved} corner changes, all inside)`)
 }
 
+function testTerraceWallsAtFloat32Depths(): void {
+  console.log('Testing terrace walls keep their crossings at depths float32 rounds down...')
+  // A rough's terraces: a wide pass at one depth and a narrower one below it.
+  // Heights are float32, so a depth such as 0.19 is stored a hair below the
+  // move's own Z. The static finalizer (and the playback kernel) must still
+  // see the move that cut the cell; they used to drop it, leaving a third of a
+  // 3D rough's terrace walls on cell edges (#1209 testing).
+  for (const [upper, lower] of [[11.4, 7.33], [9.7, 3.1], [12.3, 6.1]]) {
+    assert(Math.fround(lower) < lower, 'the lower depth rounds down in float32')
+    for (const playback of [false, true]) {
+      const grid = makeGrid(30, 30)
+      const moves = [
+        { kind: 'cut' as const, from: { x: 2, y: 10.3, z: upper }, to: { x: 28, y: 13.7, z: upper } },
+        { kind: 'cut' as const, from: { x: 2, y: 13.1, z: lower }, to: { x: 28, y: 16.9, z: lower } },
+      ]
+      if (playback) {
+        for (const move of moves) applyMoveToGrid(grid, move, 3, 'flat_endmill', null)
+      } else {
+        replayItemsIntoGrid(grid, moves.map((move): SimulationReplayItem => ({
+          operationId: 'rough', operationName: 'rough', toolRef: 't', toolType: 'flat_endmill', toolRadius: 3, vBitAngle: null,
+          toolpath: { moves: [move] } as unknown as ToolpathResult,
+        })))
+      }
+      // Every edge where the lower floor rises to the upper one has a crossing.
+      let walls = 0
+      let missing = 0
+      for (let row = 0; row + 1 < grid.rows; row += 1) {
+        for (let col = 2; col < 28; col += 1) {
+          const a = grid.topZ[row * grid.cols + col]
+          const b = grid.topZ[(row + 1) * grid.cols + col]
+          if (Math.abs(a - b) < 1 || Math.max(a, b) > 19) continue
+          walls += 1
+          if (grid.edgeCrossings![(row * grid.cols + col) * EDGE_CROSSING_STRIDE + 2] === 0) missing += 1
+        }
+      }
+      assert(walls > 10, `the terraces form walls (${walls})`)
+      assert(missing === 0, `${upper}/${lower} ${playback ? 'playback' : 'static'}: ${missing} of ${walls} terrace wall edges have no crossing`)
+    }
+  }
+  console.log('terrace walls at float32 depths: PASSED')
+}
+
 try {
   testFlatGridsCarryCrossings()
+  testTerraceWallsAtFloat32Depths()
   testCrossingOnlyChangeIsDirty()
   testEveryCornerReaderSharesOneTexture()
   testWrappedGridKeepsCellEdges()

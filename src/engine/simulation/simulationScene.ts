@@ -38,6 +38,7 @@ import { createHeightfieldMaterial } from './heightfieldShader'
 import { createInstancedBoundaryGroup } from './instancedBoundary'
 import { createOutlineCorners, type OutlineCorners } from './outlineCorners'
 import type { FlatRoundBarDescriptor, SimulationGrid } from './types'
+import { createWinnerShading, type WinnerShading } from './winnerShading'
 
 /** Everything one simulation scene mounts, so a caller cannot drop a piece. */
 export interface SimulationStockScene {
@@ -57,6 +58,13 @@ export interface SimulationStockScene {
    * upload, `update` it before each draw, and dispose it with the scene.
    */
   outline: OutlineCorners | null
+  /**
+   * Winner-move shading data (issue #1209), or null where the surface stays
+   * cell-sampled (anything but a flat block, or a table too large). Invalidate
+   * it with every heightfield upload, `update` it before each draw, and
+   * dispose it with the scene.
+   */
+  winners: WinnerShading | null
 }
 
 function buildHeightfieldSurfaceObject(
@@ -94,8 +102,9 @@ export function buildSimulationStockScene(
 ): SimulationStockScene {
   const heightfieldTexture = createHeightfieldTexture(grid)
   const outline = frame === undefined ? createOutlineCorners(heightfieldTexture, grid) : null
+  const winners = frame === undefined && !flatRoundBar && squareBlankSide === undefined ? createWinnerShading(grid) : null
   const material = createHeightfieldMaterial(
-    heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide, outline?.texture,
+    heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide, outline?.texture, winners,
   )
   const surface = buildHeightfieldSurfaceObject(grid, material, frame)
   const boundary = createInstancedBoundaryGroup(
@@ -116,5 +125,5 @@ export function buildSimulationStockScene(
   group.add(boundary)
   if (lowerHalf) group.add(lowerHalf)
 
-  return { group, surface, boundary, lowerHalf, heightfieldTexture, outline }
+  return { group, surface, boundary, lowerHalf, heightfieldTexture, outline, winners }
 }

@@ -180,10 +180,13 @@ function testOldGridsKeepExactKeysAndValues(): void {
   assert(flat.stockTopZ === topZ, `flat stock top must stay thickness ${topZ}, got ${flat.stockTopZ}`)
   const keys = Object.keys(flat).sort()
   const expected = ['cellSize', 'cols', 'originX', 'originY', 'rows', 'stockBottomZ', 'stockTopZ', 'topZ'].sort()
-  // A flat grid gains exactly one key, its edge crossings (issue #973).
-  const expectedFlat = [...expected, 'edgeCrossings'].sort()
+  // A flat block grid gains its edge crossings (issue #973) and its
+  // winner-move shading data (issue #1209), nothing else.
+  const expectedFlat = [...expected, 'edgeCrossings', 'moveTable', 'winners'].sort()
   assert(keys.length === expectedFlat.length && keys.every((key, i) => key === expectedFlat[i]), `flat grid keys drifted: ${keys.join(',')}`)
   assert(flat.edgeCrossings?.length === flat.cols * flat.rows * 4 && flat.edgeCrossings.every((byte) => byte === 0), 'a flat grid starts with no crossings recorded')
+  assert(flat.winners?.length === flat.cols * flat.rows && flat.winners.every((w) => w === 0xffffffff), 'a flat block starts with every cell uncut')
+  assert(flat.moveTable?.count === 0, 'a flat block starts with an empty move table')
 
   const wrap = { axis: 'y' as const, period: Math.PI * project.stock.thickness }
   const wrapped = createSimulationGrid(project, { targetLongAxisCells: 48, wrap })

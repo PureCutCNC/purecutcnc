@@ -19,6 +19,7 @@ import * as THREE from 'three'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
 import type { OutlineCorners } from '../../engine/simulation/outlineCorners'
+import type { WinnerShading } from '../../engine/simulation/winnerShading'
 import { buildSimulationStockScene } from '../../engine/simulation/simulationScene'
 import type { SimulationBar } from '../../app/simulationSetup'
 import type { AroundFrame } from '../../engine/aroundFrame'
@@ -150,13 +151,14 @@ export interface SimulationViewportHandle {
 const SIMULATION_DETAIL_MIN = 240
 
 /**
- * Refresh the wall-outline corner textures that went stale since the last
- * draw (issue #973). Runs ahead of every `renderer.render`, so a draw never
- * reads corners computed from older heights than the ones it shows.
+ * Refresh the wall-outline corner textures (issue #973) and the winner-move
+ * textures (issue #1209) that went stale since the last draw. Runs ahead of
+ * every `renderer.render`, so a draw never reads data older than the heights
+ * it shows.
  */
 function updateSimulationOutlines(
   renderer: THREE.WebGLRenderer,
-  ...outlines: Array<{ current: OutlineCorners | null }>
+  ...outlines: Array<{ current: Pick<OutlineCorners | WinnerShading, 'update'> | null }>
 ): void {
   for (const outline of outlines) outline.current?.update(renderer)
 }
@@ -416,7 +418,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       const scene = sceneRef.current
       const camera = cameraRef.current
       if (renderer && scene && camera) {
-        updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef)
+        updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef, staticWinnersRef, playbackWinnersRef)
         renderer.render(scene, camera)
       }
     }
@@ -446,6 +448,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // #973): refreshed before a draw whenever their heightfield changed.
   const staticOutlineRef = useRef<OutlineCorners | null>(null)
   const playbackOutlineRef = useRef<OutlineCorners | null>(null)
+  // The winner-move shading data of the same two scenes (issue #1209).
+  const staticWinnersRef = useRef<WinnerShading | null>(null)
+  const playbackWinnersRef = useRef<WinnerShading | null>(null)
   // Boundary mesh color is fixed at build time — the shader-driven mesh stays
   // alive for the duration of playback and only the heightfield texture updates.
   const boundaryMeshRef = useRef<THREE.Object3D | null>(null)
@@ -507,6 +512,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     staticOutlineRef.current?.dispose()
     staticOutlineRef.current = null
+    staticWinnersRef.current?.dispose()
+    staticWinnersRef.current = null
     objectRef.current = null
     boundaryMeshRef.current = null
     flatRoundBarLowerHalfRef.current = null
@@ -523,6 +530,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     }
     playbackOutlineRef.current?.dispose()
     playbackOutlineRef.current = null
+    playbackWinnersRef.current?.dispose()
+    playbackWinnersRef.current = null
     playbackMaterialMeshRef.current = null
     playbackBoundaryMeshRef.current = null
     playbackFlatRoundBarLowerHalfRef.current = null
@@ -672,6 +681,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         // re-upload from CPU data: recompute them from the restored heights.
         staticOutlineRef.current?.invalidate()
         playbackOutlineRef.current?.invalidate()
+        staticWinnersRef.current?.invalidate()
+        playbackWinnersRef.current?.invalidate()
         needsRenderRef.current = true
         setWebglStatus('ok')
       },
@@ -686,7 +697,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Draw only when something changed (or playback animates every frame).
       if (!needsRenderRef.current && !isPlayingRef.current) return
       needsRenderRef.current = false
-      updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef)
+      updateSimulationOutlines(renderer, staticOutlineRef, playbackOutlineRef, staticWinnersRef, playbackWinnersRef)
       renderer.render(scene, camera)
     }
     animate()
@@ -784,6 +795,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     const sceneMounted = built.group.parent === parent
     staticSceneGroupRef.current = built.group
     staticOutlineRef.current = built.outline
+    staticWinnersRef.current = built.winners
     objectRef.current = built.surface
     boundaryMeshRef.current = built.boundary
     flatRoundBarLowerHalfRef.current = built.lowerHalf
@@ -818,6 +830,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     if (!controller) {
       return
     }
+    // The move being cut is shown only as far as the tool has reached it
+    // (issue #1209), whether or not this step changed a cell.
+    const progress = controller.getWinnerProgress()
+    playbackWinnersRef.current?.setProgress(progress.index, progress.fraction)
     const region = controller.getDirtyRegion()
     if (!region) {
       return
@@ -836,6 +852,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
     // The wall outline follows the new heights: the corners near the cells
     // that changed, or every corner after a full re-upload (issue #973).
     playbackOutlineRef.current?.invalidate(uploaded ? region : undefined)
+    playbackWinnersRef.current?.invalidate(uploaded ? region : undefined)
     controller.clearDirtyRegion()
     needsRenderRef.current = true
   }, [])
@@ -964,6 +981,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       playbackSceneGroupRef.current = built.group
       playbackHeightfieldTextureRef.current = built.heightfieldTexture
       playbackOutlineRef.current = built.outline
+      playbackWinnersRef.current = built.winners
+      const progress = controller.getWinnerProgress()
+      built.winners?.setProgress(progress.index, progress.fraction)
       playbackMaterialMeshRef.current = built.surface
       playbackBoundaryMeshRef.current = built.boundary
       playbackFlatRoundBarLowerHalfRef.current = built.lowerHalf

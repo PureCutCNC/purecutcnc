@@ -99,6 +99,16 @@ export interface SimulationGrid {
    * wrapped (rotary) grid, whose walls stay on the cell edges.
    */
   edgeCrossings?: Uint8Array
+  /**
+   * The move that set each cell's height (issue #1209): an index into
+   * `moveTable`, `WINNER_NONE` for an uncut cell, or `WINNER_UNKNOWN` when the
+   * move is not in the table. Written by the flat kernel beside `topZ`; the
+   * surface shader evaluates these moves' exact cutter surfaces inside a cell.
+   * Present only on a flat block grid.
+   */
+  winners?: Uint32Array
+  /** The moves `winners` indexes, in cut order (`moveTable.ts`). */
+  moveTable?: import('./moveTable').SimulationMoveTable
 }
 
 export interface DirtyRegion {
