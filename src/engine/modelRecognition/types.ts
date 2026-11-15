@@ -36,7 +36,8 @@ export interface RecognizedCircle {
 /**
  * What a cavity's straight walls end on.
  *
- * - `through`: they reach the model's underside.
+ * - `through`: they come out of the part: at the mesh's lowest point, or on an
+ *   underside higher up with nothing under the outline below it.
  * - `flat`: a flat floor (which may itself have deeper openings in it).
  * - `taper`: the void goes on below but narrows — a drill-point cone, a floor
  *   fillet. `zBottom` is where the walls stop being vertical.

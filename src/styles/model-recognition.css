@@ -86,6 +86,15 @@
   gap: 2px;
 }
 
+/* The face chip sits beside the kind label (issue #1206 slice 4); the notes
+ * stay on their own line under it. */
+.find-cavities__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .find-cavities__row--island th {
   padding-left: 18px;
   color: var(--text-dim);
@@ -144,6 +153,13 @@
 
 .find-cavities__shape--island {
   fill: color-mix(in srgb, var(--text-dim) 30%, var(--bg-elev-1));
+}
+
+/* A Bottom shape (issue #1206 slice 4) is on the far side of the part: its
+ * outline is dotted rather than the Top shapes' dashed line, so the two read
+ * apart even where they overlap. */
+.find-cavities__shape--bottom {
+  stroke-dasharray: 1 2;
 }
 
 .find-cavities__shape--lit {

@@ -121,17 +121,22 @@ function cavityKind(round: boolean, bottom: CavityBottom): CandidateKind {
  * Flattens a detector result into drawable candidates, in the order they
  * should sit in the tree: the solids first — the material the cavities are cut
  * out of — then each cavity followed by its islands.
+ *
+ * `idPrefix` goes in front of every id (issue #1206 slice 4). The look from
+ * below is a second run over the same part, so its ids are `b-s0`, `b-c0`,
+ * `b-c0.i0`: distinct in one list, and the face readable off the row itself.
  */
 export function candidatesFromResult(
   result: ModelRecognitionResult,
   face: FlatFace,
   units: 'mm' | 'inch',
+  idPrefix = '',
 ): RecognitionCandidate[] {
   const step = roundingStep(units)
   const candidates: RecognitionCandidate[] = []
   result.solids.forEach((solid, solidIndex) => {
     candidates.push({
-      id: `s${solidIndex}`,
+      id: `${idPrefix}s${solidIndex}`,
       parentId: null,
       face,
       kind: 'solid',
@@ -146,7 +151,7 @@ export function candidatesFromResult(
     })
   })
   result.cavities.forEach((cavity, cavityIndex) => {
-    const id = `c${cavityIndex}`
+    const id = `${idPrefix}c${cavityIndex}`
     candidates.push({
       id,
       parentId: null,
@@ -199,7 +204,7 @@ const SAME_OUTLINE_AREA_FRACTION = 0.01
 /** Spans agree within this fraction of the candidate's own depth. */
 const SAME_SPAN_FRACTION = 1e-3
 
-function sameOutline(a: SketchProfile, b: SketchProfile): boolean {
+export function sameOutline(a: SketchProfile, b: SketchProfile): boolean {
   const pathA = toPath(flattenProfile(a).points)
   const pathB = toPath(flattenProfile(b).points)
   if (pathA.length < 3 || pathB.length < 3) return false
@@ -211,17 +216,29 @@ function sameOutline(a: SketchProfile, b: SketchProfile): boolean {
   return areaA + areaB - shared * 2 <= smaller * SAME_OUTLINE_AREA_FRACTION
 }
 
+/**
+ * Whether two Z spans are the same span. The first argument sets the scale: a
+ * depth has to agree to within a fraction of its own size, so the same void
+ * found from both faces compares equal and a pocket the user made deeper does
+ * not.
+ */
+export function sameSpan(
+  a: { zTop: number; zBottom: number },
+  b: { zTop: number; zBottom: number },
+): boolean {
+  const slack = Math.abs(a.zTop - a.zBottom) * SAME_SPAN_FRACTION
+  return Math.abs(a.zTop - b.zTop) <= slack && Math.abs(a.zBottom - b.zBottom) <= slack
+}
+
 export function markAlreadyDrawn(
   candidates: readonly RecognitionCandidate[],
   drawn: readonly DrawnFeature[],
 ): RecognitionCandidate[] {
   return candidates.map((candidate) => {
-    const slack = Math.abs(candidate.zTop - candidate.zBottom) * SAME_SPAN_FRACTION
     const alreadyDrawn = drawn.some((feature) => (
       feature.face === candidate.face
       && feature.operation === candidate.operation
-      && Math.abs(feature.zTop - candidate.zTop) <= slack
-      && Math.abs(feature.zBottom - candidate.zBottom) <= slack
+      && sameSpan(candidate, feature)
       && feature.profile.closed
       && sameOutline(feature.profile, candidate.profile)
     ))

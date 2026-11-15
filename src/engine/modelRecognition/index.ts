@@ -21,6 +21,13 @@ export {
   type DrawnFeature,
   type RecognitionCandidate,
 } from './candidates'
+export {
+  combineFaces,
+  meshSeenFromBelow,
+  resultFromBelowToStock,
+  type CombinedRecognition,
+  type FaceRun,
+} from './faces'
 export { recognizeCavities, type RecognitionOptions } from './recognize'
 export type {
   CavityBottom,

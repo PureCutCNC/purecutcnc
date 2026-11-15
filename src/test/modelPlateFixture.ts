@@ -25,6 +25,10 @@
  * - a through hole, centre (40, 10), radius 3;
  * - a counterbore, centre (40, 30): radius 5.5 down to Z 14, radius 3.3 through.
  *
+ * `undersidePocket` adds a 10 x 8 pocket, X 45..55, Y 16..24, cut 5 deep into
+ * the plate's underside (floor at Z 5), for the Bottom-face slice (issue #1206
+ * slice 4). It overlaps none of the shapes above.
+ *
  * `plateModelProjectWithVolume` returns the same project with the model's own
  * volume from Manifold, so a test can compare a part recreated from the
  * detected features with the part it came from.
@@ -44,6 +48,8 @@ export interface PlateFixtureOptions {
   origin?: { x: number; y: number }
   /** Facets per circle. The default is fine; 12 is a coarse STL. */
   segments?: number
+  /** Cut a pocket into the plate's underside (issue #1206 slice 4). */
+  undersidePocket?: boolean
   /** Extra features to put in the tree after the model. */
   after?: SketchFeature[]
 }
@@ -76,11 +82,17 @@ async function buildPlateFixture(options: PlateFixtureOptions = {}): Promise<Pla
     Manifold.cylinder(height, radius, radius, options.segments ?? 48).translate([x, y, z])
   )
   const pocket = Manifold.cube([20, 10, 8]).translate([5, 5, 12]).subtract(cylinder(15, 10, 12, 2, 4))
-  const solid = Manifold.cube([PLATE.width, PLATE.depth, PLATE.height])
+  const cut = Manifold.cube([PLATE.width, PLATE.depth, PLATE.height])
     .subtract(pocket)
     .subtract(cylinder(40, 10, -5, 3, 30))
     .subtract(cylinder(40, 30, 14, 5.5, 10))
     .subtract(cylinder(40, 30, -5, 3.3, 30))
+  // A pocket opening downward: the Top look never reaches it, the Bottom one
+  // does. Kept out of the way of the pocket, both holes and the counterbore.
+  const nearSide = options.undersidePocket
+    ? cut.subtract(Manifold.cube([10, 8, 5]).translate([45, 16, 0]))
+    : cut
+  const solid = nearSide
     .scale([unit, unit, unit])
     .translate([origin.x, origin.y, 0])
   const mesh = solid.getMesh()

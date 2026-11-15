@@ -27,6 +27,8 @@
  * - `recognize.ts`, top always the mesh top                 -> counterbore
  * - `recognize.ts`, a banded container no longer stops the top -> counterbore
  * - `recognize.ts`, `bottom` always `flat` below slab 0     -> drill point
+ * - `recognize.ts`, `clearBelow` never true                 -> plate on a foot
+ * - `recognize.ts`, `clearBelow` always true                -> T-slot
  * - `recognize.ts`, island top fixed at the first level     -> chamfered boss
  * - `recognize.ts`, `partOfCavity` always false             -> drill point
  * - `sections.ts`, `loopsMatch` always true for two holes   -> pocket + hole (throws)
@@ -149,6 +151,20 @@ function assertSpan(cavity: { zBottom: number; zTop: number }, zBottom: number, 
   assert(hole.bottom === 'through', 'hole: through')
   assertSpan(hole, 0, 20, 'hole')
   assertCircle(hole, 40, 10, 3, 'hole')
+}
+
+// ---------------------------------------------------------------------------
+// A plate standing on a foot: its holes are still through holes
+// ---------------------------------------------------------------------------
+{
+  // The plate's underside is at Z 0 but the foot goes down to -4, so the hole
+  // does not reach the mesh's lowest point. Nothing is under it, though.
+  const result = recognize(plate().add(box(48, 4, -4, 10, 10, 4)).subtract(cylinder(20, 20, -10, 3, 40)))
+  assert(result.cavities.length === 1 && result.skipped.length === 0, 'plate on a foot: one cavity')
+  const [hole] = result.cavities
+  assertCircle(hole, 20, 20, 3, 'plate on a foot')
+  assertSpan(hole, 0, 20, 'plate on a foot')
+  assert(hole.bottom === 'through', `plate on a foot: the hole is through, got ${hole.bottom}`)
 }
 
 // ---------------------------------------------------------------------------
