@@ -29,6 +29,7 @@ import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
 import { Icon } from '../Icon'
 import { ChangeFaceDialog } from '../feature-tree/ChangeFaceDialog'
+import { FindCavitiesDialog } from '../modelRecognition/FindCavitiesDialog'
 import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
 import { CommandNoticeToast } from './CommandNoticeToast'
@@ -651,6 +652,7 @@ export function AppShell({
               >
                 {sketchCanvas}
                 <ChangeFaceDialog />
+                <FindCavitiesDialog />
               </div>
               <div
                 id="workspace-panel-preview3d"

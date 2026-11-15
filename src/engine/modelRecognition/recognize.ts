@@ -119,7 +119,15 @@ function emptyResult(): ModelRecognitionResult {
   return { cavities: [], skipped: [], levelsTruncated: false, meshOpen: false }
 }
 
-export function recognizeCavities(mesh: RecognitionMesh): ModelRecognitionResult {
+export interface RecognitionOptions {
+  /**
+   * Hears how far the sectioning has got, 0..1, once per slab. Sectioning is
+   * nearly all of the work, so this is the whole progress of a run.
+   */
+  onProgress?: (fraction: number) => void
+}
+
+export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOptions = {}): ModelRecognitionResult {
   const bounds = meshBounds(mesh)
   const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
   if (!Number.isFinite(diagonal) || !(diagonal > 0) || !(bounds.maxZ > bounds.minZ)) return emptyResult()
@@ -157,6 +165,7 @@ export function recognizeCavities(mesh: RecognitionMesh): ModelRecognitionResult
       slab.hiBanded[hiLoop] = true
     })
     slabs.push(slab)
+    options.onProgress?.((i + 1) / (levels.length - 1))
   }
 
   // ── Tracks ─────────────────────────────────────────────────────────────────

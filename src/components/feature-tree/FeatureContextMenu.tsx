@@ -27,6 +27,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { activeFace, canChangeAuthoringFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { cannedShapeEditorFor, cannedShapeIsExpandable, cannedShapeLabelKey, isCannedFeature } from '../../cannedShapes'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { modelRecognitionRefusal } from '../../store/helpers/recognizedFeatures'
 import { hasRotaryCannedFeature, isRotaryCannedFeature, isRotaryCannedMoveSelection } from '../../store/helpers/cannedShapeActions'
 
 /**
@@ -355,6 +356,9 @@ export function FeatureContextMenu({
   const transformDisabled = menuHasLockedSelection
     || selectionOnOtherFace
     || menuHasRotaryCannedSelection
+  // Find pockets and holes is offered for one imported model at a time, and
+  // left out everywhere else rather than shown dead (issue #1206).
+  const canFindCavities = !menuHasMultipleSelection && modelRecognitionRefusal(project, primaryId) === null
   const changeFaceReason = selectionOr(
     menuHasLockedSelection
       ? t('featureTree.contextMenu.lockedTooltip')
@@ -803,6 +807,19 @@ export function FeatureContextMenu({
                 title={changeFaceReason}
               >
                 <MenuItemText reason={changeFaceReason}>{t('featureTree.face.changeAuthoringFace')}</MenuItemText>
+              </button>
+            </>
+          ) : null}
+          {canFindCavities && primaryId ? (
+            <>
+              <div className="feature-context-menu__separator" />
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.findModelCavities(primaryId)}
+                data-testid="context-find-cavities"
+              >
+                {t('featureTree.findCavities.command')}
               </button>
             </>
           ) : null}

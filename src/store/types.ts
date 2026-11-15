@@ -52,6 +52,7 @@ import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
 import type { ApplyNestInput } from './helpers/nestApply'
+import type { AddRecognizedFeaturesInput } from './helpers/recognizedFeatures'
 import type { RotaryPatternInput, RotaryPatternResult } from './helpers/rotaryPatterns'
 import type { RotarySolidInput, RotarySolidResult } from './helpers/rotarySolids'
 
@@ -477,6 +478,8 @@ export interface ProjectStore {
   addFeature: (feature: SketchFeature) => void
   importShapes: (input: { fileName: string; sourceType: ImportSourceType; shapes: ImportedShape[]; classified?: ClassifiedShape[] }) => string[]
   importCamjFolders: (input: { fileName: string; sourceProject: Project; selectedFolderIds: string[]; importStock?: boolean }) => string[]
+  /** Draws pockets and holes found on an imported model as features in a folder after it (issue #1206). */
+  addRecognizedFeatures: (input: AddRecognizedFeaturesInput) => string[]
   updateFeature: (id: string, patch: Partial<SketchFeature>) => void
   updateFeatures: (ids: string[], patch: Partial<SketchFeature>) => void
   deleteFeature: (id: string) => void
