@@ -54,6 +54,7 @@ const ALL_CODES = [
   'edgeTrochoidalInvalidGuide', 'edgeTrochoidalAdvanceDegenerate',
   'edgeTrochoidalMoveBudget', 'edgeTrochoidalEntryBudget',
   'edgeTrochoidalTabsRequireHelix', 'edgeTrochoidalTabUnsafe', 'edgeTrochoidalSmoothTabFallback',
+  'edgeVerticalOvercut', 'edgeVerticalOvercutInvalid',
   'edgeTrochoidalSkippedSpan',
   'edgeTrochoidalNoSurvivingSpan', 'edgeTrochoidalSafetyCheck',
   'carveTrochoidalWidthTooSmall', 'carveTrochoidalWidthNarrow', 'carveTrochoidalWidthLeavesCore',

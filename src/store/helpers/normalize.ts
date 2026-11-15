@@ -295,6 +295,14 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
         || operation.kind === 'edge_route_outside')
       ? ('arc' as const)
       : undefined,
+    // Vertical overcut (issue #834) is not backfilled either: absent is zero,
+    // so a saved project keeps its bytes and its motion. The stored value is
+    // kept exactly — a negative, non-finite or over-limit amount is refused by
+    // `resolveVerticalOvercut`, never clamped here — and only on the Edge Route
+    // kinds that read it.
+    verticalOvercut: operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside'
+      ? operation.verticalOvercut
+      : undefined,
   }
 
   // Never silently retarget a plasma cut when saved geometry becomes open or missing.

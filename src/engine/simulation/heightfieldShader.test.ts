@@ -27,7 +27,17 @@
  * `e2e/viewportViews.smoke.spec.ts`.
  */
 import { compileScalarGlsl } from './glslScalar.testSupport'
-import { SHALLOW_SLOPE_CELLS, SLOPE_GRADIENT_GLSL, STEP_GLSL } from './heightfieldShader'
+import { EDGE_CROSSING_STRIDE } from './edgeCrossings'
+import {
+  OUTLINE_NORMAL_NONE,
+  OUTLINE_OFFSET_SCALE,
+  OUTLINE_WALL_GLSL,
+  SHALLOW_SLOPE_CELLS,
+  SLOPE_GRADIENT_GLSL,
+  STEP_GLSL,
+} from './heightfieldShader'
+import { applyMoveToGrid, replayItemsIntoGrid } from './replay'
+import type { SimulationGrid, SimulationReplayItem } from './types'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -421,6 +431,345 @@ function testWideningAveragesNarrowScallopsOnly(): void {
   console.log(`widening: PASSED (keeps ${(narrow * 100).toFixed(0)} % of a 2.7-cell scallop, ${(wellSampled * 100).toFixed(0)} % of a 13-cell one)`)
 }
 
+// ── Issue #973: walls along the cut outline ─────────────────────────────
+
+interface Point { x: number; z: number }
+
+/** Corner offsets and the wall direction, as `OUTLINE_PASS_FRAGMENT_GLSL` unpacks them. */
+function unpackCorner(packed: number): { x: number; z: number; direction: number | null } {
+  const direction = Math.floor(packed / 65536)
+  const zCode = Math.floor((packed - direction * 65536) / 256)
+  const xCode = packed - direction * 65536 - zCode * 256
+  return {
+    x: (xCode - 127) / OUTLINE_OFFSET_SCALE,
+    z: (zCode - 127) / OUTLINE_OFFSET_SCALE,
+    direction: direction === OUTLINE_NORMAL_NONE ? null : (direction * Math.PI) / 254,
+  }
+}
+
+/** The shipped corner solve, run against one height field and its crossings. */
+function outlineOf(
+  height: HeightField,
+  crossing: (col: number, row: number, channel: number) => number = () => 0,
+  cellSize = 1,
+  stockBottomZ = 0,
+): {
+  /** Where grid corner (x, z) is drawn, in cells. */
+  corner: (x: number, z: number) => Point
+  /** The wall's line angle at the corner, radians in [0, π), or null. */
+  direction: (x: number, z: number) => number | null
+  /** Does the corner move at all. */
+  moves: (x: number, z: number) => boolean
+  /** Is the grid edge leaving the corner in a direction a wall. */
+  wallFrom: (x: number, z: number, dirX: number, dirZ: number) => boolean
+  /** Every corner in the window that a wall touches. */
+  wallCorners: (minX: number, maxX: number, minZ?: number, maxZ?: number) => Array<{ grid: Point; drawn: Point; direction: number | null }>
+} {
+  const compiled = compileScalarGlsl(`${STEP_GLSL}\n${OUTLINE_WALL_GLSL}`, { cellHeightAt: height, cellCrossing: crossing })
+  const solve = (x: number, z: number) => unpackCorner(compiled.outlineCornerSolve(x, z, stockBottomZ, cellSize) as number)
+  const wallFrom = (x: number, z: number, dirX: number, dirZ: number): boolean =>
+    compiled.wallFrom(x, z, dirX, dirZ, stockBottomZ, cellSize) as boolean
+  const corner = (x: number, z: number): Point => { const o = solve(x, z); return { x: x + o.x, z: z + o.z } }
+  return {
+    corner,
+    direction: (x, z) => solve(x, z).direction,
+    moves: (x, z) => { const o = solve(x, z); return o.x !== 0 || o.z !== 0 },
+    wallFrom,
+    wallCorners: (minX, maxX, minZ = minX, maxZ = maxX) => {
+      const found: Array<{ grid: Point; drawn: Point; direction: number | null }> = []
+      for (let z = minZ; z <= maxZ; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          if (wallFrom(x, z, 1, 0) || wallFrom(x, z, -1, 0) || wallFrom(x, z, 0, 1) || wallFrom(x, z, 0, -1)) {
+            const o = solve(x, z)
+            found.push({ grid: { x, z }, drawn: { x: x + o.x, z: z + o.z }, direction: o.direction })
+          }
+        }
+      }
+      return found
+    },
+  }
+}
+
+/** A flat grid of unit cells at the origin, with edge crossings, as `createSimulationGrid` makes one. */
+function stampGrid(size: number, top = 20): SimulationGrid {
+  return {
+    originX: 0, originY: 0, cellSize: 1, cols: size, rows: size, stockBottomZ: 0, stockTopZ: top,
+    topZ: new Float32Array(size * size).fill(top),
+    edgeCrossings: new Uint8Array(size * size * EDGE_CROSSING_STRIDE),
+  }
+}
+
+/**
+ * The two ways crossings are recorded (issue #973): playback cuts move by move
+ * and records as it goes; a static view replays everything, then records them
+ * for the final outline. Every stamped test runs both.
+ */
+type StampMode = 'playback' | 'static'
+let stampMode: StampMode = 'playback'
+const pendingCuts = new WeakMap<SimulationGrid, SimulationReplayItem[]>()
+
+function cut(
+  grid: SimulationGrid, from: { x: number; y: number }, to: { x: number; y: number }, z: number, radius: number,
+  toolType: SimulationReplayItem['toolType'] = 'flat_endmill',
+): void {
+  const move = { kind: 'cut' as const, from: { ...from, z }, to: { ...to, z } }
+  if (stampMode === 'playback') {
+    applyMoveToGrid(grid, move, radius, toolType, null)
+    return
+  }
+  const items = pendingCuts.get(grid) ?? []
+  items.push({
+    operationId: 'test', operationName: 'test', toolRef: null, toolType, toolRadius: radius, vBitAngle: null,
+    toolpath: { moves: [move] } as unknown as SimulationReplayItem['toolpath'],
+  })
+  pendingCuts.set(grid, items)
+}
+
+/** The stamped grid's outline: heights clamp at the grid's edge like the texture, crossings read 0 there. */
+function stampedOutline(grid: SimulationGrid): ReturnType<typeof outlineOf> {
+  const pending = pendingCuts.get(grid)
+  if (pending) {
+    replayItemsIntoGrid(grid, pending)
+    pendingCuts.delete(grid)
+  }
+  const inside = (value: number, count: number) => Math.min(count - 1, Math.max(0, value))
+  return outlineOf(
+    (col, row) => grid.topZ[inside(row, grid.rows) * grid.cols + inside(col, grid.cols)],
+    (col, row, channel) => (col < 0 || row < 0 || col >= grid.cols || row >= grid.rows
+      ? 0
+      : grid.edgeCrossings![(row * grid.cols + col) * EDGE_CROSSING_STRIDE + channel]),
+    grid.cellSize,
+    grid.stockBottomZ,
+  )
+}
+
+function rmsOf(values: number[]): number {
+  return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length)
+}
+
+/** Angle between two line directions, in degrees, ignoring which way they run. */
+function lineAngleDegrees(a: number, b: number): number {
+  const difference = Math.abs(a - b) % Math.PI
+  return (Math.min(difference, Math.PI - difference) * 180) / Math.PI
+}
+
+function testCircularCutFollowsTheTool(): void {
+  console.log('Testing a stamped circular slot is drawn on the tool\'s real edge...')
+  for (const depth of [-0.1, 6]) {
+    const grid = stampGrid(120)
+    const centre = { x: 60.3, y: 59.7 }
+    const radius = 40
+    const tool = 4.3
+    const segments = 400
+    for (let i = 0; i < segments; i += 1) {
+      const a0 = (i / segments) * 2 * Math.PI
+      const a1 = ((i + 1) / segments) * 2 * Math.PI
+      cut(grid,
+        { x: centre.x + radius * Math.cos(a0), y: centre.y + radius * Math.sin(a0) },
+        { x: centre.x + radius * Math.cos(a1), y: centre.y + radius * Math.sin(a1) },
+        depth, tool)
+    }
+    const corners = stampedOutline(grid).wallCorners(0, 120)
+    assert(corners.length > 600, `circle must have wall corners to check (${corners.length})`)
+    // The slot's two edges, as the 400-segment path really cuts them.
+    const error = (point: Point): number => {
+      const distance = Math.hypot(point.x - centre.x, point.z - centre.y)
+      return Math.min(Math.abs(distance - (radius + tool)), Math.abs(distance - (radius - tool)))
+    }
+    const drawn = corners.map(({ drawn }) => error(drawn))
+    const onGrid = corners.map(({ grid: point }) => error(point))
+    const lighting = corners.map(({ drawn, direction }) => {
+      assert(direction !== null, `corner ${drawn.x},${drawn.z} has a wall direction`)
+      // The tangent of a circle about the centre.
+      return lineAngleDegrees(direction!, Math.atan2(drawn.z - centre.y, drawn.x - centre.x) + Math.PI / 2)
+    })
+    assert(rmsOf(drawn) < 0.02, `depth ${depth}: drawn outline rms ${rmsOf(drawn).toFixed(3)} cell must be under 0.02`)
+    assert(Math.max(...drawn) < 0.05, `depth ${depth}: every corner within 0.05 cell of the cut (${Math.max(...drawn).toFixed(3)})`)
+    assert(rmsOf(onGrid) > 0.3, `depth ${depth}: cell edges are the worse outline (${rmsOf(onGrid).toFixed(3)})`)
+    assert(rmsOf(lighting) < 2 && Math.max(...lighting) < 6, `depth ${depth}: walls light along the circle (rms ${rmsOf(lighting).toFixed(2)}°, worst ${Math.max(...lighting).toFixed(2)}°)`)
+    console.log(`  depth ${depth}: rms ${rmsOf(onGrid).toFixed(3)} → ${rmsOf(drawn).toFixed(3)} cell, worst ${Math.max(...onGrid).toFixed(3)} → ${Math.max(...drawn).toFixed(3)}; lighting rms ${rmsOf(lighting).toFixed(2)}°`)
+  }
+  console.log('circular slot: PASSED')
+}
+
+function testStraightSlotAtAnyAngle(): void {
+  console.log('Testing a straight slot is drawn straight at any angle, and lit along itself...')
+  for (const degrees of [0, 4, 17, 30, 45, 63, 88, 135]) {
+    const angle = (degrees * Math.PI) / 180
+    const grid = stampGrid(64)
+    const middle = { x: 32.37, y: 31.79 }
+    const tool = 3.2
+    const along = { x: Math.cos(angle), y: Math.sin(angle) }
+    cut(grid, { x: middle.x - 40 * along.x, y: middle.y - 40 * along.y }, { x: middle.x + 40 * along.x, y: middle.y + 40 * along.y }, -0.1, tool)
+    const corners = stampedOutline(grid).wallCorners(8, 56)
+    assert(corners.length > 40, `${degrees}°: slot must have wall corners to check (${corners.length})`)
+    let worst = 0
+    let worstLight = 0
+    const errors: number[] = []
+    for (const { drawn, direction } of corners) {
+      const across = (drawn.x - middle.x) * -along.y + (drawn.z - middle.y) * along.x
+      errors.push(Math.abs(Math.abs(across) - tool))
+      worst = Math.max(worst, errors[errors.length - 1])
+      assert(direction !== null, `${degrees}°: corner ${drawn.x},${drawn.z} has a wall direction`)
+      worstLight = Math.max(worstLight, lineAngleDegrees(direction!, angle))
+    }
+    // Crossings and directions are stored in bytes: 1/254 cell, 1.4°.
+    assert(rmsOf(errors) < 0.02, `${degrees}°: the slot's edge drawn within 0.02 cell rms (${rmsOf(errors).toFixed(3)})`)
+    assert(worst < 0.05, `${degrees}°: every corner within 0.05 cell of the slot's edge (worst ${worst.toFixed(3)} cell)`)
+    console.log(`  ${degrees}°: rms ${rmsOf(errors).toFixed(3)}, worst ${worst.toFixed(3)} cell off the edge; lighting within ${worstLight.toFixed(2)}°`)
+    assert(worstLight < 1.5, `${degrees}°: walls light along the slot (worst ${worstLight.toFixed(2)}°)`)
+  }
+  console.log('straight slot: PASSED')
+}
+
+function testBallBottomingOutEndsOnItsRealEdge(): void {
+  console.log('Testing a ball nose that cuts through ends where it leaves the stock bottom...')
+  // A 6-cell ball, its tip 1 below the stock bottom: through where its surface
+  // is under the bottom, out to sqrt(6² - 5²) from its path, then a thin skin.
+  const grid = stampGrid(64)
+  const ball = 6
+  cut(grid, { x: -10, y: 30.43 }, { x: 74, y: 30.43 }, -1, ball, 'ball_endmill')
+  const edge = Math.sqrt(ball * ball - (ball - 1) * (ball - 1))
+  const outline = stampedOutline(grid)
+  const corners = outline.wallCorners(4, 60).filter(({ drawn }) => Math.abs(Math.abs(drawn.z - 30.43) - edge) < 1)
+  assert(corners.length > 80, `the through cut must have edge corners to check (${corners.length})`)
+  const errors = corners.map(({ drawn }) => Math.abs(Math.abs(drawn.z - 30.43) - edge))
+  assert(Math.max(...errors) < 0.03, `every corner on the through cut's real edge (worst ${Math.max(...errors).toFixed(3)} cell)`)
+  console.log('ball through cut: PASSED')
+}
+
+function testMaterialCornersStaySharp(): void {
+  console.log('Testing where two cuts cross, the corners left between them stay sharp...')
+  const grid = stampGrid(64)
+  const tool = 3
+  const row = 30.3
+  const column = 31.6
+  cut(grid, { x: -10, y: row }, { x: 74, y: row }, -0.1, tool)
+  cut(grid, { x: column, y: -10 }, { x: column, y: 74 }, -0.1, tool)
+  // Away from the grid's border, where the slots leave the stock.
+  const corners = stampedOutline(grid).wallCorners(2, 62)
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const sharp = { x: column + sx * tool, z: row + sz * tool }
+      const nearest = Math.min(...corners.map(({ drawn }) => Math.hypot(drawn.x - sharp.x, drawn.z - sharp.z)))
+      assert(nearest < 0.05, `a corner sits on the sharp corner at ${sharp.x},${sharp.z} (nearest ${nearest.toFixed(3)} cell)`)
+    }
+  }
+  // Every corner lies on one of the four edges the two slots leave.
+  const worst = Math.max(...corners.map(({ drawn }) => Math.min(
+    Math.abs(Math.abs(drawn.z - row) - tool) + Math.max(0, tool - Math.abs(drawn.x - column)),
+    Math.abs(Math.abs(drawn.x - column) - tool) + Math.max(0, tool - Math.abs(drawn.z - row)),
+  )))
+  assert(worst < 0.05, `every corner on the cut's real edge (worst ${worst.toFixed(3)} cell)`)
+  console.log('sharp corners: PASSED')
+}
+
+function testTabBridgeKeepsItsWidth(): void {
+  console.log('Testing a stamped tab bridge narrower than a cell keeps its walls and its real width (#829)...')
+  for (const width of [0.8, 0.3]) {
+    const grid = stampGrid(64)
+    const tool = 3
+    // The bridge runs along Z around column 30's centre, between two through slots.
+    const left = 30.5 - width / 2
+    const right = 30.5 + width / 2
+    cut(grid, { x: left - tool, y: -10 }, { x: left - tool, y: 74 }, -0.1, tool)
+    cut(grid, { x: right + tool, y: -10 }, { x: right + tool, y: 74 }, -0.1, tool)
+    const outline = stampedOutline(grid)
+    for (let z = 10; z < 50; z += 1) {
+      assert(outline.wallFrom(30, z, 0, 1) && outline.wallFrom(31, z, 0, 1), `width ${width}: bridge side walls at row ${z}`)
+      const drawnWidth = outline.corner(31, z).x - outline.corner(30, z).x
+      assert(Math.abs(drawnWidth - width) < 0.02, `width ${width}: drawn bridge ${drawnWidth.toFixed(3)} wide at row ${z}`)
+    }
+  }
+  console.log('tab bridge: PASSED')
+}
+
+function testPassesAtOneDepthUnite(): void {
+  console.log('Testing two passes at one depth leave the wall on the outer one, in either order...')
+  for (const depth of [-0.1, 8]) {
+    for (const outerFirst of [false, true]) {
+      const grid = stampGrid(48)
+      const passes = [20.2, 20.53]
+      if (outerFirst) passes.reverse()
+      for (const y of passes) cut(grid, { x: -10, y }, { x: 58, y }, depth, 3)
+      const corners = stampedOutline(grid).wallCorners(6, 42, 21, 26)
+      assert(corners.length > 20, `depth ${depth}: the outer edge must have corners (${corners.length})`)
+      for (const { drawn } of corners) {
+        // The inner pass's edge is a third of a cell nearer; bytes hold 1/254 cell.
+        assertClose(drawn.z, 23.53, 0.02, `depth ${depth}, outer ${outerFirst ? 'first' : 'second'}: corner at x ${drawn.x} on the outer pass's edge`)
+      }
+    }
+  }
+  console.log('passes at one depth: PASSED')
+}
+
+function testWithoutCrossingsNothingMoves(): void {
+  console.log('Testing that with no crossings recorded, a tab bridge, islands, holes and real corners stay on cell edges...')
+  const still = (name: string, field: HeightField): void => {
+    const outline = outlineOf(field)
+    for (let z = -6; z <= 12; z += 1) {
+      for (let x = -6; x <= 12; x += 1) {
+        assert(!outline.moves(x, z), `${name}: corner ${x},${z} must not move`)
+      }
+    }
+  }
+
+  // Issue #829's bridge: a 3 mm tab one cell wide across a six-cell kerf,
+  // between the 20 mm part and the 20 mm stock.
+  const bridge: HeightField = (col, row) => (row < 0 || row >= 6 ? 20 : col === 0 ? 3 : 0)
+  still('tab bridge', bridge)
+  still('tab bridge, turned', turned(bridge))
+  // It keeps its walls: both sides along its length, and a wall up to the part
+  // and the stock at each end.
+  const bridgeOutline = outlineOf(bridge)
+  for (let z = 0; z < 6; z += 1) {
+    assert(bridgeOutline.wallFrom(0, z, 0, 1) && bridgeOutline.wallFrom(1, z, 0, 1), `tab bridge side walls at row ${z}`)
+  }
+  assert(bridgeOutline.wallFrom(0, 0, 1, 0) && bridgeOutline.wallFrom(0, 6, 1, 0), 'tab bridge end walls')
+
+  // One-cell islands and holes.
+  still('one-cell tab', (col, row) => (col === 2 && row === 2 ? 3 : 0))
+  still('one-cell island on a floor', (col, row) => (col === 2 && row === 2 ? 20 : 5))
+  still('one-cell hole', (col, row) => (col === 2 && row === 2 ? 0 : 20))
+  still('one-cell-wide wall', (col) => (col === 2 ? 20 : 5))
+  still('one-cell-wide slot', (_col, row) => (row === 2 ? 0 : 20))
+
+  // A rectangle's corners stay sharp.
+  still('rectangular pocket', (col, row) => (col >= 0 && col < 7 && row >= 1 && row < 5 ? 4 : 20))
+  still('rectangular part', (col, row) => (col >= 0 && col < 7 && row >= 1 && row < 5 ? 20 : 0))
+  // An L-shaped part too.
+  still('L-shaped part', (col, row) => (col >= 0 && row >= 0 && (col < 3 || row < 3) && col < 8 && row < 8 ? 20 : 0))
+
+  // Where three faces meet: 20 mm stock, a 5 mm floor, and a 12 mm ledge.
+  const ledgeAtTurn: HeightField = (col, row) => (col < 0 ? 20 : row >= 0 ? 5 : col === 0 ? 12 : 5)
+  still('three faces at the turn', ledgeAtTurn)
+  still('three faces at the turn, turned', turned(ledgeAtTurn))
+  const ledgePastTurn: HeightField = (col, row) => (row >= 0 ? (col >= 0 ? 5 : 20) : col >= 1 ? 12 : 20)
+  still('three faces past the turn', ledgePastTurn)
+  still('three faces past the turn, turned', turned(ledgePastTurn))
+
+  // Three walls meeting at a one-cell 30 mm post in the corner.
+  const post: HeightField = (col, row) => (col < 0 ? 20 : row >= 0 ? 5 : col === 0 ? 30 : 5)
+  assert(!outlineOf(post).moves(0, 0), 'three walls meeting: the junction must not move')
+  assert(!outlineOf(turned(post)).moves(0, 0), 'three walls meeting, turned: the junction must not move')
+
+  // A plateau whose diagonal edge falls away as a steep ramp: tall edges, but
+  // slopes the surface shades, not walls.
+  const rampOff: HeightField = (col, row) => 60 - 3 * Math.max(0, col - row)
+  still('plateau falling away as a ramp', rampOff)
+  still('plateau falling away as a ramp, turned', turned(rampOff))
+
+  // Slopes have no walls: a finished surface, a V-ridge, a steep ramp.
+  const scallops = ballScallopProfile({
+    cells: 40, cellSize: 1, ballRadius: 8.5, stepover: 2.7, phase: 0.4, baseZ: 30, baseSlope: 0.02,
+  })
+  still('finished surface', (col, row) => scallops[col + 10] + 0.05 * Math.sin(row * 0.6))
+  still('V-ridge', (col) => 40 - 3 * Math.abs(col - 3))
+  still('steep ramp across the grid', (col, row) => 100 + 1.3 * col + 2.1 * row)
+  console.log('no crossings, nothing moves: PASSED')
+}
+
+
 try {
   testShallowScallopIsSlope()
   testTabBridgeAndCutThroughStaySteps()
@@ -428,6 +777,17 @@ try {
   testGradientIsContinuousAndExact()
   testGradientLeavesStepsOut()
   testWideningAveragesNarrowScallopsOnly()
+  for (const mode of ['playback', 'static'] as const) {
+    stampMode = mode
+    console.log(`\n— crossings recorded as in ${mode === 'playback' ? 'playback (move by move)' : 'a static view (after the replay)'} —`)
+    testCircularCutFollowsTheTool()
+    testStraightSlotAtAnyAngle()
+    testBallBottomingOutEndsOnItsRealEdge()
+    testMaterialCornersStaySharp()
+    testTabBridgeKeepsItsWidth()
+    testPassesAtOneDepthUnite()
+  }
+  testWithoutCrossingsNothingMoves()
   console.log('\nAll heightfield shader tests PASSED.')
 } catch (e) {
   console.error(e)

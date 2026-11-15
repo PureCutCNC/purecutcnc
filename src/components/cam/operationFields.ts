@@ -242,6 +242,7 @@ export const OPERATION_FIELD_IDS = [
   'finishFloor',
   'stockToLeaveRadial',
   'stockToLeaveAxial',
+  'verticalOvercut',
   'rotaryChuckSupport',
   'rotaryTailSupport',
   // Rotary strategy, listed beside the rotary depth rows because the Passes
@@ -378,6 +379,9 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && (operation.kind !== 'finish_surface' || isWaterlineFinish(operation)),
   },
   { id: 'stockToLeaveAxial', group: 'depth', paramRef: 'stockAxial', appliesTo: leavesStock },
+  // Bounded spoilboard overcut of the final bottom cut (issue #834): both
+  // Edge Route kinds and nothing else, matching what normalisation keeps.
+  { id: 'verticalOvercut', group: 'depth', appliesTo: (operation) => isEdgeRouteKind(operation.kind) },
   { id: 'rotaryChuckSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
   { id: 'rotaryTailSupport', group: 'depth', appliesTo: (operation) => isRotaryOperationKind(operation.kind) },
   {

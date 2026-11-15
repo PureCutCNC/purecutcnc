@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { resolveVerticalOvercut } from './verticalOvercut'
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project, Tab, TabShape } from '../../types/project'
 import { isTrochoidalEdgeRoughing, rectProfile, sampleProfilePoints, tabShape } from '../../types/project'
@@ -147,6 +148,20 @@ function expandObstacles(obstacles: PreservedObstacle[], delta: number): Preserv
     const points = offsetObstaclePoints(obstacle.points, delta)
     return { ...obstacle, points, bounds: pointsBounds(points) }
   })
+}
+
+/**
+ * A tab holds the levels from its own bottom up. A vertical overcut (issue
+ * #834) puts the route's final level below the stock bottom a tab normally
+ * stands on, and a level under a tab's bottom is not held by it — the cutter
+ * would cross the footprint at full depth and sever the tab. Extending each
+ * tab down by the overcut keeps every level the overcut moved still lifted
+ * over it. Without an overcut the obstacles are returned untouched.
+ */
+function reachOvercutLevels(obstacles: PreservedObstacle[], project: Project, operation: Operation): PreservedObstacle[] {
+  const overcut = resolveVerticalOvercut(project, operation)
+  if (overcut.kind !== 'ok') return obstacles
+  return obstacles.map((obstacle) => ({ ...obstacle, zBottom: obstacle.zBottom - overcut.amount }))
 }
 
 function buildTabObstacles(project: Project): PreservedObstacle[] {
@@ -526,7 +541,7 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     ? normalizeToolForProject(toolRecord, project).radius + Math.max(0, operation.stockToLeaveRadial)
     : Math.max(0, operation.stockToLeaveRadial)
 
-  const obstacles = expandObstacles(buildTabObstacles(project), effectiveRadius)
+  const obstacles = reachOvercutLevels(expandObstacles(buildTabObstacles(project), effectiveRadius), project, operation)
   if (obstacles.length === 0) {
     return result
   }

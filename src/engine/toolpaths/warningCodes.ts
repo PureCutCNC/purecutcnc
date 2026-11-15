@@ -122,6 +122,14 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalEntryBudget'
   | 'edgeTrochoidalTabsRequireHelix'
   | 'edgeTrochoidalTabUnsafe'
+  /** An Edge Route cuts below its intended bottom by a requested vertical
+   *  overcut, into the spoilboard (issue #834). Intentional, but it has to be
+   *  visible wherever the operation is reviewed before machining. */
+  | 'edgeVerticalOvercut'
+  /** An Edge Route's vertical overcut is negative, non-finite, or past the
+   *  project's maximum spoilboard cut depth (issue #834). The value is never
+   *  clamped: the operation generates no motion and export is refused. */
+  | 'edgeVerticalOvercutInvalid'
   /** A smooth tab was used on a trochoidal Edge Route. Trochoidal roughing owns
    *  its own tab motion in the guide domain — it fragments the guide around each
    *  tab before any orbit exists — so the shared smooth ramp cannot apply. The
@@ -636,6 +644,11 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  *   square blank's standing corners, or turn the bar at a height nobody can
  *   prove.
  *
+ * - `edgeVerticalOvercutInvalid` — an Edge Route asks to cut deeper into the
+ *   spoilboard than the project allows, or by a value that is not a
+ *   nonnegative number. It generates no motion, so the file would lack the
+ *   pass, and a clamped value would cut a depth nobody asked for (issue #834).
+ *
  * `aroundStockMismatch` stays a **warning**, as it was before #1016 C2-S4: a
  * round bar or a block in an Around setup is a note about a job the setup does
  * not describe, and promoting the code globally would have changed existing
@@ -671,6 +684,7 @@ const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCod
   'postSquareAroundToolpathStale',
   'postRotaryTurnWithoutClearance',
   'postRotaryInchUnits',
+  'edgeVerticalOvercutInvalid',
 ])
 
 /**

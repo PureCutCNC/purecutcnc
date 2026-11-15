@@ -169,6 +169,8 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.roundLinkCorners === b.roundLinkCorners
     && a.cleanWallCorners === b.cleanWallCorners
     && a.cornerRelief === b.cornerRelief
+    // Strict: a stored null is a refused value, never the same as absent (#834).
+    && a.verticalOvercut === b.verticalOvercut
     && (a.rotaryChuckSupport ?? 0) === (b.rotaryChuckSupport ?? 0)
     && (a.rotaryTailSupport ?? 0) === (b.rotaryTailSupport ?? 0)
     && (a.rotaryPassDirection ?? 'along') === (b.rotaryPassDirection ?? 'along')

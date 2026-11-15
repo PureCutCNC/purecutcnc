@@ -81,6 +81,7 @@ const BASE: Operation = {
 }
 
 const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
+  verticalOvercut: { role: 'computation', change: { verticalOvercut: 0.5 } },
   rotaryChuckSupport: { role: 'computation', change: { rotaryChuckSupport: 8 } },
   rotaryTailSupport: { role: 'computation', change: { rotaryTailSupport: 7 } },
   rotaryPassDirection: { role: 'computation', change: { rotaryPassDirection: 'around' } },

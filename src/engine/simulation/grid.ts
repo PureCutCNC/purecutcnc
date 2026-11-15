@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { EDGE_CROSSING_STRIDE } from './edgeCrossings'
+import { createMoveTable, WINNER_NONE, WINNER_UNKNOWN, type SimulationMoveTable } from './moveTable'
 import type { Project, Point } from '../../types/project'
 import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
 import type { FlatRoundBarDescriptor, SimulationBuildOptions, SimulationGrid, SquareBarDescriptor } from './types'
@@ -254,6 +256,7 @@ export function createSimulationGrid(
       ...(options.wrap ? { wrap: options.wrap } : {}),
       initialTopZ,
       topZ,
+      ...crossingsFor(spec, options),
     }
   }
 
@@ -269,6 +272,7 @@ export function createSimulationGrid(
       ...(options.wrap ? { wrap: options.wrap } : {}),
       initialTopZ,
       topZ,
+      // Only ever drawn wrapped (Around), so no edge crossings (issue #973).
     }
   }
 
@@ -299,5 +303,31 @@ export function createSimulationGrid(
     ...spec,
     ...(options.wrap ? { wrap: options.wrap } : {}),
     topZ,
+    ...crossingsFor(spec, options),
+    ...winnersFor(spec, options, topZ),
   }
+}
+
+/**
+ * Winner-move shading (issue #1209) covers a flat block only: an Around grid,
+ * a square blank and a flat round bar keep the cell-sampled surface. A cell a
+ * non-rectangular stock profile leaves empty is marked unknown, so the shader
+ * keeps the sampled surface along the stock's own outline.
+ */
+function winnersFor(
+  spec: SimulationGridSpec,
+  options: SimulationBuildOptions,
+  topZ: Float32Array,
+): { winners?: Uint32Array; moveTable?: SimulationMoveTable } {
+  if (options.wrap || options.squareBar || options.flatRoundBar) return {}
+  const winners = new Uint32Array(spec.cols * spec.rows).fill(WINNER_NONE)
+  for (let index = 0; index < topZ.length; index += 1) {
+    if (topZ[index] <= spec.stockBottomZ) winners[index] = WINNER_UNKNOWN
+  }
+  return { winners, moveTable: createMoveTable() }
+}
+
+/** A flat grid records edge crossings (issue #973); a wrapped one does not. */
+function crossingsFor(spec: SimulationGridSpec, options: SimulationBuildOptions): { edgeCrossings?: Uint8Array } {
+  return options.wrap ? {} : { edgeCrossings: new Uint8Array(spec.cols * spec.rows * EDGE_CROSSING_STRIDE) }
 }

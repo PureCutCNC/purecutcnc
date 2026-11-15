@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: GPU heightfield simulation rendering and playback update design
-last-verified: 2026-10-17
+last-verified: 2026-11-13
 ---
 
 # Simulation GPU Heightfield Design
@@ -61,7 +61,81 @@ The shipped implementation plan and playback experiments are preserved in
 - The wall mesh draws the small risers inside a slope as well, lit with the
   surface's own normal code. Collapsing them leaves a slit between two flat
   tops that shows the stock underside; lighting them as walls draws the cell
-  grid. Silhouettes and angled walls stay stair-stepped.
+  grid.
+- Walls follow the cut outline, not only cell edges (issue #973). A cell's
+  height cannot say where between two cell centres the cut ended, so the flat
+  replay kernel records it while it stamps: for the lines from a cell's centre
+  to its east and south neighbours' centres, where the tool's swept boundary
+  crossed and which way it faced (`edgeCrossings.ts`; 4 bytes per cell in
+  `grid.edgeCrossings`, beside `topZ`, whose layout is unchanged). A static
+  replay (Selected, Visible, the playback base) records them once the heights
+  are final: only cells that end on an outline are searched, and each move
+  visits only the outline cells in its reach, through a 16-cell tile index
+  (`CrossingFinalizer`). Recording them while cutting instead spends most of
+  its searches at each move's leading edge on neighbours the next move cuts
+  anyway, which made the static build ~50 % slower. Playback (Play tool)
+  records them as it cuts, for cells near the rim of a move's reach or where a
+  ball or V-bit reaches the stock bottom. Either way only edges the shared step
+  test could call a wall are searched.
+  Beside a through cut the crossing is where the tool leaves the stock bottom;
+  between two floors, halfway up the rise. A move that lowers a cell replaces
+  its crossings; one that only matches the depth keeps whichever reaches
+  further (the union of the cuts).
+- Corners are placed by dual contouring. A GPU pass solves each grid corner
+  once per height change: the least-squares point on the boundary lines through
+  the crossings of the walls that leave it, pulled weakly toward the corner,
+  kept within half a cell (if the lines meet outside that square, the
+  crossings' average). Curves come out as curves (a stamped circle's corners
+  within 0.02 cell of the tool's edge, against 0.37 cell rms on cell edges),
+  and where two cuts' edges meet at an angle the corner lands on their
+  intersection and stays sharp. Which edges are walls is still `edgeIsStep`
+  (one predicate, #829); a stamped one-cell tab bridge keeps its walls, tops
+  and real width. A wall edge with no crossing (the grid's own edge, data from
+  before) stays on its cell edge. The tops, both wall strips and the underside
+  read the same per-corner offset, so tops meet walls with no gap or overlap.
+- The pass writes one RGBA8 `(cols+1) × (rows+1)` texture: the corner's X and
+  Z offset and the wall's direction there (the sum of the crossing normals),
+  which the wall strips light with. It runs over the whole grid on build and
+  over the dirty rectangle plus its reach during playback, after the dirty
+  crossings are uploaded. Wrapped (Around) and square-blank grids record no
+  crossings and keep cell-edge walls; their periodic seam would need its own
+  corner lookup.
+- Inside a cell, a flat block's surface is exact once the cell spans two
+  pixels or more (issue #1209). The flat kernel records, beside `topZ`, the
+  move that set each cell's height (`grid.winners`, 4 bytes per cell, indexing
+  `grid.moveTable`, `moveTable.ts`); a lowered cell takes the move, and a move
+  that leaves a cell at the same height (a shared floor, the stock bottom)
+  takes it only if the cell's centre lies more deeply inside its footprint,
+  the lower table index on a tie, so the winner never depends on move order.
+  Heights are unchanged by this. The surface shader then evaluates, at the
+  fragment's exact sheet position, the cutter surfaces of the winners of the
+  2×2 cells whose centres surround it plus each winner's neighbour on either
+  side in cut order (the next segment of the same pass), with the kernel's
+  own per-move formula (`WINNER_CUT_GLSL` in `winnerShader.ts`), and takes
+  height, slope and cut-through from their minimum. A cell whose centre is cut
+  through draws its top too, so a thin skin inside it shows; one with no
+  material beside it is skipped up front. Below two pixels per cell the
+  shipped stencil path runs unchanged. On the guitar this rebuilt the exact
+  height within 1e-4 in at all but about 0.1 % of sub-cell points on the
+  finished surface and 1 % on the through-cut rim (P1, #1209), against 83 %
+  and 33 % for the cell sample.
+- The move table is a texture of two RGBA32F texels per move (from, tool slot,
+  to), at most `MOVE_TABLE_TEXTURE_MAX_ROWS` rows of
+  `MOVE_TABLE_TEXTURE_WIDTH` (WebGL2's guaranteed size, about 2.1 M moves); a
+  longer program falls back to cell-sampled shading and logs why. Winners are
+  an R32UI texture uploaded with the heightfield's dirty region
+  (`winnerShading.ts`). Playback appends its pieces to the prior operations'
+  table, so base winners keep their meaning, records each piece's own index,
+  and passes how far through the table the cut has got: entries past it are
+  ignored and the current one is clamped to its elapsed fraction, so nothing
+  shows ahead of the tool. A ramp played in part already leaves heights a
+  little below a whole-move replay (the kernel takes Z at the closest point of
+  the piece it is given); there the analytic surface follows the piece, not
+  the cell sample, by the same small amount.
+- Only a flat block records winners. Around, square blanks and flat round bars
+  keep `winners` undefined and compile exactly the shader they had; a cell a
+  non-rectangular stock profile leaves empty, or one lowered without a table
+  index, is marked unknown and keeps the sampled surface around it.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and

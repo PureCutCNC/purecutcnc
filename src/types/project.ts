@@ -913,6 +913,13 @@ export interface Operation {
    *  both Edge Route kinds; the relieved corners are the convex corners of
    *  whatever region that operation clears, so no operation kind is named. */
   cornerRelief?: CornerReliefStyle
+  /** Distance an Edge Route's final bottom cut goes below its intended bottom,
+   *  in project units (issue #834). Missing reads as zero, which is the motion
+   *  every file saved before the field existed was cut with. Bounded by
+   *  `ProjectMeta.maxSpoilboardCutDepth`: a negative, non-finite or over-limit
+   *  value is never clamped, it refuses generation and export
+   *  (`resolveVerticalOvercut`). Only the two Edge Route kinds keep it. */
+  verticalOvercut?: number
   /** Bar length left uncut at each end, in project units. Missing reads as zero. */
   rotaryChuckSupport?: number
   rotaryTailSupport?: number
@@ -1274,6 +1281,13 @@ export interface ProjectMeta {
   operationClearanceZ: number
   clampClearanceXY: number
   clampClearanceZ: number
+  /**
+   * How far below the nominal stock bottom (Z 0) an Edge Route's vertical
+   * overcut may cut into the spoilboard, in project units (issue #834). Missing
+   * reads as zero: no spoilboard cut allowed. Added without a format bump — a
+   * file without it means exactly what it always did.
+   */
+  maxSpoilboardCutDepth?: number
   /**
    * The project's embedded machine snapshot — normally one entry, and never a
    * library. The machine library lives in `src/machine/` as an application
