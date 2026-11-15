@@ -61,6 +61,14 @@ import type { Project } from '../../types/project'
 // here writes a tool change, and a tool change now carries one restart block
 // (`G90 G94 G17`, the units word, a safe-Z rapid and the start plane). The
 // `motion` hashes did not move — the generated toolpaths are unchanged.
+//
+// Two rows have moved since, deliberately, from #1212's smooth cutter-location
+// read: `issue-401-cone-finish.camj` parallel (both ops). Move counts are
+// unchanged at 28,245. Of the 28,164 cut vertices at a shared XY, 22,424 rise,
+// by at most 0.00013 in, and none goes lower: the single-sample read dipped
+// between height-map cell centres, and those dips are what filled in. Every
+// other row here is byte-identical, including both walled fixtures, whose
+// passes run beside vertical cliffs where the raise is capped.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
     "moves": 3990,
@@ -84,8 +92,8 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
   },
   "issue-401-cone-finish.camj/op0925/parallel": {
     "moves": 28245,
-    "motion": "90f269ecedd76071d76daf03757c4f2da1dbff9556f2a03e74b6ddf75715acc9",
-    "gcode": "fe2674e6c5daafdf0df08bf16ae5782ad80c203c9a5a93d662cdc71f8c459d6f"
+    "motion": "ae3019dcf51f0c7bf69675f81b2f75b18fe747815068cdb2153f23938c2be10a",
+    "gcode": "fbd3bc4ca79feddb0cc70f5fb30f70744d09716e50a14aa3b40e41a6f363f0d9"
   },
   "issue-401-cone-finish.camj/op0925/waterline": {
     "moves": 5481,
@@ -94,8 +102,8 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
   },
   "issue-401-cone-finish.camj/op0927/parallel": {
     "moves": 28245,
-    "motion": "3ece4d1b531592a575d1fbc131afcc332798c22b80ed578ef71303dda4f9de96",
-    "gcode": "b5b99d4d41720991a941bccc33b3f0988028f6d8b58ccf70c9f3c2fd1b38e7b7"
+    "motion": "66c66ac1530ad0ecdd269ec302177a420bd7b9d56d16ee44a627c31e33db7f36",
+    "gcode": "454d74b6bef2edb74ecc4c750fb47dad398581a6ed930cd6d6113caaa351dc0b"
   },
   "issue-401-cone-finish.camj/op0927/waterline": {
     "moves": 5481,

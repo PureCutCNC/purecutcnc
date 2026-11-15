@@ -1061,6 +1061,156 @@ export function safeToolTipZAt(
 }
 
 /**
+ * Sub-samples per cell side for {@link smoothToolTipZAt} (issue #1212). Odd, so
+ * the sub-grid contains every cell centre. A lattice read's dip falls with the
+ * square of its spacing, so 3 leaves a ninth of the single-sample ripple:
+ * 0.00007 in on a 0.025 in cell under a 1/4 in ball, against the 0.000625 in
+ * that showed as a honeycomb on the guitar top.
+ */
+const SUBSAMPLES_PER_CELL = 3
+
+/**
+ * The tool-tip Z a sample at `sampleZ` and squared lateral distance `dSq`
+ * allows, or -Infinity out of the tool's reach. Written exactly as
+ * `safeToolTipZAt` writes it, operation for operation, so the read below
+ * reproduces that one bit for bit and can never sit below it by rounding.
+ */
+function constrainedTipZ(sampleZ: number, dSq: number, tool: NormalizedTool, cotHalfAngle: number): number {
+  const radiusSq = tool.radius * tool.radius
+  if (dSq > radiusSq) return Number.NEGATIVE_INFINITY
+  if (tool.type === 'ball_endmill') return sampleZ - tool.radius + Math.sqrt(radiusSq - dSq)
+  return cotHalfAngle > 0 ? sampleZ - Math.sqrt(dSq) * cotHalfAngle : sampleZ
+}
+
+/**
+ * Minimum tool-tip Z at (x, y), free of the one-cell ripple `safeToolTipZAt`
+ * carries (issue #1212).
+ *
+ * `safeToolTipZAt` reads each cell as a point at its centre, so its value is a
+ * drop-cutter over a lattice of points. It peaks over every cell centre and
+ * dips between centres, by up to `(cell / 2)^2 / 2R` along a row for a ball. A
+ * pass whose vertices fall alternately on centres and on cell edges -- which
+ * marching squares on the centre grid produces for constant scallop -- zigzags
+ * by that much from one vertex to the next (0.000625 in for a 0.025 in cell
+ * under a 1/4 in ball, the honeycomb #1209's exact shading shows on the guitar
+ * top).
+ *
+ * This finds the cell that read's tool actually touches, then drops the tool
+ * again on the raw heights of that cell and its eight neighbours interpolated
+ * bilinearly and sampled {@link SUBSAMPLES_PER_CELL} times per cell side. On a
+ * smooth surface the finer contact lies within a cell of the coarse one, so
+ * nothing farther can win; looking at fewer samples can in any case only lower
+ * the result, and the sub-grid holds the contact cell's centre at its own
+ * height, so the result is never below `safeToolTipZAt`: no gouge, only filled
+ * dips. Sampling the whole footprint finely was measured too, and cost up to 10x
+ * the generate time on a steep cone for the same smoothness. Interpolating the
+ * cutter-location Z between centres instead was tried first and measured short:
+ * on slopes steeper than about `cell / 2R` the centre read follows the uphill
+ * cell's sphere and is convex between centres, so it won and the zigzag
+ * survived on 29 % of the guitar's vertices. A sub-sample with any non-finite
+ * corner is skipped, so the model's edge is not smeared outward.
+ *
+ * The raise is capped at the deepest dip the single-sample read can have: the
+ * tool's drop at `h`, half a cell's diagonal, which is `R - sqrt(R^2 - h^2)` for
+ * a ball and `h * cot(half angle)` for a V-bit. Without the cap, a pass beside a
+ * cutter-location cliff (a ball standing next to a vertical wall) would ride on
+ * the interpolated ramp across the wall's cell, up to a cell's width off the
+ * floor at the wall's foot, which leaves stock behind rather than filling
+ * ripple. A flat end mill's read does not fall off with distance, so it keeps
+ * the direct read.
+ */
+export function smoothToolTipZAt(
+  x: number,
+  y: number,
+  heightMap: HeightMap,
+  tool: NormalizedTool,
+): number {
+  const { width, height, originX, originY, cellSize, data } = heightMap
+  const maxRaise = latticeDipBound(cellSize, tool)
+  if (!(maxRaise > 0)) return safeToolTipZAt(x, y, heightMap, tool)
+  const cotHalfAngle = tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0
+    ? 1 / Math.tan((tool.vBitAngle / 2) * Math.PI / 180)
+    : 0
+
+  // The single-sample read, as `safeToolTipZAt` computes it with no pad, and
+  // the cell it touches.
+  const reach = Math.ceil(tool.radius / cellSize)
+  const col = Math.floor((x - originX) / cellSize)
+  const row = Math.floor((y - originY) / cellSize)
+  let direct = Number.NEGATIVE_INFINITY
+  let contactCol = -1
+  let contactRow = -1
+  for (let r = Math.max(0, row - reach); r <= Math.min(height - 1, row + reach); r += 1) {
+    for (let c = Math.max(0, col - reach); c <= Math.min(width - 1, col + reach); c += 1) {
+      const cellZ = data[r * width + c]
+      if (!Number.isFinite(cellZ)) continue
+      const dx = originX + (c + 0.5) * cellSize - x
+      const dy = originY + (r + 0.5) * cellSize - y
+      const z = constrainedTipZ(cellZ, dx * dx + dy * dy, tool, cotHalfAngle)
+      if (z > direct) {
+        direct = z
+        contactCol = c
+        contactRow = r
+      }
+    }
+  }
+  if (!Number.isFinite(direct)) return direct
+
+  const ceiling = direct + maxRaise
+  const step = 1 / SUBSAMPLES_PER_CELL
+  const half = (SUBSAMPLES_PER_CELL - 1) / 2
+  let best = direct
+  for (let r = Math.max(0, contactRow - 1); r <= Math.min(height - 1, contactRow + 1); r += 1) {
+    for (let c = Math.max(0, contactCol - 1); c <= Math.min(width - 1, contactCol + 1); c += 1) {
+      for (let j = -half; j <= half; j += 1) {
+        // Grid position of the sub-sample, in centre units (cell c's centre at c).
+        const gv = r + j * step
+        const r0 = Math.floor(gv)
+        const fv = gv - r0
+        const r1 = fv > 0 ? r0 + 1 : r0
+        if (r0 < 0 || r1 >= height) continue
+        const dy = originY + (gv + 0.5) * cellSize - y
+        for (let i = -half; i <= half; i += 1) {
+          const gu = c + i * step
+          const c0 = Math.floor(gu)
+          const fu = gu - c0
+          const c1 = fu > 0 ? c0 + 1 : c0
+          if (c0 < 0 || c1 >= width) continue
+          const z00 = data[r0 * width + c0]
+          const z10 = data[r0 * width + c1]
+          const z01 = data[r1 * width + c0]
+          const z11 = data[r1 * width + c1]
+          if (!Number.isFinite(z00) || !Number.isFinite(z10) || !Number.isFinite(z01) || !Number.isFinite(z11)) continue
+          const dx = originX + (gu + 0.5) * cellSize - x
+          const sampleZ = (z00 * (1 - fu) + z10 * fu) * (1 - fv) + (z01 * (1 - fu) + z11 * fu) * fv
+          const z = constrainedTipZ(sampleZ, dx * dx + dy * dy, tool, cotHalfAngle)
+          if (z > best) best = z
+        }
+      }
+    }
+  }
+  return best > ceiling ? ceiling : best
+}
+
+/**
+ * The deepest a single-sample lattice read can sit below the reads around it:
+ * the tool's drop at `h`, half a cell's diagonal, the farthest any point is from
+ * its nearest centre (issue #1212). Zero for a flat end mill, whose read does
+ * not fall off with distance.
+ */
+function latticeDipBound(cellSize: number, tool: NormalizedTool): number {
+  const h = cellSize * Math.SQRT1_2
+  if (tool.type === 'ball_endmill') {
+    const radius = tool.radius
+    return h >= radius ? radius : radius - Math.sqrt(radius * radius - h * h)
+  }
+  if (tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0) {
+    return h / Math.tan((tool.vBitAngle / 2) * Math.PI / 180)
+  }
+  return 0
+}
+
+/**
  * Raise each scan point to the kinematic cutter-location surface, plus the
  * operation's axial stock to leave.
  *
@@ -1078,62 +1228,18 @@ function applyGougeProtection(
   tool: NormalizedTool,
   axialLeave: number,
 ): void {
-  const toolRadius = tool.radius
-  const neighborCells = Math.ceil(toolRadius / heightMap.cellSize)
-  const radiusSq = toolRadius * toolRadius
-  // Kinematic constraint depends on tool geometry. For a model cell at lateral
-  // distance d (d <= R) and height cellZ, the constraint on the tool-tip Z is:
+  // The kinematic constraint is `safeToolTipZAt`'s, read through its smooth
+  // form so a scanline does not carry the height map's one-cell ripple (issue
+  // #1212); this loop used to inline the unpadded lattice read. For a model
+  // cell at lateral distance d (d <= R) and height cellZ, the tip must satisfy:
   //   - Ball endmill:  sp.z >= cellZ - R + sqrt(R² - d²)   (sphere clearance)
   //   - Flat endmill:  sp.z >= cellZ                       (cylinder clearance)
   //   - V-bit (cone θ): sp.z >= cellZ - d / tan(θ/2)
   //   - Other:         fall back to flat (conservative — never gouges)
-  const isBall = tool.type === 'ball_endmill'
-  const vBitHalfAngleDeg = tool.type === 'v_bit' && tool.vBitAngle && tool.vBitAngle > 0
-    ? tool.vBitAngle / 2
-    : 0
-  const cotHalfAngle = vBitHalfAngleDeg > 0
-    ? 1 / Math.tan((vBitHalfAngleDeg * Math.PI) / 180)
-    : 0
-
   for (let pi = 0; pi < scanPoints.length; pi++) {
     const sp = scanPoints[pi]
-    const col = Math.floor((sp.x - heightMap.originX) / heightMap.cellSize)
-    const row = Math.floor((sp.y - heightMap.originY) / heightMap.cellSize)
-
-    let safeZ = sp.z
-
-    const minC = Math.max(0, col - neighborCells)
-    const maxC = Math.min(heightMap.width - 1, col + neighborCells)
-    const minR = Math.max(0, row - neighborCells)
-    const maxR = Math.min(heightMap.height - 1, row + neighborCells)
-
-    for (let nr = minR; nr <= maxR; nr++) {
-      for (let nc = minC; nc <= maxC; nc++) {
-        const cellZ = heightMap.data[nr * heightMap.width + nc]
-        if (!isFinite(cellZ)) continue
-
-        const cx = heightMap.originX + (nc + 0.5) * heightMap.cellSize
-        const cy = heightMap.originY + (nr + 0.5) * heightMap.cellSize
-
-        const dx = cx - sp.x
-        const dy = cy - sp.y
-        const dSq = dx * dx + dy * dy
-        if (dSq > radiusSq) continue
-
-        let constrained: number
-        if (isBall) {
-          constrained = cellZ - toolRadius + Math.sqrt(radiusSq - dSq)
-        } else if (cotHalfAngle > 0) {
-          constrained = cellZ - Math.sqrt(dSq) * cotHalfAngle
-        } else {
-          // Flat endmill (and conservative fallback): any model material at
-          // lateral distance <= R must be at or below the tool tip.
-          constrained = cellZ
-        }
-        if (constrained > safeZ) safeZ = constrained
-      }
-    }
-
+    const constrained = smoothToolTipZAt(sp.x, sp.y, heightMap, tool)
+    const safeZ = constrained > sp.z ? constrained : sp.z
     // The leave lifts the cutter-location surface as a whole, so every point
     // rises by exactly it — matching `liftFragment`'s `surfaceZ + axialLeave`
     // in finishSurfaceConstantScallop.ts. At a leave of zero this is the
@@ -1366,7 +1472,7 @@ export function generateFinishSurfaceParallel(
    * have placed itself (issue #938).
    */
   const scanPointZ = (x: number, y: number): number => {
-    const lifted = Math.max(queryHeightMapTopZ(heightMap, x, y) ?? Number.NEGATIVE_INFINITY, safeToolTipZAt(x, y, heightMap, tool))
+    const lifted = Math.max(queryHeightMapTopZ(heightMap, x, y) ?? Number.NEGATIVE_INFINITY, smoothToolTipZAt(x, y, heightMap, tool))
     if (!Number.isFinite(lifted)) return lifted
     return Math.max(lifted + axialLeave, minCutZAtPoint({ x, y }))
   }
