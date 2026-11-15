@@ -56,6 +56,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `setupTargets.test.ts` — the three modules above: through-feature tolerance, same-face / cross-face / rejected verdicts, the generation block, the Move plan (dropped, kept, blocked), cut ranges with their cutter footprint, and coverage both from hand-built paths and from real generated ones; plus the square blank's Around-only, model-only reach and generation block, and its refusal of every target source (a stock target and a missing `kind` included) for a non-rotary square Around kind (#1016 C2-S4)
 
 ## Subfolders
+- [inlay/](inlay/INDEX.md) - pure 2-sided V-carve inlay geometry: V-bit insets, pocket floor, mirrored plug ridge/shoulder, frame and refusals. New in WP1; no consumer yet.
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**
 - [operations/camPlan/](operations/camPlan/INDEX.md) — deterministic CAM Plan: semantic feature/depth recognition, explainable tool planning, residual-backed rest proposals, dependency ordering, coverage, and shared edge-tab drafts. `operations/autoTabs.ts` is the pure tab-placement builder shared with the manual store action.
 - `test-fixtures/` — committed engine-test assets such as `.camj` regression files shared by engine tests, including the issue #401 real cone finish project
