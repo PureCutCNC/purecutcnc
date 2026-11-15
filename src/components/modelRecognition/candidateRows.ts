@@ -24,7 +24,17 @@ import type { DrawnFeature, RecognitionCandidate, SkipReason, SkippedCavity } fr
 import { resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
 import type { RecognizedShapeInput } from '../../store/helpers/recognizedFeatures'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import type { Project } from '../../types/project'
+import type { FlatFace, Project } from '../../types/project'
+
+/**
+ * The faces the dialog searches (issue #1206 slice 4): both flat faces, always.
+ *
+ * It does not wait for a Bottom setup. A project can hold Bottom features with
+ * no Bottom setup, which becomes real with the first operation added there
+ * (`provisionalSetup.ts`), and a search that skipped the underside reported its
+ * pockets as "covered from above" with no way for the user to tell why.
+ */
+export const RECOGNIZED_FACES: readonly FlatFace[] = ['top', 'bottom']
 
 /** Every add and subtract already in the project, as the "already drawn" check reads them. */
 export function drawnFeaturesOf(project: Project): DrawnFeature[] {

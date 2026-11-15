@@ -25,7 +25,9 @@
  *    vertical walls through that slab.
  * 2. **Tracks.** Bands that continue across a level, with the same loop on
  *    both sides, are one cavity. A track's outline is that loop.
- * 3. **Bottom.** A track that reaches the lowest slab is a through hole.
+ * 3. **Bottom.** A track that reaches the lowest slab is a through hole, and so
+ *    is one with nothing under its outline all the way down (a hole through a
+ *    plate that stands on feet).
  *    Otherwise it stands on a flat floor, or the void carries on below it
  *    narrower (a cone, a fillet) or wider (an undercut).
  * 4. **Top.** Above its straight walls a cavity runs on up through any band
@@ -307,7 +309,18 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
       if (bottomSlab > 0) {
         if (intersectionArea(path, floorRegion(bottomSlab)) > slack) bottom = 'flat'
         else if (intersectionArea(path, slabs[bottomSlab - 1].hi.material) > slack) bottom = 'taper'
-        else bottom = 'open'
+        else {
+          // Nothing under the outline all the way down: the hole comes out of
+          // the part here, on an underside that is not the mesh's lowest point
+          // (a plate standing on feet). Anything under it and it only opens
+          // into a wider cavity.
+          let clearBelow = true
+          for (let k = 0; k < bottomSlab && clearBelow; k += 1) {
+            clearBelow = intersectionArea(path, slabs[k].lo.material) <= slack
+              && intersectionArea(path, slabs[k].hi.material) <= slack
+          }
+          bottom = clearBelow ? 'through' : 'open'
+        }
       }
       const zBottom = levels[bottomSlab]
       tracks.push({ path: loop.path, area: loop.area, bottomSlab, topSlab, bottom })

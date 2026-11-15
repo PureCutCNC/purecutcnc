@@ -28,15 +28,18 @@
  * The preview is the dialog's own: the model's outline with every shape on it,
  * the solids under the cavities, the hovered row lit. The sketch behind a modal
  * dialog is dimmed, so a highlight there would not be seen.
+ *
+ * The model is looked at from Top and from Bottom, whether or not the project
+ * has a Bottom setup yet (issue #1206 slice 4). A row on Bottom says so with the
+ * face chip, and its preview outline is dotted: it is on the far side.
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { loadSTLTransformedGeometry } from '../../engine/csg'
 import {
-  candidatesFromResult,
   markAlreadyDrawn,
-  type ModelRecognitionResult,
+  type CombinedRecognition,
   type RecognitionCandidate,
 } from '../../engine/modelRecognition'
 import { flattenProfile } from '../../engine/toolpaths/geometry'
@@ -49,20 +52,23 @@ import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import type { Point } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
+import { FaceChip } from '../feature-tree/FaceChip'
 import {
   candidateSize,
   defaultCheckedIds,
   drawnFeaturesOf,
+  RECOGNIZED_FACES,
   shapesToDraw,
   skippedCounts,
   solidSkippedCounts,
 } from './candidateRows'
-import { RecognitionCancelledError, runModelRecognition } from './recognitionClient'
+import { RecognitionCancelledError } from './recognitionClient'
+import { recognizeModelFaces } from './recognizeFaces'
 
 type RunState =
   | { status: 'running'; progress: number }
   | { status: 'failed' }
-  | { status: 'done'; result: ModelRecognitionResult }
+  | { status: 'done'; result: CombinedRecognition }
 
 const KIND_KEY: Record<RecognitionCandidate['kind'], MessageKey> = {
   solid: 'featureTree.findCavities.kind.solid',
@@ -110,11 +116,11 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
     // A model with no mesh fails through the same promise as a failed run, so
     // every state change here happens in a callback.
     const job = mesh
-      ? runModelRecognition(mesh, {
+      ? recognizeModelFaces(mesh, RECOGNIZED_FACES, state.project.meta.units, {
         signal: controller.signal,
         onProgress: (progress) => setRun({ status: 'running', progress }),
       })
-      : Promise.reject<ModelRecognitionResult>(new Error('The model has no mesh'))
+      : Promise.reject<CombinedRecognition>(new Error('The model has no mesh'))
     job.then(
       (result) => setRun({ status: 'done', result }),
       (error: unknown) => {
@@ -134,9 +140,12 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
 
   const result = run.status === 'done' ? run.result : null
   const candidates = useMemo(() => (
-    result ? markAlreadyDrawn(candidatesFromResult(result, 'top', units), drawnFeaturesOf(project)) : []
-  ), [result, units, project])
+    result ? markAlreadyDrawn(result.candidates, drawnFeaturesOf(project)) : []
+  ), [result, project])
   const checkedIds = useMemo(() => checked ?? new Set(defaultCheckedIds(candidates)), [checked, candidates])
+  // A face chip is shown only once something is on Bottom: with every row on
+  // Top the list reads exactly as it did before the look from below existed.
+  const showsFaces = candidates.some((candidate) => candidate.face === 'bottom')
 
   const modelOutline = useMemo(() => (model ? flattenProfile(model.sketch.profile).points : []), [model])
   const viewBox = useMemo(() => {
@@ -230,7 +239,10 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
           )}
         </td>
         <th scope="row">
-          <span>{t(KIND_KEY[candidate.kind])}</span>
+          <span className="find-cavities__label">
+            <span>{t(KIND_KEY[candidate.kind])}</span>
+            {showsFaces ? <FaceChip face={candidate.face} /> : null}
+          </span>
           {notes.length > 0 ? <span className="find-cavities__notes">{notes.join(' · ')}</span> : null}
         </th>
         <td className="find-cavities__value">{sizeText(candidate)}</td>
@@ -332,6 +344,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                             'find-cavities__shape',
                             candidate.kind === 'solid' ? 'find-cavities__shape--solid' : '',
                             candidate.kind === 'island' ? 'find-cavities__shape--island' : '',
+                            candidate.face === 'bottom' ? 'find-cavities__shape--bottom' : '',
                             checkedIds.has(candidate.parentId ?? candidate.id) ? 'find-cavities__shape--checked' : '',
                             isLit(candidate) ? 'find-cavities__shape--lit' : '',
                           ].filter(Boolean).join(' ')}

@@ -31,6 +31,10 @@
  * - `candidates.ts`, rounding step 1e-2 in both units                  -> inches
  * - `candidates.ts`, no rounding (the fitted radius is 5.499982)       -> stored values
  * - `candidates.ts`, solids emitted after the cavities                 -> candidates: offered before every cavity
+ * - `recognizeFaces.ts`, Bottom candidates made without the `b-` prefix -> bottom face: no two rows share an id
+ * - `candidateRows.ts`, `RECOGNIZED_FACES` Top only                    -> bottom face: the dialog searches both faces
+ * - `recognizeFaces.ts`, the Bottom result not mapped to stock space   -> bottom face: the underside pocket's span
+ * - `recognizeFaces.ts`, no `b-` id prefix for Bottom                  -> bottom face: the prefix
  *
  * Run with: npx tsx src/store/modelRecognitionFlow.test.ts
  */
@@ -44,10 +48,12 @@ import {
   recognizeCavities,
   type RecognitionCandidate,
 } from '../engine/modelRecognition'
-import { drawnFeaturesOf, defaultCheckedIds, shapesToDraw } from '../components/modelRecognition/candidateRows'
+import { drawnFeaturesOf, defaultCheckedIds, RECOGNIZED_FACES, shapesToDraw } from '../components/modelRecognition/candidateRows'
+import { recognizeModelFaces } from '../components/modelRecognition/recognizeFaces'
 import { PLATE_MODEL_ID, plateModelProject, plateModelProjectWithVolume } from '../test/modelPlateFixture'
+import { withBottomSetup } from '../test/projectFixtures'
 import { THEME_PALETTES } from '../theme/palette'
-import { rectProfile, type Project, type SketchFeature } from '../types/project'
+import { rectProfile, type FlatFace, type Project, type SketchFeature } from '../types/project'
 import { modelRecognitionRefusal } from './helpers/recognizedFeatures'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
@@ -85,6 +91,16 @@ function candidatesFor(project: Project): RecognitionCandidate[] {
   assert(mesh !== null, 'the model has a mesh')
   const result = recognizeCavities(mesh!)
   return markAlreadyDrawn(candidatesFromResult(result, 'top', project.meta.units), drawnFeaturesOf(project))
+}
+
+/** The dialog's rows for the faces it would search, on the real detector in-process. */
+async function faceCandidatesFor(project: Project, faces: readonly FlatFace[]): Promise<RecognitionCandidate[]> {
+  const feature = resolveFeatureInstance(project, PLATE_MODEL_ID)
+  assert(feature !== null, 'the model resolves')
+  const mesh = loadSTLTransformedGeometry(feature!, project)
+  assert(mesh !== null, 'the model has a mesh')
+  const combined = await recognizeModelFaces(mesh!, faces, project.meta.units, { createWorker: () => null })
+  return markAlreadyDrawn(combined.candidates, drawnFeaturesOf(project))
 }
 
 const NAMES: Record<RecognitionCandidate['kind'], string> = {
@@ -361,6 +377,92 @@ function byKind(candidates: RecognitionCandidate[], kind: RecognitionCandidate['
   const solidAgain = again.find((candidate) => candidate.kind === 'solid')!
   assert(solidAgain.alreadyDrawn, 'recreating: a second run lists the solid as already drawn')
   assert(defaultCheckedIds(again).length === 0, 'recreating: nothing starts checked on a second run')
+}
+
+
+// ---------------------------------------------------------------------------
+// Bottom face: the underside pocket is found, drawn on Bottom in stock space
+// ---------------------------------------------------------------------------
+{
+  const model = await plateModelProject({ undersidePocket: true })
+
+  // Which faces are searched is the caller's decision: a Top-only run has no
+  // Bottom row, because `recognizeModelFaces` never looks further than it is
+  // asked to.
+  const topOnly = await faceCandidatesFor(model, ['top'])
+  assert(
+    !topOnly.some((candidate) => candidate.face === 'bottom'),
+    'bottom face: a Top-only run has no Bottom row',
+  )
+
+  // The dialog asks for both faces without waiting for a Bottom setup: a
+  // project can hold Bottom features before it has one, and a search that
+  // skipped the underside would report its pockets as covered from above.
+  assert(RECOGNIZED_FACES.join(',') === 'top,bottom', 'bottom face: the dialog searches both faces')
+  assert(model.setups.length === 1, 'bottom face: the fixture has no Bottom setup')
+  const noSetup = await faceCandidatesFor(model, RECOGNIZED_FACES)
+  assert(
+    noSetup.some((candidate) => candidate.face === 'bottom' && candidate.operation === 'subtract'),
+    'bottom face: the underside pocket is offered without a Bottom setup',
+  )
+  load(model)
+  const drawnNoSetup = drawAll(noSetup)
+  const afterNoSetup = useProjectStore.getState().project
+  assert(
+    afterNoSetup.features.some((feature) => drawnNoSetup.includes(feature.id) && feature.authoringFace === 'bottom'),
+    'bottom face: it is drawn on Bottom without a Bottom setup',
+  )
+  assert(afterNoSetup.setups.length === 1, 'bottom face: drawing it does not invent a setup')
+
+  const withBottom = withBottomSetup(model)
+  load(withBottom)
+  const candidates = await faceCandidatesFor(useProjectStore.getState().project, RECOGNIZED_FACES)
+  assert(
+    candidates.filter((candidate) => candidate.face === 'bottom').every((candidate) => candidate.id.startsWith('b-')),
+    'bottom face: every Bottom id carries the b- prefix',
+  )
+  const underside = candidates.find((candidate) => candidate.face === 'bottom' && candidate.operation === 'subtract')
+  assert(underside !== undefined, 'bottom face: the underside pocket is offered')
+  // Top and Bottom each number their rows from zero, so only the prefix keeps
+  // a row's id its own: the dialog keys its rows and its checks by id.
+  assert(underside!.id.startsWith('b-'), `bottom face: a Bottom row's id says so, got ${underside!.id}`)
+  assert(
+    new Set(candidates.map((candidate) => candidate.id)).size === candidates.length,
+    'bottom face: no two rows share an id',
+  )
+  assert(
+    underside!.zBottom === 0 && underside!.zTop === 5,
+    `bottom face: the underside pocket is the stock span 0..5, got ${underside!.zBottom}..${underside!.zTop}`,
+  )
+  const xs = underside!.outline.map((point) => point.x)
+  const ys = underside!.outline.map((point) => point.y)
+  assertNear(Math.min(...xs), 45, 'bottom face: the pocket min X')
+  assertNear(Math.max(...xs), 55, 'bottom face: the pocket max X')
+  assertNear(Math.min(...ys), 16, 'bottom face: the pocket min Y')
+  assertNear(Math.max(...ys), 24, 'bottom face: the pocket max Y')
+
+  // Drawing it puts it in the same folder as the Top shapes, authored on
+  // Bottom, with the stock-space span a user would read on Top.
+  const created = drawEverything(candidates)
+  const after = useProjectStore.getState().project
+  const drawn = resolvedProjectFeatures(after).filter((feature) => created.includes(feature.id))
+  const bottomDrawn = drawn.find((feature) => feature.authoringFace === 'bottom')
+  assert(bottomDrawn !== undefined, 'bottom face: drawing creates a feature authored on Bottom')
+  assert(
+    bottomDrawn!.z_bottom === 0 && bottomDrawn!.z_top === 5,
+    `bottom face: the drawn pocket is 0..5, got ${bottomDrawn!.z_bottom}..${bottomDrawn!.z_top}`,
+  )
+  const topDrawn = drawn.find((feature) => (feature.authoringFace ?? 'top') === 'top')
+  assert(topDrawn !== undefined, 'bottom face: the Top shapes are drawn too')
+  assert(bottomDrawn!.folderId === topDrawn!.folderId, 'bottom face: both faces land in one folder')
+
+  // A second run is safe: every row is already drawn.
+  const again = await faceCandidatesFor(useProjectStore.getState().project, RECOGNIZED_FACES)
+  const offered = again.filter((candidate) => !candidate.alreadyDrawn)
+  assert(
+    offered.length === 0,
+    `bottom face: a second run offers nothing new, offered ${offered.map((candidate) => candidate.id).join(',')}`,
+  )
 }
 
 console.log('store/modelRecognitionFlow.test.ts: all assertions passed')
