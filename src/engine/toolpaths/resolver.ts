@@ -860,8 +860,12 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     : []
   const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
 
+  const islandScope = operation.islandFeatureIds && operation.islandFeatureIds.length > 0
+    ? new Set(operation.islandFeatureIds)
+    : null
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => islandScope === null || islandScope.has(feature.id))
     // Pocket handles imported models from their true per-level sections in its
     // generator. The synthetic add `expandFeatureGeometry` exposes for legacy
     // 2.5D consumers is the full silhouette and would permanently close every

@@ -855,6 +855,13 @@ export interface Operation {
   debugToolpath: boolean
   target: OperationTarget
   toolRef: string | null
+  /**
+   * Explicit islands this operation is bounded by (issue #1218). Absent or
+   * empty means every `add` feature in the project competes, which is the
+   * historical behaviour. Only `pocket` and `v_carve` read it; every other kind
+   * drops it on load.
+   */
+  islandFeatureIds?: string[]
   stepdown: number
   stepover: number
   feed: number

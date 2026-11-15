@@ -104,6 +104,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   debugToolpath: { role: 'computation', change: { debugToolpath: true } },
   debugShowRejectedCorners: { role: 'computation', change: { debugShowRejectedCorners: true } },
   target: { role: 'computation', change: { target: { source: 'features', featureIds: ['feature-1'] } } },
+  islandFeatureIds: { role: 'computation', change: { islandFeatureIds: ['feature-1'] } },
   toolRef: { role: 'computation', change: { toolRef: 'tool-2' } },
   stepdown: { role: 'computation', change: { stepdown: 3 } },
   stepover: { role: 'computation', change: { stepover: 0.5 } },

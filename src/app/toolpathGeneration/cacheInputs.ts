@@ -147,6 +147,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && projectsEqual(a.plasmaStartPoints ?? null, b.plasmaStartPoints ?? null)
     && a.pass === b.pass
     && a.target === b.target
+    && JSON.stringify(a.islandFeatureIds ?? []) === JSON.stringify(b.islandFeatureIds ?? [])
     && a.toolRef === b.toolRef
     && a.stepdown === b.stepdown
     && a.stepover === b.stepover

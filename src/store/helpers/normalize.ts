@@ -265,6 +265,7 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
       plasmaLeadOut: operation.plasmaLeadOut ?? 'line' as const,
     } : {}),
     description: operation.description ?? '',
+    islandFeatureIds: sanitizedIslandFeatureIds(operation, project),
     roundOutsideCorners: operation.roundOutsideCorners ?? true,
     roundLinkCorners: operation.roundLinkCorners ?? true,
     cornerRelief: operation.cornerRelief ?? 'none',
@@ -316,6 +317,28 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
   }
 
   return normalized
+}
+
+/**
+ * Keep an explicit island scope only where a resolver reads it, and only for
+ * instances whose definition is an `add`. Dangling or wrong-role ids are
+ * dropped so a deleted island cannot silently empty a cut.
+ */
+function sanitizedIslandFeatureIds(operation: Operation, project: Project): string[] | undefined {
+  if (operation.kind !== 'pocket' && operation.kind !== 'v_carve') {
+    return undefined
+  }
+  const requested = operation.islandFeatureIds
+  if (!requested || requested.length === 0) {
+    return undefined
+  }
+  const addInstanceIds = new Set(
+    project.features
+      .filter((feature) => project.featureDefinitions[feature.definitionId]?.operation === 'add')
+      .map((feature) => feature.id),
+  )
+  const kept = [...new Set(requested.filter((id) => addInstanceIds.has(id)))]
+  return kept.length > 0 ? kept : undefined
 }
 
 export function normalizeClamp(clamp: Clamp, units: Project['meta']['units'], index: number): Clamp {
