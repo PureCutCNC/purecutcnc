@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-export { recognizeCavities } from './recognize'
+export {
+  candidatesFromResult,
+  markAlreadyDrawn,
+  type CandidateKind,
+  type DrawnFeature,
+  type RecognitionCandidate,
+} from './candidates'
+export { recognizeCavities, type RecognitionOptions } from './recognize'
 export type {
   CavityBottom,
   ModelRecognitionResult,

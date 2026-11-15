@@ -126,6 +126,7 @@ const actions: FeatureTreeActions = {
   deleteClamps: noop,
   switchFaceToEdit: noop,
   changeAuthoringFace: noop,
+  findModelCavities: noop,
 }
 
 const AROUND_SETUP: MachiningSetup = {

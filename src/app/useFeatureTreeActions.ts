@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { useModelRecognitionStore } from '../store/modelRecognitionStore'
 import { requestAuthoringFaceChange, switchWorkspaceFace } from '../store/workspaceFace'
 import { useMemo } from 'react'
 import type { QuickOperation } from '../components/cam/operationValidity'
@@ -118,6 +119,8 @@ export interface FeatureTreeActions {
   switchFaceToEdit: (featureId: string) => void
   /** Open the confirmation for changing these features' authoring face. */
   changeAuthoringFace: (featureIds: string[]) => void
+  /** Open Find pockets and holes for one imported model (issue #1206). */
+  findModelCavities: (featureId: string) => void
 }
 
 export function createFeatureTreeActions({
@@ -177,6 +180,10 @@ export function createFeatureTreeActions({
     },
     changeAuthoringFace: (featureIds: string[]) => {
       requestAuthoringFaceChange(featureIds)
+      closeTreeContextMenu()
+    },
+    findModelCavities: (featureId: string) => {
+      useModelRecognitionStore.getState().requestModelRecognition(featureId)
       closeTreeContextMenu()
     },
     editCannedShape: (featureId: string) => {

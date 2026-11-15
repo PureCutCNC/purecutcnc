@@ -163,6 +163,7 @@ function callRecordingActions(calls: string[]): FeatureTreeActions {
     deleteClamp: record('deleteClamp'),
     deleteClamps: record('deleteClamps'),
     changeAuthoringFace: record('changeAuthoringFace'),
+    findModelCavities: record('findModelCavities'),
   }
 }
 

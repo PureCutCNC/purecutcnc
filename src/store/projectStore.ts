@@ -67,6 +67,7 @@ import { createMachineDefsSlice } from './slices/machineDefsSlice'
 import { createOperationsSlice } from './slices/operationsSlice'
 import { createSetupsSlice, withGhostSelectionGuard, withSetupSync } from './slices/setupsSlice'
 import { createImportMergeSlice } from './slices/importMergeSlice'
+import { createModelRecognitionSlice } from './slices/modelRecognitionSlice'
 import { createProjectLifecycleSlice } from './slices/projectLifecycleSlice'
 import { createHistorySlice } from './slices/historySlice'
 import { createWorkpieceSlice } from './slices/workpieceSlice'
@@ -317,6 +318,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createOperationsSlice(set, get),
   ...createSetupsSlice(set, get),
   ...createImportMergeSlice(set, get),
+  ...createModelRecognitionSlice(set, get),
   ...createFeatureSlice(set, get),
   ...createFeatureGeometrySlice(set, get, {
     joinOpenProfiles,

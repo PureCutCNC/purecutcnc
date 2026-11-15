@@ -34,7 +34,7 @@ export const LARGE_IMPORT_THRESHOLD = 500
 
 export type ImportMergeSlice = Pick<ProjectStore, 'importShapes' | 'importCamjFolders'>
 
-function createNameAllocator(existingNames: Iterable<string>): (preferred: string) => string {
+export function createNameAllocator(existingNames: Iterable<string>): (preferred: string) => string {
   const taken = new Set(existingNames)
   const nextSuffix = new Map<string, number>()
   return (preferred) => {
@@ -52,7 +52,7 @@ function createNameAllocator(existingNames: Iterable<string>): (preferred: strin
   }
 }
 
-function createIdAllocator(project: Project): (prefix: string) => string {
+export function createIdAllocator(project: Project): (prefix: string) => string {
   const used = new Set([
     ...project.features.map((feature) => feature.id),
     ...Object.keys(project.featureDefinitions),

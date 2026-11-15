@@ -9,6 +9,7 @@ The mesh must already be **in the frame of one face**, with Z pointing at the to
 - `sections.ts` — a mesh section as nested loops (material, hole, island) through Clipper's even-odd rule, plus the plan-view area tests everything else is built on (`loopsMatch`, `intersectionArea`, `differenceArea`, `unionRegion`)
 - `fit.ts` — a loop back into a drawing: a circle through the facet corners when they all lie on one, otherwise arcs for runs of corners on a common circle and lines for the rest
 - `recognize.ts` — `recognizeCavities`: bands (a hole loop that is the same at both ends of a slab), tracks (bands joined across levels), each track's bottom and top, the reach check, islands, and the grouping of never-vertical voids. The file header states the rules
+- `candidates.ts` — from a detector result to drawable candidates (slice 2): one subtract per cavity followed by an add per island, with lengths rounded once so the value listed is the value stored; `markAlreadyDrawn` flags a candidate that matches an existing feature (same face, operation, span and outline), which is what makes a second run safe
 - `index.ts` — public exports
 - `recognize.test.ts` — the detector on plates cut by Manifold: pocket, through hole, counterbore (plain and chamfered), stepped pocket, boss and chamfered boss, drill point, chamfered rim, drafted pocket, T-slot, shelf, mushroom boss, 12- and 8-sided circles, slot arcs, a missing wall triangle, inches, an off-origin rotated placement, degenerate input. Its header lists the mutations each block was checked against
 

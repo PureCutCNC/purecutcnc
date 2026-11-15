@@ -18,6 +18,7 @@
 @import './styles/dialog.css';
 @import './styles/canvas-workflow.css';
 @import './styles/face.css';
+@import './styles/model-recognition.css';
 @import './styles/tablet.css';
 
 :root {
