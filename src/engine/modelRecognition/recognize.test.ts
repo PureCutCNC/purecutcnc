@@ -34,6 +34,9 @@
  * - `fit.ts`, `asCircle` always null                        -> pocket + hole
  * - `levels.ts`, vertical-wall levels dropped               -> drill point
  * - `recognize.ts`, both tolerances an absolute 0.02        -> inches
+ * - `recognize.ts`, the stand-on check always true          -> overhanging cap
+ * - `recognize.ts`, a solid loop may be an island            -> boss in a pocket
+ * - `recognize.ts`, the open-mesh check for a solid removed  -> open mesh
  *
  * Run with: npx tsx src/engine/modelRecognition/recognize.test.ts
  */
@@ -73,6 +76,16 @@ function frustum(
 ): Manifold {
   if (radiusBottom > 0) return M.cylinder(height, radiusBottom, radiusTop, segments).translate([x, y, z])
   return M.cylinder(height, radiusTop, 0, segments).rotate([180, 0, 0]).translate([x, y, z + height])
+}
+
+/** A square frustum: `sideBottom` across at `z`, `sideTop` across at `z + height`. */
+function squareFrustum(
+  x: number, y: number, z: number,
+  sideBottom: number, sideTop: number, height: number,
+): Manifold {
+  return M.cylinder(height, sideBottom / Math.SQRT2, sideTop / Math.SQRT2, 4)
+    .rotate([0, 0, 45])
+    .translate([x, y, z])
 }
 
 function toMesh(solid: Manifold): RecognitionMesh {
@@ -190,6 +203,10 @@ function assertSpan(cavity: { zBottom: number; zTop: number }, zBottom: number, 
   assert(chamfered.cavities.length === 1, 'chamfered boss: one cavity')
   assertSpan(chamfered.cavities[0].islands[0], 10, 16, 'chamfered boss: island reaches the top of the chamfer')
   assertNear(chamfered.cavities[0].islands[0].circle!.radius, 4, 'chamfered boss: footprint is the base')
+
+  // The boss is material inside the pocket — an island, not a body of its own.
+  assert(result.solids.length === 1 && result.solids[0].outline.length === 4, 'boss: the only body is the plate')
+  assertSpan(result.solids[0], 0, 20, 'boss: the plate is the whole height')
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +348,112 @@ function assertSpan(cavity: { zBottom: number; zTop: number }, zBottom: number, 
 }
 
 // ---------------------------------------------------------------------------
+// Solids: the bodies the pockets and holes are cut out of
+// ---------------------------------------------------------------------------
+{
+  // A plain plate is one body, as tall as the plate, with its own outline.
+  const result = recognize(plate())
+  assert(result.solids.length === 1 && result.skippedSolids.length === 0, 'plain plate solid: one body, nothing skipped')
+  const [solid] = result.solids
+  assertSpan(solid, 0, 20, 'plain plate solid')
+  const bounds = outlineBounds(solid)
+  assertNear(bounds.minX, 0, 'plain plate solid: min X')
+  assertNear(bounds.maxX, 60, 'plain plate solid: max X')
+  assertNear(bounds.minY, 0, 'plain plate solid: min Y')
+  assertNear(bounds.maxY, 40, 'plain plate solid: max Y')
+  assert(solid.outline.length === 4, 'plain plate solid: four corners, no points left along the edges')
+  assert(solid.circle === null, 'plain plate solid: a rectangle, not a circle')
+  assert(solid.profile.segments.every((segment) => segment.type === 'line'), 'plain plate solid: straight sides')
+}
+
+{
+  // A raised boss stacks on the plate: two bodies, bottom first.
+  const result = recognize(plate().add(box(20, 10, 20, 20, 20, 8)))
+  assert(result.solids.length === 2 && result.skippedSolids.length === 0, 'raised boss: two bodies, nothing skipped')
+  const [base, boss] = result.solids
+  assertSpan(base, 0, 20, 'raised boss: the plate')
+  assertSpan(boss, 20, 28, 'raised boss: the boss')
+  const baseBounds = outlineBounds(base)
+  assertNear(baseBounds.maxX - baseBounds.minX, 60, 'raised boss: the plate is the base')
+  const bossBounds = outlineBounds(boss)
+  assertNear(bossBounds.minX, 20, 'raised boss: boss min X')
+  assertNear(bossBounds.maxX, 40, 'raised boss: boss max X')
+  assertNear(bossBounds.minY, 10, 'raised boss: boss min Y')
+  assertNear(bossBounds.maxY, 30, 'raised boss: boss max Y')
+  assert(base.outline.length === 4 && boss.outline.length === 4, 'raised boss: both are rectangles')
+}
+
+{
+  // Holes are not part of a solid's outline; the cavities already found are
+  // what cut it, so the body stays the plate's outer rectangle.
+  const result = recognize(plate()
+    .subtract(box(5, 5, 12, 20, 10, 8))
+    .subtract(cylinder(40, 10, -5, 3, 30))
+    .subtract(cylinder(30, 30, 14, 5.5, 10, 48)))
+  assert(result.solids.length === 1, 'cut plate solid: still one body')
+  const bounds = outlineBounds(result.solids[0])
+  assertNear(bounds.minX, 0, 'cut plate solid: min X')
+  assertNear(bounds.maxX, 60, 'cut plate solid: max X')
+  assertNear(bounds.minY, 0, 'cut plate solid: min Y')
+  assertNear(bounds.maxY, 40, 'cut plate solid: max Y')
+  assert(result.solids[0].outline.length === 4, 'cut plate solid: the outer rectangle, not the holes')
+}
+
+{
+  // A chamfered top: the straight body, with the chamfer reported. A body ends
+  // where its straight walls end; nothing is carried up through the chamfer.
+  const chamfered = M.cube([40, 40, 15]).add(squareFrustum(20, 20, 15, 40, 28.284271247461902, 5))
+  const result = recognize(chamfered)
+  assert(result.solids.length === 1, 'chamfered top: one body')
+  assertSpan(result.solids[0], 0, 15, 'chamfered top')
+  assert(result.skippedSolids.length === 1 && result.skippedSolids[0].reason === 'taperedWalls', 'chamfered top: the chamfer is reported')
+  assertSpan(result.skippedSolids[0], 15, 20, 'chamfered top: the chamfered band')
+}
+
+{
+  // A cap wider than its stem overhangs empty space, so it is not a body.
+  const cap = box(20, 20, 0, 20, 20, 10).add(box(10, 10, 10, 40, 40, 10))
+  const result = recognize(cap)
+  assert(result.solids.length === 1, 'overhanging cap: only the stem is a body')
+  assertSpan(result.solids[0], 0, 10, 'overhanging cap: the stem')
+  const stemBounds = outlineBounds(result.solids[0])
+  assertNear(stemBounds.minX, 20, 'overhanging cap: stem min X')
+  assertNear(stemBounds.maxX, 40, 'overhanging cap: stem max X')
+  assert(result.skippedSolids.length === 1 && result.skippedSolids[0].reason === 'undercut', 'overhanging cap: the cap is reported')
+  assertSpan(result.skippedSolids[0], 10, 20, 'overhanging cap: the cap')
+  assert(!result.solids.some((solid) => Math.abs(solid.zTop - 20) < 1e-3), 'overhanging cap: the cap is not a body')
+}
+
+{
+  // A bar standing on end is a round body, fitted to the designed radius.
+  const result = recognize(cylinder(20, 20, 0, 10, 20, 32))
+  assert(result.solids.length === 1 && result.skippedSolids.length === 0, 'round bar: one body')
+  const [bar] = result.solids
+  assert(bar.circle !== null, 'round bar: round')
+  assertNear(bar.circle!.center.x, 20, 'round bar: centre X')
+  assertNear(bar.circle!.center.y, 20, 'round bar: centre Y')
+  assertNear(bar.circle!.radius, 10, 'round bar: the designed radius, not the facets\' inner radius')
+  assertSpan(bar, 0, 20, 'round bar')
+}
+
+{
+  // The same stepped part in inches gives the same bodies, scaled.
+  const reference = recognize(plate().add(box(20, 10, 20, 20, 20, 8)))
+  const inch = 1 / 25.4
+  const inches = recognize(plate().add(box(20, 10, 20, 20, 20, 8)).scale([inch, inch, inch]))
+  assert(inches.solids.length === reference.solids.length, 'inches: the same bodies')
+  assert(inches.skippedSolids.length === 0, 'inches: nothing skipped')
+  inches.solids.forEach((solid, i) => {
+    assertNear(solid.zBottom, reference.solids[i].zBottom * inch, `inches: body ${i} bottom`, 1e-4)
+    assertNear(solid.zTop, reference.solids[i].zTop * inch, `inches: body ${i} top`, 1e-4)
+    const actual = outlineBounds(solid)
+    const expected = outlineBounds(reference.solids[i])
+    assertNear(actual.minX, expected.minX * inch, `inches: body ${i} min X`, 1e-4)
+    assertNear(actual.maxY, expected.maxY * inch, `inches: body ${i} max Y`, 1e-4)
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Open mesh: a missing wall triangle is reported, and nothing near it is drawn
 // ---------------------------------------------------------------------------
 {
@@ -354,6 +477,10 @@ function assertSpan(cavity: { zBottom: number; zTop: number }, zBottom: number, 
   assert(result.meshOpen, 'open mesh: flagged')
   assert(result.cavities.length === 0, 'open mesh: nothing is drawn through the open heights')
   assert(result.skipped.some((entry) => entry.reason === 'openMesh'), 'open mesh: the hole is reported, not dropped')
+  // The plate's own walls pass through the open heights too, so the body is
+  // reported and not offered as a solid to draw.
+  assert(result.solids.length === 0, 'open mesh: the body is not offered as a solid')
+  assert(result.skippedSolids.some((entry) => entry.reason === 'openMesh'), 'open mesh: the body is reported')
 }
 
 // ---------------------------------------------------------------------------

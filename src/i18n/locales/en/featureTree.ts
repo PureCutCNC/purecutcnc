@@ -390,6 +390,16 @@ export const featureTreeEn = {
   'featureTree.findCavities.folderName': '{model} pockets and holes',
   'featureTree.findCavities.preview': 'Top view of the shapes found',
   'featureTree.findCavities.include': 'Draw {name}',
+  'featureTree.findCavities.group.solids': 'Solids',
+  'featureTree.findCavities.group.cavities': 'Pockets and holes',
+  'featureTree.findCavities.kind.solid': 'Solid',
+  'featureTree.findCavities.name.solid': 'Solid',
+  'featureTree.findCavities.solidSkipped.taperedWalls.one': '{count} part of the body has walls that are not vertical',
+  'featureTree.findCavities.solidSkipped.taperedWalls.other': '{count} parts of the body have walls that are not vertical',
+  'featureTree.findCavities.solidSkipped.undercut.one': '{count} part of the body overhangs empty space',
+  'featureTree.findCavities.solidSkipped.undercut.other': '{count} parts of the body overhang empty space',
+  'featureTree.findCavities.solidSkipped.openMesh.one': '{count} part of the body is next to a gap in the mesh',
+  'featureTree.findCavities.solidSkipped.openMesh.other': '{count} parts of the body are next to a gap in the mesh',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Mask mode',

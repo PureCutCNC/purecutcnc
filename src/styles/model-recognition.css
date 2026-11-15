@@ -69,6 +69,18 @@
   text-transform: uppercase;
 }
 
+/* The group heading is a real table cell, so its `colSpan` spans the table;
+ * the row-header rule above turns the body's row headers into grids. */
+.find-cavities__table tbody .find-cavities__group-row th {
+  display: table-cell;
+  padding-top: 10px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .find-cavities__table tbody th {
   display: grid;
   gap: 2px;
@@ -116,6 +128,12 @@
   fill: var(--bg-elev-1);
   stroke: var(--text-dim);
   stroke-dasharray: 3 3;
+}
+
+/* The bodies go under the cavities, so their fill is the fainter one; the
+ * checked rule below still wins when a solid row is ticked. */
+.find-cavities__shape--solid {
+  fill: color-mix(in srgb, var(--text-dim) 22%, var(--bg-elev-1));
 }
 
 .find-cavities__shape--checked {

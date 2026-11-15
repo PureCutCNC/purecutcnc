@@ -36,6 +36,14 @@
  * 5. **Reach.** Nothing may cover the outline anywhere above it. What is
  *    covered is an undercut and is reported, not returned.
  *
+ * A solid is the same walk on the other kind of loop: a top-level **material**
+ * loop of a section instead of a hole. Its bands, tracks and stacked steps
+ * mirror the cavity's, with two differences. It ends where its straight walls
+ * end (no carrying the top up through a flare), and it is returned only when it
+ * stands on something — the mesh's underside or material covering its whole
+ * outline just below — so a body hanging over empty space is reported as an
+ * undercut. A material loop inside a hole is an island, not a solid.
+ *
  * Everything is measured in the mesh's own size: the tolerances are a fixed
  * fraction of its bounding diagonal, so a part in inches and the same part in
  * millimetres give the same answer.
@@ -64,6 +72,7 @@ import type {
   RecognitionMesh,
   RecognizedCavity,
   RecognizedIsland,
+  RecognizedSolid,
   SkippedCavity,
 } from './types'
 
@@ -94,6 +103,20 @@ interface Slab {
   loBand: Array<Band | null>
   /** Per `hi` loop: true when a band ends on it. */
   hiBanded: boolean[]
+  /**
+   * The same three for solid loops, kept apart from the hole bands: the cavity
+   * code reads `bands`, `loBand` and `hiBanded`, and must see holes only.
+   */
+  solidBands: Band[]
+  solidLoBand: Array<Band | null>
+  solidHiBanded: boolean[]
+}
+
+/** A loop no band carried across a slab boundary, and the group it belongs to. */
+interface UnbandedLoop {
+  slab: number
+  loop: SectionLoop
+  group: number
 }
 
 interface TrackSummary {
@@ -116,7 +139,49 @@ function ccwOutline(path: ClipperPath): Point[] {
 }
 
 function emptyResult(): ModelRecognitionResult {
-  return { cavities: [], skipped: [], levelsTruncated: false, meshOpen: false }
+  return { cavities: [], skipped: [], solids: [], skippedSolids: [], levelsTruncated: false, meshOpen: false }
+}
+
+/**
+ * Groups the loops a band did not carry across a slab boundary into the bodies
+ * they are. Two loops are the same body when they are on the same or a
+ * neighbouring slab and cover more than half of the smaller one — a wall whose
+ * pitch is not vertical enough to band still leaves nearly the same section on
+ * both sides of one level.
+ *
+ * Widest first, so a group's first member is its body at its widest, and capped
+ * so a surface with hundreds of facets cannot take the detector down. Each loop
+ * belongs to at most one group.
+ */
+function groupUnbandedLoops(loops: UnbandedLoop[]): UnbandedLoop[][] {
+  loops.sort((a, b) => b.loop.area - a.loop.area)
+  loops.length = Math.min(loops.length, MAX_TAPER_LOOPS)
+
+  const sameBody = (a: UnbandedLoop, b: UnbandedLoop): boolean => (
+    Math.abs(a.slab - b.slab) <= 1
+    && intersectionArea([a.loop.path], [b.loop.path]) > Math.min(a.loop.area, b.loop.area) / 2
+  )
+  let groupCount = 0
+  for (const seed of loops) {
+    if (seed.group >= 0) continue
+    seed.group = groupCount
+    const queue = [seed]
+    while (queue.length > 0) {
+      const current = queue.pop()!
+      for (const other of loops) {
+        if (other.group >= 0 || !sameBody(current, other)) continue
+        other.group = seed.group
+        queue.push(other)
+      }
+    }
+    groupCount += 1
+  }
+
+  const groups: UnbandedLoop[][] = []
+  for (let group = 0; group < groupCount; group += 1) {
+    groups.push(loops.filter((member) => member.group === group))
+  }
+  return groups
 }
 
 export interface RecognitionOptions {
@@ -139,6 +204,9 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
   const { levels, truncated } = collectLevels(mesh, bounds, zTol)
   const sliceIndex = buildMeshSliceIndex(mesh.positions, mesh.index)
   const isCandidate = (loop: SectionLoop): boolean => loop.hole && loop.area >= minLoopArea
+  // A solid loop is a top-level material loop. Material inside a hole is an
+  // island standing in a cavity, not a body of its own.
+  const isSolidLoop = (loop: SectionLoop): boolean => !loop.hole && loop.parent === -1 && loop.area >= minLoopArea
 
   // ── Slabs and bands ────────────────────────────────────────────────────────
   const slabs: Slab[] = []
@@ -152,6 +220,9 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
       bands: [],
       loBand: lo.loops.map(() => null),
       hiBanded: hi.loops.map(() => false),
+      solidBands: [],
+      solidLoBand: lo.loops.map(() => null),
+      solidHiBanded: hi.loops.map(() => false),
     }
     lo.loops.forEach((loop, loLoop) => {
       if (!isCandidate(loop)) return
@@ -164,6 +235,17 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
       slab.loBand[loLoop] = band
       slab.hiBanded[hiLoop] = true
     })
+    lo.loops.forEach((loop, loLoop) => {
+      if (!isSolidLoop(loop)) return
+      const hiLoop = hi.loops.findIndex((other, otherIndex) => (
+        !slab.solidHiBanded[otherIndex] && isSolidLoop(other) && loopsMatch(loop, other, xyTol)
+      ))
+      if (hiLoop < 0) return
+      const band: Band = { slab: i, loLoop, hiLoop, next: null, hasPrevious: false }
+      slab.solidBands.push(band)
+      slab.solidLoBand[loLoop] = band
+      slab.solidHiBanded[hiLoop] = true
+    })
     slabs.push(slab)
     options.onProgress?.((i + 1) / (levels.length - 1))
   }
@@ -174,6 +256,15 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
     for (const band of slabs[i].bands) {
       const loop = slabs[i].hi.loops[band.hiLoop]
       const next = above.bands.find((candidate) => (
+        !candidate.hasPrevious && loopsMatch(loop, above.lo.loops[candidate.loLoop], xyTol)
+      ))
+      if (!next) continue
+      band.next = next
+      next.hasPrevious = true
+    }
+    for (const band of slabs[i].solidBands) {
+      const loop = slabs[i].hi.loops[band.hiLoop]
+      const next = above.solidBands.find((candidate) => (
         !candidate.hasPrevious && loopsMatch(loop, above.lo.loops[candidate.loLoop], xyTol)
       ))
       if (!next) continue
@@ -307,13 +398,63 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
     }
   }
 
-  // ── Voids whose walls are never vertical ───────────────────────────────────
-  interface TaperLoop {
-    slab: number
-    loop: SectionLoop
-    group: number
+  // ── Solids: the material the cavities are cut out of ───────────────────────
+  const solids: RecognizedSolid[] = []
+  const skippedSolids: SkippedCavity[] = []
+
+  for (const slab of slabs) {
+    for (const first of slab.solidBands) {
+      if (first.hasPrevious) continue
+      let last = first
+      while (last.next) last = last.next
+      const bottomSlab = first.slab
+      const topSlab = last.slab
+
+      const loop = slabs[bottomSlab].lo.loops[first.loLoop]
+      // A solid ends where its straight walls end: no carrying the top up
+      // through a band that is not vertical.
+      const zBottom = levels[bottomSlab]
+      const zTop = levels[topSlab + 1]
+      const outline = ccwOutline(loop.path)
+      const slack = loop.perimeter * xyTol * 2
+
+      const report = (reason: SkippedCavity['reason']): void => {
+        skippedSolids.push({ reason, outline, zBottom, zTop })
+      }
+
+      // A section this body's own walls pass through cannot be trusted to say
+      // where its material is.
+      let open = false
+      for (let k = bottomSlab; k <= topSlab && !open; k += 1) {
+        open = slabs[k].lo.openChainCount > 0 || slabs[k].hi.openChainCount > 0
+      }
+      if (open) {
+        report('openMesh')
+        continue
+      }
+
+      // Stands on something: the underside, or material covering the whole
+      // outline just below it. A body over empty space is an undercut.
+      const stands = bottomSlab === 0
+        || differenceArea([loop.path], slabs[bottomSlab - 1].hi.material) <= slack
+      if (!stands) {
+        report('undercut')
+        continue
+      }
+
+      const fitted = fitOutline(outline, xyTol)
+      solids.push({
+        profile: fitted.profile,
+        outline,
+        circle: fitted.circle,
+        zBottom,
+        zTop,
+      })
+    }
   }
-  const taperLoops: TaperLoop[] = []
+
+  // ── Voids whose walls are never vertical ───────────────────────────────────
+  const taperLoops: UnbandedLoop[] = []
   slabs.forEach((slab, slabIndex) => {
     slab.lo.loops.forEach((loop, loopIndex) => {
       if (isCandidate(loop) && !slab.loBand[loopIndex]) taperLoops.push({ slab: slabIndex, loop, group: -1 })
@@ -322,38 +463,16 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
       if (isCandidate(loop) && !slab.hiBanded[loopIndex]) taperLoops.push({ slab: slabIndex, loop, group: -1 })
     })
   })
-  taperLoops.sort((a, b) => b.loop.area - a.loop.area)
-  taperLoops.length = Math.min(taperLoops.length, MAX_TAPER_LOOPS)
 
-  const sameVoid = (a: TaperLoop, b: TaperLoop): boolean => (
-    Math.abs(a.slab - b.slab) <= 1
-    && intersectionArea([a.loop.path], [b.loop.path]) > Math.min(a.loop.area, b.loop.area) / 2
-  )
-  let groupCount = 0
-  for (const seed of taperLoops) {
-    if (seed.group >= 0) continue
-    seed.group = groupCount
-    const queue = [seed]
-    while (queue.length > 0) {
-      const current = queue.pop()!
-      for (const other of taperLoops) {
-        if (other.group >= 0 || !sameVoid(current, other)) continue
-        other.group = seed.group
-        queue.push(other)
-      }
-    }
-    groupCount += 1
-  }
-
-  for (let group = 0; group < groupCount; group += 1) {
-    const members = taperLoops.filter((member) => member.group === group)
+  for (const members of groupUnbandedLoops(taperLoops)) {
     // Sorted by area, so the first member is the void at its widest.
     const widest = members[0].loop
     const lowSlab = Math.min(...members.map((member) => member.slab))
     const highSlab = Math.max(...members.map((member) => member.slab))
 
     // A cone under a cavity or a flare above one is that cavity's own end, and
-    // is already told by its `bottom` and `flaredAbove`.
+    // is already told by its `bottom` and `flaredAbove`. This suppression is
+    // the cavity's alone: a solid has no such end to hide behind.
     const partOfCavity = tracks.some((track) => {
       const shared = intersectionArea([widest.path], [track.path])
       const below = highSlab === track.bottomSlab - 1 && track.bottom === 'taper'
@@ -371,14 +490,50 @@ export function recognizeCavities(mesh: RecognitionMesh, options: RecognitionOpt
     })
   }
 
+  // ── Bodies whose walls are never vertical ──────────────────────────────────
+  const taperSolids: UnbandedLoop[] = []
+  slabs.forEach((slab, slabIndex) => {
+    slab.lo.loops.forEach((loop, loopIndex) => {
+      if (isSolidLoop(loop) && !slab.solidLoBand[loopIndex]) {
+        taperSolids.push({ slab: slabIndex, loop, group: -1 })
+      }
+    })
+    slab.hi.loops.forEach((loop, loopIndex) => {
+      if (isSolidLoop(loop) && !slab.solidHiBanded[loopIndex]) {
+        taperSolids.push({ slab: slabIndex, loop, group: -1 })
+      }
+    })
+  })
+
+  for (const members of groupUnbandedLoops(taperSolids)) {
+    const widest = members[0].loop
+    const lowSlab = Math.min(...members.map((member) => member.slab))
+    const highSlab = Math.max(...members.map((member) => member.slab))
+    skippedSolids.push({
+      reason: 'taperedWalls',
+      outline: ccwOutline(widest.path),
+      zBottom: levels[lowSlab],
+      zTop: levels[highSlab + 1],
+    })
+  }
+
   const byHeightThenSize = (
     a: { zTop: number; zBottom: number; outline: Point[] },
     b: { zTop: number; zBottom: number; outline: Point[] },
   ): number => (b.zTop - a.zTop) || (a.zBottom - b.zBottom) || (a.outline[0].x - b.outline[0].x)
     || (a.outline[0].y - b.outline[0].y)
+  // Solids stack bottom first, so a body drawn before the one standing on it
+  // is folded into the tree in the order that recreates the part.
+  const byBottomThenTop = (
+    a: { zBottom: number; zTop: number; outline: Point[] },
+    b: { zBottom: number; zTop: number; outline: Point[] },
+  ): number => (a.zBottom - b.zBottom) || (a.zTop - b.zTop) || (a.outline[0].x - b.outline[0].x)
+    || (a.outline[0].y - b.outline[0].y)
   cavities.sort(byHeightThenSize)
   skipped.sort(byHeightThenSize)
+  solids.sort(byBottomThenTop)
+  skippedSolids.sort(byHeightThenSize)
 
   const meshOpen = slabs.some((slab) => slab.lo.openChainCount > 0 || slab.hi.openChainCount > 0)
-  return { cavities, skipped, levelsTruncated: truncated, meshOpen }
+  return { cavities, skipped, solids, skippedSolids, levelsTruncated: truncated, meshOpen }
 }

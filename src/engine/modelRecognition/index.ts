@@ -29,6 +29,7 @@ export type {
   RecognizedCavity,
   RecognizedCircle,
   RecognizedIsland,
+  RecognizedSolid,
   SkipReason,
   SkippedCavity,
 } from './types'

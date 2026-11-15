@@ -15,9 +15,9 @@
  */
 
 /**
- * Find pockets and holes smoke (issue #1206 slice 2) — imports a real STL with
- * one blind pocket, runs the search from Properties, draws the shape, undoes
- * it, and checks that a second run offers nothing new.
+ * Find pockets and holes smoke (issue #1206 slices 2 and 3) — imports a real
+ * STL with one blind pocket, runs the search from Properties, draws the solid
+ * and the pocket, undoes it, and checks that a second run offers nothing new.
  *
  * The detector and the store action are covered by
  * src/engine/modelRecognition/recognize.test.ts and
@@ -85,7 +85,14 @@ async function importPlate(page: Page): Promise<void> {
   await expect(dialog).not.toBeVisible({ timeout: 30_000 })
 }
 
-interface FeatureRow { id: string; folderId: string | null; z_top: number; z_bottom: number; authoringFace: string }
+interface FeatureRow {
+  id: string
+  definitionId: string
+  folderId: string | null
+  z_top: number
+  z_bottom: number
+  authoringFace: string
+}
 
 function featuresOf(project: Record<string, unknown>): FeatureRow[] {
   return project.features as FeatureRow[]
@@ -111,30 +118,53 @@ test.describe('find pockets and holes', () => {
     const modelHeight = model.z_top - model.z_bottom
 
     const dialog = await openFromProperties(page)
+    const solidRow = dialog.getByTestId('find-cavities-row-s0')
     const row = dialog.getByTestId('find-cavities-row-c0')
     await expect(row).toBeVisible({ timeout: 30_000 })
     await expect(row).toHaveAttribute('data-kind', 'pocket')
-    await expect(dialog.locator('.find-cavities__row')).toHaveCount(1)
+    // The plate's own body is listed above its pocket, unchecked: most runs
+    // only want the pockets.
+    await expect(solidRow).toBeVisible()
+    await expect(solidRow).toHaveAttribute('data-kind', 'solid')
+    await expect(solidRow.locator('input[type="checkbox"]')).not.toBeChecked()
+    await expect(dialog.locator('.find-cavities__row')).toHaveCount(2)
     await expect(row.locator('input[type="checkbox"]')).toBeChecked()
-    await expect(dialog.getByTestId('find-cavities-preview').locator('.find-cavities__shape')).toHaveCount(1)
+    // Both shapes are drawn in the preview, the solid under the pocket.
+    await expect(dialog.getByTestId('find-cavities-preview').locator('.find-cavities__shape')).toHaveCount(2)
+    await expect(dialog.getByTestId('find-cavities-preview').locator('.find-cavities__shape--solid')).toHaveCount(1)
     const add = dialog.getByTestId('find-cavities-add')
     await expect(add).toHaveText('Add 1 shape')
 
-    // Unchecking the only row leaves nothing to add.
+    // Unchecking the only checked row leaves nothing to add.
     await row.locator('input[type="checkbox"]').uncheck()
     await expect(add).toBeDisabled()
     await row.locator('input[type="checkbox"]').check()
+
+    // Checking the solid adds the body as well.
+    await solidRow.locator('input[type="checkbox"]').check()
+    await expect(add).toHaveText('Add 2 shapes')
     await add.click()
     await expect(dialog).not.toBeVisible()
 
     const project = await getProject(page)
     const after = featuresOf(project)
-    expect(after).toHaveLength(2)
-    const drawn = after.find((feature) => feature.id !== model.id)!
+    expect(after).toHaveLength(3)
+    // The operation lives on the shared definition, not on the instance.
+    const definitions = project.featureDefinitions as Record<string, { operation?: string }>
+    const draws = (feature: FeatureRow, operation: string): boolean =>
+      definitions[feature.definitionId]?.operation === operation
+    const solidDrawn = after.find((feature) => feature.id !== model.id && draws(feature, 'add'))!
+    const drawn = after.find((feature) => feature.id !== model.id && draws(feature, 'subtract'))!
+    expect(solidDrawn).toBeDefined()
     expect(drawn.authoringFace).toBe('top')
     // Ratios, because the default project is in inches and the fixture is mm.
+    expect((solidDrawn.z_top - solidDrawn.z_bottom) / modelHeight).toBeCloseTo(1, 3)
+    expect(solidDrawn.z_top).toBeCloseTo(model.z_top, 4)
     expect((drawn.z_top - drawn.z_bottom) / modelHeight).toBeCloseTo((PLATE.z - POCKET.floor) / PLATE.z, 3)
     expect(drawn.z_top).toBeCloseTo(model.z_top, 4)
+    // The solid comes before the pocket, and both are in the same folder.
+    expect(after.indexOf(solidDrawn)).toBeLessThan(after.indexOf(drawn))
+    expect(solidDrawn.folderId).toBe(drawn.folderId)
     // In a new folder, directly after the model in the tree.
     const tree = project.featureTree as Array<{ type: string; featureId?: string; folderId?: string }>
     const modelIndex = tree.findIndex((entry) => entry.featureId === model.id)
@@ -142,12 +172,14 @@ test.describe('find pockets and holes', () => {
     const folders = project.featureFolders as Array<{ id: string; name: string }>
     expect(folders.find((folder) => folder.id === drawn.folderId)?.name).toContain('pockets and holes')
 
-    // A second run lists the pocket as already drawn and offers nothing.
+    // A second run lists both as already drawn and offers nothing.
     await page.locator('.tree-row--feature').first().click()
     await page.getByTestId('find-cavities-open').click()
     await expect(row).toBeVisible({ timeout: 30_000 })
     await expect(row).toContainText('Already drawn')
     await expect(row.locator('input[type="checkbox"]')).not.toBeChecked()
+    await expect(solidRow).toContainText('Already drawn')
+    await expect(solidRow.locator('input[type="checkbox"]')).not.toBeChecked()
     await expect(add).toBeDisabled()
     await page.keyboard.press('Escape')
     await expect(dialog).not.toBeVisible()
