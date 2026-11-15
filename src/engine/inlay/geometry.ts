@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright 2026 Franja (Frank) Povazanj
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@ import {
 import { simplifyOffsetContour } from '../toolpaths/arcReconstruction'
 import { offsetClipperPaths } from '../../store/helpers/clipping'
 import { mirrorProfile } from '../../store/helpers/transform'
+import { convertLength } from '../../utils/units'
 import { getProfileBounds, rectProfile } from '../../types/project'
 import type { Point, SketchProfile } from '../../types/project'
 import type {
@@ -35,24 +36,35 @@ import type {
 } from './types'
 
 /** Extra bite into the V wall so the floor pass never leaves a hairline ridge. */
-const FLOOR_OVERLAP = 0.05
+const FLOOR_OVERLAP_MM = 0.05
 /** Plug stock margin around the mirrored source. */
-export const INLAY_FRAME_MARGIN = 5
+export const INLAY_FRAME_MARGIN_MM = 5
 /** The V generator refuses a zero contour stepdown (vcarve.ts). */
-export const INLAY_MIN_WALL_STEP = 0.05
+export const INLAY_MIN_WALL_STEP_MM = 0.05
 /** Anything below one square micron is a collapsed contour, not a shape. */
 const MIN_SHAPE_AREA = 1e-6
 
+/** Frame margin in the project's own units. */
+export function inlayFrameMargin(units: InlayGeometryInput['units']): number {
+  return convertLength(INLAY_FRAME_MARGIN_MM, 'mm', units)
+}
+
+/** Smallest accepted V-ring stepdown in the project's own units. */
+export function inlayMinWallStep(units: InlayGeometryInput['units']): number {
+  return convertLength(INLAY_MIN_WALL_STEP_MM, 'mm', units)
+}
+
 export function computeInlayGeometry(input: InlayGeometryInput): InlayGeometry {
-  const { shapes, params, plugOrigin } = input
+  const { shapes, params, plugOrigin, units } = input
   if (shapes.length === 0) {
     throw new RangeError('inlay geometry needs at least one source shape')
   }
-  validateParams(params)
+  validateParams(params, units)
+  const floorOverlap = convertLength(FLOOR_OVERLAP_MM, 'mm', units)
 
   const slope = Math.tan((params.vBitAngle * Math.PI) / 360)
   const plugDepth = params.pocketDepth + params.surfaceGap
-  const floorInset = params.pocketDepth * slope - FLOOR_OVERLAP
+  const floorInset = params.pocketDepth * slope - floorOverlap
   const ridgeInset = plugDepth * slope + params.fitAdjustment
   const shoulderInset = params.fitAdjustment
   const stepover = slope * params.wallStep
@@ -121,7 +133,7 @@ export function computeInlayGeometry(input: InlayGeometryInput): InlayGeometry {
     pocketFloor,
     plugRidge,
     plugShoulder,
-    frame: plugFrame(shapes, plugOrigin, mirrorAxisX !== null),
+    frame: plugFrame(shapes, plugOrigin, mirrorAxisX !== null, inlayFrameMargin(units)),
     derived,
     problems,
   }
@@ -206,6 +218,7 @@ function plugFrame(
   shapes: InlayInputShape[],
   plugOrigin: Point,
   mirrored: boolean,
+  margin: number,
 ): SketchProfile {
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
@@ -221,14 +234,17 @@ function plugFrame(
     maxY = Math.max(maxY, bounds.maxY)
   }
   return rectProfile(
-    minX - INLAY_FRAME_MARGIN,
-    minY - INLAY_FRAME_MARGIN,
-    maxX - minX + 2 * INLAY_FRAME_MARGIN,
-    maxY - minY + 2 * INLAY_FRAME_MARGIN,
+    minX - margin,
+    minY - margin,
+    maxX - minX + 2 * margin,
+    maxY - minY + 2 * margin,
   )
 }
 
-function validateParams(params: InlayGeometryInput['params']): void {
+function validateParams(
+  params: InlayGeometryInput['params'],
+  units: InlayGeometryInput['units'],
+): void {
   const finite = (name: string, value: number): void => {
     if (!Number.isFinite(value)) {
       throw new RangeError(`${name} must be finite`)
@@ -264,7 +280,8 @@ function validateParams(params: InlayGeometryInput['params']): void {
   if (params.plugBaseThickness < 0) {
     throw new RangeError('plugBaseThickness must not be negative')
   }
-  if (params.wallStep < INLAY_MIN_WALL_STEP) {
-    throw new RangeError(`wallStep must be at least ${INLAY_MIN_WALL_STEP}`)
+  const minWallStep = inlayMinWallStep(units)
+  if (params.wallStep < minWallStep) {
+    throw new RangeError(`wallStep must be at least ${minWallStep}`)
   }
 }

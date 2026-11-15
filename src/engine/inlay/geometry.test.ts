@@ -22,7 +22,7 @@
 
 import { circleProfile, getProfileBounds, rectProfile } from '../../types/project'
 import { flattenProfile } from '../toolpaths/geometry'
-import { computeInlayGeometry, INLAY_FRAME_MARGIN } from './geometry'
+import { computeInlayGeometry, inlayFrameMargin, inlayMinWallStep } from './geometry'
 import type { SketchFeature, SketchProfile } from '../../types/project'
 import type { InlayGeometryInput, InlayParams } from './types'
 
@@ -110,10 +110,10 @@ function signedArea(profile: SketchProfile): number {
   approxEq(ridge.minY, 1.32017, 1e-3, 'ridge keeps y')
   approxEq(ridge.maxY, 98.67983, 1e-3, 'ridge keeps y max')
   const frame = getProfileBounds(result.frame)
-  approxEq(frame.minX, 300 - INLAY_FRAME_MARGIN, 1e-6, 'frame minX')
-  approxEq(frame.maxX, 400 + INLAY_FRAME_MARGIN, 1e-6, 'frame maxX')
-  approxEq(frame.minY, -INLAY_FRAME_MARGIN, 1e-6, 'frame minY')
-  approxEq(frame.maxY, 100 + INLAY_FRAME_MARGIN, 1e-6, 'frame maxY')
+  approxEq(frame.minX, 300 - inlayFrameMargin('mm'), 1e-6, 'frame minX')
+  approxEq(frame.maxX, 400 + inlayFrameMargin('mm'), 1e-6, 'frame maxX')
+  approxEq(frame.minY, -inlayFrameMargin('mm'), 1e-6, 'frame minY')
+  approxEq(frame.maxY, 100 + inlayFrameMargin('mm'), 1e-6, 'frame maxY')
   assert(result.plugRidge[0].operation === 'add', 'plug boundary of a subtract source is an island')
   console.log('ok 2 - mirror and frame')
 }
@@ -200,6 +200,23 @@ function signedArea(profile: SketchProfile): number {
   }
   assert(threw, 'angle 180 is rejected')
   console.log('ok 7 - validation')
+}
+
+// 8. Units: the mm-based limits convert instead of being read as project units.
+{
+  approxEq(inlayFrameMargin('inch'), 5 / 25.4, 1e-9, 'inch frame margin is 5 mm')
+  approxEq(inlayMinWallStep('inch'), 0.05 / 25.4, 1e-9, 'inch min wall step is 0.05 mm')
+
+  const inch = computeInlayGeometry({
+    shapes: [rectShape('plate', 0, 0, 4, 4, 'subtract')],
+    params: { ...REFERENCE_PARAMS, wallStep: 0.01 },
+    units: 'inch',
+    plugOrigin: { x: 8, y: 0 },
+  })
+  const frame = getProfileBounds(inch.frame)
+  approxEq(frame.minX, 8 + 8 - 4 - 5 / 25.4, 1e-6, 'inch frame uses the converted margin')
+  assert(inch.problems.length === 0, `inch reference has no problems, got ${JSON.stringify(inch.problems)}`)
+  console.log('ok 8 - unit conversion')
 }
 
 console.log('inlay geometry: all tests passed')
