@@ -24,6 +24,10 @@
  *   (centre 15, 10, radius 2) standing 4 high on that floor;
  * - a through hole, centre (40, 10), radius 3;
  * - a counterbore, centre (40, 30): radius 5.5 down to Z 14, radius 3.3 through.
+ *
+ * `plateModelProjectWithVolume` returns the same project with the model's own
+ * volume from Manifold, so a test can compare a part recreated from the
+ * detected features with the part it came from.
  */
 
 import { getManifoldModule } from '../engine/csg'
@@ -45,6 +49,24 @@ export interface PlateFixtureOptions {
 }
 
 export async function plateModelProject(options: PlateFixtureOptions = {}): Promise<Project> {
+  return (await buildPlateFixture(options)).project
+}
+
+export interface PlateFixture {
+  project: Project
+  /** The fixture model's own volume, in the project's units cubed. */
+  volume: number
+}
+
+/**
+ * The same project, plus the model's own volume from Manifold, for a test that
+ * recreates the part from its detected features and compares the two.
+ */
+export async function plateModelProjectWithVolume(options: PlateFixtureOptions = {}): Promise<PlateFixture> {
+  return buildPlateFixture(options)
+}
+
+async function buildPlateFixture(options: PlateFixtureOptions = {}): Promise<PlateFixture> {
   const units = options.units ?? 'mm'
   const origin = options.origin ?? { x: 0, y: 0 }
   // The inch project is the same part, 25.4 times smaller in numbers.
@@ -62,6 +84,7 @@ export async function plateModelProject(options: PlateFixtureOptions = {}): Prom
     .scale([unit, unit, unit])
     .translate([origin.x, origin.y, 0])
   const mesh = solid.getMesh()
+  const volume = solid.volume()
 
   const width = PLATE.width * unit
   const depth = PLATE.depth * unit
@@ -113,5 +136,5 @@ export async function plateModelProject(options: PlateFixtureOptions = {}): Prom
     },
   }, [model, ...(options.after ?? [])])
   project.stock.thickness = height
-  return project
+  return { project, volume }
 }

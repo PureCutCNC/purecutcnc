@@ -379,6 +379,16 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.findCavities.folderName': '{model} 槽和孔',
   'featureTree.findCavities.preview': '找到的形状的俯视图',
   'featureTree.findCavities.include': '绘制 {name}',
+  'featureTree.findCavities.group.solids': '实体',
+  'featureTree.findCavities.group.cavities': '槽和孔',
+  'featureTree.findCavities.kind.solid': '实体',
+  'featureTree.findCavities.name.solid': '实体',
+  'featureTree.findCavities.solidSkipped.taperedWalls.one': '实体有 {count} 处侧壁不垂直',
+  'featureTree.findCavities.solidSkipped.taperedWalls.other': '实体有 {count} 处侧壁不垂直',
+  'featureTree.findCavities.solidSkipped.undercut.one': '实体有 {count} 处悬空',
+  'featureTree.findCavities.solidSkipped.undercut.other': '实体有 {count} 处悬空',
+  'featureTree.findCavities.solidSkipped.openMesh.one': '实体有 {count} 处靠近网格缺口',
+  'featureTree.findCavities.solidSkipped.openMesh.other': '实体有 {count} 处靠近网格缺口',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': '遮罩模式',

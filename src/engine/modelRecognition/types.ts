@@ -78,6 +78,21 @@ export interface RecognizedCavity {
 }
 
 /**
+ * A prismatic body of the model, the material a cavity is cut out of: an outer
+ * loop with vertical walls, standing on something, that a caller can draw as an
+ * `add` feature. Holes are not part of its outline; the cavities already found
+ * are what cut it.
+ */
+export interface RecognizedSolid {
+  profile: SketchProfile
+  /** The outline as a plain polygon, counter-clockwise in the mesh's XY. */
+  outline: Point[]
+  circle: RecognizedCircle | null
+  zBottom: number
+  zTop: number
+}
+
+/**
  * Why a void was seen but not returned as a cavity.
  *
  * - `undercut`: material covers part of it from above.
@@ -96,6 +111,12 @@ export interface SkippedCavity {
 export interface ModelRecognitionResult {
   cavities: RecognizedCavity[]
   skipped: SkippedCavity[]
+  /**
+   * The bodies the cavities are cut out of, bottom first. Only the reasons
+   * `undercut`, `taperedWalls` and `openMesh` apply to `skippedSolids`.
+   */
+  solids: RecognizedSolid[]
+  skippedSolids: SkippedCavity[]
   /**
    * True when the mesh had more candidate levels than the detector examines
    * (a relief with hundreds of flat steps). The result is then incomplete.

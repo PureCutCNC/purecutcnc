@@ -373,6 +373,16 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.findCavities.folderName': '{model} Taschen und Bohrungen',
   'featureTree.findCavities.preview': 'Draufsicht der gefundenen Formen',
   'featureTree.findCavities.include': '{name} zeichnen',
+  'featureTree.findCavities.group.solids': 'Körper',
+  'featureTree.findCavities.group.cavities': 'Taschen und Bohrungen',
+  'featureTree.findCavities.kind.solid': 'Körper',
+  'featureTree.findCavities.name.solid': 'Körper',
+  'featureTree.findCavities.solidSkipped.taperedWalls.one': '{count} Teil des Körpers hat keine senkrechten Wände',
+  'featureTree.findCavities.solidSkipped.taperedWalls.other': '{count} Teile des Körpers haben keine senkrechten Wände',
+  'featureTree.findCavities.solidSkipped.undercut.one': '{count} Teil des Körpers ragt über leeren Raum',
+  'featureTree.findCavities.solidSkipped.undercut.other': '{count} Teile des Körpers ragen über leeren Raum',
+  'featureTree.findCavities.solidSkipped.openMesh.one': '{count} Teil des Körpers liegt an einer Lücke im Netz',
+  'featureTree.findCavities.solidSkipped.openMesh.other': '{count} Teile des Körpers liegen an einer Lücke im Netz',
 
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Maskenmodus',

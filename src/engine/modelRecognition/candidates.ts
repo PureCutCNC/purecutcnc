@@ -15,11 +15,17 @@
  */
 
 /**
- * From what the detector found to what can be drawn (issue #1206 slice 2).
+ * From what the detector found to what can be drawn (issue #1206 slices 2 and
+ * 3).
  *
- * A candidate is one feature the user may add: a subtract for a cavity, an add
- * for a boss standing in one. Its numbers are rounded here, once, so the value
- * shown in the list is the value stored in the project.
+ * A candidate is one feature the user may add: an add for a solid, a subtract
+ * for a cavity, an add for a boss standing in one. Its numbers are rounded
+ * here, once, so the value shown in the list is the value stored in the
+ * project.
+ *
+ * Solids come before the cavities, in the detector's own order: the tree folds
+ * its features in order, so an add is in place before the subtracts that carve
+ * it.
  *
  * `markAlreadyDrawn` is what makes a second run safe: a candidate that matches
  * a feature already in the project — same face, same operation, same span,
@@ -32,10 +38,10 @@ import { flattenProfile } from '../toolpaths/geometry'
 import { intersectionArea, pathArea, toPath } from './sections'
 import type { CavityBottom, ModelRecognitionResult, RecognizedCircle } from './types'
 
-export type CandidateKind = 'throughHole' | 'blindHole' | 'throughPocket' | 'pocket' | 'island'
+export type CandidateKind = 'solid' | 'throughHole' | 'blindHole' | 'throughPocket' | 'pocket' | 'island'
 
 export interface RecognitionCandidate {
-  /** Stable within one run: `c3`, or `c3.i0` for an island of `c3`. */
+  /** Stable within one run: `s3` for a solid, `c3`, or `c3.i0` for an island of `c3`. */
   id: string
   /** The cavity an island stands in, or null. An island is only drawn with its parent. */
   parentId: string | null
@@ -113,7 +119,8 @@ function cavityKind(round: boolean, bottom: CavityBottom): CandidateKind {
 
 /**
  * Flattens a detector result into drawable candidates, in the order they
- * should sit in the tree: each cavity followed by its islands.
+ * should sit in the tree: the solids first — the material the cavities are cut
+ * out of — then each cavity followed by its islands.
  */
 export function candidatesFromResult(
   result: ModelRecognitionResult,
@@ -122,6 +129,22 @@ export function candidatesFromResult(
 ): RecognitionCandidate[] {
   const step = roundingStep(units)
   const candidates: RecognitionCandidate[] = []
+  result.solids.forEach((solid, solidIndex) => {
+    candidates.push({
+      id: `s${solidIndex}`,
+      parentId: null,
+      face,
+      kind: 'solid',
+      operation: 'add',
+      ...roundedShape(solid.profile, solid.circle, step),
+      outline: solid.outline,
+      zTop: roundTo(solid.zTop, step),
+      zBottom: roundTo(solid.zBottom, step),
+      bottom: null,
+      flaredAbove: false,
+      alreadyDrawn: false,
+    })
+  })
   result.cavities.forEach((cavity, cavityIndex) => {
     const id = `c${cavityIndex}`
     candidates.push({

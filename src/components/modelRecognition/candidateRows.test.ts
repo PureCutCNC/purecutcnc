@@ -21,6 +21,7 @@
  *
  * Mutation checks (each made the named block fail, then was reverted):
  * - `defaultCheckedIds` includes islands                 -> default checks
+ * - `defaultCheckedIds` includes solids                  -> default checks
  * - `defaultCheckedIds` ignores `alreadyDrawn`           -> default checks
  * - `shapesToDraw` reads an island's own id              -> boss follows pocket
  * - `shapesToDraw` draws an already-drawn island         -> boss follows pocket
@@ -32,7 +33,7 @@
 
 import type { RecognitionCandidate, SkippedCavity } from '../../engine/modelRecognition'
 import { circleProfile, rectProfile } from '../../types/project'
-import { candidateSize, defaultCheckedIds, shapesToDraw, skippedCounts } from './candidateRows'
+import { candidateSize, defaultCheckedIds, shapesToDraw, skippedCounts, solidSkippedCounts } from './candidateRows'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -56,6 +57,12 @@ function candidate(patch: Partial<RecognitionCandidate> & { id: string }): Recog
   }
 }
 
+const solid = candidate({
+  id: 's0', kind: 'solid', operation: 'add',
+  profile: rectProfile(0, 0, 60, 40),
+  outline: [{ x: 0, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 40 }, { x: 0, y: 40 }],
+  zTop: 20, zBottom: 0, bottom: null,
+})
 const pocket = candidate({ id: 'c0' })
 const boss = candidate({
   id: 'c0.i0', parentId: 'c0', kind: 'island', operation: 'add',
@@ -66,12 +73,21 @@ const hole = candidate({
   circle: { center: { x: 40, y: 10 }, radius: 3 }, zBottom: 0, bottom: 'through',
 })
 const drawnHole = candidate({ ...hole, id: 'c2', alreadyDrawn: true })
-const rows = [pocket, boss, hole, drawnHole]
+const rows = [solid, pocket, boss, hole, drawnHole]
 const name = (row: RecognitionCandidate): string => row.id
 
-// Default checks: cavities not yet drawn; a boss has no box of its own.
+// Default checks: cavities not yet drawn; a boss has no box of its own, and a
+// solid is unchecked because most runs only want the pockets.
 {
   assert(defaultCheckedIds(rows).join(',') === 'c0,c1', `default checks: got ${defaultCheckedIds(rows).join(',')}`)
+}
+
+// A checked solid is drawn before the cavities: it is the body they cut.
+{
+  assert(!defaultCheckedIds(rows).includes('s0'), 'solid first: a solid is never checked by default')
+  const all = shapesToDraw(rows, new Set(['s0', 'c0', 'c1']), name)
+  assert(all.map((shape) => shape.name).join(',') === 's0,c0,c0.i0,c1', `solid first: got ${all.map((shape) => shape.name).join(',')}`)
+  assert(all[0].operation === 'add' && all[0].zTop === 20 && all[0].zBottom === 0, 'solid first: it adds the whole body')
 }
 
 // A boss follows its pocket, whatever is in the checked set under its own id.
@@ -108,6 +124,11 @@ const name = (row: RecognitionCandidate): string => row.id
     `not drawn: got ${JSON.stringify(counts)}`,
   )
   assert(skippedCounts([]).length === 0, 'not drawn: nothing skipped, nothing listed')
+  assert(
+    JSON.stringify(solidSkippedCounts([entry('undercut'), entry('openMesh')]))
+      === JSON.stringify([{ reason: 'undercut', count: 1 }, { reason: 'openMesh', count: 1 }]),
+    'not drawn: the bodies are counted under their own list, in the same order',
+  )
 }
 
 console.log('modelRecognition/candidateRows.test.ts: all assertions passed')

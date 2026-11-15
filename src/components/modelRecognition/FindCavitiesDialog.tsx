@@ -18,13 +18,16 @@
  * Find pockets and holes (issue #1206): runs the detector on one imported
  * model, lists what it found, and draws the checked rows as ordinary features.
  *
- * The list has no settings. A row is a cavity; a boss standing in a pocket is
- * shown under it and always goes with it. Rows that match a shape already in
- * the project start unchecked, so running this twice adds nothing twice.
+ * The list has no settings. It has two groups: the solids, the bodies the
+ * cavities are cut out of, and the pockets and holes. A solid starts
+ * unchecked, because most runs only want the pockets. A cavity is a row; a boss
+ * standing in a pocket is shown under it and always goes with it. Rows that
+ * match a shape already in the project start unchecked, so running this twice
+ * adds nothing twice.
  *
  * The preview is the dialog's own: the model's outline with every shape on it,
- * the hovered row lit. The sketch behind a modal dialog is dimmed, so a
- * highlight there would not be seen.
+ * the solids under the cavities, the hovered row lit. The sketch behind a modal
+ * dialog is dimmed, so a highlight there would not be seen.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -46,7 +49,14 @@ import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import type { Point } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
-import { candidateSize, defaultCheckedIds, drawnFeaturesOf, shapesToDraw, skippedCounts } from './candidateRows'
+import {
+  candidateSize,
+  defaultCheckedIds,
+  drawnFeaturesOf,
+  shapesToDraw,
+  skippedCounts,
+  solidSkippedCounts,
+} from './candidateRows'
 import { RecognitionCancelledError, runModelRecognition } from './recognitionClient'
 
 type RunState =
@@ -55,6 +65,7 @@ type RunState =
   | { status: 'done'; result: ModelRecognitionResult }
 
 const KIND_KEY: Record<RecognitionCandidate['kind'], MessageKey> = {
+  solid: 'featureTree.findCavities.kind.solid',
   throughHole: 'featureTree.findCavities.kind.throughHole',
   blindHole: 'featureTree.findCavities.kind.blindHole',
   throughPocket: 'featureTree.findCavities.kind.throughPocket',
@@ -148,6 +159,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
       : `${formatLength(size.width, units)} × ${formatLength(size.height, units)}`
   }
   const nameOf = (candidate: RecognitionCandidate): string => {
+    if (candidate.kind === 'solid') return t('featureTree.findCavities.name.solid')
     if (candidate.kind === 'island') return t('featureTree.findCavities.name.island')
     if (candidate.circle) return t('featureTree.findCavities.name.hole', { size: sizeText(candidate) })
     return t('featureTree.findCavities.name.pocket')
@@ -180,8 +192,67 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
   }
 
   const skipped = result ? skippedCounts(result.skipped) : []
+  const skippedSolids = result ? solidSkippedCounts(result.skippedSolids) : []
   const isLit = (candidate: RecognitionCandidate): boolean => (
     hovered !== null && (candidate.id === hovered || candidate.parentId === hovered)
+  )
+
+  const solidCandidates = candidates.filter((candidate) => candidate.kind === 'solid')
+  const cavityCandidates = candidates.filter((candidate) => candidate.kind !== 'solid')
+  // The preview paints in document order, so the solids go first and the
+  // cavities sit on top of them.
+  const previewCandidates = [...solidCandidates, ...cavityCandidates]
+
+  const rowOf = (candidate: RecognitionCandidate) => {
+    const notes = notesOf(candidate)
+    const island = candidate.parentId !== null
+    return (
+      <tr
+        key={candidate.id}
+        className={[
+          'find-cavities__row',
+          island ? 'find-cavities__row--island' : '',
+          isLit(candidate) ? 'find-cavities__row--lit' : '',
+        ].filter(Boolean).join(' ')}
+        data-testid={`find-cavities-row-${candidate.id}`}
+        data-kind={candidate.kind}
+        onPointerEnter={() => setHovered(candidate.parentId ?? candidate.id)}
+        onPointerLeave={() => setHovered(null)}
+      >
+        <td>
+          {island ? null : (
+            <input
+              type="checkbox"
+              checked={checkedIds.has(candidate.id)}
+              onChange={() => toggle(candidate.id)}
+              aria-label={t('featureTree.findCavities.include', { name: nameOf(candidate) })}
+            />
+          )}
+        </td>
+        <th scope="row">
+          <span>{t(KIND_KEY[candidate.kind])}</span>
+          {notes.length > 0 ? <span className="find-cavities__notes">{notes.join(' · ')}</span> : null}
+        </th>
+        <td className="find-cavities__value">{sizeText(candidate)}</td>
+        <td className="find-cavities__value">{formatLength(candidate.zTop - candidate.zBottom, units)}</td>
+        <td className="find-cavities__value">
+          {`${formatLength(candidate.zTop, units)} → ${formatLength(candidate.zBottom, units)}`}
+        </td>
+      </tr>
+    )
+  }
+
+  const groupOf = (kind: 'solids' | 'cavities', rows: RecognitionCandidate[]) => (
+    rows.length === 0 ? null : (
+      <tbody className="find-cavities__group" data-group={kind}>
+        <tr className="find-cavities__group-row">
+          <th scope="rowgroup" colSpan={5}>
+            {t(kind === 'solids' ? 'featureTree.findCavities.group.solids' : 'featureTree.findCavities.group.cavities')}
+          </th>
+        </tr>
+        {rows.map(rowOf)}
+      </tbody>
+    )
   )
 
   return createPortal(
@@ -241,46 +312,8 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                           <th scope="col">{t('featureTree.findCavities.col.z')}</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {candidates.map((candidate) => {
-                          const notes = notesOf(candidate)
-                          const island = candidate.parentId !== null
-                          return (
-                            <tr
-                              key={candidate.id}
-                              className={[
-                                'find-cavities__row',
-                                island ? 'find-cavities__row--island' : '',
-                                isLit(candidate) ? 'find-cavities__row--lit' : '',
-                              ].filter(Boolean).join(' ')}
-                              data-testid={`find-cavities-row-${candidate.id}`}
-                              data-kind={candidate.kind}
-                              onPointerEnter={() => setHovered(candidate.parentId ?? candidate.id)}
-                              onPointerLeave={() => setHovered(null)}
-                            >
-                              <td>
-                                {island ? null : (
-                                  <input
-                                    type="checkbox"
-                                    checked={checkedIds.has(candidate.id)}
-                                    onChange={() => toggle(candidate.id)}
-                                    aria-label={t('featureTree.findCavities.include', { name: nameOf(candidate) })}
-                                  />
-                                )}
-                              </td>
-                              <th scope="row">
-                                <span>{t(KIND_KEY[candidate.kind])}</span>
-                                {notes.length > 0 ? <span className="find-cavities__notes">{notes.join(' · ')}</span> : null}
-                              </th>
-                              <td className="find-cavities__value">{sizeText(candidate)}</td>
-                              <td className="find-cavities__value">{formatLength(candidate.zTop - candidate.zBottom, units)}</td>
-                              <td className="find-cavities__value">
-                                {`${formatLength(candidate.zTop, units)} → ${formatLength(candidate.zBottom, units)}`}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
+                      {groupOf('solids', solidCandidates)}
+                      {groupOf('cavities', cavityCandidates)}
                     </table>
                   </div>
                   {viewBox ? (
@@ -292,12 +325,13 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                       data-testid="find-cavities-preview"
                     >
                       <path className="find-cavities__model" d={pathData(modelOutline)} />
-                      {candidates.map((candidate) => (
+                      {previewCandidates.map((candidate) => (
                         <path
                           key={candidate.id}
                           className={[
                             'find-cavities__shape',
-                            candidate.operation === 'add' ? 'find-cavities__shape--island' : '',
+                            candidate.kind === 'solid' ? 'find-cavities__shape--solid' : '',
+                            candidate.kind === 'island' ? 'find-cavities__shape--island' : '',
                             checkedIds.has(candidate.parentId ?? candidate.id) ? 'find-cavities__shape--checked' : '',
                             isLit(candidate) ? 'find-cavities__shape--lit' : '',
                           ].filter(Boolean).join(' ')}
@@ -311,17 +345,28 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                 </div>
               )}
 
-              {skipped.length > 0 || result.meshOpen || result.levelsTruncated ? (
+              {skipped.length > 0 || skippedSolids.length > 0 || result.meshOpen || result.levelsTruncated ? (
                 <div className="find-cavities__skipped" data-testid="find-cavities-skipped">
-                  {skipped.length > 0 ? <h3>{t('featureTree.findCavities.skipped.title')}</h3> : null}
-                  {skipped.length > 0 ? (
+                  {skipped.length > 0 || skippedSolids.length > 0
+                    ? <h3>{t('featureTree.findCavities.skipped.title')}</h3> : null}
+                  {skipped.length > 0 || skippedSolids.length > 0 ? (
                     <ul>
                       {skipped.map((entry) => (
-                        <li key={entry.reason} data-reason={entry.reason}>
+                        <li key={`cavity-${entry.reason}`} data-kind="cavity" data-reason={entry.reason}>
                           {tPlural(
                             entry.count,
                             `featureTree.findCavities.skipped.${entry.reason}.one`,
                             `featureTree.findCavities.skipped.${entry.reason}.other`,
+                            { count: entry.count },
+                          )}
+                        </li>
+                      ))}
+                      {skippedSolids.map((entry) => (
+                        <li key={`solid-${entry.reason}`} data-kind="solid" data-reason={entry.reason}>
+                          {tPlural(
+                            entry.count,
+                            `featureTree.findCavities.solidSkipped.${entry.reason}.one`,
+                            `featureTree.findCavities.solidSkipped.${entry.reason}.other`,
                             { count: entry.count },
                           )}
                         </li>

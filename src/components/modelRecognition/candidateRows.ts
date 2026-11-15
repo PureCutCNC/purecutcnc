@@ -42,10 +42,16 @@ export function drawnFeaturesOf(project: Project): DrawnFeature[] {
     })
 }
 
-/** Cavities start checked unless they are already drawn. Islands have no box of their own. */
+/**
+ * Cavities start checked unless they are already drawn. Islands have no box of
+ * their own, and a solid is unchecked: most runs only want the pockets, and a
+ * solid the user did not ask for would add a body to the tree.
+ */
 export function defaultCheckedIds(candidates: readonly RecognitionCandidate[]): string[] {
   return candidates
-    .filter((candidate) => candidate.parentId === null && !candidate.alreadyDrawn)
+    .filter((candidate) => (
+      candidate.parentId === null && candidate.kind !== 'solid' && !candidate.alreadyDrawn
+    ))
     .map((candidate) => candidate.id)
 }
 
@@ -97,9 +103,21 @@ export function shapesToDraw(
 
 const SKIP_ORDER: readonly SkipReason[] = ['taperedWalls', 'undercut', 'openMesh']
 
-/** How many voids were seen but not offered, per reason, in a fixed order. */
-export function skippedCounts(skipped: readonly SkippedCavity[]): Array<{ reason: SkipReason; count: number }> {
+function countSkipped(skipped: readonly SkippedCavity[]): Array<{ reason: SkipReason; count: number }> {
   return SKIP_ORDER
     .map((reason) => ({ reason, count: skipped.filter((entry) => entry.reason === reason).length }))
     .filter((entry) => entry.count > 0)
+}
+
+/** How many voids were seen but not offered, per reason, in a fixed order. */
+export function skippedCounts(skipped: readonly SkippedCavity[]): Array<{ reason: SkipReason; count: number }> {
+  return countSkipped(skipped)
+}
+
+/**
+ * How many bodies were seen but not offered, per reason, in a fixed order. The
+ * same reasons, listed under the solid wording.
+ */
+export function solidSkippedCounts(skipped: readonly SkippedCavity[]): Array<{ reason: SkipReason; count: number }> {
+  return countSkipped(skipped)
 }

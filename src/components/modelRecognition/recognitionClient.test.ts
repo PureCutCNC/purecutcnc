@@ -80,7 +80,7 @@ class FakeWorker implements RecognitionWorkerLike {
   }
 }
 
-const EMPTY = { cavities: [], skipped: [], levelsTruncated: false, meshOpen: false }
+const EMPTY = { cavities: [], skipped: [], solids: [], skippedSolids: [], levelsTruncated: false, meshOpen: false }
 
 async function testResultAndProgress(): Promise<void> {
   const worker = new FakeWorker(() => [
