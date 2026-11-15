@@ -29,8 +29,8 @@
  * the solids under the cavities, the hovered row lit. The sketch behind a modal
  * dialog is dimmed, so a highlight there would not be seen.
  *
- * The model is looked at from Top always, and from Bottom too when the project
- * has a Bottom setup (issue #1206 slice 4). A row on Bottom says so with the
+ * The model is looked at from Top and from Bottom, whether or not the project
+ * has a Bottom setup yet (issue #1206 slice 4). A row on Bottom says so with the
  * face chip, and its preview outline is dotted: it is on the far side.
  */
 
@@ -57,7 +57,7 @@ import {
   candidateSize,
   defaultCheckedIds,
   drawnFeaturesOf,
-  facesToRecognize,
+  RECOGNIZED_FACES,
   shapesToDraw,
   skippedCounts,
   solidSkippedCounts,
@@ -112,14 +112,11 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
     const state = useProjectStore.getState()
     const feature = modelRecognitionRefusal(state.project, modelId) ? null : resolveFeatureInstance(state.project, modelId)
     const mesh = feature ? loadSTLTransformedGeometry(feature, state.project) : null
-    // Bottom is searched only when the project has a Bottom setup; the look
-    // from below is the dialog's one face decision (issue #1206 slice 4).
-    const faces = facesToRecognize(state.project)
     const controller = new AbortController()
     // A model with no mesh fails through the same promise as a failed run, so
     // every state change here happens in a callback.
     const job = mesh
-      ? recognizeModelFaces(mesh, faces, state.project.meta.units, {
+      ? recognizeModelFaces(mesh, RECOGNIZED_FACES, state.project.meta.units, {
         signal: controller.signal,
         onProgress: (progress) => setRun({ status: 'running', progress }),
       })

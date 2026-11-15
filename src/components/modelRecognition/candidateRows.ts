@@ -24,19 +24,17 @@ import type { DrawnFeature, RecognitionCandidate, SkipReason, SkippedCavity } fr
 import { resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
 import type { RecognizedShapeInput } from '../../store/helpers/recognizedFeatures'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { findSetupForFace } from '../../store/helpers/activeFace'
 import type { FlatFace, Project } from '../../types/project'
 
 /**
- * The faces the dialog searches (issue #1206 slice 4): always Top, and Bottom
- * only when the project has a setup that turns the stock over. Without one a
- * Bottom shape would be authored on a face the project cannot machine, so the
- * dialog behaves exactly as it did before the look from below existed. There is
- * no setting and no checkbox: the project says which faces it has.
+ * The faces the dialog searches (issue #1206 slice 4): both flat faces, always.
+ *
+ * It does not wait for a Bottom setup. A project can hold Bottom features with
+ * no Bottom setup, which becomes real with the first operation added there
+ * (`provisionalSetup.ts`), and a search that skipped the underside reported its
+ * pockets as "covered from above" with no way for the user to tell why.
  */
-export function facesToRecognize(project: Pick<Project, 'setups'>): FlatFace[] {
-  return findSetupForFace(project, 'bottom') ? ['top', 'bottom'] : ['top']
-}
+export const RECOGNIZED_FACES: readonly FlatFace[] = ['top', 'bottom']
 
 /** Every add and subtract already in the project, as the "already drawn" check reads them. */
 export function drawnFeaturesOf(project: Project): DrawnFeature[] {
