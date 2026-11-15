@@ -143,6 +143,58 @@ test('a flat end mill keeps the single-sample read', () => {
   }
 })
 
+test('for a ball and a V-bit, across map edges and uncovered cells, the smooth read is never below the single-sample read nor past the cap', () => {
+  // A dome on a ramp, rasterised into a map three cells wider than the mesh on
+  // every side, so the border cells hold no model (-Infinity) and sub-samples
+  // there have non-finite corners. The sweep runs from outside the map, over
+  // its edge and its empty border, onto the model.
+  const cellSize = 0.4
+  const mesh = slopeTestMesh((x, y) => {
+    const dx = (x - 15) / 12, dy = (y - 10) / 8
+    return 2 + 0.2 * x + 4 * Math.max(0, 1 - dx * dx - dy * dy)
+  }, 30, 20, 1)
+  const meshBounds = computeXYBounds(mesh.positions)
+  const pad = 3 * cellSize
+  const map = buildHeightMap(mesh.positions, mesh.index, {
+    minX: meshBounds.minX - pad, maxX: meshBounds.maxX + pad, minY: meshBounds.minY - pad, maxY: meshBounds.maxY + pad,
+  }, cellSize)
+  const tools: Array<{ label: string; tool: NormalizedTool; cap: number }> = [
+    { label: 'ball', tool: ball(4), cap: diagonalDip(cellSize, 2) },
+    {
+      label: '90-degree V-bit',
+      tool: { type: 'v_bit', diameter: 4, radius: 2, vBitAngle: 90 } as NormalizedTool,
+      cap: cellSize * Math.SQRT1_2 / Math.tan(45 * DEG),
+    },
+  ]
+  for (const { label, tool, cap } of tools) {
+    let raised = 0
+    let raisedNearEdge = 0
+    let offModel = 0
+    for (let x = meshBounds.minX - pad - 1; x <= meshBounds.maxX + pad + 1; x += 0.057) {
+      for (let y = meshBounds.minY - pad - 1; y <= meshBounds.maxY + pad + 1; y += 0.149) {
+        const direct = safeToolTipZAt(x, y, map, tool)
+        const smooth = smoothToolTipZAt(x, y, map, tool)
+        if (!Number.isFinite(direct)) {
+          assert.equal(smooth, direct, `${label} (${x}, ${y}): no model under the tool, yet the smooth read is ${smooth}`)
+          offModel += 1
+          continue
+        }
+        assert(smooth >= direct, `${label} (${x}, ${y}): smooth ${smooth} is below the single-sample read ${direct}`)
+        assert(smooth - direct <= cap + 1e-12, `${label} (${x}, ${y}): raised ${smooth - direct}, past the cap ${cap}`)
+        if (smooth > direct) {
+          raised += 1
+          const nearEdge = x < meshBounds.minX + 2 * cellSize || x > meshBounds.maxX - 2 * cellSize
+            || y < meshBounds.minY + 2 * cellSize || y > meshBounds.maxY - 2 * cellSize
+          if (nearEdge) raisedNearEdge += 1
+        }
+      }
+    }
+    assert(offModel > 0, `${label}: the sweep never left the model, so the empty border is untested`)
+    assert(raised > 0, `${label}: the smooth read never differs, so this proves nothing`)
+    assert(raisedNearEdge > 0, `${label}: nothing is raised near the model's edge, so the non-finite corners are untested`)
+  }
+})
+
 interface PassStats {
   vertices: number
   alternating: number
@@ -176,19 +228,36 @@ function passStats(moves: ToolpathMove[], threshold: number): PassStats {
   return { vertices, alternating }
 }
 
-/** The height map the constant-scallop strategy itself reads, out of the mesh's own cache. */
-function strategyMap(project: Project, spacing: number) {
+/**
+ * The height map a strategy itself reads, out of the mesh's own cache, given
+ * the cell size that strategy asks for from its tool and pass spacing.
+ */
+function strategyMap(project: Project, requestCell: (radius: number) => number) {
   const mesh = loadSTLTransformedGeometry(asSketchFeature(resolvedFeature(project, 'hills-model')), project)!
   const tool = normalizeToolForProject(project.tools[0], project)
   const bounds = computeXYBounds(mesh.positions)
-  const cellSize = chooseHeightMapCellSize(bounds, Math.max(1e-6, Math.min(tool.radius / 5, spacing)), [])
+  const cellSize = chooseHeightMapCellSize(bounds, Math.max(1e-6, requestCell(tool.radius)), [])
   return { tool, map: getCachedHeightMap(mesh as FinishSurfaceParallelCacheHost, mesh.positions, mesh.index, bounds, cellSize) }
+}
+
+/** Every cut vertex at or above the single-sample read, exactly; returns how many sit strictly above it. */
+function assertNeverBelow(moves: ToolpathMove[], map: HeightMap, tool: NormalizedTool, label: string): number {
+  let above = 0
+  for (const move of moves) {
+    if (move.kind !== 'cut') continue
+    const floor = safeToolTipZAt(move.to.x, move.to.y, map, tool)
+    // Exactly: the smooth read reproduces the single-sample one bit for bit
+    // before raising it, so not even a rounding error may put a vertex lower.
+    assert(move.to.z >= floor, `${label}: a vertex at (${move.to.x}, ${move.to.y}) is ${floor - move.to.z} below the cutter-location read`)
+    if (move.to.z > floor) above += 1
+  }
+  return above
 }
 
 function assertSmoothPasses(project: Project, operation: Operation, label: string): void {
   const result = generateFinishSurfaceToolpath({ ...project, operations: [operation] }, operation)
   const spacing = (operation.stepover ?? 0.5) * project.tools[0].diameter
-  const { tool, map } = strategyMap(project, spacing)
+  const { tool, map } = strategyMap(project, (radius) => Math.min(radius / 5, spacing))
   const threshold = rowDip(map.cellSize, tool.radius) / 2
   const stats = passStats(result.moves, threshold)
   assert(stats.vertices > 1000, `${label}: only ${stats.vertices} pass vertices`)
@@ -198,14 +267,24 @@ function assertSmoothPasses(project: Project, operation: Operation, label: strin
   const share = stats.alternating / stats.vertices
   assert(share < 0.04, `${label}: ${(share * 100).toFixed(1)} % of pass vertices zigzag by more than ${threshold.toFixed(5)}`)
   // Never below the single-sample read: the smooth read only ever raises.
-  for (const move of result.moves) {
-    if (move.kind !== 'cut') continue
-    const floor = safeToolTipZAt(move.to.x, move.to.y, map, tool)
-    // Exactly: the smooth read reproduces the single-sample one bit for bit
-    // before raising it, so not even a rounding error may put a vertex lower.
-    assert(move.to.z >= floor, `${label}: a vertex at (${move.to.x}, ${move.to.y}) is ${floor - move.to.z} below the cutter-location read`)
-  }
+  assertNeverBelow(result.moves, map, tool, label)
 }
+
+test('parallel passes are never below the single-sample read, and are raised where it dipped', () => {
+  // Parallel reads its own, finer map (`min(r/3, stepover/2)`) and seeds each
+  // point with the raw height before `applyGougeProtection` raises it.
+  const surface = (x: number, y: number): number => {
+    const dx = (x - 30) / 26, dy = (y - 20) / 17
+    return 2 + 0.15 * x + 7 * Math.max(0, 1 - dx * dx - dy * dy)
+  }
+  const { project, operation } = surfaceTestProject(slopeTestMesh(surface, 60, 40, 1), 4)
+  const op: Operation = { ...operation, pocketPattern: 'parallel', pocketAngle: 0, stepover: 0.15 }
+  const result = generateFinishSurfaceToolpath({ ...project, operations: [op] }, op)
+  const stepoverDistance = 0.15 * project.tools[0].diameter
+  const { tool, map } = strategyMap(project, (radius) => Math.min(radius / 3, stepoverDistance * 0.5))
+  const above = assertNeverBelow(result.moves, map, tool, 'parallel dome on a ramp')
+  assert(above > 100, `only ${above} parallel vertices sit above the single-sample read, so the smooth read is not in use`)
+})
 
 test('constant scallop passes on a synthetic carved surface have a smooth Z', () => {
   // A tilted dome on a ramp: slopes from 0 to about 25 degrees in every
