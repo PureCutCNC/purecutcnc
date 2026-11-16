@@ -1725,8 +1725,31 @@ function generateEdgeRouteToolpathSingle(
   // A lone target cannot stand in its own way: every level it is routed at
   // cuts it. Leaving it out keeps a single-target route's work what it was.
   const targetsCanBlock = closedTargetFeatures.length > 1
+  // A model this route's target encloses cannot be in the way (issue #1225):
+  // the part being routed already claims everything inside its own outline, so
+  // the model inside it is not material the cutter has to steer around. Left
+  // whole, a model whose outline is the target's wall put the zero-stock finish
+  // contour exactly on the keep-out edge and masked the wall path away. Only
+  // models are clipped: an `add` obstacle's footprint is material beside the
+  // route, and a model that sticks out past the target keeps that part of its
+  // outline, so a real neighbour is still protected.
+  const targetOutlinePaths = solidPaths(closedTargetFeatures.flatMap((feature) => featureToClipperPaths(feature)))
+  const clipModelToTargets = (candidate: RouteObstacleCandidate): RouteObstacleCandidate => {
+    // A model that is one of this route's own targets is left whole: its own
+    // outline is in the union, so clipping it would erase it and drop it out of
+    // the target-cut-at set (#179), where it still has to stand in another
+    // target's way at levels it is not being cut (a 6 mm cutter came 1 mm from
+    // a deeper model's wall that way). `cutAt` already keeps its own wall
+    // reachable, which is the case this issue fixes for an enclosed model.
+    if (candidate.carvable
+      || targetFeatureIdSet.has(candidate.featureId)
+      || targetOutlinePaths.length === 0) return candidate
+    const paths = differenceClipperPaths(candidate.paths, targetOutlinePaths)
+    return { ...candidate, paths, frame: clipperPathsFrame(paths) }
+  }
   const allAdditiveObstacles: RouteObstacle[] = (obstacleCandidates?.solids ?? [])
     .filter((candidate) => targetsCanBlock || !targetFeatureIdSet.has(candidate.featureId))
+    .map(clipModelToTargets)
     .filter(reachesRoute)
     .map((candidate) => ({
       paths: candidate.paths,
