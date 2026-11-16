@@ -1,0 +1,204 @@
+/* Find pockets and holes (issue #1206): the result list beside a top view of
+ * the shapes found. */
+
+.dialog--find-cavities {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.dialog-body.find-cavities {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.find-cavities__status {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+  color: var(--status-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.find-cavities__status p {
+  margin: 0;
+}
+
+.find-cavities__found {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(200px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.find-cavities__list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.find-cavities__intro {
+  margin: 0;
+  color: var(--status-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.find-cavities__table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.find-cavities__table th,
+.find-cavities__table td {
+  padding: 5px 6px;
+  text-align: left;
+  font-weight: 400;
+  vertical-align: top;
+}
+
+.find-cavities__table thead th {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The group heading is a real table cell, so its `colSpan` spans the table;
+ * the row-header rule above turns the body's row headers into grids. */
+.find-cavities__table tbody .find-cavities__group-row th {
+  display: table-cell;
+  padding-top: 10px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.find-cavities__table tbody th {
+  display: grid;
+  gap: 2px;
+}
+
+/* The face chip sits beside the kind label (issue #1206 slice 4); the notes
+ * stay on their own line under it. */
+.find-cavities__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.find-cavities__row--island th {
+  padding-left: 18px;
+  color: var(--text-dim);
+}
+
+.find-cavities__row--lit {
+  background: var(--accent-soft);
+}
+
+.find-cavities__notes {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.find-cavities__value {
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  white-space: nowrap;
+}
+
+.find-cavities__preview {
+  width: 100%;
+  max-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.find-cavities__model,
+.find-cavities__shape {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.25px;
+}
+
+.find-cavities__model {
+  fill: color-mix(in srgb, var(--text-dim) 14%, transparent);
+  stroke: var(--text-dim);
+}
+
+.find-cavities__shape {
+  fill: var(--bg-elev-1);
+  stroke: var(--text-dim);
+  stroke-dasharray: 3 3;
+}
+
+/* The bodies go under the cavities, so their fill is the fainter one; the
+ * checked rule below still wins when a solid row is ticked. */
+.find-cavities__shape--solid {
+  fill: color-mix(in srgb, var(--text-dim) 22%, var(--bg-elev-1));
+}
+
+.find-cavities__shape--checked {
+  fill: color-mix(in srgb, var(--accent) 22%, var(--bg-elev-1));
+  stroke: var(--accent-strong);
+  stroke-dasharray: none;
+}
+
+.find-cavities__shape--island {
+  fill: color-mix(in srgb, var(--text-dim) 30%, var(--bg-elev-1));
+}
+
+/* A Bottom shape (issue #1206 slice 4) is on the far side of the part: its
+ * outline is dotted rather than the Top shapes' dashed line, so the two read
+ * apart even where they overlap. */
+.find-cavities__shape--bottom {
+  stroke-dasharray: 1 2;
+}
+
+.find-cavities__shape--lit {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--bg-elev-1));
+  stroke-width: 2.25px;
+}
+
+.find-cavities__skipped {
+  display: grid;
+  gap: 6px;
+  color: var(--status-text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.find-cavities__skipped h3 {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.find-cavities__skipped ul,
+.find-cavities__skipped p {
+  margin: 0;
+}
+
+.find-cavities__skipped ul {
+  padding-left: 18px;
+}
+
+.find-cavities-section__hint {
+  margin: 0 0 8px;
+}
+
+@media (max-width: 720px) {
+  .find-cavities__found {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

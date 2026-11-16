@@ -73,6 +73,7 @@ import type { MessageKey } from '../../i18n/locales/en'
 import { activeFace, faceAngles, linkedCopiesOffFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
 import { FaceZRange } from './FaceZRange'
+import { FindCavitiesSection } from '../modelRecognition/FindCavitiesSection'
 import { rotaryProjectNeedsMm } from '../export/rotaryUnitsNotice'
 
 /**
@@ -1899,6 +1900,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             linkedInstanceCount={linkedInstanceCount}
           />
         ) : null}
+        <FindCavitiesSection featureId={selectedFeature.id} />
         <DisclosureSection title={t('featureTree.properties.instance')} storageKey="feature-instance">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>
