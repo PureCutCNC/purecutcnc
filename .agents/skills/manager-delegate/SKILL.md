@@ -245,6 +245,27 @@ gained only the intended keys and that no existing value changed. Note that loca
 files do not share a quote style — `es/*` uses double quotes where others use
 single — so match the file, not the sibling.
 
+## Manager rules
+
+Learned running 0.6.0 (#1230). They apply on top of the loop above.
+
+- **Keep slices small.** A slice the worker can finish in one or two rounds beats
+  one large slice; split before dispatching, not after it stalls.
+- **Two turns, then take over.** If the worker hasn't fixed a review finding
+  after two turns, the manager or Codex fixes it. Stop the runner and any
+  queued rounds by PID; never `pkill -f` a pattern that also matches your own
+  command line.
+- **Merge authority is integration branches only.** The manager may merge docs,
+  tooling, tests and byte-identical-output slices into an integration branch.
+  Toolpath and UI changes merge only after the maintainer has tested them.
+  Nothing goes into `main` without the maintainer.
+- **One CPU-heavy job at a time**, across all sessions: builds, e2e, G-code
+  conformance and probes. Check running processes first.
+- **Compare performance with equal settings.** When timing two modes or
+  stock types against each other, keep every operation setting the same, and
+  agree the comparison before optimising either path.
+- **Releases follow [`RELEASE.md`](../../../RELEASE.md).**
+
 ## Commands
 
 ```

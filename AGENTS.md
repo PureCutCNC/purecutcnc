@@ -394,6 +394,7 @@ Before editing:
 | CAM, geometry, simulation, or G-code | Engine area index and relevant current design | Focused engine fixtures plus `npm run build`; safety-sensitive assertions |
 | Desktop/platform integration | [`planning/DESKTOP_DESIGN.md`](planning/DESKTOP_DESIGN.md) and `src/platform/` | Browser fallback plus affected native check |
 | Agent harness or delegated execution | This file, [`scripts/INDEX.md`](scripts/INDEX.md), and the named skill | Actual diff, independent verification, and explicit dispatch approval |
+| Cutting a release (RC, publish, desktop builds, manual) | [`RELEASE.md`](RELEASE.md) | Release tag on current `main`, installers on the release, docs checks green |
 
 **Required evidence** is what you must verify before you speak — not what the
 reply must contain. See **Communication Style** above.
