@@ -81,8 +81,8 @@ export default defineConfig([
       'max-lines': ['error', { max: 3800, skipBlankLines: true, skipComments: true }],
     },
   },
-  // Rotary model target modules get a shared cap. The remaining move driver is
-  // capped at its measured post-extraction size until it is split in turn (#1232).
+  // Rotary model modules share a cap. The public entry module still contains
+  // roughing and is capped at its measured size after the finishing split (#1234).
   {
     files: ['src/engine/toolpaths/rotaryModel*.ts'],
     ignores: ['src/engine/toolpaths/rotaryModel*.test.ts'],
@@ -93,7 +93,7 @@ export default defineConfig([
   {
     files: ['src/engine/toolpaths/rotaryModel.ts'],
     rules: {
-      'max-lines': ['error', { max: 1802, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['error', { max: 1034, skipBlankLines: true, skipComments: true }],
     },
   },
   // Toolpath generation routinely builds arrays of hundreds of thousands of
