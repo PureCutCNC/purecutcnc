@@ -114,6 +114,7 @@ import { minRenderHeight } from '../csg'
 import { computeOperationToolpath } from './generateOperation'
 import { normalizeToolForProject } from './geometry'
 import type { ToolpathMove } from './types'
+import { rotaryOutputDigest } from '../../test/rotaryOutputDigest'
 import { deepestCutterGouge } from '../../test/rotaryCutterGouge'
 import { blankProfile, cutterPosesByAngle, sweepProfile } from '../../test/rotaryWallFootSweep'
 import type { WallFootProfile } from '../../test/rotaryWallFootSweep'
@@ -197,9 +198,18 @@ function turnOperation(project: Project, turnId: string, kind: 'rotary_rough' | 
   }
 }
 
+// Captured before extraction at f3582eb7104464bf53565cf70c72f93136d80e83.
+const baseline = {
+  rotary_rough: 'efc1e84a8251169ab09ee9572398648cee73b1ce0e918390e87a43229637f58b',
+  rotary_finish: 'b03c6309353d1054e063a71f8511f1f849ccb53d29864cd3920e283ba8e79bf6',
+}
+
 function generate(project: Project, operation: Operation): ToolpathMove[] {
   const envelope = computeOperationToolpath(project, operation)
   assert.ok(envelope, `${operation.name} dispatches to the rotary generator`)
+  assert.ok(operation.kind === 'rotary_rough' || operation.kind === 'rotary_finish')
+  assert.equal(rotaryOutputDigest(project, operation, envelope.result), baseline[operation.kind],
+    operation.name + ': fixed toolpath and posted output')
   return envelope.result.moves
 }
 

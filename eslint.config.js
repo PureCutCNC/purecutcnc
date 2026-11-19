@@ -81,6 +81,21 @@ export default defineConfig([
       'max-lines': ['error', { max: 3800, skipBlankLines: true, skipComments: true }],
     },
   },
+  // Rotary model target modules get a shared cap. The remaining move driver is
+  // capped at its measured post-extraction size until it is split in turn (#1232).
+  {
+    files: ['src/engine/toolpaths/rotaryModel*.ts'],
+    ignores: ['src/engine/toolpaths/rotaryModel*.test.ts'],
+    rules: {
+      'max-lines': ['error', { max: 650, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/engine/toolpaths/rotaryModel.ts'],
+    rules: {
+      'max-lines': ['error', { max: 1802, skipBlankLines: true, skipComments: true }],
+    },
+  },
   // Toolpath generation routinely builds arrays of hundreds of thousands of
   // moves or points, and `target.push(...source)` passes one *argument* per
   // element — it throws `RangeError: Maximum call stack size exceeded` past the
