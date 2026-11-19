@@ -27,6 +27,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "shortDescription": "2.5D CAD/CAM for real-world CNC work.",
+    "category": "GraphicsAndDesign",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
