@@ -31,6 +31,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { join, sep } from 'node:path'
 
 import { announcesPort, waitForOwnDevServer } from './resave-examples'
 import { emittedOperationIds, omittedOperations, parseArguments } from './resave-examples-check'
@@ -235,10 +236,10 @@ function testPostprocessorSkippedOperationIsReported(): void {
 function testParseArguments(): void {
   const before = parseArguments(['before'])
   assert.equal(before.label, 'before')
-  assert.ok(before.examplesDir.endsWith('/public/examples'))
+  assert.ok(before.examplesDir.endsWith(join(sep, 'public', 'examples')))
   const copied = parseArguments(['after', '--examples-dir', 'work/old-examples'])
   assert.equal(copied.label, 'after')
-  assert.ok(copied.examplesDir.endsWith('/work/old-examples'))
+  assert.ok(copied.examplesDir.endsWith(join(sep, 'work', 'old-examples')))
   assert.throws(() => parseArguments(['sideways']), /usage:/)
   assert.throws(() => parseArguments(['after', '--examples-dir']), /needs a directory/)
 }
