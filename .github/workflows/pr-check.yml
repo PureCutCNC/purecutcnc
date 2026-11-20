@@ -52,10 +52,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  native-portability:
-    name: Native portability - ${{ matrix.os }}
+  # The unit tests on the desktop platforms, so a test that only passes on
+  # Linux fails its PR instead of a branch desktop build (#1239). Lint, type
+  # checks and e2e behave the same everywhere and stay on the Ubuntu jobs.
+  native-unit-tests:
+    name: Unit tests - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -74,14 +77,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check example path handling
-        run: npm exec -- tsx scripts/resave-examples.test.ts
+      - name: Unit tests
+        env:
+          # The runner's default (CPU count - 2) gives one or two workers on
+          # these 3-4 core runners.
+          RUN_TESTS_JOBS: '4'
+          RUN_TESTS_REPORT: test-results/structural-timings.json
+        run: npm test
 
-      - name: Check source file case
-        run: npm exec -- tsx src/sourceFileCaseClash.test.ts
-
-      - name: Check bar-clearing toolpath parity
-        run: npm exec -- tsx src/engine/toolpaths/barSkipAir.test.ts
+      - name: Upload test timing report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-timings-${{ matrix.os }}
+          path: test-results/structural-timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}
