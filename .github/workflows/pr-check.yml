@@ -3,7 +3,7 @@ name: PR Build Check
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  # Run the same build + e2e jobs on a pushed branch before its PR exists (#985):
+  # Run the PR checks on a pushed branch before its PR exists (#985):
   # gh workflow run pr-check.yml --ref <branch>
   workflow_dispatch:
 
@@ -51,6 +51,37 @@ jobs:
             test-results/structural-timings.json
           if-no-files-found: ignore
           retention-days: 14
+
+  native-portability:
+    name: Native portability - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check example path handling
+        run: npm exec -- tsx scripts/resave-examples.test.ts
+
+      - name: Check source file case
+        run: npm exec -- tsx src/sourceFileCaseClash.test.ts
+
+      - name: Check bar-clearing toolpath parity
+        run: npm exec -- tsx src/engine/toolpaths/barSkipAir.test.ts
 
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}

@@ -37,10 +37,10 @@
  *
  * The "before" reference is a **square blank of the same box** (or a milling
  * block): a square's section is the full side at every Z, so the generator's
- * output there is the pre-change output byte for byte — the base worktree
- * produces the identical `BASE_CLEARING_HASH` for a round bar, a square blank
- * and a block on this fixture. That gives a real before/after move count
- * without a stale golden, and pins the block/square path as unchanged.
+ * output there matches the pre-change path at the checksum's coordinate
+ * precision. The base worktree produced the same clearing path for a round
+ * bar, a square blank and a block. This pins that reference and gives a real
+ * before/after move count.
  *
  * ## Mutations this file bites
  *
@@ -91,21 +91,38 @@ function approx(actual: number, expected: number, tolerance: number, label: stri
 /**
  * The frozen clearing output of this fixture's block/square path — the base
  * worktree's value, shared there by a round bar, a square blank and a block.
- * Pinned so the "no bar section" path cannot drift.
+ * Pinned so the "no bar section" path cannot drift. These hashes were
+ * derived from fixtures verified against the original raw x64 hashes.
  */
 const BASE_CLEARING_HASH: Record<string, string> = {
-  'mm:x': '9f1459f84507bd1f',
-  'mm:y': 'bfe938c039d480a8',
-  'inch:x': 'ec198655025cbeaa',
-  'inch:y': 'b66a661856a11d87',
+  'mm:x': '823c6b5f697c6d28',
+  'mm:y': '8f49bc46bccc3281',
+  'inch:x': 'b49ecb0c75672586',
+  'inch:y': 'abce8949e93ad9f1',
 }
 
 function baseClearingHash(units: 'mm' | 'inch', axis: StockAxis): string {
   return BASE_CLEARING_HASH[`${units}:${axis}`]
 }
 
+// Round XYZ to nine decimal places in project units for the checksum. This
+// removes the observed CPU rounding noise far below export precision.
+function roundPointForChecksum(point: ToolpathPoint): ToolpathPoint {
+  return {
+    ...point,
+    x: Number(point.x.toFixed(9)),
+    y: Number(point.y.toFixed(9)),
+    z: Number(point.z.toFixed(9)),
+  }
+}
+
 function moveHash(result: ToolpathResult): string {
-  return createHash('sha256').update(JSON.stringify(result.moves)).digest('hex').slice(0, 16)
+  const moves = result.moves.map((move) => ({
+    ...move,
+    from: roundPointForChecksum(move.from),
+    to: roundPointForChecksum(move.to),
+  }))
+  return createHash('sha256').update(JSON.stringify(moves)).digest('hex').slice(0, 16)
 }
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -461,8 +478,8 @@ function testSquareBlank(): void {
   }
 }
 
-function testBlockByteIdentical(): void {
-  console.log('Block project: byte-identical clearing...')
+function testBlockClearing(): void {
+  console.log('Block project: clearing matches the reference...')
   const result = generate(pocketProject({ units: 'mm', axis: 'x', shape: 'block', face: 'top', pass: 'rough' }))
   assertTrue(
     moveHash(result) === baseClearingHash('mm', 'x'),
@@ -569,7 +586,7 @@ function main(): void {
   testPocketFloorAndWalls()
   testPocketBottom()
   testSquareBlank()
-  testBlockByteIdentical()
+  testBlockClearing()
   testEntryStartsAtTheBarSurface()
   testSurfaceClean()
   testRoughSurface()
