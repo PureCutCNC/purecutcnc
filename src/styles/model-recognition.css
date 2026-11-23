@@ -69,21 +69,13 @@
   text-transform: uppercase;
 }
 
-/* The group heading is a real table cell, so its `colSpan` spans the table;
- * the row-header rule above turns the body's row headers into grids. */
 .find-cavities__table tbody .find-cavities__group-row th {
-  display: table-cell;
   padding-top: 10px;
   color: var(--text-dim);
   font-size: 10.5px;
   font-weight: 400;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-}
-
-.find-cavities__table tbody th {
-  display: grid;
-  gap: 2px;
 }
 
 /* The face chip sits beside the kind label (issue #1206 slice 4); the notes
@@ -93,6 +85,17 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+label.find-cavities__label {
+  cursor: pointer;
+}
+
+@media (any-pointer: coarse) {
+  label.find-cavities__label {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .find-cavities__row--island th {
@@ -105,6 +108,8 @@
 }
 
 .find-cavities__notes {
+  display: block;
+  margin-top: 2px;
   color: var(--text-dim);
   font-size: 11.5px;
 }
@@ -115,6 +120,8 @@
 }
 
 .find-cavities__preview {
+  position: sticky;
+  top: 0;
   width: 100%;
   max-height: 320px;
   border: 1px solid var(--line);
@@ -200,5 +207,11 @@
 @media (max-width: 720px) {
   .find-cavities__found {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .find-cavities__preview {
+    grid-row: 1;
+    z-index: 1;
+    max-height: min(160px, 24vh);
   }
 }
