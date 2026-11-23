@@ -320,8 +320,12 @@ console.log('Testing that a square blank helixes the bands its earlier layers ma
   // `squareRotaryStubContactFloor` is a tangency there and only binds where a
   // pose is closer -- that half is proved on the builder itself in block 3
   // (a band given at the stub face is floored exactly as a ring sample is).
-  const pullStart = FINISH.alongStart + BALL.radius
-  const pullEnd = FINISH.alongEnd - BALL.radius
+  // #1190: this cone ends exactly at the band, so the around finish overruns
+  // both ends as on a round bar (#1155 rn-e): no stub stands there, and the
+  // band is the whole range. The bounded-stub case is proved by
+  // `rotarySquareAroundPasses.test.ts` block 5 on a model longer than its band.
+  const pullStart = FINISH.alongStart
+  const pullEnd = FINISH.alongEnd
   let finishPoses = 0
   let finishMinAlong = Number.POSITIVE_INFINITY
   let finishMaxAlong = Number.NEGATIVE_INFINITY
@@ -333,14 +337,14 @@ console.log('Testing that a square blank helixes the bands its earlier layers ma
       finishMinAlong = Math.min(finishMinAlong, along)
       finishMaxAlong = Math.max(finishMaxAlong, along)
       assert.ok(along >= pullStart - 1e-9 && along <= pullEnd + 1e-9,
-        `a finish pose stays a cutter radius inside both stub faces (x ${along.toFixed(4)})`)
+        `a finish pose stays inside the band (x ${along.toFixed(4)})`)
       const tip = tipOf(point)
       assert.ok(tip >= MODEL_LOW - 0.2, `no finish cut dives below the model (${tip.toFixed(3)})`)
     }
   }
   assert.ok(finishPoses > 0, 'the finish emitted poses')
   assert.ok(Math.abs(finishMinAlong - pullStart) < 1e-6 && Math.abs(finishMaxAlong - pullEnd) < 1e-6,
-    `the finish band is the whole pulled span (${finishMinAlong.toFixed(4)}..${finishMaxAlong.toFixed(4)})`)
+    `the finish band is the whole span (${finishMinAlong.toFixed(4)}..${finishMaxAlong.toFixed(4)})`)
   // A stays forward on the finish too: the helix is one-way, like the rough's.
   let finishSign = 0
   for (const move of finish.moves) {
@@ -352,7 +356,7 @@ console.log('Testing that a square blank helixes the bands its earlier layers ma
     finishSign = sign
   }
   console.log(`  finish: ${finishPitches.length} helix runs, pitch ${finishPitches[0].toFixed(3)} (limit ${pitchLimit}), `
-    + `${finishPoses} poses inside the pulled span ${finishMinAlong.toFixed(2)}..${finishMaxAlong.toFixed(2)}`)
+    + `${finishPoses} poses inside the span ${finishMinAlong.toFixed(2)}..${finishMaxAlong.toFixed(2)}`)
 
   // The turn overlap is the **square blank's** rule: a round bar has no corner
   // shell standing above the tip, so its pitch stays exactly the requested
@@ -520,10 +524,15 @@ console.log('Testing that the square blank\'s helix reads the ring grid\'s angle
 // ── 5. the generator installs the cache, and the worker transport carries it ──
 console.log('Testing that the square blank\'s generator keeps maps and the pool returns them...')
 {
-  const serial = generateRotaryRough('square-pool', MESH, STOCK, BALL, ROUGH, {})
+  // #1190: an around pass reads a **ball** exactly on a square blank too, as on
+  // a round bar, and an exact row keeps no angle map. A flat's ring grid still
+  // reads the conservative maps on either blank, so the transport is proved
+  // with a flat of the same size.
+  const flat: NormalizedTool = { ...BALL, id: 'flat-2', name: '2 mm end mill', type: 'flat_endmill' }
+  const serial = generateRotaryRough('square-pool', MESH, STOCK, flat, ROUGH, {})
   const source = createNodeRotaryAngleWorkerSource({ availableParallelism: 4 })
   let pool: ReturnType<typeof createRotaryAnglePool> | null = null
-  const pooled = await generateRotaryRoughAsync('square-pool', MESH, STOCK, BALL, ROUGH, {}, (prep) => {
+  const pooled = await generateRotaryRoughAsync('square-pool', MESH, STOCK, flat, ROUGH, {}, (prep) => {
     const created = createRotaryAnglePool(prep, source, { maxWorkers: 2 })
     pool = created
     return created.batches

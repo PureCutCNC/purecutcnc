@@ -217,8 +217,7 @@ function withRetainedBar(
  * `stubStart`/`stubEnd` are false at a band end the **target itself** ends at
  * (#1155 rn-e): the plain bar beyond the model is material the approved rule
  * lets the operation cut into, so the retained wall must not stand there. A
- * square blank keeps both (`false` is never passed for one): its retained
- * corners are what holds the part, not a turnable surface.
+ * square blank gives up the stub there too (#1190).
  */
 export function retainedBarStubs(
   stock: BarStock,
@@ -253,6 +252,27 @@ export function concatRotaryMeshes(meshes: readonly RotaryModelMesh[]): RotaryMo
     vertexOffset += mesh.positions.length / 3
   }
   return { positions, index }
+}
+
+/**
+ * Whether an operation keeps the square blank's own rules (#1190).
+ *
+ * An **around** pass reads, bounds and cleans a square blank exactly as it does
+ * a round bar: the exact read for a ball (#1177), the shoulder cleanup ring, the
+ * exact layer floor (#1173) and the band-end overrun (#1155 rn-e). The approved
+ * rule (Frank, 2026-11-20) is that the same model gives the same result on
+ * either blank. The square blank's rules there were never about the read: in
+ * around mode its stubs are not in the sampled mesh, and every square rule
+ * (the stub floors, the forced step, the corner material gate) is closed-form
+ * and applied after sampling. An **along** pass keeps the conservative read and
+ * its square rules; the band-end overrun applies to both directions (Frank,
+ * 2026-11-22), so it is not gated here.
+ */
+export function usesSquareBlankRules(
+  stock: BarStock,
+  params: Pick<RotaryFinishParams, 'passDirection'>,
+): boolean {
+  return isSquareStock(stock) && params.passDirection !== 'around'
 }
 
 /** Two along positions closer than this are the same coordinate (#1155 rn-e). */
@@ -309,9 +329,8 @@ export function targetBandOverrun(
  *   still stops the tool, exactly as #1155 rn-a..rn-d require, and the wall-foot
  *   ring `rotaryWallFeet` puts at that wall's foot is where the tool first
  *   follows the target's own surface.
- * - A **square blank** keeps both ends as they were (#1045 slice G / #1016): its
- *   retained corners are the part's support, and the corner material gate and
- *   the stub floors are untouched by the round bar's rule.
+ * - A **square blank** takes the same rule in both pass directions (#1190), and
+ *   its closed-form stub floors skip an overrun end (`squareRetainedStubs`).
  */
 export interface RotaryBandEnds {
   readonly stubStart: boolean
@@ -462,12 +481,9 @@ export function rotarySampledMesh(
   // #1155 rn-e: no retained wall stands at an end the target itself ends at, so
   // the body may cut the plain bar beyond it. `mesh` is the **target** here (the
   // neighbours are concatenated above), so the test reads exactly the extent the
-  // cut range was clamped to. A **square** blank keeps every stub it had: its
-  // retained corners are the part's support, and the corner material gate and
-  // the exact stub floors are untouched by the round bar's rule.
-  const overrun = isSquareStock(stock)
-    ? { start: false, end: false }
-    : targetBandOverrun(mesh, stock, params)
+  // cut range was clamped to. #1190: a square blank takes the same rule in both
+  // pass directions, so a rough and the finish after it agree about the ends.
+  const overrun = targetBandOverrun(mesh, stock, params)
   return withRetainedBar(
     sampledMesh,
     stock,

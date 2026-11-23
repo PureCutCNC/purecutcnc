@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { barCentre, barInscribedRadius, barPivotZ, isSquareStock } from '../../types/barStock'
+import { barCentre, barInscribedRadius, barPivotZ } from '../../types/barStock'
 import { type BarStock, getStockBounds } from '../../types/project'
 import { minRenderHeight } from '../csg'
 import { appendAll } from './appendAll'
@@ -71,8 +71,8 @@ function neighbourRisesAcross(
 
 /**
  * The band ends for one operation (#1155 rn-e): `targetBandOverrun` decides
- * which ends the target itself owns, and only a **round** bar gives up the stub
- * and the centre pull there.
+ * which ends the target itself owns, and the band gives up the stub and the
+ * centre pull there, on either blank and in either pass direction (#1190).
  */
 export function rotaryBandEnds(
   mesh: RotaryModelMesh,
@@ -81,7 +81,6 @@ export function rotaryBandEnds(
   tool: NormalizedTool,
   params: RotaryFinishParams,
 ): RotaryBandEnds {
-  if (isSquareStock(stock)) return KEEP_BAND_ENDS
   const overrun = targetBandOverrun(mesh, stock, params)
   if (!overrun.start && !overrun.end) return KEEP_BAND_ENDS
   const along = alongExtremes(mesh.positions, stock)
@@ -117,8 +116,7 @@ export function rotaryBandEnds(
  * a neighbour's span **strictly contains** the face, so the flat the ring has to
  * clear runs across it. A neighbour that merely *ends* at the face is the
  * #1155 rn-e case: there is no flat beyond the face to sweep, and no ring is
- * added. A square blank keeps both ends (`KEEP_BAND_ENDS`), so it never
- * qualifies.
+ * added.
  *
  * Each face gets **two** rings, on the quarters of the overlap rather than one
  * on its middle (#1177 correction 2). A flat disc reaches only radii up to
@@ -470,41 +468,39 @@ export function rotaryWallFeet(
   // (a neighbour wall stands at it) this foot falls outside `span` and the
   // neighbour's own ring is the one that runs -- the same test every neighbour
   // foot takes.
-  if (!isSquareStock(stock)) {
-    const overrun = targetBandOverrun(mesh, stock, params)
-    const bounds = getStockBounds(stock)
-    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-    const barRadius = barInscribedRadius(stock)
-    const extents = (neighbours ?? [])
-      .map((neighbour) => alongExtremes(neighbour.positions, stock))
-      .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
-    for (const direction of [1, -1] as const) {
-      const owns = direction > 0 ? overrun.start : overrun.end
-      if (!owns) continue
-      const face = direction > 0 ? params.alongStart : params.alongEnd
-      const foot = face
-      if (!(foot >= span.start - WALL_FOOT_EPSILON && foot <= span.end + WALL_FOOT_EPSILON)) continue
-      // The bar has to exist on the far side: an end at the blank's own end has
-      // nothing standing beyond it.
-      if (direction > 0 ? !(face - lower > WALL_FOOT_EPSILON) : !(upper - face > WALL_FOOT_EPSILON)) continue
-      const farFrom = direction > 0 ? face - window : face
-      const farTo = direction > 0 ? face : face + window
-      if (extents.some((extent) => extent.min < farTo - WALL_FOOT_EPSILON
-        && extent.max > farFrom + WALL_FOOT_EPSILON)) continue
-      const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
-      const targetTops = meshSurfaceTops(mesh, stock, bandSide[0], bandSide[1])
-      let rises = false
-      for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) {
-        const top = targetTops[bin]
-        if (!Number.isFinite(top)) continue
-        if (barRadius > top + tolerance) {
-          rises = true
-          break
-        }
+  const overrun = targetBandOverrun(mesh, stock, params)
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const barRadius = barInscribedRadius(stock)
+  const extents = (neighbours ?? [])
+    .map((neighbour) => alongExtremes(neighbour.positions, stock))
+    .filter((extent) => Number.isFinite(extent.min) && Number.isFinite(extent.max))
+  for (const direction of [1, -1] as const) {
+    const owns = direction > 0 ? overrun.start : overrun.end
+    if (!owns) continue
+    const face = direction > 0 ? params.alongStart : params.alongEnd
+    const foot = face
+    if (!(foot >= span.start - WALL_FOOT_EPSILON && foot <= span.end + WALL_FOOT_EPSILON)) continue
+    // The bar has to exist on the far side: an end at the blank's own end has
+    // nothing standing beyond it.
+    if (direction > 0 ? !(face - lower > WALL_FOOT_EPSILON) : !(upper - face > WALL_FOOT_EPSILON)) continue
+    const farFrom = direction > 0 ? face - window : face
+    const farTo = direction > 0 ? face : face + window
+    if (extents.some((extent) => extent.min < farTo - WALL_FOOT_EPSILON
+      && extent.max > farFrom + WALL_FOOT_EPSILON)) continue
+    const bandSide = direction > 0 ? [face, face + window] : [face - window, face]
+    const targetTops = meshSurfaceTops(mesh, stock, bandSide[0], bandSide[1])
+    let rises = false
+    for (let bin = 0; bin < WALL_ANGLE_BINS; bin++) {
+      const top = targetTops[bin]
+      if (!Number.isFinite(top)) continue
+      if (barRadius > top + tolerance) {
+        rises = true
+        break
       }
-      if (rises) feet.push({ face, foot, direction })
     }
+    if (rises) feet.push({ face, foot, direction })
   }
   return feet.sort((a, b) => a.foot - b.foot)
 }
@@ -678,4 +674,39 @@ export function rotaryNeighbourColumns(
     }
   })
   return columns
+}
+
+/**
+ * Lift both ends of every chord of `tips` (on `angles`) that a refined sample
+ * stands above, by the most any refined sample inside it does (#1190). `tips`
+ * is changed in place; a chord with a missing end, or a refined sample off the
+ * model, is left as it is. A shared end takes the larger of its two chords'
+ * lifts, and a lift only ever raises a tip, so no chord is lowered.
+ */
+export function liftDippingChords(
+  angles: readonly number[],
+  tips: number[],
+  refinedAngles: readonly number[],
+  refinedRows: readonly Float32Array[],
+  column: number,
+): void {
+  const lift = new Array<number>(tips.length).fill(0)
+  let r = 0
+  for (let k = 0; k + 1 < angles.length; k++) {
+    const a0 = angles[k]
+    const a1 = angles[k + 1]
+    const t0 = tips[k]
+    const t1 = tips[k + 1]
+    while (r < refinedAngles.length && refinedAngles[r] <= a0 + 1e-9) r++
+    let excess = 0
+    for (; r < refinedAngles.length && refinedAngles[r] < a1 - 1e-9; r++) {
+      const sample = refinedRows[r][column]
+      if (!Number.isFinite(t0) || !Number.isFinite(t1) || !Number.isFinite(sample)) continue
+      const chord = t0 + (t1 - t0) * (refinedAngles[r] - a0) / (a1 - a0)
+      excess = Math.max(excess, sample - chord)
+    }
+    lift[k] = Math.max(lift[k], excess)
+    lift[k + 1] = Math.max(lift[k + 1], excess)
+  }
+  for (let k = 0; k < tips.length; k++) if (lift[k] > 0) tips[k] += lift[k]
 }

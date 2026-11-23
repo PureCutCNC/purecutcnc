@@ -26,6 +26,9 @@ import { createRotaryAnglePool, type RotaryAnglePool } from './rotaryAnglePool'
 
 // Captured before the extraction on main at f3582eb7104464bf53565cf70c72f93136d80e83.
 // A shared regression can change both drivers together, so compare to the fixed output.
+// #1190 re-recorded all eight square rows: an around pass reads, bounds and overruns
+// a square blank as it does a round bar, and an along pass overruns its owned ends
+// too. Every round row is unchanged.
 const baseline: Readonly<Record<string, string>> = {
   'round x rotary_finish around': '8668ea5303fa53bf4809fa3b925dfb2ac7da4a326a74ee9fab81f2a939ed427f',
   'round x rotary_finish along': 'f063e6118a19ec1412c75f2717e4bd1dced1bd58f1f23102a9ca5157fd075150',
@@ -35,14 +38,14 @@ const baseline: Readonly<Record<string, string>> = {
   'round y rotary_finish along': '13488876228afa952eda133cc92413c5552a87fca5f9cf1c677af2fb1c1a0ba6',
   'round y rotary_rough around': '6d093f5af3eec76dca829040a84ef3c4252f290d0c5d48fcef0619905796b07f',
   'round y rotary_rough along': 'bcef20596e2607e78afb41b8ff1a6335b0559920729dd14c512f336455837551',
-  'square x rotary_finish around': '62c5e29a410e30fc1f523acf39ef0e9241a46f0f27ca2f2f5d98a0ff9cd5f3df',
-  'square x rotary_finish along': '5e93ce5b7ae14aa09146b80471b3162852ea60753ac982bbcc2caca78e3a1710',
-  'square x rotary_rough around': 'fdc9c5cf879e51c16368e6ae4d5010313c89141c6bea97f7b4ab6bc2c5dcb44d',
-  'square x rotary_rough along': 'dc1d083a6a7d45c964ab036e840138a8437ad86a2d2231e17fc3bb8060d43138',
-  'square y rotary_finish around': 'de8974b9293a97119a90ac92fd4b9682a10ab56b100c52f9691f429cb3393b49',
-  'square y rotary_finish along': 'cbee0feefb2765a3ef668a7aef1dfd24c5624f210437d54e38c7d3d09d1218c8',
-  'square y rotary_rough around': '50a99d45ef29f607995cc813e443a41f4f15bc370199165d8284414ca7bd308e',
-  'square y rotary_rough along': 'a39dd71dfec91f5eaee0fa99b456a0fc87bc7e63327f495513146c401ecd93a3',
+  'square x rotary_finish around': '7b3585bdf4bba7bf5e0f81b37ac398ffc5515027f86a1ce7c8b92deb23409239',
+  'square x rotary_finish along': '9befa7527347dead8b765ce63fdf7d4ac39e3b97c8bde4931f7573998c1c5e5a',
+  'square x rotary_rough around': 'b8fe8ef74d7eff769e8e3c63dc0d85bdd416f47bd64ff2bf31c500818d91b526',
+  'square x rotary_rough along': '3458370b5776018d8722e3a64d2582656d8d7fcacd2563430019bfd9f33d6bbc',
+  'square y rotary_finish around': '56873bbf3d2c57a42ec14e14a871aa1e83bead3d162be8420eb9c3a308a33645',
+  'square y rotary_finish along': '5438c2e0b4f273847a186fb061e69296b55c7ded578f14af673b3699956b5d1e',
+  'square y rotary_rough around': 'ad913cf04ea9926156146b57a28e257fd42e375a967de41e1752a1bf0513d2a2',
+  'square y rotary_rough along': '92146a27dba86977d0e460212ed914b480eb6d72d29286572e5ce7d618061663',
   'round x region rough around': '546c11444e1c79c0377e9d2d1b0c14eb9ed80d64f6d96517bb23dfefbbce4fbf',
 }
 

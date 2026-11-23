@@ -24,7 +24,7 @@ import {
   type ContinuousHelixSpend,
   walkContinuousBand,
 } from './rotaryContinuous'
-import { finishFromTargets } from './rotaryModelFinish'
+import { continuousExactRead, finishFromTargets } from './rotaryModelFinish'
 import {
   alongCoordinate,
   boundsOf,
@@ -419,7 +419,7 @@ function continuousRoughInput(
 ): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
-  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params)
+  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params, sampling.bandOverrun)
   return {
     prep,
     tool,
@@ -428,16 +428,8 @@ function continuousRoughInput(
     stockToLeave: sampling.stockToLeave,
     // #1185 R2: the helix is held to the bound the rough's rings are.
     toleranceFloor: rotaryRefinementToleranceFloor(params, tool.units),
-    // #1173/#1177: the same exact read as the finish's, for the same reasons --
-    // including the ball's, and including the pad being the flat's alone.
-    ...(isSquareStock(prep.stock)
-      ? {}
-      : {
-        readExactRows: true,
-        ...(tool.type === 'ball_endmill'
-          ? {}
-          : { exactTipPad: params.requestedCellSize * 1.25 }),
-      }),
+    // #1173/#1177/#1190: the finish's exact read (ball included, pad the flat's).
+    ...continuousExactRead(prep.stock, tool, params),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
@@ -759,7 +751,7 @@ function roughFromTargets(
   if (around && layers * angles.length * along.length > MAX_ROTARY_EMISSION_WORK) {
     return { operationId, moves: [], warnings: [{ code: 'rotaryWorkBudgetExceeded', params: { operation: operationId } }], bounds: null }
   }
-  const forceStep = retainedStubStepForced(stock, params, tool)
+  const forceStep = retainedStubStepForced(stock, params, tool, sampling.bandOverrun)
   // #1096: a sample outside the operation's region is not cut, at any layer.
   // The mask is null when the operation targets no region, and then nothing
   // below reads it -- the motion is exactly the pre-region output.

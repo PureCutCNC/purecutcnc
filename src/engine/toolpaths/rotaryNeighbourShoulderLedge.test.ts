@@ -199,9 +199,11 @@ function turnOperation(project: Project, turnId: string, kind: 'rotary_rough' | 
 }
 
 // Captured before extraction at f3582eb7104464bf53565cf70c72f93136d80e83.
+// #1190: the finish re-recorded when the shoulder-cleanup ring took the around
+// chord check, which lifts a chord that dips across a Hex vertex.
 const baseline = {
   rotary_rough: 'efc1e84a8251169ab09ee9572398648cee73b1ce0e918390e87a43229637f58b',
-  rotary_finish: 'b03c6309353d1054e063a71f8511f1f849ccb53d29864cd3920e283ba8e79bf6',
+  rotary_finish: '2ac7050b662353fcc937a8d4995b425ae56745901ade49149ca0d0f5c1ccb806',
 }
 
 function generate(project: Project, operation: Operation): ToolpathMove[] {

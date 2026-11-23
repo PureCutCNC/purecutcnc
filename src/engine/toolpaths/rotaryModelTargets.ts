@@ -15,7 +15,7 @@
  */
 
 import { barMaxRadius, isSquareStock } from '../../types/barStock'
-import { type BarStock, getStockBounds } from '../../types/project'
+import { type BarStock } from '../../types/project'
 import { minRenderHeight } from '../csg'
 import type { RotaryFinishParams } from './rotaryModelParams'
 import {
@@ -24,6 +24,7 @@ import {
   retainedBarStubs,
   rotaryCutterSpan,
   rotarySampledMesh,
+  usesSquareBlankRules,
 } from './rotaryModelTargetGeometry'
 import {
   mergeAlongPositions,
@@ -34,6 +35,7 @@ import {
   rotaryWallFeet,
   type RotaryWallFoot,
   type RotaryWallFootRead,
+  liftDippingChords,
   shoulderCleanFaces,
   WALL_FOOT_EPSILON,
   wallFootPreps,
@@ -62,6 +64,7 @@ import {
   sampleAnglesWithPrepAsync,
   sampleRotaryModelWithWorkspace,
 } from './rotarySampling'
+import { NO_BAND_OVERRUN, type RotaryBandOverrun, squareRetainedStubs } from './rotaryModelMotion'
 import { squareRotaryStubContactFloor } from './squareRotaryStock'
 import type { NormalizedTool } from './types'
 import type { ToolpathWarning, ToolpathWarningCode } from './warningCodes'
@@ -232,6 +235,11 @@ export interface RotaryTargets {
    * reads it; the finish has no layers.
    */
   layerFloor: number | null
+  /**
+   * The band ends this operation cuts past onto the plain bar (#1155 rn-e), so
+   * the motion's square stub rules skip them too (#1190).
+   */
+  bandOverrun: RotaryBandOverrun
   stopped: boolean
   refusal: ToolpathWarningCode | null
 }
@@ -241,7 +249,7 @@ function targetRefusal(code: ToolpathWarningCode): RotaryTargets {
   return {
     angles: [], along: [], tips: [], stubFloor: null, linkRowAt: () => null,
     prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
-    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null,
+    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null, bandOverrun: NO_BAND_OVERRUN,
     stopped: false, refusal: code,
   }
 }
@@ -251,7 +259,7 @@ function targetStopped(angles: number[], along: number[]): RotaryTargets {
   return {
     angles, along, tips: [], stubFloor: null, linkRowAt: () => null,
     prep: null, stockToLeave: 0, ringOnlyIndices: [], shoulderCleanIndices: [],
-    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null,
+    shoulderCleanRings: [], baseAngleStep: 360, layerFloor: null, bandOverrun: NO_BAND_OVERRUN,
     stopped: true, refusal: null,
   }
 }
@@ -595,10 +603,10 @@ function prepareRotaryTargets(
     // ball's true tip by `(r + pad)(1/cos delta - 1) + pad tan delta`: 0.21 mm at
     // 25 degrees on Frank's bolt, which is the raised band along every facet
     // edge. The read is exact for both tool shapes (`exactFootprintTips`), so the
-    // ball takes it exactly as its wall-foot rings and its helix do. A square
-    // blank keeps the conservative read for its retained-corner rules, exactly
-    // as its helix does.
-    ...(tool.type === 'ball_endmill' && !isSquareStock(stock) ? { exactTipRows: true } : {}),
+    // ball takes it exactly as its wall-foot rings and its helix do. #1190: a
+    // square blank's around pass reads it too; only its along pass keeps the
+    // conservative read (`usesSquareBlankRules`).
+    ...(tool.type === 'ball_endmill' && !usesSquareBlankRules(stock, params) ? { exactTipRows: true } : {}),
     ...(rotaryConservativeSampling(params) ? { conservativeCellBounds: true } : {}),
     ...((gridExtra !== undefined) ? { gridExtra } : {}),
     ...(baseMesh.retainedTriangleStart !== undefined
@@ -622,12 +630,10 @@ function prepareRotaryTargets(
   // mesh's, not the read mode's -- and its own `along` is the target's grid, so
   // neither a neighbour nor a wall-foot column can enter the value. It exists
   // only where the last layer is planned from an exact read anyway: an around
-  // pass, a flat cutter (the helix that rides the floor is only exactly read
-  // there) and a round bar (a square blank's floor carries the retained-corner
-  // rules).
+  // pass and a flat cutter (the helix that rides the floor is only exactly read
+  // there), on either blank (#1190).
   const floorPrep = params.passDirection === 'around'
     && tool.type === 'flat_endmill'
-    && !isSquareStock(stock)
     ? createRotarySamplingPrep(baseMesh, stock, samplingTool, {
       along: floorAlong,
       requestedCellSize: params.requestedCellSize,
@@ -701,6 +707,7 @@ function completeRotaryTargets(
   layerFloor: number | null,
 ): RotaryTargets {
   const { along, stockToLeave, maxRadius, samplingMesh, samplingTool, gridExtra, linkWorkspace } = plan
+  const bandOverrun: RotaryBandOverrun = { start: plan.overrunStart, end: plan.overrunEnd }
   // The first sample below the centreline is the only place the warning names
   // (one warning per operation, however many places need it). The value that
   // decides it carries the stock offset, so leaving stock does not hide a model
@@ -805,13 +812,10 @@ function completeRotaryTargets(
   // sample).
   let stubFloor: number[][] | null = null
   if (isSquareStock(stock)) {
-    const bounds = getStockBounds(stock)
-    const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-    const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
     // No stub exists at an end the cut range already meets; `rotaryAlongPositions`
-    // draws the same line before it refines a shoulder.
-    const lowerStub = params.alongStart > lower
-    const upperStub = upper > params.alongEnd
+    // draws the same line before it refines a shoulder. #1190: nor at an end the
+    // operation overruns, which has given up its stub.
+    const { lowerStub, upperStub } = squareRetainedStubs(stock, params, bandOverrun)
     if (lowerStub || upperStub) {
       stubFloor = tips.map((row) => new Array<number>(row.length).fill(Number.NEGATIVE_INFINITY))
       for (let k = 0; k < tips.length; k++) {
@@ -912,11 +916,7 @@ function completeRotaryTargets(
     const linkTips = Array.from(raw, (tip) =>
       Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
     if (isSquareStock(stock)) {
-      const bounds = getStockBounds(stock)
-      const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-      const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-      const lowerStub = params.alongStart > lower
-      const upperStub = upper > params.alongEnd
+      const { lowerStub, upperStub } = squareRetainedStubs(stock, params, bandOverrun)
       if (lowerStub || upperStub) {
         for (let i = 0; i < linkAlong.length; i++) {
           let floor = Number.NEGATIVE_INFINITY
@@ -950,7 +950,7 @@ function completeRotaryTargets(
   // column -- the cleanup face is inside a neighbour's span, so it always is.
   const shoulderCleanRings: RotaryShoulderCleanRing[] = []
   const neighbourColumns = plan.neighbourColumns
-  if (neighbourColumns !== null && !isSquareStock(stock)) {
+  if (neighbourColumns !== null && !usesSquareBlankRules(stock, params)) {
     const baseStep = plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360
     const step = Math.min(Math.max(baseStep / 4, CLEANUP_MIN_STEP_DEG), CLEANUP_MAX_STEP_DEG)
     const count = Math.max(1, Math.round(360 / step))
@@ -982,10 +982,26 @@ function completeRotaryTargets(
         const sampled = sampleAnglesWithPrep(neighbourColumns.prep, ringAngles, warnings)
         if (!sampled.valid) continue
         if (sampled.stopped) break
-        const ringTips = Array.from({ length: ringAngles.length }, (_, k) => {
-          const raw = sampled.tipRadius[k][position]
-          return Number.isFinite(raw) ? Math.min(Math.max(raw + stockToLeave, 0), maxRadius) : NaN
+        // A straight chord between two exact tips can still dip below the
+        // envelope where the ring crosses a Hex vertex: the tip curve bends
+        // concave there, and how deep the chord dips depends on where the bend
+        // falls between two samples (0.0225 mm on a square blank's phase, 0.0032
+        // mm on a round one's). The around rule every other ring takes
+        // (`refineAroundSampling`, at the surface bound -- a neighbour is not
+        // this operation's material to be approximate about) finds the dip, but
+        // its added samples would be the sub-10 ms blocks #1173 forbids. So the
+        // ring keeps its uniform grid and lifts both ends of a dipping chord by
+        // the most any refined sample stands above it: the lifted chord is at or
+        // above the refined polyline, which is within the bound of the envelope.
+        const raw = Array.from({ length: ringAngles.length }, (_, k) => sampled.tipRadius[k][position])
+        const refined = refineAroundSampling({
+          prep: neighbourColumns.prep, stock, tool, warnings, angles: ringAngles,
+          tips: sampled.tipRadius, lifts: sampled.lifts,
         })
+        if (refined?.stopped === true) break
+        if (refined !== null) liftDippingChords(ringAngles, raw, refined.angles, refined.tips, position)
+        const ringTips = raw.map((tip) =>
+          Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
         if (ringTips.some((tip) => Number.isFinite(tip))) {
           shoulderCleanRings.push({ index, angles: ringAngles, tips: ringTips })
         }
@@ -1003,6 +1019,7 @@ function completeRotaryTargets(
     shoulderCleanRings,
     baseAngleStep: plan.angles.length > 1 ? plan.angles[1] - plan.angles[0] : 360,
     layerFloor,
+    bandOverrun,
     stopped: false, refusal: null,
   }
 }

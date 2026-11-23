@@ -444,7 +444,28 @@ interface Fixture {
   operation: Operation
   tool: NormalizedTool
   along: { start: number; end: number }
+  /**
+   * #1190: the retained stubs' faces. A band end the model itself ends at is
+   * overrun (#1155 rn-e) and keeps no stub, so its face is the bar's own end;
+   * an end a chuck or support bounds keeps the band's end.
+   */
+  stubbed: { start: number; end: number }
   targetRadius: number
+}
+
+function stubbedFaces(
+  stock: BarStock,
+  along: { start: number; end: number },
+  model: { min: number; max: number },
+): { start: number; end: number } {
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  const at = (band: number, end: number): boolean => Math.abs(band - end) <= 1e-9 * Math.max(1, Math.abs(end))
+  return {
+    start: at(along.start, model.min) ? lower : along.start,
+    end: at(along.end, model.max) ? upper : along.end,
+  }
 }
 
 function codexFixture(
@@ -510,12 +531,10 @@ function codexFixture(
   }
   project.operations = [operation]
   const tool = normalizeToolForProject(project.tools[0], project)
-  const along = rotaryAlongRange(
-    stock, project.clamps, modelAlongExtent(project, model, 'x'),
-    tool, { chuckEnd: 0, tailEnd: 0 },
-  )
+  const extent = modelAlongExtent(project, model, 'x')
+  const along = rotaryAlongRange(stock, project.clamps, extent, tool, { chuckEnd: 0, tailEnd: 0 })
   assert.ok(along, 'the Codex fixture has room between its supports')
-  return { project, operation, tool, along, targetRadius: target.radius }
+  return { project, operation, tool, along, stubbed: stubbedFaces(stock, along, extent), targetRadius: target.radius }
 }
 
 // ── 1. the two measured Codex cases ───────────────────────────────────
@@ -545,9 +564,9 @@ console.log('Testing the Codex A0 plunge and the stub-face under-read...')
         `no emitted point reaches the stub (${point.x} >= ${reach})`)
     }
   }
-  const measured = stubPenetration(stock, tool, result.moves, along.start, along.end)
+  const measured = stubPenetration(stock, tool, result.moves, fixture.stubbed.start, fixture.stubbed.end)
   assert.ok(measured.max <= 1e-6,
-    `the whole Codex program clears both retained stubs (${measured.max} at ${measured.where})`)
+    `the whole Codex program clears its retained stub (${measured.max} at ${measured.where})`)
 
   // The second measured case: the exact contact the review cites at
   // A7.769784 is the helper's value, and the review's under-read 13.001261 is
@@ -618,7 +637,7 @@ console.log('Testing the ball offset and the near-reach contact...')
   // stub) is gone with the F7 pull-in; the floor it pinned is asserted above.
   assert.equal(lowestTipAt(result.moves, 18.733333333333334, 0, stock), Infinity,
     'the ball no longer cuts inside the retained stub\'s reach')
-  const measured = stubPenetration(stock, fixture.tool, result.moves, CODEX_ALONG.start, CODEX_ALONG.end)
+  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end)
   assert.ok(measured.max <= 1e-6,
     `the ball program clears both retained stubs (${measured.max} at ${measured.where})`)
 
@@ -652,7 +671,7 @@ for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
   )
   approx(floor, toolType === 'flat_endmill' ? 12.5 : 10.128932,
     `${toolType}: the exact contact at the NaN sample`, 1e-6)
-  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
+  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end)
   assert.ok(measured.max <= 1e-6,
     `${toolType}: the off-axis rough clears both retained stubs (${measured.max} at ${measured.where})`)
   // #1016 C2-F7 moved every sample at least one cutter radius off the stub, so
@@ -664,7 +683,7 @@ for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
   assert.equal(cutTipAt(result.moves, CODEX_NAN_SAMPLE, 1080, stock), Infinity,
     `${toolType}: the A1080 sample is no longer inside the stub's reach`)
   const checked = assertStubFloorsRespected(
-    stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, `off-axis rough ${toolType}`,
+    stock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end, `off-axis rough ${toolType}`,
   )
   assert.equal(checked, 0, `${toolType}: the F6b floor never binds -- no point is inside a stub's reach`)
   console.log(`  off-axis rough ${toolType}: floor ${floor.toFixed(6)}, penetration ${measured.max.toExponential(2)}`)
@@ -679,7 +698,7 @@ for (const toolType of ['flat_endmill', 'ball_endmill'] as const) {
   assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), ['rotaryBelowCentreline'],
     `${toolType}: the off-axis finish reports only the below-centreline refusal (plus the advisory)`)
   assert.ok(result.moves.length > 0, `${toolType}: the off-axis finish still cuts where the model lies under the tool`)
-  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.along.start, fixture.along.end)
+  const measured = stubPenetration(stock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end)
   assert.ok(measured.max <= 1e-6,
     `${toolType}: the off-axis finish clears both retained stubs (${measured.max} at ${measured.where})`)
 }
@@ -802,11 +821,10 @@ function buildFixture(spec: CaseSpec): Fixture {
   }
   project.operations = [operation]
   const tool = normalizeToolForProject(project.tools[0], project)
-  const along = rotaryAlongRange(
-    stock, project.clamps, modelAlongExtent(project, model, axis), tool, { chuckEnd: 0, tailEnd: 0 },
-  )
+  const extent = modelAlongExtent(project, model, axis)
+  const along = rotaryAlongRange(stock, project.clamps, extent, tool, { chuckEnd: 0, tailEnd: 0 })
   assert.ok(along, `${spec.range}: the sweep fixture has room between its supports`)
-  return { project, operation, tool, along, targetRadius }
+  return { project, operation, tool, along, stubbed: stubbedFaces(stock, along, extent), targetRadius }
 }
 
 console.log('Testing the seeded square sweep against both retained stubs...')
@@ -835,8 +853,13 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     // A band shorter than the cutter cannot hold the cutter at all once its
     // centre is pulled one radius inside each stub (#1016 C2-F7): refusing with
     // `rotaryNoRoom` and emitting nothing is the correct answer for those
-    // sweep cases, not a failure.
-    if (!(fixture.along.end - fixture.along.start > 2 * fixture.tool.radius)) {
+    // sweep cases, not a failure. #1190: only a stubbed end is pulled; an end
+    // the model owns is overrun.
+    const sweepStock = fixture.project.stock as BarStock
+    const sweepBounds = getStockBounds(sweepStock)
+    const pulls = (fixture.stubbed.start > (sweepStock.axis === 'x' ? sweepBounds.minX : sweepBounds.minY) ? 1 : 0)
+      + ((sweepStock.axis === 'x' ? sweepBounds.maxX : sweepBounds.maxY) > fixture.stubbed.end ? 1 : 0)
+    if (!(fixture.along.end - fixture.along.start > pulls * fixture.tool.radius)) {
       collapsed++
       assert.deepEqual(result.moves, [], `${label}: a band narrower than the cutter emits no motion`)
       assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), ['rotaryNoRoom'],
@@ -853,23 +876,24 @@ console.log('Testing the seeded square sweep against both retained stubs...')
     assert.deepEqual(unexpected, [], `${label}: no unexpected warning`)
     assert.ok(result.moves.length > 0, `${label}: cuts`)
     const measured = stubPenetration(
-      fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end,
+      fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end,
     )
     // #1016 C2-F7: every sample is at least one cutter radius from each stub, so
     // the exact F6 floor has nothing to lift in any case. That is the property
     // this call pins; the oracle below still proves the cutter clears the square.
     const floored = assertStubFloorsRespected(
-      fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.along.start, fixture.along.end, label,
+      fixture.project.stock as BarStock, fixture.tool, result.moves, fixture.stubbed.start, fixture.stubbed.end, label,
     )
     assert.equal(floored, 0, `${label}: the F6 floor never binds -- no point is inside a stub's reach`)
     // The pull-in is one cutter radius, and only at an end that has a stub. The
-    // cases that run to the bar's end keep their reach there.
+    // cases that run to the bar's end keep their reach there, and so (#1190) do
+    // the ends the model itself owns.
     const stock = fixture.project.stock as BarStock
     const bounds = getStockBounds(stock)
     const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
     const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-    const minAlong = fixture.along.start > lower ? fixture.along.start + fixture.tool.radius : fixture.along.start
-    const maxAlong = upper > fixture.along.end ? fixture.along.end - fixture.tool.radius : fixture.along.end
+    const minAlong = fixture.stubbed.start > lower ? fixture.along.start + fixture.tool.radius : fixture.along.start
+    const maxAlong = upper > fixture.stubbed.end ? fixture.along.end - fixture.tool.radius : fixture.along.end
     for (const move of result.moves) {
       for (const point of [move.from, move.to]) {
         const along = stock.axis === 'x' ? point.x : point.y

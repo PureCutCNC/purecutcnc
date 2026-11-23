@@ -269,7 +269,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   // The retainer the generators build is square too, but #1016 C2-F7 pulls the
   // cutter centre one cutter radius inside each stubbed end, so a pass no longer
   // rides the retained corner: a stepover that puts a pass on exactly 45° cuts
-  // at the model radius and its centre never leaves the band.
+  // at the model radius and its centre never leaves the band. (#1190: these
+  // ends are the model's own, so they are overrun instead, with no stub at all.)
   const band = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
   const retained = generateRotaryFinish('retained', band, SQUARE, BALL, { ...PARAMS, stepover: 2 * Math.PI * MAX_R / 8 }, {})
   // The real cutting moves, not the inter-run links that sit one clearance
@@ -281,12 +282,14 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   const min45 = Math.min(...at45.map((m) => m.to.z)) - PIVOT
   assert.ok(min45 < H, `the 45° finish pass no longer rides the retained corner (${min45} < ${H})`)
   approx(min45, TARGET_RADIUS, 'the 45° finish pass cuts the model radius', 0.05)
-  const inset = BALL.radius
+  // #1190: the cylinder ends exactly at the band, so both ends are the model's
+  // own and are overrun as on a round bar (#1155 rn-e): no pull, and the centre
+  // stays within the model's ends.
   for (const move of retained.moves) {
     if (move.kind === 'rapid') continue
     for (const point of [move.from, move.to]) {
-      assert.ok(point.x >= BAND_START + inset - 1e-9 && point.x <= BAND_END - inset + 1e-9,
-        `the cutter centre stays one radius inside the band (${point.x})`)
+      assert.ok(point.x >= BAND_START - 1e-9 && point.x <= BAND_END + 1e-9,
+        `the cutter centre stays inside the model's ends (${point.x})`)
     }
   }
   assert.equal(squareBlankRetainedStub(SQUARE, 5, 5), null, 'empty span has no stub')
@@ -333,10 +336,13 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   // first one below the flat surface, and it bites less than one stepdown.
   const baseAngle = (a: number): number => ((a % 360) + 360) % 360
   // The shoulder-refined ends start at the blank's own surface (10); the layer
-  // cuts are the ones below it.
+  // cuts are the ones below it. #1190: the model owns both ends, so an along
+  // pass now runs end to end (no pull); a cut counts when it crosses the
+  // interior, not only when it ends there.
   const flatCuts = result.moves.filter((m) => m.kind === 'cut'
     && baseAngle(m.to.a ?? 0) === 0 && m.to.z - PIVOT < H - 1e-9
-    && m.to.x >= BAND_START + 2 - 1e-9 && m.to.x <= BAND_END - 2 + 1e-9)
+    && Math.max(m.from.x, m.to.x) >= BAND_START + 2 - 1e-9
+    && Math.min(m.from.x, m.to.x) <= BAND_END - 2 + 1e-9)
   assert.ok(flatCuts.length > 0, 'the flat direction still cuts')
   // Nothing may cut above the flat at all: the old layer 0 did, one stepdown
   // below the corner (11.142 on this blank).
@@ -472,10 +478,15 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
               if (radial < targetRadius) caseModel = Math.max(caseModel, Math.min(targetRadius - radial, l - bandStart, bandEnd - l))
             }
             // Retained: the analytic box outside the cut range, inside the blank.
+            // #1190: the cylinder owns both band ends, so the body may cut one
+            // cutter radius of the plain bar beyond each (#1155 rn-e); the box
+            // that must stay whole starts past that.
+            const keepStart = bandStart - tool.radius
+            const keepEnd = bandEnd + tool.radius
             if (l >= 0 && l <= blankEnd && Math.abs(la) < h && Math.abs(lu) < h) {
-              const depth = l < bandStart
-                ? Math.min(bandStart - l, l)
-                : l > bandEnd ? Math.min(l - bandEnd, blankEnd - l) : 0
+              const depth = l < keepStart
+                ? Math.min(keepStart - l, l)
+                : l > keepEnd ? Math.min(l - keepEnd, blankEnd - l) : 0
               if (depth > 0) caseRetained = Math.max(caseRetained, Math.min(depth, h - Math.abs(la), h - Math.abs(lu)))
             }
           }
@@ -567,13 +578,17 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
 // coarser than the cutter footprint (`2 * radius`) in every case, and the
 // seeded grids are deliberately misaligned so no sample lands on the shoulder.
 // No timing assertions.
+//
+// #1190: an end the model owns is overrun and keeps no stub, so every target
+// here runs 6 mm past both band ends: the band stays bounded and both retained
+// shoulders stand, which is the case this block is about.
 {
   // The exact manager repro.
   const managerParams = {
     stepover: 2 * Math.PI * MAX_R / 8, sampleSpacing: 12, stockToLeave: 0,
     alongStart: BAND_START, alongEnd: BAND_END, safeRadius: 20, requestedCellSize: 0.05, stepdown: 3,
   }
-  const managerMesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START, BAND_END)
+  const managerMesh = cylinderMesh(SQUARE, TARGET_RADIUS, BAND_START - 6, BAND_END + 6)
   const manager = sweep(SQUARE, FLAT, managerMesh, managerParams, TARGET_RADIUS)
   const managerAllowance = managerParams.requestedCellSize + 1e-3
   assert.ok(manager.retained <= managerAllowance,
@@ -618,7 +633,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
               safeRadius: 4 * scale, requestedCellSize: 0.05 * scale,
             }
             assert.ok(spacing > 2 * radius, `case ${cases} spacing is coarser than the cutter footprint`)
-            const mesh = cylinderMesh(stock, targetRadius, bandStart, bandEnd, 96)
+            const mesh = cylinderMesh(stock, targetRadius, bandStart - 6 * scale, bandEnd + 6 * scale, 96)
             const measured = sweep(stock, tool, mesh, params, targetRadius)
             const allowance = params.requestedCellSize + 1e-3 * scale
             assert.ok(measured.retained <= allowance, `case ${cases} (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave}) `
@@ -723,7 +738,9 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
               alongStart: start, alongEnd: end, safeRadius: 5 * scale, requestedCellSize: 4.4e-4 * scale,
             }
             assert.ok(start > lower && end < upper, 'the misaligned band leaves a retained shoulder at both ends')
-            const mesh = cylinderMesh(stock, 0.08 * scale, start, end, 32)
+            // #1190: the target runs past both band ends, so they stay stubbed and
+            // pulled (a model-owned end is overrun and would leave room).
+            const mesh = cylinderMesh(stock, 0.08 * scale, lower + 0.05 * length, upper - 0.05 * length, 32)
             const label = `collapsed span (${axis}/${units}/${offset ? 'off' : 'on'}/${type}/leave ${leave})`
             const { result, sampled } = runBeforeSampling(
               (onAngle) => generateRotaryFinish('collapsed-span', mesh, stock, tool, params, { onAngle }),
@@ -765,7 +782,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       assert.ok(start + tool.radius < end - tool.radius, 'the cap fixture still leaves a cutter-centre span')
       const label = `capped spacing (${axis}/${type})`
       const { result, sampled } = runBeforeSampling(
-        (onAngle) => generateRotaryFinish('capped-cell', cylinderMesh(stock, 0.02, start, end, 32), stock, tool, params, { onAngle }),
+        (onAngle) => generateRotaryFinish('capped-cell', cylinderMesh(stock, 0.02, lower + 0.01, upper - 0.01, 32), stock, tool, params, { onAngle }),
         label,
       )
       assert.equal(sampled, false, `${label}: no angle is sampled`)
@@ -793,7 +810,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
         stepover: 0.5, stepdown: 0.2, sampleSpacing: 0.1, stockToLeave: 0,
         alongStart: start, alongEnd: end, safeRadius: 5, requestedCellSize: 1.1e-3,
       }
-      const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.02, start, end, 32), stock, tool, params, {})
+      // #1190: the target runs past both band ends so both stay stubbed and pulled.
+      const near = generateRotaryFinish('near-cap', cylinderMesh(stock, 0.02, lower + 0.01, upper - 0.01, 32), stock, tool, params, {})
       assert.ok(near.moves.length > 0, `near-cap (${axis}) still generates`)
       assert.deepEqual(near.warnings, [], `near-cap (${axis}) raises no warning`)
       nearCapCases++
@@ -836,7 +854,9 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
           const effectiveCell = chooseHeightMapCellSize(samplingBounds, params.requestedCellSize, [])
           assert.ok(effectiveCell > params.requestedCellSize * 1000,
             `the cap widens the effective cell far above the requested one (${effectiveCell})`)
-          const measured = sweep(stock, tool, cylinderMesh(stock, TARGET_RADIUS * scale, bandStart, bandEnd, 96), params, TARGET_RADIUS * scale)
+          // #1190: the target runs past both band ends so both stay stubbed.
+          const measured = sweep(stock, tool,
+            cylinderMesh(stock, TARGET_RADIUS * scale, bandStart - 6 * scale, bandEnd + 6 * scale, 96), params, TARGET_RADIUS * scale)
           const allowance = effectiveCell + 1e-3 * scale
           assert.ok(measured.retained <= allowance, `cap-bound retained (${axis}/${units}/${type}/leave ${leave}) `
             + `stays within the effective cell (${measured.retained.toFixed(6)} <= ${allowance.toFixed(6)})`)
@@ -952,9 +972,15 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // (`rotarySquareHelix.test.ts`), so the around program's rings and its
       // at-layer links between them are replaced by the helix. The finish rows
       // below moved in ca-j's correction round 1, when the finish was admitted.
-      direction === 'along' ? 'fac8eaac0fb0b159' : '4a38235b13638c6f',
+      // #1190 re-recorded both rows: an around pass reads a ball exactly on a
+      // square blank too, as on a round bar, and both directions overrun the
+      // cylinder's own ends.
+      direction === 'along' ? '070d10cdda1cc920' : '259b79474ef0f8f8',
       `rough ${direction}: zero stock to leave is byte-identical`)
-    const spanStart = base.alongStart + BALL.radius
+    // #1190: the cylinder ends exactly at the band, so both directions overrun
+    // both ends as a round bar does (#1155 rn-e) and the outermost pass is the
+    // band end itself, with no stub to keep the body out of.
+    const spanStart = base.alongStart
     const first = outermost(withLeave, spanStart)
     // The old along generator lifted the first pass to ~4.42 on this fixture.
     assert.ok(first <= modelRadius + leave + 0.12,
@@ -970,10 +996,10 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     for (const move of withLeave.moves) {
       if (move.kind === 'rapid') continue
       for (const point of [move.from, move.to]) {
-        assert.ok(point.x - BALL.radius >= base.alongStart - 1e-9,
-          `rough ${direction}: the cutter body stays out of the lower retained stub at x ${point.x}`)
-        assert.ok(point.x + BALL.radius <= base.alongEnd + 1e-9,
-          `rough ${direction}: the cutter body stays out of the upper retained stub at x ${point.x}`)
+        assert.ok(point.x >= base.alongStart - 1e-9,
+          `rough ${direction}: the cutter centre stays inside the model's start at x ${point.x}`)
+        assert.ok(point.x <= base.alongEnd + 1e-9,
+          `rough ${direction}: the cutter centre stays inside the model's end at x ${point.x}`)
       }
     }
   }
@@ -998,9 +1024,11 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     // #1103 slice ca-j re-recorded the around rows again: the finish's whole-ring
     // band is one continuous helix now (rough and finish alike, review P1), so
     // its ring program is replaced by the helix. The along rows are still the
-    // base commit's bytes.
+    // base commit's bytes. #1190 re-recorded all four rows: the around finish
+    // reads a ball exactly on a square blank too, and both directions overrun
+    // the cylinder's own ends, as on a round bar.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'b7fea12dcc3c98c5' : '1c7492c5cba1e187',
+      direction === 'along' ? '8b5449e01fa9fbc9' : '17444b6066699268',
       `finish ${direction}: zero stock to leave is byte-identical`)
     // Recaptured for #1095: square around is unchanged (its stub never entered
     // the sampling mesh); square along carries the un-thickened wall now, so
@@ -1008,9 +1036,9 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     // Recaptured for #1103 slice ca-c: the square around finish's rings are
     // forward-only, so its positive-leave program moved with the zero-leave one.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? 'cda89c07cab2130f' : 'df7e7d6cd246a481',
+      direction === 'along' ? '36daca4dd4e8a473' : 'e373a84e248de33e',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
-    const first = outermost(finish, base.alongStart + BALL.radius)
+    const first = outermost(finish, base.alongStart)
     assert.ok(first <= modelRadius + leave + 0.03,
       `finish ${direction}: the outermost pass reaches model + stock to leave `
       + `(${first.toFixed(4)} <= ${(modelRadius + leave + 0.03).toFixed(4)})`)
@@ -1021,10 +1049,10 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     for (const move of finish.moves) {
       if (move.kind === 'rapid') continue
       for (const point of [move.from, move.to]) {
-        assert.ok(point.x - BALL.radius >= base.alongStart - 1e-9,
-          `finish ${direction}: the cutter body stays out of the lower retained stub at x ${point.x}`)
-        assert.ok(point.x + BALL.radius <= base.alongEnd + 1e-9,
-          `finish ${direction}: the cutter body stays out of the upper retained stub at x ${point.x}`)
+        assert.ok(point.x >= base.alongStart - 1e-9,
+          `finish ${direction}: the cutter centre stays inside the model's start at x ${point.x}`)
+        assert.ok(point.x <= base.alongEnd + 1e-9,
+          `finish ${direction}: the cutter centre stays inside the model's end at x ${point.x}`)
       }
     }
   }
@@ -1088,6 +1116,9 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
 // exact stub floor is the safety net, so the outermost ring already followed
 // the model. This locks that in -- the square blank is the behaviour the round
 // bar had to match -- and asserts the cutter body only touches the stub face.
+// #1190: the cylinder ends exactly at the band, so the around finish now
+// overruns both ends as a round bar does (#1155 rn-e): the outermost ring is the
+// band end itself, and the cutter centre still never passes the model's ends.
 {
   const stock = squareStock(8, 40, 'x')
   const pivot = barPivotZ(stock)
@@ -1111,7 +1142,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     }
     return radii
   }
-  for (const [end, along] of [['lower', 10 + BALL.radius], ['upper', 30 - BALL.radius]] as const) {
+  for (const [end, along] of [['lower', 10], ['upper', 30]] as const) {
     const radii = ringAt(along)
     assert.ok(radii.length > 0, `${end}: the outermost ring is emitted`)
     assert.ok(Math.max(...radii) <= modelRadius + cell + 1e-6,
@@ -1122,10 +1153,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
   for (const move of result.moves) {
     if (move.kind === 'rapid') continue
     for (const point of [move.from, move.to]) {
-      assert.ok(point.x - BALL.radius >= 10 - 1e-9,
-        `the cutter body stays out of the lower retained stub at x ${point.x}`)
-      assert.ok(point.x + BALL.radius <= 30 + 1e-9,
-        `the cutter body stays out of the upper retained stub at x ${point.x}`)
+      assert.ok(point.x >= 10 - 1e-9 && point.x <= 30 + 1e-9,
+        `the cutter centre stays inside the model's ends at x ${point.x}`)
     }
   }
 }

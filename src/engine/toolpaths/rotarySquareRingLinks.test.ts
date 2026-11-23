@@ -309,7 +309,11 @@ console.log('Testing that a square blank links whole and model-split rings at th
   // a whole cell past each sample now, so two of these boundaries no longer
   // clear the at-layer proof's own bound and keep their raised link instead (30),
   // and one transition that used to be wider than 45 degrees no longer is (1).
-  assert.equal(whole.length, 30, `whole-ring links (${whole.length})`)
+  // #1190 re-recorded the whole-ring count (30 -> 6): the around pass reads this
+  // square blank exactly, as a round bar, and more of its whole rings are helix
+  // bands now (helix moves 90 -> 260, cuts 1765 -> 711), so fewer single whole
+  // rings are left to link at the seam. The wide-turn count did not move.
+  assert.equal(whole.length, 6, `whole-ring links (${whole.length})`)
   assert.equal(wideTurns.length, 1, `wide transitions that keep their retract (${wideTurns.length})`)
   console.log(`  ${whole.length} whole-ring and ${split.length} split-ring links, `
     + `${helixMoves.size} helix moves; `
@@ -416,7 +420,10 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   // merge's trigger was narrowed to steps finer than the base angle grid; with
   // the merge switched off the count is still 65. A merged move stands at or
   // above both of the moves it replaces, never lower.
-  assert.equal(across.length, 60, `gate-gap links on the dense grid (${across.length})`)
+  // #1190 re-recorded it (60 -> 26): the around pass reads this square blank
+  // exactly, as a round bar, and more of its rings are helix bands now (helix
+  // moves 343 -> 708, cuts 2562 -> 1262), so fewer gate-gap transitions remain.
+  assert.equal(across.length, 26, `gate-gap links on the dense grid (${across.length})`)
   console.log(`  ${across.length} gate-gap links, widest ${widest.toFixed(2)} deg, `
     + `${wideGroups.filter((group) => group.length > 1).length} of them row-proven`)
 }

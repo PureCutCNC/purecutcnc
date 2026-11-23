@@ -329,14 +329,15 @@ function testRotaryAroundFinishSeesTheFin(): void {
   // At A = 0 the fin stands straight up on the sample line; the required tip is
   // its 10 mm top. Before #1050 the height map saw only the base and the ring
   // descended to 5 (the independent required tip was 10).
+  // #1190: a square blank's around finish is a continuous helix like a round
+  // bar's, so no cut runs along the bar at A0 any more; every cut **point** at
+  // A0 is checked instead.
   let seen = 0
   for (const move of result.moves) {
     if (move.kind !== 'cut') continue
-    const fromAngle = ((move.from.a ?? 0) % 360 + 360) % 360
-    const toAngle = ((move.to.a ?? 0) % 360 + 360) % 360
-    if (fromAngle > 1e-6 && fromAngle < 360 - 1e-6) continue
-    if (toAngle > 1e-6 && toAngle < 360 - 1e-6) continue
     for (const point of [move.from, move.to]) {
+      const angle = ((point.a ?? 0) % 360 + 360) % 360
+      if (angle > 1e-6 && angle < 360 - 1e-6) continue
       if (point.x < 2 || point.x > 18) continue
       seen += 1
       assert.ok(point.z - pivot >= 10 - 1e-6,

@@ -362,10 +362,9 @@ export interface ContinuousHelixInput {
    * ({@link exactHelixRow}) because a roughing layer after the first asks for
    * the same physical angles at the same poses again.
    *
-   * Absent (the default) keeps the conservative read and its map reuse: a
-   * square blank stays on it, because its helix rides the retained-corner rules
-   * the ring path built on that read (`stubFloor`, and the layer's material
-   * touch gate).
+   * Absent (the default) keeps the conservative read and its map reuse. Every
+   * around pass reads exactly since #1190, on either blank; the square blank's
+   * stub floor and material gate are closed-form and apply on top of it.
    */
   readonly readExactRows?: boolean
   /**

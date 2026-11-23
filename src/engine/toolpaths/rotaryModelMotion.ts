@@ -319,6 +319,38 @@ export function ringRuns(samples: readonly (ToolpathPoint | null)[]): RotaryRun[
   return runs
 }
 
+/** The band ends an operation cuts past onto the plain bar (#1155 rn-e). */
+export interface RotaryBandOverrun {
+  readonly start: boolean
+  readonly end: boolean
+}
+
+export const NO_BAND_OVERRUN: RotaryBandOverrun = { start: false, end: false }
+
+/**
+ * Which retained square stubs an operation must stay off (#1190).
+ *
+ * A stub stands beyond each band end the cut range does not already meet at the
+ * bar's end. An end the operation **overruns** (#1155 rn-e: the target itself
+ * ends there, which an around pass on a square blank now honours as a round bar
+ * does) has no stub, so its closed-form floor does not apply. Both are `false`
+ * on a round bar, whose stubs never carry a floor.
+ */
+export function squareRetainedStubs(
+  stock: BarStock,
+  params: Pick<RotaryFinishParams, 'alongStart' | 'alongEnd'>,
+  overrun: RotaryBandOverrun = NO_BAND_OVERRUN,
+): { lowerStub: boolean; upperStub: boolean } {
+  if (!isSquareStock(stock)) return { lowerStub: false, upperStub: false }
+  const bounds = getStockBounds(stock)
+  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
+  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
+  return {
+    lowerStub: params.alongStart > lower && !overrun.start,
+    upperStub: upper > params.alongEnd && !overrun.end,
+  }
+}
+
 /**
  * The between-sample safety net for a square blank's exact retained-stub floor
  * (#1016 C2-F6): a predicate that forces the emitter's stepped move on a
@@ -352,13 +384,9 @@ export function retainedStubStepForced(
   stock: BarStock,
   params: RotaryFinishParams,
   tool: NormalizedTool,
+  overrun: RotaryBandOverrun = NO_BAND_OVERRUN,
 ): ((from: ToolpathPoint, to: ToolpathPoint) => boolean) | undefined {
-  if (!isSquareStock(stock)) return undefined
-  const bounds = getStockBounds(stock)
-  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-  const lowerStub = params.alongStart > lower
-  const upperStub = upper > params.alongEnd
+  const { lowerStub, upperStub } = squareRetainedStubs(stock, params, overrun)
   if (!lowerStub && !upperStub) return undefined
   const pivot = barPivotZ(stock)
   const alongOf = (point: ToolpathPoint): number => stock.axis === 'x' ? point.x : point.y
@@ -404,15 +432,11 @@ export function continuousHelixStubFloor(
   stock: BarStock,
   tool: NormalizedTool,
   params: RotaryFinishParams,
+  overrun: RotaryBandOverrun = NO_BAND_OVERRUN,
 ): ((along: number, angleDeg: number) => number) | undefined {
-  if (!isSquareStock(stock)) return undefined
-  const bounds = getStockBounds(stock)
-  const lower = stock.axis === 'x' ? bounds.minX : bounds.minY
-  const upper = stock.axis === 'x' ? bounds.maxX : bounds.maxY
-  // No stub exists at an end the cut range already meets; the ring path's own
-  // `stubFloor` draws the same line (`completeRotaryTargets`).
-  const lowerStub = params.alongStart > lower
-  const upperStub = upper > params.alongEnd
+  // No stub exists at an end the cut range already meets or overruns; the ring
+  // path's own `stubFloor` draws the same line (`completeRotaryTargets`).
+  const { lowerStub, upperStub } = squareRetainedStubs(stock, params, overrun)
   if (!lowerStub && !upperStub) return undefined
   return (along: number, angleDeg: number): number => {
     let floor = Number.NEGATIVE_INFINITY
