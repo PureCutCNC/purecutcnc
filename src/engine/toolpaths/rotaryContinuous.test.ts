@@ -1268,6 +1268,8 @@ interface WalkRecord {
   readonly helices: string[]
   readonly rings: number[]
   readonly spends: ContinuousHelixSpend[]
+  /** Whether each attempt was asked to keep the refinement reserve (#1237). */
+  readonly reserves: boolean[]
   readonly result: ReturnType<typeof walkContinuousBand>
 }
 
@@ -1282,11 +1284,13 @@ function walkBand(
   const helices: string[] = []
   const rings: number[] = []
   const spends: ContinuousHelixSpend[] = []
+  const reserves: boolean[] = []
   const result = walkContinuousBand({
     along,
-    attempt: (from, to, spent) => {
+    attempt: (from, to, spent, reserve) => {
       spends.push(spent)
-      return attempt(from, to, spent)
+      reserves.push(reserve)
+      return attempt(from, to, spent, reserve)
     },
     emitHelix: (helix) => {
       order.push(`helix:${helix.turns}`)
@@ -1298,7 +1302,7 @@ function walkBand(
     },
     ...extra,
   }, fromRing, toRing)
-  return { order, helices, rings, spends, result }
+  return { order, helices, rings, spends, reserves, result }
 }
 
 // ── a middle feature: helix - rings - helix, on complete boundary rings ────
@@ -1366,6 +1370,39 @@ function walkBand(
   assert.equal(regionRefused.helices.length, 0, 'a helix the caller will not cut keeps rings')
   assert.deepEqual(regionRefused.rings, band, 'the whole range keeps its rings')
   console.log('  ca-g refusals: cancelled / spent / uncovered / ineligible / uncovered case all keep rings')
+}
+
+// ── #1237: a band refused on its price alone is split until it fits ────────
+{
+  // Eleven rings; a range of more than three rings is over budget before it
+  // reads anything (no samples, rows or work), as a long busto band is.
+  const along = Array.from({ length: 11 }, (_, i) => 2 * i)
+  const priced = (from: number, to: number): ContinuousHelix => (
+    to - from + 1 > 3
+      ? { ...fakeHelix(to - from, 0, [], { exhausted: true }), samples: 0, rows: 0, rasterWork: 0 }
+      : fakeHelix(to - from, 7)
+  )
+  const record = walkBand(along, priced)
+  // 0-10 -> 0-5 / 6-10 -> 0-2, 3-5 / 6-8, 9-10: every piece a helix.
+  assert.deepEqual(record.order, ['helix:2', 'helix:2', 'helix:2', 'helix:1'],
+    `a priced refusal splits until each piece fits (got ${record.order.join(', ')})`)
+  assert.deepEqual(record.rings, [], 'no ring is cut where a piece fits')
+  assert.deepEqual(record.reserves, [false, true, true, true, true, true, true],
+    'the whole band is priced as before; every piece keeps the refinement reserve')
+  assert.deepEqual(record.spends.map((spent) => spent.work), [0, 0, 0, 0, 0, 0, 0],
+    'each piece has a budget of its own')
+  assert.equal(record.result.spent.work, 28, 'the walk still reports everything it spent')
+
+  // A piece too short to split (three rings or fewer) keeps its rings when it
+  // is still priced over budget, and a refusal after reading is not split.
+  const short = walkBand(along.slice(0, 3), () => ({
+    ...fakeHelix(2, 0, [], { exhausted: true }), samples: 0, rows: 0, rasterWork: 0,
+  }))
+  assert.deepEqual(short.rings, [0, 1, 2], 'a short over-budget band keeps its rings')
+  const spentRefusal = walkBand(along, () => fakeHelix(1, 10, [], { exhausted: true }))
+  assert.deepEqual(spentRefusal.rings, along.map((_, i) => i), 'a refusal after reading keeps every ring')
+  assert.equal(spentRefusal.reserves.length, 1, 'and is attempted once')
+  console.log(`  #1237 price split: ${record.order.join(' ')}`)
 }
 
 // ── the recursion is bounded, and a real budget stops the split ────────────

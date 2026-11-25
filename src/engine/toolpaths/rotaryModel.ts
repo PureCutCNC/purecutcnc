@@ -1851,7 +1851,9 @@ function roughFromTargets(
             // band's rings, so the layer's air skip is never relaxed.
             const walked = walkContinuousBand({
               along,
-              attempt: (from: number, to: number, spent: ContinuousHelixSpend): ContinuousHelix | null =>
+              attempt: (
+                from: number, to: number, spent: ContinuousHelixSpend, reserveRefinement: boolean,
+              ): ContinuousHelix | null =>
                 roughBand === null ? null : buildContinuousHelix({
                   ...roughBand,
                   band: { start: along[from], end: along[to] },
@@ -1876,6 +1878,7 @@ function roughFromTargets(
                       : {}),
                   },
                   spent,
+                  ...(reserveRefinement ? { reserveRefinement } : {}),
                 }),
               accept: (helix) => region === null
                 || continuousPathInsideRegion(region, stock, helix.points, angleBase),
