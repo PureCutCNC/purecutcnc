@@ -927,6 +927,11 @@ export interface Operation {
    *  around it (a ring at each along position, A turning). Missing reads as
    *  `'along'`, which is what a saved operation was cut with (#1045 slice A). */
   rotaryPassDirection?: RotaryPassDirection
+  /** Whether a rotary rough/finish around the bar may cut a band of rings as
+   *  one continuous helix, read exactly between the rings (#1237). Missing or
+   *  false cuts rings only, which is what a saved operation gets; the exact
+   *  helix read is slower to generate. Ignored for passes along the bar. */
+  rotaryContinuousHelix?: boolean
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

@@ -79,6 +79,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   rotaryChuckSupport: 'compare',
   rotaryTailSupport: 'compare',
   rotaryPassDirection: 'compare',
+  rotaryContinuousHelix: 'compare',
   plasmaSide: 'compare',
   plasmaReverseDirection: 'compare',
   plasmaLeadIn: 'compare',

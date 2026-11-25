@@ -1919,6 +1919,16 @@ export function CAMPanel({
           />
         </label>
       ),
+      rotaryContinuousHelix: () => (
+        <label className="properties-check" title={camT('cam.rotary.continuousHelixTooltip')}>
+          <input
+            type="checkbox"
+            checked={operation.rotaryContinuousHelix ?? false}
+            onChange={(event) => updateOperation(operation.id, { rotaryContinuousHelix: event.target.checked })}
+          />
+          <span>{camT('cam.rotary.continuousHelix')}</span>
+        </label>
+      ),
       stockToLeaveAxial: () => (
         <label className="properties-field">
           <span>{camT('cam.operation.stockToLeaveAxial')}</span>

@@ -670,6 +670,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.rotary.passesTooltip': "Le long de la barre : les passes parcourent la longueur de la barre puis avancent autour. Autour de la barre : la barre tourne sous l'outil à une position, puis avance le long — plus lisse sur les formes tournées.",
   'cam.rotary.passAlong': 'Le long de la barre',
   'cam.rotary.passAround': 'Autour de la barre',
+  'cam.rotary.continuousHelix': 'Hélice continue',
+  'cam.rotary.continuousHelixTooltip': "Autour de la barre : usine les suites d'anneaux complets en une seule hélice continue. Plus lent : lit le modèle exactement entre les anneaux.",
   'cam.rotary.stepoverAlongTooltip': 'Le long de la barre : le recouvrement est la distance entre les passes autour de la barre.',
   'cam.rotary.stepoverAroundTooltip': 'Autour de la barre : le recouvrement est la distance entre les anneaux le long de la barre.',
   'cam.opDesc.rotaryRough.title': 'Ébauche rotative',

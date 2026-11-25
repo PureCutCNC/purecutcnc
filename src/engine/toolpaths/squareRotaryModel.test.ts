@@ -952,6 +952,8 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     const withLeave = generateRotaryRough('leave', mesh, stock, BALL,
       { ...base, stockToLeave: leave, passDirection: direction }, {})
     const roughHash = createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16)
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings.
     assert.equal(roughHash,
       // #1098: square along rough layers alternate direction. #1117 rl-b
       // re-recorded the around row: its corner arcs now link at the layer as
@@ -975,7 +977,7 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
       // #1190 re-recorded both rows: an around pass reads a ball exactly on a
       // square blank too, as on a round bar, and both directions overrun the
       // cylinder's own ends.
-      direction === 'along' ? '070d10cdda1cc920' : '259b79474ef0f8f8',
+      direction === 'along' ? '070d10cdda1cc920' : 'be702949801bd186',
       `rough ${direction}: zero stock to leave is byte-identical`)
     // #1190: the cylinder ends exactly at the band, so both directions overrun
     // both ends as a round bar does (#1155 rn-e) and the outermost pass is the
@@ -1027,16 +1029,20 @@ function distinctAngles(moves: readonly ToolpathMove[]): number {
     // base commit's bytes. #1190 re-recorded all four rows: the around finish
     // reads a ball exactly on a square blank too, and both directions overrun
     // the cylinder's own ends, as on a round bar.
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings, and its links read exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '8b5449e01fa9fbc9' : '17444b6066699268',
+      direction === 'along' ? '8b5449e01fa9fbc9' : '91272fc5f2219334',
       `finish ${direction}: zero stock to leave is byte-identical`)
     // Recaptured for #1095: square around is unchanged (its stub never entered
     // the sampling mesh); square along carries the un-thickened wall now, so
     // its old value (which lifted the outermost pass to ~4.42) moved.
     // Recaptured for #1103 slice ca-c: the square around finish's rings are
     // forward-only, so its positive-leave program moved with the zero-leave one.
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings, and its links read exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '36daca4dd4e8a473' : 'e373a84e248de33e',
+      direction === 'along' ? '36daca4dd4e8a473' : 'a986548a17159315',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart)
     assert.ok(first <= modelRadius + leave + 0.03,

@@ -215,6 +215,8 @@ console.log('Testing that a square blank links whole and model-split rings at th
   const rough = generateRotaryRough('square-ring-links', shaped(stock, radiusAt, 0, length, 80, 240), stock, BALL2, {
     stepover: 0.6, sampleSpacing: 0.6, stockToLeave: 0, alongStart: 0, alongEnd: length,
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.25, stepdown: 1.5, passDirection: 'around',
+    // #1237: this block records what the helix leaves, so it asks for one.
+    continuousHelix: true,
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
   const ringAlong = [...new Set(rough.moves
@@ -340,6 +342,8 @@ console.log('Testing that a spent at-layer budget falls back to the unchanged ra
   const rough = generateRotaryRough('at-layer-budget', model, stock, BALL4, {
     stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 2, alongEnd: length - 2,
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.5, stepdown: 2.5, passDirection: 'around',
+    // #1237: the block below describes the helixed layers, so it asks for them.
+    continuousHelix: true,
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
   const layers = layersOf(rough.moves)
@@ -385,6 +389,8 @@ console.log('Testing that a fine angular grid links the gate gap without samplin
   const rough = generateRotaryRough('dense-grid', shaped(stock, lobeRadiusAt(length, 60), 0, length, 80, 240), stock, BALL2, {
     stepover: 0.6, sampleSpacing: 0.1, stockToLeave: 0, alongStart: 0, alongEnd: length,
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.1, stepdown: 1.5, passDirection: 'around',
+    // #1237: the counts below were recorded beside the helix bands.
+    continuousHelix: true,
   }, {})
   assert.deepEqual(rough.warnings, [], 'the rough has no warning')
   // #1103 ca-j: the fixture's whole-ring bands are helices, so a helix move is

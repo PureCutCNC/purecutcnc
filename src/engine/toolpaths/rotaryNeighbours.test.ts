@@ -525,8 +525,9 @@ check('a #1096 include region over the Hex does not uncover the Hex', () => {
 check('the shank band helices while the head band falls back to rings', () => {
   const { project, turnId } = boltFixture()
   const stock = project.stock as BarStock
+  // #1237: the helix is the operation's choice, and this check is about it.
   const operation = rotaryOperation(project, [turnId], 'rotary_rough', {
-    toolRef: 'flat', rotaryPassDirection: 'around',
+    toolRef: 'flat', rotaryPassDirection: 'around', rotaryContinuousHelix: true,
   })
   const result = generate(project, operation)
   const alongOf = (point: { x: number; y: number }) => (stock.axis === 'x' ? point.x : point.y)
@@ -693,7 +694,10 @@ check('a model outside the target\u2019s along range changes nothing', () => {
   // 1344 -> 1231 for #1185 slice R3: rings keep their own chords where another
   // ring needed a midpoint, so fewer collinear cuts are emitted. The control
   // below -- the Hex moved clear is byte-identical to no Hex at all -- holds.
-  assert.equal(withNeighbour.length, 1231, 'the overlapping neighbour moves the output: the measured bolt run')
+  // 1231 -> 4077 for #1237: the helix is off unless the operation asks for it,
+  // so the shank is cut as rings, each its own run of chords and links, where
+  // one merged helix move per band stood before.
+  assert.equal(withNeighbour.length, 4077, 'the overlapping neighbour moves the output: the measured bolt run')
   // Now move the Hex clear of the Turn's cut range: the retained bar stubs
   // already stand there, so the operation must be byte-identical to the run
   // with no neighbour at all.

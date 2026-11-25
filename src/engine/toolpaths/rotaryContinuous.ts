@@ -147,6 +147,7 @@ import {
   cachedAngleKey,
   createRotarySamplingPrep,
   rotaryAngleRowWork,
+  rotaryExactStretchWork,
   sampleAnglesWithPrep,
 } from './rotarySampling'
 import type { RotarySamplingPrep } from './rotarySampling'
@@ -785,12 +786,18 @@ function sampleHelixRows(
   // the `'read-write'` prep below), and a price must know which rows are free.
   const readCache = prep.angleMaps !== 'off'
   const remaining = budget.work - spent.work - sampling.work
+  // #1237: an exact row turns only the facets its own stretch of the bar
+  // reaches (`exactFootprintTips` with the row's poses as its columns), so it is
+  // priced and charged by that count, not by every facet at its angle. The disc
+  // is the read's own: the cutter's radius plus the flat's exact pad.
+  const exactRadius = prep.tool.radius
+    + (prep.tool.type === 'ball_endmill' ? 0 : (input.exactTipPad ?? 0))
   let roundWork = 0
   for (const row of rows) {
     const angle = rowAngle(startAngle, row, phaseScale)
     const price = exactRows
       ? (exactHelixRow(prep, angle, input.stockToLeave, row.along) === undefined
-        ? rotaryAngleRowWork(prep, angle, false)
+        ? rotaryExactStretchWork(prep, angle, row.along, exactRadius)
         : 0)
       : rotaryAngleRowWork(prep, angle, readCache)
     roundWork += price
@@ -840,10 +847,14 @@ function sampleHelixRows(
         [angle],
         input.warnings,
         input.shouldStop ? { shouldStop: input.shouldStop } : {},
+        // #1237: every pose of the row is wanted, which bounds the exact read
+        // to the facets the row's stretch reaches; the values are unchanged.
+        exactRows ? [Array.from({ length: row.along.length }, (_, i) => i)] : undefined,
       )
       if (!sampled.valid) return 'exhausted'
       if (sampled.stopped) return 'stopped'
       sampling.reused += sampled.reused
+      // #1237: an exact row reports the facets its stretch-limited read turned.
       sampling.work += sampled.rasterWork
       // The row arrives lifted by the angle's conservative cell rise, exactly as
       // the ring grid reads it -- or, in the exact mode, as the footprint

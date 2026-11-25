@@ -526,6 +526,11 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
         label: translate('cam.rotary.passes'),
         value: translate(operation.rotaryPassDirection === 'around' ? 'cam.rotary.passAround' : 'cam.rotary.passAlong'),
       },
+      // #1237: only an around pass offers the helix, and the sheet names it only
+      // when it is on, as it does every other opt-in path setting.
+      ...(operation.rotaryPassDirection === 'around' && operation.rotaryContinuousHelix === true
+        ? [{ label: translate('cam.rotary.continuousHelix'), value: translate('booklet.value.enabled') }]
+        : []),
       { label: translate('cam.rotary.chuckSupport'), value: lengthWithUnits(operation.rotaryChuckSupport ?? 0, units) },
       { label: translate('cam.rotary.tailSupport'), value: lengthWithUnits(operation.rotaryTailSupport ?? 0, units) },
     )

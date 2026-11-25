@@ -467,7 +467,7 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   // `RING_MESH` is a surface of revolution under every angle, so the whole band
   // is one uninterrupted helix: A never reverses, and the two complete
   // boundary rings are the only turning cuts that keep their along coordinate.
-  const result = generateRotaryFinish('rings', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around' }, {})
+  const result = generateRotaryFinish('rings', RING_MESH, RING_STOCK, FLAT, { ...RING_PARAMS, passDirection: 'around', continuousHelix: true }, {})
   assert.deepEqual(result.warnings, [], 'the around finish has no warning')
   const turning: ToolpathMove[] = []
   let reversals = 0
@@ -521,7 +521,7 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   // as the ring fallback does; the ring shape itself is proved on the taper below.
   const SQUARE_RING_STOCK = squareStock(40, 20, 'x', { x: 10, y: 7 })
   const result = generateRotaryFinish('rings-square', RING_MESH, SQUARE_RING_STOCK, FLAT, {
-    ...RING_PARAMS, passDirection: 'around',
+    ...RING_PARAMS, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the square around finish has no warning')
   for (const move of result.moves) {
@@ -560,7 +560,7 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
     radius: 4 + 0.5 * s / 64,
   })), 64)
   const result = generateRotaryRough('rings-rough', taper, RING_STOCK, FLAT, {
-    ...RING_PARAMS, stepdown: 3, passDirection: 'around',
+    ...RING_PARAMS, stepdown: 3, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the around rough has no warning')
   // #1103 slice ca-d: commanded A is one-way and never wrapped. It grows past
@@ -611,7 +611,7 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   const model = revolved(stock, [{ along: 0, radius: 5 }, { along: 20, radius: 5 }], 64)
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryFinish('round-model-only', model, stock, FLAT, params, {})
   assert.deepEqual(result.warnings, [], 'the model-only round finish has no warning')
@@ -669,7 +669,7 @@ function aroundAngleIntervals(radius: number, sampleSpacing: number, tolerance =
   ], { axis: SQUARE_RING_STOCK.axis === 'x' ? 'y' : 'x', period: circumference })
   assert.ok(region, 'the ring-fallback mask builds')
   const result = generateRotaryFinish('links', RING_MESH, SQUARE_RING_STOCK, FLAT, {
-    ...RING_PARAMS, passDirection: 'around', region,
+    ...RING_PARAMS, passDirection: 'around', continuousHelix: true, region,
   }, {})
   assert.deepEqual(result.warnings, [], 'the linked finish has no warning')
   const rapid = result.moves.filter((move) => move.kind === 'rapid')
@@ -738,7 +738,7 @@ console.log('Testing that a continuous helix resolves a ridge between two rings.
   ], 128)
   const finish = generateRotaryFinish('ridge-link', model, stock, ball, {
     stepover: 1.49, sampleSpacing: 2, stockToLeave: 0, alongStart: 5, alongEnd: 25,
-    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around', continuousHelix: true,
   }, {})
   // A Ø200 bar's height map is reduced to its budget; that is a resolution
   // advisory, not a refusal, and the ridge below still resolves.
@@ -837,7 +837,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   ], 128)
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('rough-clamp', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the clamp rough has no warning')
@@ -869,7 +869,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const model = revolved(stock, [{ along: 0, radius: 5 }, { along: 20, radius: 5 }], 64)
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('rough-links', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the linked rough has no warning')
@@ -922,7 +922,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   ], 128)
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('ridge-link', model, stock, ball, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the ridge rough has no warning')
@@ -985,7 +985,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const model: RotaryModelMesh = { positions, index }
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('rough-gap', model, stock, FLAT, { ...params, stepdown: 3 }, {})
   assert.deepEqual(result.warnings, [], 'the gap rough has no warning')
@@ -1024,7 +1024,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const model: RotaryModelMesh = { positions, index }
   const params = {
     stepover: 0.25, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.5, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('rough-gap-fine', model, stock, FLAT, { ...params, stepdown: 2 }, {})
   assert.deepEqual(result.warnings, [], 'the fine-step gap rough has no warning')
@@ -1073,7 +1073,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const model = prism(stock, crossSection, [0, 20])
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 20,
-    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.05, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('rough-split-rings', model, stock, FLAT, { ...params, stepdown: 2 }, {})
   assert.deepEqual(result.warnings, [], 'the split-ring rough has no warning')
@@ -1160,7 +1160,7 @@ function firstLayerRetract(moves: readonly ToolpathMove[]): number {
   const model: RotaryModelMesh = { positions: new Float32Array(positions), index: new Uint32Array(index) }
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 0, alongEnd: 16,
-    safeRadius: 30, requestedCellSize: 0.1, passDirection: 'around' as const,
+    safeRadius: 30, requestedCellSize: 0.1, passDirection: 'around' as const, continuousHelix: true,
   }
   const result = generateRotaryRough('ca-f-forward-ring-links', model, stock, BALL, { ...params, stepdown: 2 }, {})
   assert.deepEqual(result.warnings, [], 'the seam-groove rough warns about nothing')
@@ -1455,7 +1455,7 @@ function propertyAllowance(tool: NormalizedTool): number {
       alongEnd: PROP_LENGTH,
       safeRadius: 20,
       requestedCellSize: PROP_CELL,
-      passDirection: 'around',
+      passDirection: 'around', continuousHelix: true,
     }, {})
     assert.deepEqual(result.warnings, [], `seed ${seed}: no warning`)
     const allowance = propertyAllowance(tool)
@@ -1596,7 +1596,7 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
     alongEnd: 15 * scale,
     safeRadius: 30 * scale,
     requestedCellSize: 0.2 * scale,
-    passDirection: 'around',
+    passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], `${label}: the chiral finish has no warning`)
   assert.ok(result.moves.length > 0, `${label}: the chiral finish emits motion`)
@@ -1761,7 +1761,7 @@ const HEX_SECTION = Array.from({ length: 6 }, (_, i): readonly [number, number] 
   const mesh = prism(HEX_STOCK, HEX_SECTION, [10, 30])
   const result = generateRotaryFinish('hex', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the hex finish has no warning')
   const points = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
@@ -1819,7 +1819,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = prism(HEX_STOCK, HEX_SECTION, [10, 30])
   const result = generateRotaryFinish('hex-steps', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', continuousHelix: true,
   }, {})
   const cuts = result.moves.filter((move) => move.kind === 'cut')
   const vertical = cuts.filter((move) => Math.abs(move.to.z - move.from.z) > 1e-9
@@ -1846,7 +1846,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = prism(HEX_STOCK, bumpSection, [10, 30])
   const result = generateRotaryFinish('bump', mesh, HEX_STOCK, { ...BALL, radius: 0.25, diameter: 0.5 }, {
     stepover: 20, sampleSpacing: 1, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', continuousHelix: true,
   }, {})
   const cuts = result.moves.filter((move) => move.kind === 'cut')
   const pivot = barPivotZ(HEX_STOCK)
@@ -1871,7 +1871,7 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   // A finish no longer reads a stepdown at all (2026-10-22 decision), so the
   // comparison is purely the direction field.
   const around = generateRotaryFinish('change', mesh, DIGEST_STOCK, FLAT,
-    { ...params, passDirection: 'around' }, {})
+    { ...params, passDirection: 'around', continuousHelix: true }, {})
   assert.ok(along.moves.length > 0 && around.moves.length > 0, 'both directions cut')
   assert.notDeepEqual(around.moves, along.moves, 'around and along produce different motion')
   // #1103 slice ca-c: an around pass turns one way and A grows across the
@@ -1891,10 +1891,10 @@ function stepCheck(move: ToolpathMove, pivot: number): { rise: number; spacing: 
   const mesh = prism(DIGEST_SQUARE, SQUARE_SECTION, [10, 30])
   const params = { ...RING_PARAMS, alongStart: 10, alongEnd: 30 }
   const rough = generateRotaryRough('square-around', mesh, DIGEST_SQUARE, FLAT, {
-    ...params, stepdown: 3, passDirection: 'around',
+    ...params, stepdown: 3, passDirection: 'around', continuousHelix: true,
   }, {})
   const finish = generateRotaryFinish('square-around', mesh, DIGEST_SQUARE, FLAT, {
-    ...params, passDirection: 'around',
+    ...params, passDirection: 'around', continuousHelix: true,
   }, {})
   for (const [label, result] of [['finish', finish], ['rough', rough]] as const) {
     assert.ok(result.moves.length > 0, `${label} square around emits motion`)
@@ -2090,7 +2090,7 @@ function checkLayering(label: string, points: readonly LayeredPoint[]): void {
 {
   const pivot = barPivotZ(LAYER_STOCK)
   const result = generateRotaryRough('layer-around', LAYER_MESH, LAYER_STOCK, FLAT, {
-    ...LAYER_PARAMS, stepdown: LAYER_STEPDOWN, passDirection: 'around',
+    ...LAYER_PARAMS, stepdown: LAYER_STEPDOWN, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the around layering rough has no warning')
   const points = orderedCutPoints(result.moves)
@@ -2172,7 +2172,7 @@ console.log('Testing the retained round ends on around and along passes...')
   // lands at 20.6667, the same 0.3333 mm overlap). Both are checked so the
   // along half of the fix is not carried by the around half.
   const cases = [
-    { label: 'around', passDirection: 'around' as const, sampleSpacing: 0.75 },
+    { label: 'around', passDirection: 'around' as const, continuousHelix: true, sampleSpacing: 0.75 },
     { label: 'along', passDirection: undefined, sampleSpacing: 0.75 },
     { label: 'along at 2.9', passDirection: undefined, sampleSpacing: 2.9 },
   ]
@@ -2230,7 +2230,7 @@ console.log('Testing the around rough on a band with no model under the tool...'
   }
   for (const direction of ['around', 'along'] as const) {
     const result = direction === 'around'
-      ? generateRotaryRough('nan-fallback', model, stock, FLAT, { ...params, passDirection: 'around' }, {})
+      ? generateRotaryRough('nan-fallback', model, stock, FLAT, { ...params, passDirection: 'around', continuousHelix: true }, {})
       : generateRotaryRough('nan-fallback', model, stock, FLAT, params, {})
     assert.deepEqual(result.warnings, [], `${direction}: the missing-model rough has no warning`)
     const cuts = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
@@ -2322,7 +2322,7 @@ console.log('Testing the emitted around sweep on the hex prism...')
   const mesh = prism(HEX_STOCK, section, [10, 30])
   const reference = generateRotaryFinish('hex-cap', mesh, HEX_STOCK, BALL, {
     stepover: 20, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 10, alongEnd: 30,
-    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: CELL, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(reference.warnings, [], 'the capped hex finish has no warning')
 
@@ -2406,7 +2406,7 @@ console.log('Testing the angle cap in inch units...')
   }
   const result = generateRotaryFinish('inch-cap', mesh, stock, tool, {
     stepover: 1, sampleSpacing: 0.06, stockToLeave: 0, alongStart: 0, alongEnd: 4,
-    safeRadius: 2, requestedCellSize: 0.005, passDirection: 'around',
+    safeRadius: 2, requestedCellSize: 0.005, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the inch around finish has no warning')
   const angles = [...new Set(result.moves.flatMap((move) => [angleOf(move.from), angleOf(move.to)]))].sort((a, b) => a - b)

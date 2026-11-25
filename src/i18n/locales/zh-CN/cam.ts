@@ -738,6 +738,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.rotary.passesTooltip': '沿棒料：刀具沿棒料长度走刀，并绕棒料步进。绕棒料：棒料在同一位置旋转，刀具在其下方切削，然后沿棒料步进——车削形状更光顺。',
   'cam.rotary.passAlong': '沿棒料',
   'cam.rotary.passAround': '绕棒料',
+  'cam.rotary.continuousHelix': '连续螺旋',
+  'cam.rotary.continuousHelixTooltip': '绕棒料：将连续的完整环切合并为一条连续螺旋。较慢：在环之间精确读取模型。',
   'cam.rotary.stepoverAlongTooltip': '沿棒料：步距是绕棒料方向相邻刀路之间的距离。',
   'cam.rotary.stepoverAroundTooltip': '绕棒料：步距是沿棒料方向相邻圆环之间的距离。',
   'cam.opDesc.rotaryRough.title': '旋转粗加工',

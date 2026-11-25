@@ -1532,7 +1532,9 @@ export function runRotaryAngleJob(
     // is skipped. The row is the same; only the wasted map is gone.
     if (prep.exactTipRows === true) {
       const row = new Float32Array(along.length)
-      exactFootprintTips(row, prep, plan, subset, candidates, cos, sin, job.columns)
+      // #1237: an exact row's work is the facets it turns -- every candidate,
+      // or only those its wanted stretch reaches (`rotaryExactStretchWork`).
+      rasterWork = exactFootprintTips(row, prep, plan, subset, candidates, cos, sin, job.columns)
       return { index: job.index, row, lift: 0, warnings: angleWarnings, reused: false, rasterWork }
     }
     const buildOptions = {
@@ -1684,7 +1686,7 @@ function exactFootprintTips(
   sin: number,
   /** #1185 R3: read only these ring positions; the rest of `row` is `NaN`. */
   columns?: readonly number[],
-): void {
+): number {
   const { mesh, stock, tool, along, pivot } = prep
   const positions = mesh.positions
   const index = mesh.index
@@ -1734,16 +1736,12 @@ function exactFootprintTips(
   let wantedHigh = Number.POSITIVE_INFINITY
   if (columns !== undefined) {
     row.fill(NaN)
-    wantedLow = Number.POSITIVE_INFINITY
-    wantedHigh = Number.NEGATIVE_INFINITY
-    for (const column of columns) {
-      if (along[column] < wantedLow) wantedLow = along[column]
-      if (along[column] > wantedHigh) wantedHigh = along[column]
-    }
-    const slack = 1e-9 * (1 + Math.abs(wantedLow) + Math.abs(wantedHigh) + radius)
-    wantedLow -= radius + slack
-    wantedHigh += radius + slack
+    const stretch = exactStretchWindow(along, columns, radius)
+    wantedLow = stretch.low
+    wantedHigh = stretch.high
   }
+  // #1237: the facets this read turns, which is the row's raster work.
+  let skipped = 0
   for (let s = 0; s < count; s++) {
     const offset = subset[s]
     let lo = Number.POSITIVE_INFINITY
@@ -1758,6 +1756,7 @@ function exactFootprintTips(
       if (Math.max(a0, a1, a2) < wantedLow || Math.min(a0, a1, a2) > wantedHigh) {
         acrossMin[s] = Number.POSITIVE_INFINITY
         acrossMax[s] = Number.POSITIVE_INFINITY
+        skipped++
         continue
       }
     }
@@ -1966,6 +1965,7 @@ function exactFootprintTips(
     }
     row[i] = best === Number.NEGATIVE_INFINITY ? NaN : best - pivot
   }
+  return count - skipped
 }
 
 
@@ -2140,6 +2140,106 @@ export function rotaryAngleRowWork(
     ]) {
       const base = bucket * bucketWords
       for (let word = 0; word < bucketWords; word++) count += popcount32(bucketBits[base + word])
+    }
+  }
+  return count
+}
+
+/**
+ * The along stretch an exact read of `columns` reaches (#1185 R3): from the
+ * first wanted position's footprint to the last one's, widened by far more than
+ * rounding. A facet wholly outside it misses every wanted disc, so the exact
+ * read leaves it unturned and {@link rotaryExactStretchWork} does not count it.
+ * Both read the stretch here, so the price and the read cannot drift apart.
+ */
+export function exactStretchWindow(
+  along: readonly number[],
+  columns: readonly number[],
+  radius: number,
+): { readonly low: number; readonly high: number } {
+  let low = Number.POSITIVE_INFINITY
+  let high = Number.NEGATIVE_INFINITY
+  for (const column of columns) {
+    if (along[column] < low) low = along[column]
+    if (along[column] > high) high = along[column]
+  }
+  const slack = 1e-9 * (1 + Math.abs(low) + Math.abs(high) + radius)
+  return { low: low - radius - slack, high: high + radius + slack }
+}
+
+/** #1237: each triangle's `[min, max]` along the bar, per mesh and axis. */
+const triangleAlongSpans = new WeakMap<RotaryModelMesh, { readonly x?: Float64Array; readonly y?: Float64Array }>()
+
+/**
+ * Every triangle's along range, two numbers per triangle, built once per mesh
+ * and bar axis (#1237). A facet's place along the bar does not depend on the
+ * turn, so a stretch price is a bucket walk and a range test with no vertex
+ * reads.
+ */
+function triangleAlongSpan(mesh: RotaryModelMesh, axis: 'x' | 'y'): Float64Array {
+  const known = triangleAlongSpans.get(mesh)
+  const cached = known?.[axis]
+  if (cached !== undefined) return cached
+  const { positions, index } = mesh
+  const alongAxis = axis === 'x' ? 0 : 1
+  const spans = new Float64Array((index.length / 3) * 2)
+  for (let t = 0; t * 3 < index.length; t++) {
+    const a0 = positions[index[t * 3] * 3 + alongAxis]
+    const a1 = positions[index[t * 3 + 1] * 3 + alongAxis]
+    const a2 = positions[index[t * 3 + 2] * 3 + alongAxis]
+    spans[t * 2] = Math.min(a0, a1, a2)
+    spans[t * 2 + 1] = Math.max(a0, a1, a2)
+  }
+  triangleAlongSpans.set(mesh, { ...known, [axis]: spans })
+  return spans
+}
+
+/**
+ * The candidates an exact read of one angle at the positions `along` actually
+ * turns (#1237): the angle's candidate list -- `always` and both buckets, the
+ * list `runRotaryAngleJob` gathers, repeats included -- less every facet wholly
+ * outside the positions' stretch ({@link exactStretchWindow}), which
+ * `exactFootprintTips` skips before turning it. `radius` is the read's disc:
+ * the cutter's radius, plus the flat's exact pad.
+ *
+ * The whole-angle price (`rotaryAngleRowWork`) charged an exact helix row for
+ * every facet at its angle, about 171 k on Frank's busto, so every band was
+ * refused before a row was read.
+ */
+export function rotaryExactStretchWork(
+  prep: RotarySamplingPrep,
+  angleDeg: number,
+  along: readonly number[],
+  radius: number,
+): number {
+  if (along.length === 0) return 0
+  const plan = prep.planFor([angleDeg])
+  const spans = triangleAlongSpan(prep.mesh, prep.stock.axis)
+  const columns = Array.from({ length: along.length }, (_, i) => i)
+  const { low, high } = exactStretchWindow(along, columns, radius)
+  const meets = (offset: number): boolean => {
+    const t = offset / 3
+    return !(spans[t * 2 + 1] < low || spans[t * 2] > high)
+  }
+  let count = 0
+  for (let i = 0; i < plan.always.length; i++) if (meets(plan.always[i])) count++
+  const bucketWords = plan.bucketWords
+  if (bucketWords > 0) {
+    const t = (angleDeg * Math.PI) / 180
+    const bucketBits = plan.bucketBits
+    for (const bucket of [
+      bucketIndex(Math.PI / 2 - t, plan.bucketWidth),
+      bucketIndex(Math.PI / 2 - t + Math.PI, plan.bucketWidth),
+    ]) {
+      const base = bucket * bucketWords
+      for (let word = 0; word < bucketWords; word++) {
+        let bits = bucketBits[base + word]
+        while (bits !== 0) {
+          const lowest = bits & -bits
+          if (meets(((word << 5) + 31 - Math.clz32(lowest)) * 3)) count++
+          bits ^= lowest
+        }
+      }
     }
   }
   return count

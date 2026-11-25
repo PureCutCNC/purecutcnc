@@ -767,7 +767,9 @@ const ROUND_FINISH_PARAMS = {
   const mesh = cylinderMesh(stock, 4, 3, 27)
   // The cutter-centre span 3..27 pulls in one 1.5 mm ball radius at each end,
   // so the rings land exactly on X4.5, X5.5, ...: the reviewer's link span.
-  const params = ROUND_FINISH_PARAMS
+  // #1237: the link below lives on a band whose helix the region refuses, so
+  // the operation asks for the helix.
+  const params = { ...ROUND_FINISH_PARAMS, continuousHelix: true }
   // A region covering the whole sheet keeps every ring whole and inside.
   const sheet: SheetRect = {
     alongMin: 0, alongMax: 30,
@@ -1073,6 +1075,9 @@ const ROUND_FINISH_PARAMS = {
 // cell row, so all four programs move. The square rows are untouched.
 // The around rough moved once more when the exact read's refinement took the
 // 0.005 mm floor at the prism's convex corners (2291 moves; 2478 on the base).
+// #1237 re-recorded the four around rows: the helix is off unless the operation
+// asks for it, so each band is cut as rings, and a ball finish's links read
+// exactly. Every along row is unchanged.
 const NO_REGION_HASHES: Record<string, string> = {
   'round/rotary_rough/along': 'moves=4aa9de8d8f6da26e warnings= gcode=b7f10baff78f8b2d',
   // #1117 rl-e re-recorded this row: the at-layer leftover is now what an
@@ -1099,13 +1104,13 @@ const NO_REGION_HASHES: Record<string, string> = {
   // stock instead of 0.005 mm (this fixture leaves 0.4 mm, so 0.1 mm), which is
   // fewer refined angles and so fewer cut moves -- 2291 moves became 1742 here.
   // Both along roughs and all four finishes are byte-identical to before.
-  'round/rotary_rough/around': 'moves=c96f19ef3dc206c3 warnings= gcode=47659e566765db0c',
+  'round/rotary_rough/around': 'moves=a0063e49f5ecaae5 warnings= gcode=c2d93c17a1284223',
   'round/rotary_finish/along': 'moves=e09be094ed17079a warnings=rotaryFinishWithoutRough gcode=0276b51663ba5a86',
   // #1103 slice ca-c re-recorded the two around-finish rows on purpose: a round
   // bar's uninterrupted band is now one continuous helix (A one-way, never
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
-  'round/rotary_finish/around': 'moves=7ee460b1b9c7d826 warnings=rotaryFinishWithoutRough gcode=1466ed53586a0114',
+  'round/rotary_finish/around': 'moves=b9445bdf2f1fdaad warnings=rotaryFinishWithoutRough gcode=1daad1b7f4ca9375',
   'square/rotary_rough/along': 'moves=f984a0b25ce702dc warnings= gcode=3923c1eca317fa7b',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer
@@ -1132,9 +1137,9 @@ const NO_REGION_HASHES: Record<string, string> = {
   // #1190 re-recorded all four square rows: an around pass reads, bounds and
   // overruns a square blank as it does a round bar, and an along pass overruns its
   // owned ends too. The four round rows are unchanged.
-  'square/rotary_rough/around': 'moves=52db4cc3b19c5add warnings= gcode=867c011768ffbd86',
+  'square/rotary_rough/around': 'moves=05a6b1e8b1df1aa3 warnings= gcode=2d684bcff6475827',
   'square/rotary_finish/along': 'moves=2e984dfb6922c935 warnings=rotaryFinishWithoutRough gcode=b1b811903243bd3d',
-  'square/rotary_finish/around': 'moves=418ffaf8a0ccf915 warnings=rotaryFinishWithoutRough gcode=df5701731dc35204',
+  'square/rotary_finish/around': 'moves=381011c1f1ce2b87 warnings=rotaryFinishWithoutRough gcode=017eb7e3eb873bdd',
   // #1173 re-recorded the three remaining around rows for the **approved
   // upward-only merge** alone (`raiseShortAroundSegments`, which drops a refined
   // point only when the chord over it stays 0..0.02 mm

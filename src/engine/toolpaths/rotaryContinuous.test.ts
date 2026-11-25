@@ -951,6 +951,7 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
     safeRadius: 30 * scale,
     requestedCellSize: 0.2 * scale,
     passDirection: 'around',
+    continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], `${label}: the chiral finish has no warning`)
   // A is one-way whether the band came out as a helix or as forward-only rings:
@@ -1118,7 +1119,7 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   const pivot = barPivotZ(stock)
   const result = generateRotaryFinish('helix-chiral', chiralMesh(stock, model, 40), stock, tool, {
     stepover: 2.5, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 6, alongEnd: 14,
-    safeRadius: 30, requestedCellSize: 0.2, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: 0.2, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the gentle chiral finish has no warning')
   baseResult = result
@@ -1569,6 +1570,7 @@ function entryLink(
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 8, alongEnd: 32,
     safeRadius: 12, requestedCellSize: 0.05, passDirection: 'around' as const,
+    continuousHelix: true,
   }
   // #1177: the middle feature's two side walls are **vertical** -- a mesh column
   // 0.001 deg outside each edge -- instead of one 1-degree segment wide. A ball

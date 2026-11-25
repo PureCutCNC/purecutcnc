@@ -93,6 +93,8 @@ function continuousFinishInput(
   warnings: ToolpathWarning[],
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
 ): ContinuousBandInput | null {
+  // #1237: the helix is the operation's choice; off, no band is attempted.
+  if (params.continuousHelix !== true) return null
   const prep = sampling.prep
   if (prep === null) return null
   const stubFloor = continuousHelixStubFloor(prep.stock, tool, params, sampling.bandOverrun)
