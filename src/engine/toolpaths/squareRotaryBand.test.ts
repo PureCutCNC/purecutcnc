@@ -62,6 +62,16 @@
  *  - **the pull-in skipped when the range collapses**: the collapsed fixture
  *    emits motion instead of `rotaryNoRoom`.
  *
+ * ## #1190: an end the model owns is overrun
+ *
+ * Since #1190 a square blank follows the round bar's #1155 rn-e rule in both
+ * pass directions: at a band end the **model itself** ends at, there is no
+ * retained stub and no pull, and the cutter's centre reaches the model's end.
+ * Frank's own file is that case at both ends now, and the 25 mm case at its
+ * model end. The pull-in and its outward rounding are still the rule at an end a
+ * chuck or an end support bounds, which the 25 mm start and the hostile
+ * rounding fixture (bounded by end supports) keep exercising.
+ *
  * Run with: npx tsx src/engine/toolpaths/squareRotaryBand.test.ts
  */
 
@@ -250,6 +260,9 @@ interface BandSpec {
   stepover: number
   stepdown: number
   axis?: StockAxis
+  /** #1190: end supports that bound the band inside the model, so it keeps its stubs. */
+  chuckSupport?: number
+  tailSupport?: number
 }
 
 interface BandFixture {
@@ -369,6 +382,8 @@ function bandFixture(spec: BandSpec): BandFixture {
     stockToLeaveRadial: 0,
     stepover: spec.stepover,
     stepdown: spec.stepdown,
+    rotaryChuckSupport: spec.chuckSupport ?? 0,
+    rotaryTailSupport: spec.tailSupport ?? 0,
   }
   project.operations = [operation]
   const tool = normalizeToolForProject(project.tools[0], project)
@@ -381,7 +396,8 @@ function bandFixture(spec: BandSpec): BandFixture {
     min = Math.min(min, surface.mesh.positions[i])
     max = Math.max(max, surface.mesh.positions[i])
   }
-  const band = rotaryAlongRange(stock, project.clamps, { min, max }, tool, { chuckEnd: 0, tailEnd: 0 })
+  const band = rotaryAlongRange(stock, project.clamps, { min, max }, tool,
+    { chuckEnd: spec.chuckSupport ?? 0, tailEnd: spec.tailSupport ?? 0 })
   assert.ok(band, 'the fixture has room between its supports')
   return { project, operation, stock, tool, band, targetRadius: spec.radius }
 }
@@ -429,35 +445,28 @@ const TOOL_TYPES: ReadonlyArray<Extract<ToolType, 'flat_endmill' | 'ball_endmill
 
 // ── 1. the exact cutter-centre span on Frank's own case ───────────────
 
-console.log('Testing the cutter centre starts and ends one radius inside Frank\'s band...')
+console.log('Testing the cutter centre reaches both of Frank\'s model ends...')
 {
   const finish = frankFixture('rotary_finish')
   approx(finish.band.start, 1, 'Frank\'s band starts at the model')
   approx(finish.band.end, 5, 'Frank\'s band ends at the model')
-  const rt = finish.tool.radius
-  const spanStart = finish.band.start + rt
-  const spanEnd = finish.band.end - rt
+  // #1190: both ends are the model's own, so neither is pulled in.
+  const spanStart = finish.band.start
+  const spanEnd = finish.band.end
   const result = generateRotaryOperation(finish.project, finish.operation)
   assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
     'Frank\'s finish generates without a refusal (the advisory is expected)')
   assert.ok(result.moves.length > 0, 'Frank\'s finish cuts')
   // The finish cuts every sample of its span, so the emitted extremes are the
-  // span's own ends: exactly one radius in, not two and not zero.
+  // span's own ends: the model's ends exactly.
   const alongs = result.moves.flatMap((move) => [alongOf(finish.stock, move.from), alongOf(finish.stock, move.to)])
-  approx(Math.min(...alongs), spanStart, 'the first sample is one cutter radius inside the band')
-  approx(Math.max(...alongs), spanEnd, 'the last sample is one cutter radius inside the band')
-  // #1016 C2-F7b: the pull is rounded outward, so the gap the strict F6 floor
-  // computes at each end sample is at least the radius -- no ulp short.
-  assert.ok(Math.min(...alongs) - finish.band.start >= rt,
-    `the first sample is a tangency, not inside the stub (${Math.min(...alongs) - finish.band.start} >= ${rt})`)
-  assert.ok(finish.band.end - Math.max(...alongs) >= rt,
-    `the last sample is a tangency, not inside the stub (${finish.band.end - Math.max(...alongs)} >= ${rt})`)
-  assertTangencyTips(finish, result.moves, 'Frank finish')
+  approx(Math.min(...alongs), spanStart, 'the first sample is at the model\'s start')
+  approx(Math.max(...alongs), spanEnd, 'the last sample is at the model\'s end')
   for (const move of result.moves) {
     for (const point of [move.from, move.to]) {
       const along = alongOf(finish.stock, point)
       assert.ok(along >= spanStart - 1e-9 && along <= spanEnd + 1e-9,
-        `every emitted point is inside the pulled-in span (${along})`)
+        `every emitted point is inside the model's ends (${along})`)
     }
   }
   // The measured shape of the pass: rapid at travel height, one straight plunge
@@ -485,23 +494,16 @@ console.log('Testing the cutter centre starts and ends one radius inside Frank\'
   assert.ok(Math.abs(alongOf(finish.stock, retract.from) - spanStart) <= 1e-9
     || Math.abs(alongOf(finish.stock, retract.from) - spanEnd) <= 1e-9,
   'the final retract leaves from a span end')
-  const measured = stubPenetration(finish.stock, finish.tool, result.moves, finish.band.start, finish.band.end)
-  assert.ok(measured.max <= 1e-6,
-    `Frank's finish clears both retained ends (${measured.max} at ${measured.where})`)
 
   const rough = frankFixture('rotary_rough')
   const roughResult = generateRotaryOperation(rough.project, rough.operation)
   assert.deepEqual(roughResult.warnings, [], 'Frank\'s rough generates without a warning')
   assert.ok(roughResult.moves.length > 0, 'Frank\'s rough cuts')
   const roughAlongs = roughResult.moves.flatMap((move) => [alongOf(rough.stock, move.from), alongOf(rough.stock, move.to)])
-  assert.ok(Math.min(...roughAlongs) >= spanStart - 1e-9, 'the rough never starts inside the stub reach')
-  assert.ok(Math.max(...roughAlongs) <= spanEnd + 1e-9, 'the rough never ends inside the stub reach')
-  const roughMeasured = stubPenetration(rough.stock, rough.tool, roughResult.moves, rough.band.start, rough.band.end)
-  assert.ok(roughMeasured.max <= 1e-6,
-    `Frank's rough clears both retained ends (${roughMeasured.max} at ${roughMeasured.where})`)
-  console.log(`  Frank: band ${finish.band.start}..${finish.band.end} in, span ${spanStart}..${spanEnd}, `
-    + `finish ${result.moves.length} moves, rough ${roughResult.moves.length} moves, `
-    + `penetration ${Math.max(measured.max, roughMeasured.max).toExponential(2)}`)
+  assert.ok(Math.min(...roughAlongs) >= spanStart - 1e-9, 'the rough never starts before the model')
+  assert.ok(Math.max(...roughAlongs) <= spanEnd + 1e-9, 'the rough never ends past the model')
+  console.log(`  Frank: band ${finish.band.start}..${finish.band.end}, span ${spanStart}..${spanEnd}, `
+    + `finish ${result.moves.length} moves, rough ${roughResult.moves.length} moves`)
 }
 
 // ── 2. the 25 mm case, flat and ball, rough and finish ────────────────
@@ -513,8 +515,10 @@ console.log('Testing the 25 mm case on both cutter shapes and both pass kinds...
     for (const kind of ['rotary_rough', 'rotary_finish'] as const) {
       const fixture = codexBandFixture(kind, toolType)
       const rt = fixture.tool.radius
+      // #1190: the chuck bounds the start, so it keeps its stub and pull; the
+      // model owns the end, so the centre reaches it.
       const spanStart = fixture.band.start + rt
-      const spanEnd = fixture.band.end - rt
+      const spanEnd = fixture.band.end
       approx(fixture.band.start, 18, `${toolType}/${kind}: the chuck-limited band starts at 18`)
       approx(fixture.band.end, 40, `${toolType}/${kind}: the model-limited band ends at 40`)
       const result = generateRotaryOperation(fixture.project, fixture.operation)
@@ -533,30 +537,35 @@ console.log('Testing the 25 mm case on both cutter shapes and both pass kinds...
         }
       }
       assert.ok(min >= spanStart - 1e-9, `${toolType}/${kind}: no sample reaches the lower stub (${min})`)
-      assert.ok(max <= spanEnd + 1e-9, `${toolType}/${kind}: no sample reaches the upper stub (${max})`)
-      // #1016 C2-F7b: the computed gap from each stub face is at least the
-      // radius, so the strict F6 floor is `-Infinity` at the first/last sample.
+      assert.ok(max <= spanEnd + 1e-9, `${toolType}/${kind}: no sample passes the model's end (${max})`)
+      // #1016 C2-F7b: the computed gap from the chuck's stub face is at least
+      // the radius, so the strict F6 floor is `-Infinity` at the first sample.
       assert.ok(min - fixture.band.start >= rt,
         `${toolType}/${kind}: the lower end sample is a tangency (${min - fixture.band.start} >= ${rt})`)
-      assert.ok(fixture.band.end - max >= rt,
-        `${toolType}/${kind}: the upper end sample is a tangency (${fixture.band.end - max} >= ${rt})`)
-      if (kind === 'rotary_finish') assertTangencyTips(fixture, result.moves, `${toolType}/${kind}`)
-      const measured = stubPenetration(fixture.stock, fixture.tool, result.moves, fixture.band.start, fixture.band.end)
+      if (kind === 'rotary_finish') {
+        approx(max, spanEnd, `${toolType}/${kind}: the finish reaches the model's end`)
+        assertTangencyTips(fixture, result.moves, `${toolType}/${kind}`)
+      }
+      // Only the chuck's stub stands; the model's end has none to clear.
+      const bar = getStockBounds(fixture.stock)
+      const measured = stubPenetration(fixture.stock, fixture.tool, result.moves, fixture.band.start,
+        fixture.stock.axis === 'x' ? bar.maxX : bar.maxY)
       assert.ok(measured.max <= 1e-6,
         `${toolType}/${kind}: zero retained-stub intrusion (${measured.max} at ${measured.where})`)
       checked++
     }
   }
   assert.equal(checked, 4, 'both cutter shapes and both pass kinds are exercised')
-  console.log(`  25 mm: ${checked} cases, span 21..37 mm, zero retained-stub penetration`)
+  console.log(`  25 mm: ${checked} cases, span 21..40 mm, zero retained-stub penetration`)
 }
 
 // ── 3. the F6 floor never binds, and an end with no stub is unchanged ──
 
 console.log('Testing the F6 floor is a net that never binds and an unstubbed end is untouched...')
 {
-  // Every emitted point is at least the cutter radius from both stub faces, so
-  // the exact F6 contact floor is -Infinity everywhere on the motion.
+  // Every emitted point is at least the cutter radius from the chuck's stub
+  // face, so the exact F6 contact floor is -Infinity everywhere on the motion.
+  // #1190: the model's end has no stub (it is overrun), so only the start counts.
   for (const toolType of TOOL_TYPES) {
     const fixture = codexBandFixture('rotary_finish', toolType)
     const result = generateRotaryOperation(fixture.project, fixture.operation)
@@ -564,16 +573,17 @@ console.log('Testing the F6 floor is a net that never binds and an unstubbed end
     for (const move of result.moves) {
       for (const point of [move.from, move.to]) {
         const along = alongOf(fixture.stock, point)
-        closest = Math.min(closest, along - fixture.band.start, fixture.band.end - along)
+        closest = Math.min(closest, along - fixture.band.start)
       }
     }
     assert.ok(closest >= fixture.tool.radius,
       `${toolType}: no sample is inside the retained stub's reach (${closest} >= ${fixture.tool.radius})`)
   }
 
-  // A band that runs to the bar's own end has no stub there: only the stubbed
-  // start is pulled in. The model's end is the stock's end (6 in), so the last
-  // sample must still be exactly 6, not one radius short of it.
+  // A band that runs to the bar's own end has no stub there. The model's end is
+  // the stock's end (6 in), so the last sample must still be exactly 6, not one
+  // radius short of it. #1190: the model owns its start too, so the start is not
+  // pulled in either.
   const open = bandFixture({
     side: 2, length: 6, units: 'inch', radius: 1, modelStart: 1, modelEnd: 6,
     toolRadius: 0.125, toolType: 'flat_endmill', kind: 'rotary_finish', stepover: 0.32, stepdown: 0.125,
@@ -583,9 +593,9 @@ console.log('Testing the F6 floor is a net that never binds and an unstubbed end
   assert.deepEqual(result.warnings.map((warning) => warning.code).filter((code) => code !== 'rotaryFinishWithoutRough'), [],
     'the open-end fixture generates without a refusal (the advisory is expected)')
   const alongs = result.moves.flatMap((move) => [alongOf(open.stock, move.from), alongOf(open.stock, move.to)])
-  approx(Math.min(...alongs), open.band.start + open.tool.radius, 'the stubbed start is still pulled in')
+  approx(Math.min(...alongs), open.band.start, 'the model-owned start is not pulled in')
   approx(Math.max(...alongs), open.band.end, 'the bar end is not pulled in')
-  console.log('  floor net: every sample at least one radius from a stub; open end keeps its full reach')
+  console.log('  floor net: every sample at least one radius from the stub; unstubbed ends keep their full reach')
 }
 
 // ── 3b. the outward rounding of the pull (#1016 C2-F7b) ───────────────
@@ -597,13 +607,17 @@ console.log('Testing the cutter-centre pull is rounded outward past the stub tan
   // short of 2.4. The along grid can also round a few ulps past the span end
   // (`start + (end - start) * i / intervals`), so a one-ulp nudge is not enough;
   // the span is nudged by a relative margin and verified.
+  // #1190: the model runs past both ends and two end supports bound the band
+  // (21.3 = 18.9 + 2.4 and 38.7 = 100 - 58.9 - 2.4, each an ulp off), so both
+  // ends keep their stubs; a model-owned end would be overrun and not pulled.
   const fixture = bandFixture({
-    side: 25, length: 100, units: 'mm', radius: 10, modelStart: 21.3, modelEnd: 38.7,
+    side: 25, length: 100, units: 'mm', radius: 10, modelStart: 10, modelEnd: 90,
     toolRadius: 2.4, toolType: 'flat_endmill', kind: 'rotary_finish', stepover: 0.4, stepdown: 2,
+    chuckSupport: 18.9, tailSupport: 58.9,
   })
   const rt = fixture.tool.radius
-  approx(fixture.band.start, 21.3, 'the hostile band starts at the model', 1e-6)
-  approx(fixture.band.end, 38.7, 'the hostile band ends at the model', 1e-6)
+  approx(fixture.band.start, 21.3, 'the hostile band starts at the chuck support', 1e-6)
+  approx(fixture.band.end, 38.7, 'the hostile band ends at the tail support', 1e-6)
   assert.ok(fixture.band.start + rt - fixture.band.start < rt,
     'the naive start sum rounds inside the stub (the fixture is rounding-hostile)')
   assert.ok(fixture.band.end - (fixture.band.end - rt) < rt,
@@ -638,9 +652,13 @@ console.log('Testing a collapsed cutter-centre span refuses with rotaryNoRoom...
 {
   // A 0.2 in band with a 1/4 in flat: the two pulls cross, there is no room for
   // the cutter inside the band, and the refusal is the existing rotaryNoRoom.
+  // #1190: two end supports bound the band (1 = 0.875 + 0.125 and
+  // 1.2 = 6 - 4.675 - 0.125) inside a longer model, so both ends are stubbed and
+  // pulled; a model-owned end is overrun and would leave room.
   const collapsed = bandFixture({
-    side: 2, length: 6, units: 'inch', radius: 1, modelStart: 1, modelEnd: 1.2,
+    side: 2, length: 6, units: 'inch', radius: 1, modelStart: 0.5, modelEnd: 5,
     toolRadius: 0.125, toolType: 'flat_endmill', kind: 'rotary_finish', stepover: 0.32, stepdown: 0.125,
+    chuckSupport: 0.875, tailSupport: 4.675,
   })
   approx(collapsed.band.end - collapsed.band.start, 0.2, 'the fixture band is narrower than the cutter', 1e-6)
   const result = generateRotaryOperation(collapsed.project, collapsed.operation)
@@ -678,6 +696,9 @@ console.log('Testing the simulated band beyond one radius from each end reaches 
     // accuracy on a flat that stands at the target (F8 owns its true width).
     const bandStart = fixture.band.start + rt
     const bandEnd = fixture.band.end - rt
+    // #1190: a model-owned start is overrun, so the cutter may take up to one
+    // radius of the bar beyond it; the retained check starts past that.
+    const retainedBelow = fixture.band.start - rt - cell
     const allowance = convertLength(0.05, 'mm', fixture.project.meta.units)
     let audited = 0
     let worstTop = -Infinity
@@ -692,7 +713,7 @@ console.log('Testing the simulated band beyond one radius from each end reaches 
         if (along >= bandStart && along <= bandEnd) {
           audited++
           worstTop = Math.max(worstTop, top)
-        } else if (along < fixture.band.start - cell) {
+        } else if (along < retainedBelow) {
           retained++
           lowestRetained = Math.min(lowestRetained, top)
         }

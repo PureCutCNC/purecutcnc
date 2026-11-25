@@ -3975,11 +3975,11 @@ function proveAtLayerLink(
   // #1155 rn-e: on a **round** bar the plain bar beyond the model's own end is
   // material the operation may cut into, so a cell within one cutter radius of
   // the band's end is not "retained" any more -- the body legitimately reaches
-  // it. Every cell further out still must not move. A square blank keeps the
-  // whole band's edge: its retained corners hold the part.
-  const roundOverrun = entry.stock.shape === 'round'
-  const retainedLow = roundOverrun ? entry.alongStart - cutterRadius : entry.alongStart
-  const retainedHigh = roundOverrun ? entry.alongEnd + cutterRadius : entry.alongEnd
+  // it. Every cell further out still must not move. #1190: a square blank's
+  // passes overrun its owned ends the same way, so the same cutter radius is
+  // open on either blank.
+  const retainedLow = entry.alongStart - cutterRadius
+  const retainedHigh = entry.alongEnd + cutterRadius
   for (let i = first; i <= last; i++) {
     const cellAlong = reference.alongStart + (i + 0.5) * reference.alongBin
     if (cellAlong < context.alongLimits.min || cellAlong > context.alongLimits.max) continue
@@ -4905,9 +4905,10 @@ for (const { entry, program } of CASES) {
   // (2) The retained ends keep the blank. Cells outside the band are material
   // the cutter's body must never reach -- except, on a round bar, the one cutter
   // radius past each of the model's own ends that #1155 rn-e's rule opens (the
-  // approved "may cut into it"; a square blank keeps its retained corners).
-  const retainedLow = stock.shape === 'round' ? entry.alongStart - cutterRadius : entry.alongStart
-  const retainedHigh = stock.shape === 'round' ? entry.alongEnd + cutterRadius : entry.alongEnd
+  // approved "may cut into it"). #1190: a square blank takes the same rule in
+  // both pass directions.
+  const retainedLow = entry.alongStart - cutterRadius
+  const retainedHigh = entry.alongEnd + cutterRadius
   for (let i = 0; i < reference.alongBins; i++) {
     const along = reference.alongStart + (i + 0.5) * reference.alongBin
     if (along >= retainedLow - 1e-9 && along <= retainedHigh + 1e-9) continue

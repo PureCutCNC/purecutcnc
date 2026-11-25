@@ -52,7 +52,7 @@
 
 import assert from 'node:assert/strict'
 
-import { barPivotZ } from '../../types/barStock'
+import { barPivotZ, squareStock } from '../../types/barStock'
 import type { BarStock, Operation, Project } from '../../types/project'
 import { defaultTool, newProject, roundStock } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
@@ -85,8 +85,11 @@ const SHOULDER = HEX_END
 const ROUGH_BALL_ID = 'ball-025'
 const FLAT_ID = 'flat-025'
 
-/** Frank's bolt in miniature, the Hex's facets rotated by `rotationDeg`. */
-function boltFixture(rotationDeg = 0): {
+/**
+ * Frank's bolt in miniature, the Hex's facets rotated by `rotationDeg`, on a
+ * round bar or (#1190) a square blank of the same side.
+ */
+function boltFixture(rotationDeg = 0, shape: 'round' | 'square' = 'round'): {
   project: Project
   operation: Operation
   /** op0195, op0197, op0198: the Hex rough, the Turn rough and the Turn finish. */
@@ -95,7 +98,7 @@ function boltFixture(rotationDeg = 0): {
   const base = newProject('1177 ball finish', 'mm')
   base.meta.projectType = 'rotary'
   base.meta.maxTravelZ = 50.8
-  base.stock = roundStock(50.8, 101.6, 'x')
+  base.stock = shape === 'square' ? squareStock(50.8, 101.6, 'x') : roundStock(50.8, 101.6, 'x')
   base.tools = [{
     ...defaultTool('mm', 1), id: BALL_ID, name: '1/8" ball nose', type: 'ball_endmill',
     diameter: 2 * BALL_RADIUS, defaultStepover: 0.4, defaultStepdown: 1,
@@ -529,10 +532,10 @@ function checkFacets(index: PoseIndex, fromX: number, toX: number, label: string
   return survey
 }
 
-function run(rotationDeg: number): void {
-  const { project, operation, others } = boltFixture(rotationDeg)
+function run(rotationDeg: number, shape: 'round' | 'square' = 'round'): void {
+  const { project, operation, others } = boltFixture(rotationDeg, shape)
   const stock = project.stock as BarStock
-  const label = rotationDeg === 0 ? 'phase 0' : `phase ${rotationDeg}`
+  const label = `${shape === 'square' ? 'square ' : ''}${rotationDeg === 0 ? 'phase 0' : `phase ${rotationDeg}`}`
   // `boltFixture` rotates the Hex by `rotationDeg` in the sketch frame; in the
   // commanded frame the facet normal moves the other way, so the envelope's
   // phase is `-rotationDeg`. That is the sign the earlier round could not
@@ -612,4 +615,10 @@ run(0)
 // re-generation and re-read, not a shifted check angle: A, C and D all run
 // again on it.
 run(0.4465)
+// #1190: the same model on a square blank of the same side gives the round
+// bar's result -- the exact read, the shoulder cleanup ring and the overrun at
+// the chuck end all apply to an around pass on either blank. Before #1190 this
+// run measured 0.21 mm over the envelope (A), 0.39 mm at X31.2 (B) and 5.8 mm
+// left at the chuck end (4c).
+run(0, 'square')
 console.log('issue-1177-ballFinish.test.ts: all checks passed')

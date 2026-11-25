@@ -502,8 +502,10 @@ console.log('Testing that forward-only rings keep the square blank\'s at-layer l
   const pivot = barPivotZ(stock)
   const plunges = result.moves.filter((move) => move.kind === 'plunge')
   // One plunge per layer start and one for the layer whose first rings are
-  // skipped, not one per refused boundary.
-  assert.equal(plunges.length, 9, `the layer starts are the plunges (${plunges.length})`)
+  // skipped, not one per refused boundary. #1190 re-recorded the count (9 -> 8):
+  // the around pass reads this square blank exactly and overruns the model's own
+  // ends, as on a round bar.
+  assert.equal(plunges.length, 8, `the layer starts are the plunges (${plunges.length})`)
   // #1117 (square links): a boundary is linked either by the raised traverse
   // or, where it qualifies, by the at-layer cut that replaces it.
   const linkMove = (move: ToolpathMove): boolean => move.kind === 'rapid'
@@ -538,9 +540,17 @@ console.log('Testing that forward-only rings keep the square blank\'s at-layer l
     `the round layers are a helix (${helixCuts.length} cutting helix moves)`)
   assert.ok(airLinks.length > 0,
     `corner-arc links survive the helix classification and reach the safety loop (${airLinks.length})`)
-  assert.equal(plunges.length, 9, `the layer starts are the plunges (${plunges.length})`)
-  assert.equal(seamLinks.length, 0,
-    `no whole ring is left to link at the seam once the bands helix (${seamLinks.length})`)
+  assert.equal(plunges.length, 8, `the layer starts are the plunges (${plunges.length})`)
+  // #1190: the model ends exactly at the band, so the around pass now overruns
+  // both ends as on a round bar, and the rings at the band's two ends (X 2..3 and
+  // 397..398) stay rings and link at the seam. No helix attempt is refused.
+  // Re-recorded 0 -> 5; every one of them is at a band end.
+  assert.equal(seamLinks.length, 5,
+    `only the band-end rings link at the seam once the bands helix (${seamLinks.length})`)
+  for (const link of seamLinks) {
+    assert.ok(link.from.x <= 3 + 1e-9 || link.from.x >= 397 - 1e-9,
+      `a seam link is at a band end (x ${link.from.x})`)
+  }
   // Every at-layer link cuts at or above its own layer, and never above the
   // blank: a corner-arc link rides the layer radius through the gate's air.
   let linkSamples = 0
@@ -607,9 +617,13 @@ console.log('Testing that the square around rough links its forward-only arcs at
   // The collinear merge leaves one such move per band on this revolved model, and
   // a move that spans more than the ring spacing in along is that band, not a
   // link between two rings.
-  const isHelixMove = (move: ToolpathMove): boolean => move.kind === 'cut'
+  // #1190: the around pass reads this square blank exactly, so the flat's floor
+  // layer helix follows the model and is no longer merged into one long move;
+  // its short pieces are classified by their constant pitch (`helixMovesOf`).
+  const helixSet = helixMovesOf(rough.moves)
+  const isHelixMove = (move: ToolpathMove): boolean => helixSet.has(move) || (move.kind === 'cut'
     && move.from.a !== move.to.a
-    && Math.abs(move.to.x - move.from.x) > SQUARE_BASE.stepover * 1.5
+    && Math.abs(move.to.x - move.from.x) > SQUARE_BASE.stepover * 1.5)
   const links = rough.moves.filter((move) => isAlongLink(move) && !isHelixMove(move))
   const raised = rough.moves.filter(isRaisedAlongLink)
   const seamLinks = links.filter((link) => link.from.a === link.to.a
@@ -678,8 +692,16 @@ console.log('Testing that the square around rough links its forward-only arcs at
   }
   // #1103 ca-j: the whole-ring layers are helices, so there is no seam link left
   // to prove here; the corner-arc layers above are the ones that still link.
-  assert.equal(seamLinks.length, 0,
-    `no whole-ring seam link is left once the bands helix (${seamLinks.length})`)
+  // #1190: the cylinder ends exactly at the band, so the pass overruns both ends
+  // as on a round bar and the rings within one stepover of each end (X 12..14 and
+  // 26..28) stay rings and link at the seam. Re-recorded 0 -> 10, all at the ends.
+  assert.equal(seamLinks.length, 10,
+    `only the band-end rings link at the seam once the bands helix (${seamLinks.length})`)
+  for (const link of seamLinks) {
+    assert.ok(link.to.x <= SQUARE_BASE.alongStart + SQUARE_BASE.stepover + 1e-9
+      || link.from.x >= SQUARE_BASE.alongEnd - SQUARE_BASE.stepover - 1e-9,
+    `a seam link is at a band end (${link.from.x} -> ${link.to.x})`)
+  }
   assert.ok(raised.length > 0, `and the fixture still exercises raised links (${raised.length})`)
   // A corner-arc link is one straight cut at its layer across the seam gap. The
   // gate's proof is what lets it stay down: every grid row the turn sweeps is one
@@ -1108,10 +1130,15 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
 
 console.log('Testing the retained-square shoulders on the forward-only rings...')
 {
-  const rough = generateRotaryRough('shoulder-rough', SQUARE_MODEL, SQUARE, FLAT, {
+  // #1190: an around pass overruns an end its model owns (#1155 rn-e), so the
+  // stub stands only where something else bounds the band. The model here runs
+  // past both band ends, which keeps both stubs and their pull exactly as a
+  // support or keep-out would.
+  const boundedModel = cylinder(SQUARE, ROUND_RADIUS, 8, 32)
+  const rough = generateRotaryRough('shoulder-rough', boundedModel, SQUARE, FLAT, {
     ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
   }, {})
-  const finish = generateRotaryFinish('shoulder-finish', SQUARE_MODEL, SQUARE, FLAT, {
+  const finish = generateRotaryFinish('shoulder-finish', boundedModel, SQUARE, FLAT, {
     ...SQUARE_BASE, passDirection: 'around',
   }, {})
   const pulled = { start: SQUARE_BASE.alongStart + FLAT.radius, end: SQUARE_BASE.alongEnd - FLAT.radius }

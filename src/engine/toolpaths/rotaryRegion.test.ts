@@ -1106,7 +1106,7 @@ const NO_REGION_HASHES: Record<string, string> = {
   // wrapped) and a square blank's rings are forward-only (A grows one turn per
   // ring). Every other row is the base commit's bytes, exactly.
   'round/rotary_finish/around': 'moves=7ee460b1b9c7d826 warnings=rotaryFinishWithoutRough gcode=1466ed53586a0114',
-  'square/rotary_rough/along': 'moves=a45d9f9fbd8bd7e9 warnings= gcode=c8e19d47e3a0b8c1',
+  'square/rotary_rough/along': 'moves=f984a0b25ce702dc warnings= gcode=3923c1eca317fa7b',
   // #1117 (square links) re-recorded this row: without a region a square
   // blank's whole rings (below its inscribed radius) now link at the layer
   // instead of only its corner arcs. 33 raised links became at-layer cuts;
@@ -1129,9 +1129,12 @@ const NO_REGION_HASHES: Record<string, string> = {
   // rough's 1925 moves sit on such a chord and are 0.008 to 0.023 mm lower
   // than the sampled midpoint they used to take -- inside the 0.1 mm this
   // rough's chords may dip. The other seven rows are byte-identical.
-  'square/rotary_rough/around': 'moves=755a3af8bd650821 warnings= gcode=97a0f415cd9bb6eb',
-  'square/rotary_finish/along': 'moves=00b76a30aaf6601f warnings=rotaryFinishWithoutRough gcode=91c37f814f3b176b',
-  'square/rotary_finish/around': 'moves=567f8fcd6012bb1a warnings=rotaryFinishWithoutRough gcode=95a606809357ecfd',
+  // #1190 re-recorded all four square rows: an around pass reads, bounds and
+  // overruns a square blank as it does a round bar, and an along pass overruns its
+  // owned ends too. The four round rows are unchanged.
+  'square/rotary_rough/around': 'moves=52db4cc3b19c5add warnings= gcode=867c011768ffbd86',
+  'square/rotary_finish/along': 'moves=2e984dfb6922c935 warnings=rotaryFinishWithoutRough gcode=b1b811903243bd3d',
+  'square/rotary_finish/around': 'moves=418ffaf8a0ccf915 warnings=rotaryFinishWithoutRough gcode=df5701731dc35204',
   // #1173 re-recorded the three remaining around rows for the **approved
   // upward-only merge** alone (`raiseShortAroundSegments`, which drops a refined
   // point only when the chord over it stays 0..0.02 mm

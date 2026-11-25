@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { barCentre, barPivotZ, isSquareStock } from '../../types/barStock'
+import { barCentre, barPivotZ } from '../../types/barStock'
 import type { BarStock } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import {
@@ -38,12 +38,31 @@ import {
 import type { RotaryFinishParams } from './rotaryModelParams'
 import { continuousPathInsideRegion, rotaryRegionContains, rotaryRegionSegmentContains } from './rotaryModelRegion'
 import { AROUND_RAISE_TOLERANCE_MM, mergeCollinearCuts, raiseShortAroundSegments } from './rotaryModelSimplify'
+import { usesSquareBlankRules } from './rotaryModelTargetGeometry'
 import { CLEANUP_MIN_STEP_DEG, type RotaryTargets } from './rotaryModelTargets'
 import { turnAngle } from './rotaryModelTargetSampling'
 import type { RotarySampleOptions } from './rotarySampling'
 import { rotaryTravelZ } from './squareRotaryStock'
 import type { NormalizedTool, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import type { ToolpathWarning } from './warningCodes'
+
+/**
+ * How the continuous helix reads its rows, for the rough and the finish alike
+ * (#1173/#1177): the exact footprint maximum, with the flat's lateral pad (see
+ * below). #1190: a square blank's around pass reads exactly too; only an along
+ * pass keeps the conservative read (`usesSquareBlankRules`).
+ */
+export function continuousExactRead(
+  stock: BarStock,
+  tool: NormalizedTool,
+  params: RotaryFinishParams,
+): { readExactRows?: true; exactTipPad?: number } {
+  if (usesSquareBlankRules(stock, params)) return {}
+  return {
+    readExactRows: true,
+    ...(tool.type === 'ball_endmill' ? {} : { exactTipPad: params.requestedCellSize * 1.25 }),
+  }
+}
 
 /**
  * The continuous helix's operation-wide input for the finish (#1103 slices ca-c
@@ -76,7 +95,7 @@ function continuousFinishInput(
 ): ContinuousBandInput | null {
   const prep = sampling.prep
   if (prep === null) return null
-  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params)
+  const stubFloor = continuousHelixStubFloor(prep.stock, tool, params, sampling.bandOverrun)
   return {
     prep,
     tool,
@@ -88,8 +107,8 @@ function continuousFinishInput(
     // conservative cell rise is one value per angle and saturates at a whole
     // cell on any shoulder, so the helix rode that cell above the target over
     // the whole shank (0.0098 in on Frank's bolt) while the ring beside it sat
-    // at target + leave. A square blank keeps the conservative read: its helix
-    // rides the retained-corner rules the ring path built on it.
+    // at target + leave. #1190: a square blank's around pass reads it too; its
+    // stub floors are closed-form and never needed the map.
     // #1177: a ball takes that read too. It used to be withheld from every
     // cutter but a flat, and the conservative cell read then over-read a ball by
     // its disc maximum -- 0.21 mm at 25 degrees on Frank's bolt, the same band
@@ -101,14 +120,7 @@ function continuousFinishInput(
     // (and C1 across a vertex), so a straight G1 chord between two exact tips
     // lies at or **above** the envelope -- there is nothing to pad for, and the
     // measured chord at the operation's own step stays inside 0.002 mm.
-    ...(isSquareStock(prep.stock)
-      ? {}
-      : {
-        readExactRows: true,
-        ...(tool.type === 'ball_endmill'
-          ? {}
-          : { exactTipPad: params.requestedCellSize * 1.25 }),
-      }),
+    ...continuousExactRead(prep.stock, tool, params),
     warnings,
     ...(stubFloor !== undefined ? { stubFloor } : {}),
     ...(hooks.shouldStop !== undefined ? { shouldStop: hooks.shouldStop } : {}),
@@ -165,7 +177,7 @@ export function finishFromTargets(
     ? { x: alongPosition, y: centre, z: pivot + tip, a: angle }
     : { x: centre, y: alongPosition, z: pivot + tip, a: angle }
   const alongAt = (pass: number, positionIndex: number): number => along[rowIndexAt(pass, positionIndex)]
-  const forceStep = retainedStubStepForced(stock, params, tool)
+  const forceStep = retainedStubStepForced(stock, params, tool, sampling.bandOverrun)
   // #1096: a region limits where the tool may cut. Every sample whose tool
   // position falls outside it is dropped before it can become a cut, so a ring
   // or pass splits into the runs that are inside. The mask is null when the

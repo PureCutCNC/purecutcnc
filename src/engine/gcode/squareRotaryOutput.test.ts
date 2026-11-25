@@ -402,24 +402,29 @@ for (const axis of ['x', 'y'] as const) {
  *
  * Re-captured again for #1098: the eight **rough** entries only, for the same
  * along-layer alternation as the round matrix. Every finish entry is unchanged.
+ *
+ * Re-captured again for #1190, all sixteen entries: the fixture's model ends
+ * at the band, and a square blank now overruns an end its model owns in both
+ * pass directions (#1155 rn-e), as a round bar does. The round matrix is
+ * unchanged.
  */
 const SQUARE_BASELINE: Record<string, string> = {
-  'x/mm/rotary_rough/flat_endmill': 'moves=25f63a19f743dca2|warnings=|gcode=1119d548e2545ec2|post=',
-  'x/mm/rotary_rough/ball_endmill': 'moves=74d86fbc88d69d8b|warnings=|gcode=3e84433a168900da|post=',
-  'x/mm/rotary_finish/flat_endmill': 'moves=76b5619be346db35|warnings=rotaryFinishWithoutRough|gcode=2cfa151a820fbd1a|post=',
-  'x/mm/rotary_finish/ball_endmill': 'moves=91e82b497c5e49e9|warnings=rotaryFinishWithoutRough|gcode=4d7c8e9f4908feb0|post=',
-  'x/inch/rotary_rough/flat_endmill': 'moves=cbe3a882dca1df66|warnings=|gcode=2badcfaadb95a411|post=',
-  'x/inch/rotary_rough/ball_endmill': 'moves=0f785113544404c9|warnings=|gcode=8266583d251f5763|post=',
-  'x/inch/rotary_finish/flat_endmill': 'moves=744293ceeb1c6651|warnings=rotaryFinishWithoutRough|gcode=cc6257fb65153b60|post=',
-  'x/inch/rotary_finish/ball_endmill': 'moves=9459d0d08d24b863|warnings=rotaryFinishWithoutRough|gcode=491d7da2e7d92b59|post=',
-  'y/mm/rotary_rough/flat_endmill': 'moves=a37c385a0e7f71cc|warnings=|gcode=48af6c96658b6e66|post=',
-  'y/mm/rotary_rough/ball_endmill': 'moves=53450f017cf47548|warnings=|gcode=702619c5b0e05acf|post=',
-  'y/mm/rotary_finish/flat_endmill': 'moves=33358f8ea7e988ef|warnings=rotaryFinishWithoutRough|gcode=d01560ba902a5572|post=',
-  'y/mm/rotary_finish/ball_endmill': 'moves=884abac6dce74e4a|warnings=rotaryFinishWithoutRough|gcode=55e5060b32d639a5|post=',
-  'y/inch/rotary_rough/flat_endmill': 'moves=72b995af769136bd|warnings=|gcode=f57ce41a333c7ee4|post=',
-  'y/inch/rotary_rough/ball_endmill': 'moves=bb665a80787fee69|warnings=|gcode=307eb301f1b69b74|post=',
-  'y/inch/rotary_finish/flat_endmill': 'moves=4c0d75554bb80afe|warnings=rotaryFinishWithoutRough|gcode=f372756196175666|post=',
-  'y/inch/rotary_finish/ball_endmill': 'moves=6da72cdfb688a239|warnings=rotaryFinishWithoutRough|gcode=11766c7311fbf1ae|post=',
+  'x/mm/rotary_rough/flat_endmill': 'moves=5cf7737b544acf90|warnings=|gcode=76c5430b9ad1f871|post=',
+  'x/mm/rotary_rough/ball_endmill': 'moves=ab3fc72598e491ba|warnings=|gcode=8325f13120638d9b|post=',
+  'x/mm/rotary_finish/flat_endmill': 'moves=8fbbe583f433e8c4|warnings=rotaryFinishWithoutRough|gcode=35c36f6449d8dc90|post=',
+  'x/mm/rotary_finish/ball_endmill': 'moves=0d80002154cab3a1|warnings=rotaryFinishWithoutRough|gcode=21319354ca28aace|post=',
+  'x/inch/rotary_rough/flat_endmill': 'moves=09d48c7f196d19d7|warnings=|gcode=f402ce776038bc5f|post=',
+  'x/inch/rotary_rough/ball_endmill': 'moves=af2267fd71990cf8|warnings=|gcode=6a1827e4cab3f7d7|post=',
+  'x/inch/rotary_finish/flat_endmill': 'moves=a46a8bd6ec1c9253|warnings=rotaryFinishWithoutRough|gcode=fa1881522bae99ce|post=',
+  'x/inch/rotary_finish/ball_endmill': 'moves=1e3c29c6b4bb6197|warnings=rotaryFinishWithoutRough|gcode=143c70b5c4c559d1|post=',
+  'y/mm/rotary_rough/flat_endmill': 'moves=01d1a289c36f9b91|warnings=|gcode=196038f6944e8f13|post=',
+  'y/mm/rotary_rough/ball_endmill': 'moves=96714076be1590cf|warnings=|gcode=ab673fa4f13d080b|post=',
+  'y/mm/rotary_finish/flat_endmill': 'moves=306a934ad33cac7e|warnings=rotaryFinishWithoutRough|gcode=a31cb7b996b5a530|post=',
+  'y/mm/rotary_finish/ball_endmill': 'moves=453cde06c691e3a4|warnings=rotaryFinishWithoutRough|gcode=8832dcfa45b0ab94|post=',
+  'y/inch/rotary_rough/flat_endmill': 'moves=00ffca7571b62a83|warnings=|gcode=9c4a1de5b7910b94|post=',
+  'y/inch/rotary_rough/ball_endmill': 'moves=a2496a86f4d54b39|warnings=|gcode=8ffcd330976fcd70|post=',
+  'y/inch/rotary_finish/flat_endmill': 'moves=390f28eb55355c9d|warnings=rotaryFinishWithoutRough|gcode=97b5558576e60919|post=',
+  'y/inch/rotary_finish/ball_endmill': 'moves=219adb49fc5035ce|warnings=rotaryFinishWithoutRough|gcode=a16891263e4afe0f|post=',
 }
 
 if (process.env.SQUARE_ROTARY_PRINT_SQUARE === '1') {
