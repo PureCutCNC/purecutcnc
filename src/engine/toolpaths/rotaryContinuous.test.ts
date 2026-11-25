@@ -1454,6 +1454,21 @@ function walkBand(
   assert.equal(broke.points.length, 0, 'a band over its shared budget emits no points')
   const free = build(RIDGE, FLAT, { spent: ZERO_HELIX_SPEND })
   assert.ok(free.points.length > 1, 'the same band with its budget unspent is a helix')
+  // #1237: a piece the walk split off keeps half its budget for refinement, so
+  // a first pass that fits the whole cap but not half of it is refused on its
+  // price, before reading anything, and the walk halves it again.
+  const whole = build(RIDGE, FLAT, { spent: ZERO_HELIX_SPEND })
+  assert.ok(whole.rasterWork > 0, 'the fixture reads model rows')
+  const firstPass = build(RIDGE, FLAT, { budget: { rounds: 0 } }).rasterWork
+  const cap = { work: 1.5 * firstPass }
+  const unreserved = build(RIDGE, FLAT, { budget: cap })
+  assert.ok(unreserved.rasterWork > 0, 'without the reserve the first pass is read')
+  const reserved = build(RIDGE, FLAT, { budget: cap, reserveRefinement: true })
+  assert.equal(reserved.exhausted, true, 'with the reserve the first pass is over half the cap')
+  assert.equal(reserved.rasterWork + reserved.rows + reserved.samples, 0,
+    'and is refused on its price, reading nothing')
+  const roomy = build(RIDGE, FLAT, { budget: { work: 2 * firstPass + 1 }, reserveRefinement: true })
+  assert.ok(roomy.rasterWork > 0, 'a first pass within half the cap is read with the reserve')
   console.log(`  ca-g budget: ${defaulted.spends.length} bounded attempts (0/1/2/deep caps), a spent band is rings, an unspent one is a helix`)
 }
 
