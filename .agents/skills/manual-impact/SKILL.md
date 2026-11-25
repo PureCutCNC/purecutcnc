@@ -40,11 +40,14 @@ If the diff touches `src/i18n/locales/en/**`, `src/components/**`,
 
 ## 2. Find the pages and screenshots
 
-The manual is being rebuilt on the docs repo's `site-revamp` branch; once it
-merges, use `main`. List the pages:
+Read the docs repo's `main` unless the user names a docs branch. Bigger changes
+are documented on a docs integration branch (for example `docs/issue-85-m3-rotary`)
+before it merges, and pages or screenshots there may not exist on `main` yet. Set
+the ref once, then list the pages:
 
 ```bash
-gh api "repos/PureCutCNC/purecutcnc.github.io/git/trees/site-revamp?recursive=1" \
+DOCS_REF=main   # or the docs branch the user named
+gh api "repos/PureCutCNC/purecutcnc.github.io/git/trees/$DOCS_REF?recursive=1" \
   --jq '.tree[].path | select(startswith("site/src/content/docs/guide/") and endswith(".mdx"))
         | ltrimstr("site/src/content/docs/") | rtrimstr(".mdx")'
 ```
@@ -53,7 +56,7 @@ List the captured screenshots with what each shows, then grep for the panel,
 operation or control you changed:
 
 ```bash
-gh api "repos/PureCutCNC/purecutcnc.github.io/contents/site/src/assets/manual/media.json?ref=site-revamp" \
+gh api "repos/PureCutCNC/purecutcnc.github.io/contents/site/src/assets/manual/media.json?ref=$DOCS_REF" \
   --jq .content | base64 -d \
   | jq -r 'to_entries[] | select(.value.source == "capture") | "\(.key)\t\(.value.shows)"'
 ```
