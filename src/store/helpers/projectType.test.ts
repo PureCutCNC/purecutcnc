@@ -297,9 +297,11 @@ function postOperations(
  */
 const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
-  'pocket-feed-reduction.camj': 'cbf2417a4be43caf',
+  // #1253 retains line segments that a fitted arc would deviate from.
+  // Both pocket programs still match their previous exports with fitting off.
+  'pocket-feed-reduction.camj': 'a9bdac583b24e00b',
   'v-carve-noise-test.camj': '24623f98ba01c484',
-  'another-pocket-test.camj': '4f96da538edfabb4',
+  'another-pocket-test.camj': 'dc30f3e3898676bc',
   // #1177 recaptured the `around` pair: the fixture's ball reads the exact
   // sphere drop, so the rough's layers are level and merge (1465 -> 407
   // moves, the same cut length). The non-rotary rows are untouched.
@@ -455,7 +457,7 @@ async function main(): Promise<void> {
     assertEqual(barSeedsModel({ ...round, stock: milling.stock }), false, 'a rotary project without a bar has no bar to seed from')
   })
 
-  await test('generated and exported programs are byte-identical to the base commit', () => {
+  await test('generated and exported programs match the reference output', () => {
     // Plasma.
     const { input } = exportPlasma(PLASMA_EXPORT_SCENARIOS['part-with-holes']())
     const plasmaProject: Project = {

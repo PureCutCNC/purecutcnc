@@ -61,6 +61,7 @@
  * at the end (#1091: no closing unwind).
  */
 
+import { arcChordSagitta } from '../../src/engine/toolpaths/arcReconstruction'
 import { newProject, defaultTool, getStockBounds, rectProfile, roundStock } from '../../src/types/project'
 import type { MachiningSetup, Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
@@ -159,13 +160,19 @@ function rotaryPt(x: number, y: number, z: number, a: number): ToolpathPoint {
 }
 
 /** Lead in from safe Z, then cut the given polyline. */
-function leadInAndCut(points: ToolpathPoint[]): ToolpathMove[] {
+type FixturePoint = ToolpathPoint & { incomingChordError?: number }
+
+function leadInAndCut(points: FixturePoint[]): ToolpathMove[] {
   const moves: ToolpathMove[] = [
     { kind: 'rapid', from: pt(0, 0, 5), to: { ...points[0], z: 5 } },
     { kind: 'plunge', from: { ...points[0], z: 5 }, to: { ...points[0] } },
   ]
   for (let i = 0; i < points.length - 1; i++) {
-    moves.push({ kind: 'cut', from: { ...points[i] }, to: { ...points[i + 1] } })
+    const { incomingChordError: _unused, ...from } = points[i]
+    const { incomingChordError, ...to } = points[i + 1]
+    const move: ToolpathMove = { kind: 'cut', from, to }
+    if (incomingChordError !== undefined) move.arcChordError = incomingChordError
+    moves.push(move)
   }
   return moves
 }
@@ -174,11 +181,14 @@ function leadInAndCut(points: ToolpathPoint[]): ToolpathMove[] {
 function arcChords(
   radius: number, startDeg: number, sweepDeg: number, count: number,
   cx = 0, cy = 0, z = -1,
-): ToolpathPoint[] {
-  const points: ToolpathPoint[] = []
+): FixturePoint[] {
+  const points: FixturePoint[] = []
+  const incomingChordError = arcChordSagitta(radius, sweepDeg * Math.PI / (180 * count))
   for (let i = 0; i <= count; i++) {
     const angle = ((startDeg + (sweepDeg * i) / count) * Math.PI) / 180
-    points.push(pt(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle), z))
+    const point: FixturePoint = pt(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle), z)
+    if (i > 0) point.incomingChordError = incomingChordError
+    points.push(point)
   }
   return points
 }
@@ -218,11 +228,7 @@ function concentricPasses(): ToolpathMove[] {
   const moves: ToolpathMove[] = []
   for (const radius of [20, 16, 12, 8]) {
     const ring = arcChords(radius, 0, 360, 32)
-    moves.push({ kind: 'rapid', from: pt(0, 0, 5), to: { ...ring[0], z: 5 } })
-    moves.push({ kind: 'plunge', from: { ...ring[0], z: 5 }, to: { ...ring[0] } })
-    for (let i = 0; i < ring.length - 1; i++) {
-      moves.push({ kind: 'cut', from: { ...ring[i] }, to: { ...ring[i + 1] } })
-    }
+    moves.push(...leadInAndCut(ring))
   }
   return moves
 }

@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
+import { arcChordSagitta } from './arcReconstruction'
 import { plasmaStartPointForContour } from './plasmaStartPoint'
 import type { Operation, Point, Project } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
 import { resolveProject } from '../../store/helpers/resolveFeatures'
 import { expandFeatureGeometry } from '../../text'
 import { findOperationTool } from '../../toolPolicy'
-import { convertLength } from '../../utils/units'
+import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { flattenProfile, fromClipperPath, getOperationSafeZ, normalizeToolForProject, normalizeWinding, resolveDimensionRef, offsetKeepOutPaths, toClipperPath, DEFAULT_CLIPPER_SCALE } from './geometry'
 import { buildTangentLeadPath } from './tangentLink'
 import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals } from './plasmaGeometry'
@@ -88,6 +89,7 @@ interface PlasmaCut {
   entry: Point[]
   ring: Point[]
   exit: Point[]
+  circle?: { center: Point; radius: number }
 }
 
 export function generatePlasmaProfileToolpath(authoritativeProject: Project, operation: Operation): ToolpathResult {
@@ -118,8 +120,16 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     .map((f) => ({ feature: f, ring: flattenProfile(f.sketch.profile).points }))
   const safeZ = Math.max(getOperationSafeZ(authoritativeProject), project.stock.thickness + (tool.cutHeight ?? 0) + convertLength(1, 'mm', project.meta.units))
   const z = project.stock.thickness + (tool.cutHeight ?? 0)
-  const move = (kind: ToolpathMove['kind'], from: Point & { z?: number }, to: Point & { z?: number }): void => {
-    result.moves.push({ kind, from: { ...from, z: from.z ?? z }, to: { ...to, z: to.z ?? z } })
+  const tolerance = exportGeometryTolerance(project.meta.units)
+  const move = (
+    kind: ToolpathMove['kind'],
+    from: Point & { z?: number },
+    to: Point & { z?: number },
+    arcChordError?: number,
+  ): void => {
+    const motion: ToolpathMove = { kind, from: { ...from, z: from.z ?? z }, to: { ...to, z: to.z ?? z } }
+    if (arcChordError !== undefined) motion.arcChordError = arcChordError
+    result.moves.push(motion)
   }
   // Step 1: resolve every contour to its finished cut, in selection order, so
   // each contour's own warnings come out in the order they always did.
@@ -198,7 +208,19 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     if (chosen.centrePierce) warn('plasmaCentrePierce', target.name)
     else if (chosen.straightFallback) warn('plasmaStraightLead', target.name)
     if (outLength > 0 && chosen.exit.length === 0) warn('plasmaLeadOutOmitted', target.name)
-    cuts.push({ id: target.id, name: target.name, source: shape.ring, entry: chosen.entry, ring: chosen.ring, exit: chosen.exit })
+    const profile = target.sketch.profile
+    const segment = profile.segments[0]
+    let circle: PlasmaCut['circle']
+    if (profile.segments.length === 1 && segment?.type === 'circle') {
+      const { center } = segment
+      const radius = Math.hypot(profile.start.x - center.x, profile.start.y - center.y)
+        + (inside ? -tool.radius : tool.radius)
+      if (radius > 0 && ring.every((point) =>
+        Math.abs(Math.hypot(point.x - center.x, point.y - center.y) - radius) <= tolerance)) {
+        circle = { center, radius }
+      }
+    }
+    cuts.push({ id: target.id, name: target.name, source: shape.ring, entry: chosen.entry, ring: chosen.ring, exit: chosen.exit, circle })
   }
   // Step 2: the order (issue #958). Inside contours before the contour that
   // encloses them, part by part, nearest next from the machine origin.
@@ -213,7 +235,20 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     if (previous) move('rapid', previous, { ...pierce, z: safeZ })
     move('plunge', { ...pierce, z: safeZ }, pierce)
     for (let i = 1; i < cut.entry.length; i += 1) move('lead_in', cut.entry[i - 1], cut.entry[i])
-    for (let i = 1; i < cut.ring.length; i += 1) move('cut', cut.ring[i - 1], cut.ring[i])
+    for (let i = 1; i < cut.ring.length; i += 1) {
+      const from = cut.ring[i - 1]
+      const to = cut.ring[i]
+      let arcChordError: number | undefined
+      if (cut.circle) {
+        // Allow only the sagitta of this span of the known offset circle.
+        const { center, radius } = cut.circle
+        const ax = from.x - center.x, ay = from.y - center.y
+        const bx = to.x - center.x, by = to.y - center.y
+        const sweep = Math.atan2(ax * by - ay * bx, ax * bx + ay * by)
+        arcChordError = arcChordSagitta(radius, sweep)
+      }
+      move('cut', from, to, arcChordError)
+    }
     for (let i = 1; i < cut.exit.length; i += 1) move('lead_out', cut.exit[i - 1], cut.exit[i])
     const end = cutEnd(cut)
     move('rapid', end, { ...end, z: safeZ })

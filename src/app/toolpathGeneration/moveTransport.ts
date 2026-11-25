@@ -111,6 +111,9 @@ export interface PackedMoves {
   /** Tags, parallel to `sourceIndices`. Strings cannot live in a typed array,
    *  so these clone normally — there are few, and they repeat. */
   sourceValues: string[]
+  /** One value per move when a path has sampled curves. NaN marks an absent
+   *  allowance. Trochoidal paths have evidence on nearly every move. */
+  arcChordErrors?: Float64Array
   /** Sparse rotary angles, ascending by {@link angleSlot}. Present only when at
    *  least one point has an angle, so an all-linear toolpath packs to exactly
    *  the bytes and layout it did before the rotary axis existed. */
@@ -144,6 +147,7 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
   const sourceValues: string[] = []
   const angleIndices: number[] = []
   const angleValues: number[] = []
+  let arcChordErrors: Float64Array | undefined
 
   for (let index = 0; index < count; index += 1) {
     const move = moves[index]
@@ -166,6 +170,10 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
     if (move.feedScale !== undefined) {
       feedScaleIndices.push(index)
       feedScaleValues.push(move.feedScale)
+    }
+    if (move.arcChordError !== undefined) {
+      arcChordErrors ??= new Float64Array(count).fill(NaN)
+      arcChordErrors[index] = move.arcChordError
     }
     if (move.source !== undefined) {
       sourceIndices.push(index)
@@ -191,6 +199,7 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
     feedScaleValues: Float64Array.from(feedScaleValues),
     sourceIndices: Uint32Array.from(sourceIndices),
     sourceValues,
+    ...(arcChordErrors === undefined ? {} : { arcChordErrors }),
     // Absent when the toolpath never turns: the packed shape is then identical
     // to the pre-rotary one, transfer list and all.
     ...(angleIndices.length > 0
@@ -200,7 +209,10 @@ export function packMoves(moves: readonly ToolpathMove[]): PackedMoves {
 }
 
 export function unpackMoves(packed: PackedMoves): ToolpathMove[] {
-  const { count, kinds, coords, feedScaleIndices, feedScaleValues, sourceIndices, sourceValues, angleIndices, angleValues } = packed
+  const {
+    count, kinds, coords, feedScaleIndices, feedScaleValues,
+    sourceIndices, sourceValues, arcChordErrors, angleIndices, angleValues,
+  } = packed
   const moves: ToolpathMove[] = new Array<ToolpathMove>(count)
 
   // Sparse fields are walked with cursors rather than looked up per move, so
@@ -232,6 +244,8 @@ export function unpackMoves(packed: PackedMoves): ToolpathMove[] {
       move.feedScale = feedScaleValues[feedCursor]
       feedCursor += 1
     }
+    const arcChordError = arcChordErrors?.[index]
+    if (arcChordError !== undefined && !Number.isNaN(arcChordError)) move.arcChordError = arcChordError
     if (sourceCursor < sourceIndices.length && sourceIndices[sourceCursor] === index) {
       move.source = sourceValues[sourceCursor]
       sourceCursor += 1
@@ -270,7 +284,8 @@ export function transferablesOf(transported: TransportedResult): ArrayBuffer[] {
     packedMoves.feedScaleValues.buffer as ArrayBuffer,
     packedMoves.sourceIndices.buffer as ArrayBuffer,
   ]
-  // A toolpath with no angle transfers exactly the buffers it always did.
+  if (packedMoves.arcChordErrors !== undefined) buffers.push(packedMoves.arcChordErrors.buffer as ArrayBuffer)
+  // Packed angles are transferred only when the toolpath has them.
   if (packedMoves.angleIndices !== undefined && packedMoves.angleValues !== undefined) {
     buffers.push(packedMoves.angleIndices.buffer as ArrayBuffer)
     buffers.push(packedMoves.angleValues.buffer as ArrayBuffer)
@@ -318,6 +333,10 @@ export function isPackedMoves(value: unknown): value is PackedMoves {
     && candidate.feedScaleValues instanceof Float64Array
     && candidate.sourceIndices instanceof Uint32Array
     && Array.isArray(candidate.sourceValues)
+    && (candidate.arcChordErrors === undefined
+      || (candidate.arcChordErrors instanceof Float64Array
+        && candidate.arcChordErrors.length === count
+        && candidate.arcChordErrors.every(error => Number.isNaN(error) || (Number.isFinite(error) && error >= 0))))
     && anglesValid
     && candidate.coords.length === count * COORDS_PER_MOVE
     && candidate.kinds.length === count

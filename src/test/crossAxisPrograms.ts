@@ -41,6 +41,7 @@
  * rule's tests live in `src/engine/gcode/crossAxisHeldByTouchOff.test.ts`.
  */
 
+import { arcChordSagitta } from '../engine/toolpaths/arcReconstruction'
 import { convertLength } from '../utils/units'
 import { defaultOrigin, defaultTool, newProject, roundStock } from '../types/project'
 import type { BarStock, MachiningSetup, Operation, Project, Tool } from '../types/project'
@@ -359,6 +360,7 @@ export function crossAxisArcProgram(radiusMm = 5): CrossAxisProgram {
       kind: 'cut' as const,
       from: at(index),
       to: at(index + 1),
+      arcChordError: arcChordSagitta(radiusMm, Math.PI * 2 / count),
     })),
   ]
   return {

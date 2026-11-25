@@ -132,8 +132,9 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, ORBIT_SAGITTA_
 import type { TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
-import { appendLinkedTrochoidalRing, appendOrbitCuts, recordTrochoidalRingEnd } from './trochoidalRingLinks'
+import { appendLinkedTrochoidalRing, recordTrochoidalRingEnd } from './trochoidalRingLinks'
 import {
+  appendOrbitCuts,
   appendTrochoidalEntry,
   resolveTrochoidalGeometry,
   trochoidalEntryMoveCount,
@@ -3519,7 +3520,7 @@ function cutTrochoidalRingMoves(
       angularDirection,
     )
 
-    appendOrbitCuts(moves, built.points, z)
+    appendOrbitCuts(moves, built.points, z, toolDiameter)
     recordTrochoidalRingEnd(moves, root, built.entryCenter, pathParams)
     nextPosition = { x: built.points[built.points.length - 1].x, y: built.points[built.points.length - 1].y, z }
   }

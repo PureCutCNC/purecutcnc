@@ -150,7 +150,7 @@ const EXPECTED: Expectation[] = [
 ]
 
 /** Posted through the bundled `grbl` definition; the moves are what #812 touches, not the dialect. */
-const EXPECTED_GCODE_BYTES = 1_544_960
+const EXPECTED_GCODE_BYTES = 1_577_530
 
 /**
  * sha256 of the posted program, with the generation stamp normalised away.
@@ -163,11 +163,11 @@ const EXPECTED_GCODE_BYTES = 1_544_960
  * file pins is #812's toolpath claim, and the per-operation move hashes above
  * carry that on their own; a clock is not part of it.
  *
- * This value replaces `b452f2eeb153982e`, recorded the same way over the raw
- * program. Same tree, same program: the only difference is that one line, and
- * the move hashes above were not re-recorded.
+ * #1253 retains the source lines where the outside edge routes fail the
+ * segment-deviation check. The individual move hashes and the program with
+ * arc fitting disabled match the previous export.
  */
-const EXPECTED_GCODE_HASH = '68ca801bd2083994'
+const EXPECTED_GCODE_HASH = '551f29998d4edf7b'
 
 /** The one environment-dependent line of the program, replaced by a placeholder. */
 function withoutGeneratedStamp(gcode: string): string {

@@ -21,6 +21,7 @@
  * Run with: npx tsx src/engine/gcode/sbpMotionParser.test.ts
  */
 
+import { arcChordSagitta } from '../toolpaths/arcReconstruction'
 import { defaultTool, newProject } from '../../types/project'
 import type { Operation } from '../../types/project'
 import { normalizeToolForProject } from '../toolpaths/geometry'
@@ -215,7 +216,7 @@ function testDebugModelForSbpExport(): void {
     { kind: 'plunge', from: { ...points[0], z: 30 }, to: points[0] },
   ]
   for (let index = 0; index < points.length - 1; index++) {
-    moves.push({ kind: 'cut', from: points[index], to: points[index + 1] })
+    moves.push({ kind: 'cut', from: points[index], to: points[index + 1], arcChordError: arcChordSagitta(20, Math.PI * 2 / 72) })
   }
   moves.push({ kind: 'cut', from: points[72], to: { x: 95, y: 50, z: 2 } })
   moves.push({ kind: 'rapid', from: { x: 95, y: 50, z: 2 }, to: { x: 95, y: 50, z: 30 } })

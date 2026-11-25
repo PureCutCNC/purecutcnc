@@ -588,6 +588,9 @@ export interface PartialArcFitOptions {
    *  median step.  This rejects a long straight chord plus tiny neighbouring
    *  curve chords that can otherwise pass an endpoint-only circle fit. */
   maxAngularStepRatio?: number
+  /** Optional bound on radial error over each complete source segment.
+   *  The index refers to the segment's start in the original point array. */
+  maxSegmentDeviation?: (index: number) => number
   /** Optional source-circle centers for anti-spurious validation.
    *  When provided and non-empty, a fit whose center is farther than
    *  min(0.01, radius×0.001) from any source center is rejected.
@@ -628,6 +631,11 @@ export interface FittedArcRun {
 // circles retain their fitted circle across windows; non-circular input can
 // produce tighter local fits that still use the existing validation gates.
 const MAX_ARC_FIT_CANDIDATE_POINTS = 128
+
+/** Height between a circular span and the chord joining its endpoints. */
+export function arcChordSagitta(radius: number, sweepRadians: number): number {
+  return 2 * radius * Math.sin(sweepRadians / 4) ** 2
+}
 
 function dist2D(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -702,7 +710,7 @@ export function findArcRunsInPoints(
         fit = constrainCircleToEndpoints(fit, sub[0], sub[sub.length - 1]) ?? fit
       }
 
-      if (!validateArcFitPoints(sub, fit, opts)) continue
+      if (!validateArcFitPoints(sub, fit, opts, i)) continue
 
       const clockwise = arcSweepClockwise(sub, fit.center)
       best = {
@@ -731,6 +739,7 @@ function validateArcFitPoints(
   points: Point[],
   fit: { center: Point; radius: number },
   opts: PartialArcFitOptions,
+  startIndex: number,
 ): boolean {
   const { center, radius } = fit
 
@@ -764,6 +773,13 @@ function validateArcFitPoints(
     let da = Math.abs(a2 - a1)
     if (da > Math.PI) da = 2 * Math.PI - da
     if (da > maxSegmentAngle) return false
+    // The farthest point from the centre is an endpoint, already checked.
+    // Check the closest point too, where an apparently good fit can bow
+    // across a straight move between vertices (#1253).
+    if (opts.maxSegmentDeviation
+      && radius - segmentDistance(center, points[k], points[k + 1]) > opts.maxSegmentDeviation(startIndex + k)) {
+      return false
+    }
     angularSteps.push(da)
   }
 

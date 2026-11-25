@@ -46,7 +46,7 @@ import { XY_EPSILON, samePointXY } from './geometry'
 import { buildOffsetDomainCheck, domainSafePathLength, type TangentLinkDomainRegion } from './tangentLink'
 import { buildTrochoidalContour, type TrochoidalContourResult } from './trochoidalEdge'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
-import type { TrochoidalOperationBudget } from './trochoidalPath'
+import { appendOrbitCuts, type TrochoidalOperationBudget } from './trochoidalPath'
 import type { ToolpathMove, ToolpathPoint } from './types'
 
 /** Source tag on a link's orbit moves. The two joining chords stay untagged, like the ring's own cuts. */
@@ -169,19 +169,6 @@ export function seamClosedContourNearest(points: Point[], anchor: Point, snap: n
   return [foot, ...points.slice(nextIndex), ...points.slice(0, nextIndex)]
 }
 
-/** Cut along an orbit's points at `z`, one move per chord. */
-export function appendOrbitCuts(moves: ToolpathMove[], points: readonly Point[], z: number, source?: string): void {
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const move: ToolpathMove = {
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    }
-    if (source !== undefined) move.source = source
-    moves.push(move)
-  }
-}
-
 function appendChord(moves: ToolpathMove[], from: Point, to: Point, z: number): void {
   if (samePointXY(from, to)) return
   moves.push({ kind: 'cut', from: { x: from.x, y: from.y, z }, to: { x: to.x, y: to.y, z } })
@@ -283,9 +270,9 @@ export function appendLinkedTrochoidalRing(
   budget.remainingPoints -= generated
 
   appendChord(moves, fromPosition, linkPoints[0], z)
-  appendOrbitCuts(moves, linkPoints, z, TROCHOIDAL_LINK_SOURCE)
+  appendOrbitCuts(moves, linkPoints, z, toolDiameter, TROCHOIDAL_LINK_SOURCE)
   appendChord(moves, linkPoints[linkPoints.length - 1], ringPoints[0], z)
-  appendOrbitCuts(moves, ringPoints, z)
+  appendOrbitCuts(moves, ringPoints, z, toolDiameter)
   recordTrochoidalRingEnd(moves, root, ring.built.entryCenter ?? start, params)
   const end = ringPoints[ringPoints.length - 1]
   return { x: end.x, y: end.y, z }

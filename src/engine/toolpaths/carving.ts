@@ -39,6 +39,7 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type Trochoida
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import {
+  appendOrbitCuts,
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
   trochoidalEntryMoveCount,
@@ -609,7 +610,7 @@ export function generateFollowLineToolpath(
   for (const target of orderedTargets) {
     if (target.work.mode === 'trochoidal') {
       for (const path of target.work.paths) {
-        const { built, z, entryStartZ, closed } = path
+        const { built, z, entryStartZ } = path
         const entry = built.points[0]
 
         // Skip retract when the tool is already at the entry XY (successive
@@ -647,9 +648,8 @@ export function generateFollowLineToolpath(
           )
         }
 
-        const cutMoves = toProfileCutMoves(built.points, z, closed)
-        appendAll(moves, cutMoves)
-        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        appendOrbitCuts(moves, built.points, z, tool.diameter)
+        currentPosition = moves.at(-1)?.to ?? currentPosition
       }
     } else {
       for (const fragment of target.work.fragments) {

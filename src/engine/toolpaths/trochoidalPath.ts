@@ -17,6 +17,7 @@
 import type { Operation, Point } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import { plungeLimitedFeedScale } from './entry'
+import { ORBIT_SAGITTA_FRACTION } from './trochoidalEdge'
 import type { TrochoidalPathStore } from './trochoidalLevelPaths'
 
 export const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
@@ -105,6 +106,28 @@ export interface TrochoidalOperationBudget {
 
 export function trochoidalEntryStrategy(operation: Operation): 'helix' | 'plunge' {
   return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
+}
+
+/** Emit sampled orbit spans with the sampler's chord allowance.
+ *  Transition chords are emitted separately and carry no allowance. */
+export function appendOrbitCuts(
+  moves: ToolpathMove[],
+  points: readonly Point[],
+  z: number,
+  toolDiameter: number,
+  source?: string,
+): void {
+  const arcChordError = ORBIT_SAGITTA_FRACTION * toolDiameter
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const move: ToolpathMove = {
+      kind: 'cut',
+      from: { x: points[index].x, y: points[index].y, z },
+      to: { x: points[index + 1].x, y: points[index + 1].y, z },
+      arcChordError,
+    }
+    if (source !== undefined) move.source = source
+    moves.push(move)
+  }
 }
 
 export function appendTrochoidalEntry(

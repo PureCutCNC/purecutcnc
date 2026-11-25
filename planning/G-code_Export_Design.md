@@ -488,6 +488,14 @@ project→machine coordinate transform and G-code emission. It does not modify
   `ToolpathMove` types or G-code concerns.
 - Fitting uses a Kasa algebraic circle (linear least squares) with a
   conservative 0.01 mm (project-unit-equivalent) residual tolerance.
+- Export checks the full source segment between each adjacent pair of
+  vertices. Its closest point to the fitted centre must be within the
+  0.01 mm radial error budget on the inside of the circle (#1253).
+  Each move sampled from a known curve can also carry that chord's sampling
+  allowance. Trochoidal orbits use their sampler's sagitta budget, and a
+  verified circular plasma contour uses the sagitta of each offset-circle
+  chord. The fitting check retains the original linear moves when a span
+  would exceed its budget.
 - A qualifying cut run may contain a circular sub-run embedded in straight
   lead-in/lead-out geometry. The shared partial-run search finds the circular
   portion; the surrounding straight moves remain as linear G1 output.
@@ -549,14 +557,9 @@ Invariants:
 - The exported-vs-optimized deviation check compares like with like. Linear
   moves are measured against the reference polyline directly; a fitted **arc**
   is measured against the reference **vertices** it spans, which must lie within
-  tolerance of the swept arc. That is the arc-fitting contract above (a residual
-  bound on the source *points*). Measuring a fitted arc against the reference
-  *chords* instead would charge it the sagitta between them — the gap inherent
-  to approximating a curve with line segments, which grows with radius
-  (≈ 0.00095 × R at the 5° flattening used for source curves and corner
-  fillets) and so exceeds the tolerance above roughly 10.5 mm radius no matter
-  how well the arc was fitted. The arc is the more accurate path there: the
-  machine cuts the true curve rather than the chords standing in for it.
+  tolerance of the swept arc. This diagnostic measures agreement with the
+  source vertices. Export also checks each source chord during fitting, with
+  the generator's sampling allowance where available, as described above.
 - Both the tolerance the fitter accepts and the tolerance the diagnostic
   verifies come from `exportGeometryTolerance()` in `src/utils/units.ts`, so the
   two cannot drift apart.

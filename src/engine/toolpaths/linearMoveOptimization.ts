@@ -111,6 +111,8 @@ function canMerge(a: ToolpathMove, b: ToolpathMove): boolean {
   if (a.kind !== b.kind) return false
   if (a.source !== b.source) return false
   if (a.feedScale !== b.feedScale) return false
+  // Each allowance describes one original chord, never their combined span.
+  if (a.arcChordError !== undefined || b.arcChordError !== undefined) return false
 
   // A move that turns the stock is never merged (issue #393): the merged move
   // would keep only one endpoint's angle, and the middle angle would be lost.
