@@ -35,6 +35,7 @@ import type {
   EmittedArcOptions,
 } from './arcFitting'
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
+import { optimizeLinearMoves } from '../toolpaths/linearMoveOptimization'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -665,6 +666,19 @@ function testCurveAllowanceAppliesToOneSourceMoveOnly(): void {
     'adjacent curved moves cannot extend their allowance across an unverified chord')
 }
 
+function testMergingCollinearMovesDropsChordAllowance(): void {
+  const moves = [
+    cut(pt(0, 0), pt(1, 0), { arcChordError: 0.004 }),
+    cut(pt(1, 0), pt(2, 0), { arcChordError: 0.002 }),
+    cut(pt(2, 0), pt(2, 1), { arcChordError: 0.003 }),
+  ]
+  const optimized = optimizeLinearMoves({ operationId: 'op', moves, bounds: null, warnings: [] })
+  assert(optimized.moves.length === 2, 'collinear moves still compact')
+  assert(optimized.moves[0].to.x === 2 && optimized.moves[0].arcChordError === undefined,
+    'the merged span keeps both moves but gets its own ordinary export tolerance')
+  assert(optimized.moves[1].arcChordError === 0.003, 'an untouched chord retains its own allowance')
+}
+
 function testAcceptsOrdinaryCircularArcAfterCollinearGate(): void {
   console.log('Testing that ordinary circular arcs still pass the collinearity gate...')
 
@@ -1283,6 +1297,7 @@ testRejectsLongStraightWithCornerFragment()
 testPreservesStraightSidesAroundCornerChords()
 testAcceptsCircularRunWithOneShortEndpointChord()
 testCurveAllowanceAppliesToOneSourceMoveOnly()
+testMergingCollinearMovesDropsChordAllowance()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
 testFullCircularChordLoop()
 testPartialArcWithStraightLeads()

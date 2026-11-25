@@ -3520,7 +3520,7 @@ function cutTrochoidalRingMoves(
       angularDirection,
     )
 
-    appendOrbitCuts(moves, built.points, z, toolDiameter)
+    appendOrbitCuts(moves, built.points, z, toolDiameter, true)
     recordTrochoidalRingEnd(moves, root, built.entryCenter, pathParams)
     nextPosition = { x: built.points[built.points.length - 1].x, y: built.points[built.points.length - 1].y, z }
   }

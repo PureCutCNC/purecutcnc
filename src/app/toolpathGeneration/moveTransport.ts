@@ -245,7 +245,9 @@ export function unpackMoves(packed: PackedMoves): ToolpathMove[] {
       feedCursor += 1
     }
     const arcChordError = arcChordErrors?.[index]
-    if (arcChordError !== undefined && !Number.isNaN(arcChordError)) move.arcChordError = arcChordError
+    if (arcChordError !== undefined && Number.isFinite(arcChordError) && arcChordError >= 0) {
+      move.arcChordError = arcChordError
+    }
     if (sourceCursor < sourceIndices.length && sourceIndices[sourceCursor] === index) {
       move.source = sourceValues[sourceCursor]
       sourceCursor += 1
@@ -335,8 +337,7 @@ export function isPackedMoves(value: unknown): value is PackedMoves {
     && Array.isArray(candidate.sourceValues)
     && (candidate.arcChordErrors === undefined
       || (candidate.arcChordErrors instanceof Float64Array
-        && candidate.arcChordErrors.length === count
-        && candidate.arcChordErrors.every(error => Number.isNaN(error) || (Number.isFinite(error) && error >= 0))))
+        && candidate.arcChordErrors.length === count))
     && anglesValid
     && candidate.coords.length === count * COORDS_PER_MOVE
     && candidate.kinds.length === count

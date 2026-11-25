@@ -214,13 +214,17 @@ console.log('\nEdge cases')
     packMoves([line]).arcChordErrors === undefined,
     'plain linear moves allocated curve evidence',
   )
-  for (const arcChordErrors of [new Float64Array(2), Float64Array.of(NaN, -1, Infinity)]) {
-    check(
-      'malformed curve allowances are rejected',
-      !isPackedMoves({ ...received, arcChordErrors }),
-      'a mismatched or invalid allowance buffer was accepted',
-    )
-  }
+  check(
+    'an allowance buffer of the wrong length is rejected',
+    !isPackedMoves({ ...received, arcChordErrors: new Float64Array(2) }),
+    'a mismatched allowance buffer was accepted',
+  )
+  const malformedValues = { ...received, arcChordErrors: Float64Array.of(NaN, -1, Infinity) }
+  check(
+    'invalid curve allowances are dropped while unpacking',
+    isPackedMoves(malformedValues) && unpackMoves(malformedValues).every(move => move.arcChordError === undefined),
+    'an invalid allowance could relax the export tolerance',
+  )
 }
 
 check('an empty path packs and unpacks', unpackMoves(packMoves([])).length === 0, 'empty round trip failed')

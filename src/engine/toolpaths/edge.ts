@@ -1155,7 +1155,7 @@ export function appendTrochoidalContoursAtLevels(
       )
     }
     // The orbit sampler includes the seam for closed rings.
-    appendOrbitCuts(moves, built.points, z, toolDiameter)
+    appendOrbitCuts(moves, built.points, z, toolDiameter, closed)
     nextPosition = moves.at(-1)?.to ?? nextPosition
   }
   return nextPosition

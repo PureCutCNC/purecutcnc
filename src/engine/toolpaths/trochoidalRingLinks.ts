@@ -270,9 +270,9 @@ export function appendLinkedTrochoidalRing(
   budget.remainingPoints -= generated
 
   appendChord(moves, fromPosition, linkPoints[0], z)
-  appendOrbitCuts(moves, linkPoints, z, toolDiameter, TROCHOIDAL_LINK_SOURCE)
+  appendOrbitCuts(moves, linkPoints, z, toolDiameter, false, TROCHOIDAL_LINK_SOURCE)
   appendChord(moves, linkPoints[linkPoints.length - 1], ringPoints[0], z)
-  appendOrbitCuts(moves, ringPoints, z, toolDiameter)
+  appendOrbitCuts(moves, ringPoints, z, toolDiameter, true)
   recordTrochoidalRingEnd(moves, root, ring.built.entryCenter ?? start, params)
   const end = ringPoints[ringPoints.length - 1]
   return { x: end.x, y: end.y, z }

@@ -610,7 +610,7 @@ export function generateFollowLineToolpath(
   for (const target of orderedTargets) {
     if (target.work.mode === 'trochoidal') {
       for (const path of target.work.paths) {
-        const { built, z, entryStartZ } = path
+        const { built, z, entryStartZ, closed } = path
         const entry = built.points[0]
 
         // Skip retract when the tool is already at the entry XY (successive
@@ -648,7 +648,7 @@ export function generateFollowLineToolpath(
           )
         }
 
-        appendOrbitCuts(moves, built.points, z, tool.diameter)
+        appendOrbitCuts(moves, built.points, z, tool.diameter, closed)
         currentPosition = moves.at(-1)?.to ?? currentPosition
       }
     } else {

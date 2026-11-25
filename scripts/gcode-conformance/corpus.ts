@@ -160,18 +160,14 @@ function rotaryPt(x: number, y: number, z: number, a: number): ToolpathPoint {
 }
 
 /** Lead in from safe Z, then cut the given polyline. */
-type FixturePoint = ToolpathPoint & { incomingChordError?: number }
-
-function leadInAndCut(points: FixturePoint[]): ToolpathMove[] {
+function leadInAndCut(points: ToolpathPoint[], arcChordError?: number): ToolpathMove[] {
   const moves: ToolpathMove[] = [
     { kind: 'rapid', from: pt(0, 0, 5), to: { ...points[0], z: 5 } },
     { kind: 'plunge', from: { ...points[0], z: 5 }, to: { ...points[0] } },
   ]
   for (let i = 0; i < points.length - 1; i++) {
-    const { incomingChordError: _unused, ...from } = points[i]
-    const { incomingChordError, ...to } = points[i + 1]
-    const move: ToolpathMove = { kind: 'cut', from, to }
-    if (incomingChordError !== undefined) move.arcChordError = incomingChordError
+    const move: ToolpathMove = { kind: 'cut', from: { ...points[i] }, to: { ...points[i + 1] } }
+    if (arcChordError !== undefined) move.arcChordError = arcChordError
     moves.push(move)
   }
   return moves
@@ -181,16 +177,18 @@ function leadInAndCut(points: FixturePoint[]): ToolpathMove[] {
 function arcChords(
   radius: number, startDeg: number, sweepDeg: number, count: number,
   cx = 0, cy = 0, z = -1,
-): FixturePoint[] {
-  const points: FixturePoint[] = []
-  const incomingChordError = arcChordSagitta(radius, sweepDeg * Math.PI / (180 * count))
+): { points: ToolpathPoint[]; arcChordError: number } {
+  const points: ToolpathPoint[] = []
   for (let i = 0; i <= count; i++) {
     const angle = ((startDeg + (sweepDeg * i) / count) * Math.PI) / 180
-    const point: FixturePoint = pt(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle), z)
-    if (i > 0) point.incomingChordError = incomingChordError
-    points.push(point)
+    points.push(pt(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle), z))
   }
-  return points
+  return { points, arcChordError: arcChordSagitta(radius, sweepDeg * Math.PI / (180 * count)) }
+}
+
+function leadInAndCutArc(...args: Parameters<typeof arcChords>): ToolpathMove[] {
+  const { points, arcChordError } = arcChords(...args)
+  return leadInAndCut(points, arcChordError)
 }
 
 /**
@@ -227,21 +225,22 @@ function issue447PointsInch(): ToolpathPoint[] {
 function concentricPasses(): ToolpathMove[] {
   const moves: ToolpathMove[] = []
   for (const radius of [20, 16, 12, 8]) {
-    const ring = arcChords(radius, 0, 360, 32)
-    moves.push(...leadInAndCut(ring))
+    moves.push(...leadInAndCutArc(radius, 0, 360, 32))
   }
   return moves
 }
 
 /** A partial arc entered and left by straight cuts. */
 function arcWithStraightLeads(): ToolpathMove[] {
-  const arc = arcChords(15, 0, 120, 12)
-  return leadInAndCut([
+  const { points: arc, arcChordError } = arcChords(15, 0, 120, 12)
+  const moves = leadInAndCut([
     pt(30, -10),
     pt(arc[0].x, arc[0].y),
     ...arc.slice(1),
     pt(arc[arc.length - 1].x - 12, arc[arc.length - 1].y + 6),
   ])
+  for (let i = 3; i < moves.length - 1; i += 1) moves[i].arcChordError = arcChordError
+  return moves
 }
 
 /**
@@ -854,7 +853,7 @@ export const CORPUS: CorpusCase[] = [
     covers: '360 deg run split into 4 x 90 deg, and the degenerate-bisector path',
     units: 'mm',
     machineId: 'grbl',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
   },
   {
     name: 'arc-with-straight-leads',
@@ -868,14 +867,14 @@ export const CORPUS: CorpusCase[] = [
     covers: 'sweeps landing exactly on the 90 deg split threshold',
     units: 'mm',
     machineId: 'grbl',
-    moves: leadInAndCut(arcChords(25, 0, 90, 18)),
+    moves: leadInAndCutArc(25, 0, 90, 18),
   },
   {
     name: 'just-over-ninety-degrees',
     covers: 'the ceil() epsilon in splitArc, just past the threshold',
     units: 'mm',
     machineId: 'grbl',
-    moves: leadInAndCut(arcChords(25, 0, 91, 18)),
+    moves: leadInAndCutArc(25, 0, 91, 18),
   },
   {
     name: 'inch-output',
@@ -916,14 +915,14 @@ export const CORPUS: CorpusCase[] = [
     covers: 'line numbers, program number and %% wrapper alongside fitted arcs',
     units: 'mm',
     machineId: 'mach3',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
   },
   {
     name: 'linuxcnc-dialect',
     covers: 'a second I/J dialect with its own number format and header',
     units: 'mm',
     machineId: 'linuxcnc',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
   },
   {
     name: 'pocket-many-arcs',
@@ -988,7 +987,7 @@ export const CORPUS: CorpusCase[] = [
         covers: 'native CG arc syntax and direction, speeds, units guard, CRLF',
         units,
         machineId: 'shopbot',
-        moves: leadInAndCut(arcChords(10 * scale, 0, sweep, 16, 0, 0, -scale)),
+        moves: leadInAndCutArc(10 * scale, 0, sweep, 16, 0, 0, -scale),
       })),
       {
         name: `sbp-${units}-tool-change`,
@@ -1027,7 +1026,7 @@ export const CORPUS: CorpusCase[] = [
     covers: 'issue #946 - a Bottom setup flipped about Y, origin on the flip centreline',
     units: 'mm',
     machineId: 'grbl',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
     bottomSetup: { axis: 'y', origin: 'centre' },
   },
   {
@@ -1052,7 +1051,7 @@ export const CORPUS: CorpusCase[] = [
     covers: 'issue #946 - the setup header and free-text notes as (parenthesised) comments',
     units: 'mm',
     machineId: 'linuxcnc',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
     bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
   },
   {
@@ -1068,7 +1067,7 @@ export const CORPUS: CorpusCase[] = [
     covers: 'issue #946 - the setup header under line numbers and the %% wrapper',
     units: 'mm',
     machineId: 'mach3',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
     bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
   },
   {
@@ -1094,7 +1093,7 @@ export const CORPUS: CorpusCase[] = [
       + 'and a Bottom program in the SBP dialect',
     units: 'mm',
     machineId: 'shopbot',
-    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    moves: leadInAndCutArc(10, 0, 360, 32),
     bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
   },
   {

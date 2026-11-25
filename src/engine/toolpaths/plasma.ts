@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { arcChordSagitta } from './arcReconstruction'
 import { plasmaStartPointForContour } from './plasmaStartPoint'
 import type { Operation, Point, Project } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
@@ -24,7 +23,7 @@ import { findOperationTool } from '../../toolPolicy'
 import { convertLength, exportGeometryTolerance } from '../../utils/units'
 import { flattenProfile, fromClipperPath, getOperationSafeZ, normalizeToolForProject, normalizeWinding, resolveDimensionRef, offsetKeepOutPaths, toClipperPath, DEFAULT_CLIPPER_SCALE } from './geometry'
 import { buildTangentLeadPath } from './tangentLink'
-import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals } from './plasmaGeometry'
+import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals, projectOnSegment } from './plasmaGeometry'
 import { orderPlasmaCuts, outlinesEnclosingLaterCuts } from './plasmaOrder'
 import type { ToolpathMove, ToolpathResult } from './types'
 
@@ -213,8 +212,11 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     let circle: PlasmaCut['circle']
     if (profile.segments.length === 1 && segment?.type === 'circle') {
       const { center } = segment
+      // Clipper offsets the flat chords. Its miter vertices sit at the
+      // circular offset plus the secant correction for the sampled polygon.
+      const miterOffset = tool.radius / Math.cos(Math.PI / shape.ring.length)
       const radius = Math.hypot(profile.start.x - center.x, profile.start.y - center.y)
-        + (inside ? -tool.radius : tool.radius)
+        + (inside ? -miterOffset : miterOffset)
       if (radius > 0 && ring.every((point) =>
         Math.abs(Math.hypot(point.x - center.x, point.y - center.y) - radius) <= tolerance)) {
         circle = { center, radius }
@@ -240,12 +242,11 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
       const to = cut.ring[i]
       let arcChordError: number | undefined
       if (cut.circle) {
-        // Allow only the sagitta of this span of the known offset circle.
+        // At the arrival seam the endpoint can be inside the circle because
+        // it splits a source chord. Measure against the actual finite segment.
         const { center, radius } = cut.circle
-        const ax = from.x - center.x, ay = from.y - center.y
-        const bx = to.x - center.x, by = to.y - center.y
-        const sweep = Math.atan2(ax * by - ay * bx, ax * bx + ay * by)
-        arcChordError = arcChordSagitta(radius, sweep)
+        const closest = projectOnSegment(center, from, to)
+        arcChordError = Math.max(0, radius - Math.hypot(closest.x - center.x, closest.y - center.y))
       }
       move('cut', from, to, arcChordError)
     }

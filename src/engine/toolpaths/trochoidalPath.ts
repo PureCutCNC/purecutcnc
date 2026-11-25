@@ -108,13 +108,14 @@ export function trochoidalEntryStrategy(operation: Operation): 'helix' | 'plunge
   return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
 }
 
-/** Emit sampled orbit spans with the sampler's chord allowance.
- *  Transition chords are emitted separately and carry no allowance. */
+/** The dwell loops are sampled orbits too. Leave the snapped closing span
+ *  and separately emitted transition chords at the ordinary export tolerance. */
 export function appendOrbitCuts(
   moves: ToolpathMove[],
   points: readonly Point[],
   z: number,
   toolDiameter: number,
+  closed: boolean,
   source?: string,
 ): void {
   const arcChordError = ORBIT_SAGITTA_FRACTION * toolDiameter
@@ -123,8 +124,8 @@ export function appendOrbitCuts(
       kind: 'cut',
       from: { x: points[index].x, y: points[index].y, z },
       to: { x: points[index + 1].x, y: points[index + 1].y, z },
-      arcChordError,
     }
+    if (!closed || index < points.length - 2) move.arcChordError = arcChordError
     if (source !== undefined) move.source = source
     moves.push(move)
   }

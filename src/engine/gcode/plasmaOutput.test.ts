@@ -24,7 +24,7 @@ import assert from 'node:assert/strict'
 import { exportPlasma, PLASMA_EXPORT_SCENARIOS, rectangle } from '../../test/plasmaExportFixtures'
 import type { PlasmaExportSpec } from '../../test/plasmaExportFixtures'
 import { warningSeverity } from '../toolpaths/warningCodes'
-import { defaultTool } from '../../types/project'
+import { circleProfile, defaultTool } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { runPostProcessor } from './postprocessor'
@@ -319,6 +319,30 @@ function foldedCircleIndex(moves: string[]): number {
   const [, first, , , second] = items
   assert.ok(first.kind === 'cut' && first.moves.length === 2 && first.pierce.x === 0 && first.pierce.y === 0)
   assert.ok(second.kind === 'cut' && second.pierce.x === 9 && second.pierce.y === 9, 'a cut with no plunge fires where the head already is')
+}
+
+// A large inch kerf makes the miter correction larger than the export
+// tolerance. A split chord still needs its full inward distance at the seam.
+for (const diameter of [0.2, 1]) {
+  const { input, result } = exportPlasma({
+    units: 'inch',
+    thickness: 0.12,
+    features: [
+      { id: 'plate', operation: 'add', profile: rectangle(0, 0, 7, 7) },
+      { id: 'hole', operation: 'subtract', profile: circleProfile(3.5, 3.5, 2.5) },
+    ],
+    operations: [{ featureIds: ['hole'], tool: { diameter }, operation: { plasmaLeadIn: 'line' } }],
+  })
+  assert.deepEqual(result.warnings, [])
+  const cut = input.operations[0].toolpath.moves.filter(move => move.kind === 'cut')
+  assert.equal(cut.length, 73, 'the 72-sample circle gains one move where the entry splits the contour')
+  const radius = 2.5 - diameter / (2 * Math.cos(Math.PI / 72))
+  const seam = cut[0].from
+  const depth = radius - Math.hypot(seam.x - 3.5, seam.y - 3.5)
+  assert.ok((cut[0].arcChordError ?? 0) >= depth - 1e-12, 'the first span accounts for the split chord')
+  assert.ok((cut[72].arcChordError ?? 0) >= depth - 1e-12, 'the last span accounts for the split chord')
+  assert.ok(cut.every(move => move.arcChordError !== undefined), 'the inch offset verifies against the miter radius')
+  assert.ok(cuts(result.gcode)[0].moves.some(line => /^G3 /.test(line)), 'the inch hole still posts with arcs')
 }
 
 // A rectangle helper sanity check keeps the fixtures honest.

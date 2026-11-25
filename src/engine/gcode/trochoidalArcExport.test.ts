@@ -144,6 +144,14 @@ function testTrochoidalExportFitsArcs(): void {
   )
   assert(toolpath.moves.length > 5000, `expected dense trochoidal output, got ${toolpath.moves.length} moves`)
 
+  const cuts = toolpath.moves.filter(move => move.kind === 'cut')
+  assert(cuts.some(move => (move.arcChordError ?? 0) > 0), 'generated orbit chords carry the sampler allowance')
+  for (const z of new Set(cuts.map(move => move.to.z))) {
+    const closing = cuts.findLast(move => move.to.z === z)
+    assert(closing !== undefined && closing.arcChordError === undefined,
+      'the snapped closing chord keeps the ordinary export tolerance')
+  }
+
   const linear = exportGcode(project, operation, tool, toolpath, false)
   const fitted = exportGcode(project, operation, tool, toolpath, true)
 
