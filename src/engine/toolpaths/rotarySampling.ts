@@ -885,6 +885,14 @@ export interface RotaryAngleJob {
    * the cap; see `refineAroundSampling`.
    */
   readonly columns?: readonly number[]
+  /**
+   * #1258: positions of an exact row that only need to know whether anything
+   * is under the tool (`coveredFootprintTips`), disjoint from `columns`. Each
+   * gets the first contact found -- a real surface height, never above the
+   * exact one -- or `NaN` when nothing is there. A roughing layer's helix asks
+   * this for poses it has proved sit at the layer radius.
+   */
+  readonly covered?: readonly number[]
 }
 
 /**
@@ -1474,6 +1482,25 @@ export function runRotaryAngleJob(
         break build
       }
     }
+    // #1258: an exact row wanted at some positions visits only the facets whose
+    // span along the bar meets those positions' stretch, found through the mesh's
+    // along index, instead of gathering every candidate at the angle and testing
+    // each against the stretch. The facets kept, and the work reported, are the
+    // ones the gather-and-test below keeps (see `stretchCandidates`).
+    // A row with `covered` positions (a roughing layer's helix) reads those only
+    // as "is anything under the tool" (`coveredFootprintTips`), so a row whose
+    // every position is covered reads nothing exactly.
+    if (prep.exactTipRows === true && job.columns !== undefined) {
+      const stretch = job.columns.length === 0 && job.covered !== undefined
+        ? { count: 0, work: 0 }
+        : exactStretchRead(prep, plan, t, subset, job.columns)
+      if (stretch !== null) {
+        const row = new Float32Array(along.length)
+        exactFootprintTips(row, prep, plan, subset, stretch.count, cos, sin, job.columns, true)
+        if (job.covered !== undefined) coveredFootprintTips(row, prep, plan, t, cos, sin, job.covered)
+        return { index: job.index, row, lift: 0, warnings: angleWarnings, reused: false, rasterWork: stretch.work }
+      }
+    }
     // Only triangles whose cross-section arc covers this turn's strip direction
     // can put a cell in that window. The bucket index is conservative -- a
     // triangle lands in every bucket its arc touches, padded a bucket either
@@ -1535,6 +1562,7 @@ export function runRotaryAngleJob(
       // #1237: an exact row's work is the facets it turns -- every candidate,
       // or only those its wanted stretch reaches (`rotaryExactStretchWork`).
       rasterWork = exactFootprintTips(row, prep, plan, subset, candidates, cos, sin, job.columns)
+      if (job.covered !== undefined) coveredFootprintTips(row, prep, plan, t, cos, sin, job.covered)
       return { index: job.index, row, lift: 0, warnings: angleWarnings, reused: false, rasterWork }
     }
     const buildOptions = {
@@ -1629,6 +1657,15 @@ const EXACT_ROW_MAX_BINS = 4096
 const EXACT_ROW_TOP_MARGIN = 1e-9
 
 /**
+ * The relative slack on a ball's reach test (#1258): a facet is dropped as out
+ * of reach only when its bounds are more than this share of the radius beyond
+ * the footprint, and its lift is taken from a distance this share of the radius
+ * nearer than its bounds -- a thousand times the billionth the contact tests
+ * themselves allow at the rim.
+ */
+const BALL_REACH_SLACK = 1e-6
+
+/**
  * The **exact** maximum of the turned surface over one cutter footprint (#1155
  * rn-d correction 3).
  *
@@ -1686,6 +1723,11 @@ function exactFootprintTips(
   sin: number,
   /** #1185 R3: read only these ring positions; the rest of `row` is `NaN`. */
   columns?: readonly number[],
+  /**
+   * #1258: every candidate already meets the wanted positions' stretch (the
+   * along index chose them), so the stretch test below would keep them all.
+   */
+  stretchFiltered = false,
 ): number {
   const { mesh, stock, tool, along, pivot } = prep
   const positions = mesh.positions
@@ -1749,7 +1791,7 @@ function exactFootprintTips(
     let low = Number.POSITIVE_INFINITY
     let high = Number.NEGATIVE_INFINITY
     let peak = Number.NEGATIVE_INFINITY
-    if (columns !== undefined) {
+    if (columns !== undefined && !stretchFiltered) {
       const a0 = positions[index[offset] * 3 + alongAxis]
       const a1 = positions[index[offset + 1] * 3 + alongAxis]
       const a2 = positions[index[offset + 2] * 3 + alongAxis]
@@ -1852,120 +1894,395 @@ function exactFootprintTips(
     const i = columns !== undefined ? columns[position] : position
     const origin = along[i]
     let best = Number.NEGATIVE_INFINITY
-    // The long facets, then the bins this position's footprint can reach.
+    // The bins this position's footprint can reach, then the long facets.
+    // #1258: the bins are read from the footprint's centre outward -- the bin
+    // before the centre's (a facet over the centre may start there) up to the
+    // last, then the rest -- so the highest contact is usually found early and
+    // the skips below drop more of the facets after it. A tip is a maximum, so
+    // the order cannot change it.
     const firstBin = Math.max(0, Math.floor((origin - radius - startLow) / binWidth) - 2)
     const lastBin = Math.min(binCount - 1, Math.floor((origin + radius - startLow) / binWidth) + 1)
-    const binnedFrom = longCount + (firstBin <= lastBin ? binStart[firstBin] : 0)
-    const binnedTo = longCount + (firstBin <= lastBin ? binStart[lastBin + 1] : 0)
-    for (let n = 0; n < binnedTo; n++) {
-      if (n === longCount) n = binnedFrom
-      if (n >= binnedTo) break
-      const s = slots[n]
-      if (spanMin[s] - origin > radius || spanMax[s] - origin < -radius) continue
-      // A facet wholly below the best tip so far cannot raise it. The margin is
-      // far above the rounding of the contact arithmetic (about 1e-13 at these
-      // coordinates) and far below anything a tip is compared by, so a skipped
-      // facet's own contact would have failed the `> best` test below.
-      if (top[s] + EXACT_ROW_TOP_MARGIN * (1 + Math.abs(top[s])) < best) continue
-      // Inlined projection (the same three statements the scratch closure wrote).
-      const base = s * 9
-      vx[0] = turned[base] - origin
-      vy[0] = turned[base + 1]
-      vz[0] = turned[base + 2]
-      vx[1] = turned[base + 3] - origin
-      vy[1] = turned[base + 4]
-      vz[1] = turned[base + 5]
-      vx[2] = turned[base + 6] - origin
-      vy[2] = turned[base + 7]
-      vz[2] = turned[base + 8]
-      // A triangle whose projected bounds miss the disc cannot contribute.
-      const minX = Math.min(vx[0], vx[1], vx[2])
-      if (minX > radius) continue
-      const maxX = Math.max(vx[0], vx[1], vx[2])
-      if (maxX < -radius) continue
-      const e1x = vx[1] - vx[0]
-      const e1y = vy[1] - vy[0]
-      const e2x = vx[2] - vx[0]
-      const e2y = vy[2] - vy[0]
-      const denom = e1x * e2y - e1y * e2x
-      // The height map reads no surface from a projection that collapses to a
-      // line either (`buildHeightMap`'s determinant test). A flat's bottom face
-      // is right to skip one too -- a vertical wall cannot be under its plane --
-      // but a **ball** is lifted by such a wall (its equator reaches it), and a
-      // sector's radial end face projects exactly that way: skipping it read the
-      // tip 0.40 mm low at the face (#1177). So the ball still reads the
-      // triangle's vertices and edges; only its plane case, whose gradient is
-      // infinite here, is dropped.
-      if (Math.abs(denom) < 1e-15) {
-        if (!ball) continue
-        const contact = ballFootprintTip(vx, vy, vz, 0, 0, radius, contains, false)
-        if (contact > best) best = contact
-        continue
-      }
-      const rise1 = vz[1] - vz[0]
-      const rise2 = vz[2] - vz[0]
-      const gx = (rise1 * e2y - rise2 * e1y) / denom
-      const gy = (rise2 * e1x - rise1 * e2x) / denom
-      if (ball) {
-        // #1177: the exact sphere drop onto this triangle. Every candidate below
-        // is the centre height for the ball to touch one surface point, and the
-        // resting height is their maximum.
-        const contact = ballFootprintTip(vx, vy, vz, gx, gy, radius, contains, true)
-        if (contact > best) best = contact
-        continue
-      }
-      // (a) Its own vertices, where the height is read off the mesh.
-      for (let j = 0; j < 3; j++) {
-        if (vx[j] * vx[j] + vy[j] * vy[j] <= radiusSq + 1e-12 && vz[j] > best) best = vz[j]
-      }
-      // (b) Where each edge crosses the footprint's boundary: an affine height
-      // over the clipped edge is highest at one of its ends.
-      for (let j = 0; j < 3; j++) {
-        const k = j === 2 ? 0 : j + 1
-        const dx = vx[k] - vx[j]
-        const dy = vy[k] - vy[j]
-        const a = dx * dx + dy * dy
-        if (!(a > 0)) continue
-        const b = 2 * (vx[j] * dx + vy[j] * dy)
-        const c = vx[j] * vx[j] + vy[j] * vy[j] - radiusSq
-        let discriminant = b * b - 4 * a * c
-        if (discriminant < 0) {
-          if (discriminant < -1e-18) continue
-          discriminant = 0
+    const centreBin = Math.min(lastBin, Math.max(firstBin, Math.floor((origin - startLow) / binWidth) - 1))
+    const binned = firstBin <= lastBin
+    for (let range = 0; range < 3; range++) {
+      const from = range === 2 ? 0 : !binned ? 0 : longCount + binStart[range === 0 ? centreBin : firstBin]
+      const to = range === 2 ? longCount : !binned ? 0 : longCount + binStart[range === 0 ? lastBin + 1 : centreBin]
+      for (let n = from; n < to; n++) {
+        const s = slots[n]
+        if (spanMin[s] - origin > radius || spanMax[s] - origin < -radius) continue
+        // A facet wholly below the best tip so far cannot raise it. The margin is
+        // far above the rounding of the contact arithmetic (about 1e-13 at these
+        // coordinates) and far below anything a tip is compared by, so a skipped
+        // facet's own contact would have failed the `> best` test below.
+        if (top[s] + EXACT_ROW_TOP_MARGIN * (1 + Math.abs(top[s])) < best) continue
+        if (ball) {
+          // #1258: a ball resting on a facet touches it at a point no nearer the
+          // pose than the facet's bounds, and a contact `d` from the pose lifts the
+          // centre only `sqrt(r^2 - d^2)` above that point -- so the tip it gives is
+          // at most the facet's top less `r - sqrt(r^2 - d^2)`, and a facet whose
+          // bounds are farther than `r` gives none. Both are checked from the
+          // bounds already held, before the facet is loaded. The reach is taken a
+          // millionth of the radius short of the bounds, and the far test a
+          // millionth beyond them, far past the rounding of the contact tests
+          // (`ballFootprintTip` accepts a rim point a billionth outside), so a
+          // facet that could have set the tip is never left out.
+          const lowX = spanMin[s] - origin
+          const highX = spanMax[s] - origin
+          const nearX = lowX > 0 ? lowX : (highX < 0 ? -highX : 0)
+          const nearY = acrossMin[s] > 0 ? acrossMin[s] : (acrossMax[s] < 0 ? -acrossMax[s] : 0)
+          const nearSq = nearX * nearX + nearY * nearY
+          if (nearSq > radiusSq * (1 + BALL_REACH_SLACK) + 1e-11) continue
+          const reach = Math.max(0, Math.sqrt(nearSq) - BALL_REACH_SLACK * radius)
+          const lift = Math.sqrt(Math.max(0, radiusSq - reach * reach)) - radius
+          if (top[s] + lift + EXACT_ROW_TOP_MARGIN * (1 + Math.abs(top[s])) < best) continue
         }
-        const root = Math.sqrt(discriminant)
-        for (let side = 0; side < 2; side++) {
-          const crossing = side === 0 ? (-b - root) / (2 * a) : (-b + root) / (2 * a)
-          if (!(crossing >= 0) || crossing > 1) continue
-          const value = vz[j] + (vz[k] - vz[j]) * crossing
-          if (value > best) best = value
+        // Inlined projection (the same three statements the scratch closure wrote).
+        const base = s * 9
+        vx[0] = turned[base] - origin
+        vy[0] = turned[base + 1]
+        vz[0] = turned[base + 2]
+        vx[1] = turned[base + 3] - origin
+        vy[1] = turned[base + 4]
+        vz[1] = turned[base + 5]
+        vx[2] = turned[base + 6] - origin
+        vy[2] = turned[base + 7]
+        vz[2] = turned[base + 8]
+        // A triangle whose projected bounds miss the disc cannot contribute.
+        const minX = Math.min(vx[0], vx[1], vx[2])
+        if (minX > radius) continue
+        const maxX = Math.max(vx[0], vx[1], vx[2])
+        if (maxX < -radius) continue
+        const e1x = vx[1] - vx[0]
+        const e1y = vy[1] - vy[0]
+        const e2x = vx[2] - vx[0]
+        const e2y = vy[2] - vy[0]
+        const denom = e1x * e2y - e1y * e2x
+        // The height map reads no surface from a projection that collapses to a
+        // line either (`buildHeightMap`'s determinant test). A flat's bottom face
+        // is right to skip one too -- a vertical wall cannot be under its plane --
+        // but a **ball** is lifted by such a wall (its equator reaches it), and a
+        // sector's radial end face projects exactly that way: skipping it read the
+        // tip 0.40 mm low at the face (#1177). So the ball still reads the
+        // triangle's vertices and edges; only its plane case, whose gradient is
+        // infinite here, is dropped.
+        if (Math.abs(denom) < 1e-15) {
+          if (!ball) continue
+          const contact = ballFootprintTip(vx, vy, vz, 0, 0, radius, contains, false)
+          if (contact > best) best = contact
+          continue
         }
-      }
-      // (c) The footprint's centre, which is in the region whenever the triangle
-      // covers it. A triangle far larger than the disc (a long facet strip) has
-      // every vertex and edge outside it, so this is its only interior point --
-      // and for a plane whose gradient is zero it is the only candidate carrying
-      // the plane's height at all.
-      if (contains(0, 0)) {
-        const value = vz[0] + gx * (0 - vx[0]) + gy * (0 - vy[0])
-        if (value > best) best = value
-      }
-      // (d) The disc's own highest point of this triangle's plane, when it lies
-      // inside the triangle. A plane over a disc peaks on the rim along its
-      // gradient, which is an arc's interior rather than a vertex.
-      const gradient = Math.hypot(gx, gy)
-      if (gradient > 1e-12) {
-        const px = (radius * gx) / gradient
-        const py = (radius * gy) / gradient
-        if (contains(px, py)) {
-          const value = vz[0] + gx * (px - vx[0]) + gy * (py - vy[0])
-          if (value > best) best = value
+        const rise1 = vz[1] - vz[0]
+        const rise2 = vz[2] - vz[0]
+        const gx = (rise1 * e2y - rise2 * e1y) / denom
+        const gy = (rise2 * e1x - rise1 * e2x) / denom
+        if (ball) {
+          // #1177: the exact sphere drop onto this triangle. Every candidate below
+          // is the centre height for the ball to touch one surface point, and the
+          // resting height is their maximum.
+          const contact = ballFootprintTip(vx, vy, vz, gx, gy, radius, contains, true)
+          if (contact > best) best = contact
+          continue
         }
+        best = flatFootprintTip(vx, vy, vz, gx, gy, radius, contains, best)
       }
     }
     row[i] = best === Number.NEGATIVE_INFINITY ? NaN : best - pivot
   }
   return count - skipped
+}
+
+/**
+ * The highest point of one projected triangle under a flat's disc of `radius`
+ * around the pose, or `best` when none of it is higher (#1155 rn-d correction
+ * 3). The turned height is affine over the triangle, so the maximum over
+ * triangle ∩ disc is at one of four kinds of point, each tested below.
+ *
+ * A module function since #1258, so the exact read and the bounded layer read
+ * (`coveredFootprintTips`) answer "is any of this facet under the flat" with
+ * the same tests; the statements are the ones the read always ran inline.
+ */
+function flatFootprintTip(
+  vx: readonly number[],
+  vy: readonly number[],
+  vz: readonly number[],
+  gx: number,
+  gy: number,
+  radius: number,
+  contains: (px: number, py: number) => boolean,
+  best: number,
+): number {
+  const radiusSq = radius * radius
+  // (a) Its own vertices, where the height is read off the mesh.
+  for (let j = 0; j < 3; j++) {
+    if (vx[j] * vx[j] + vy[j] * vy[j] <= radiusSq + 1e-12 && vz[j] > best) best = vz[j]
+  }
+  // (b) Where each edge crosses the footprint's boundary: an affine height
+  // over the clipped edge is highest at one of its ends.
+  for (let j = 0; j < 3; j++) {
+    const k = j === 2 ? 0 : j + 1
+    const dx = vx[k] - vx[j]
+    const dy = vy[k] - vy[j]
+    const a = dx * dx + dy * dy
+    if (!(a > 0)) continue
+    const b = 2 * (vx[j] * dx + vy[j] * dy)
+    const c = vx[j] * vx[j] + vy[j] * vy[j] - radiusSq
+    let discriminant = b * b - 4 * a * c
+    if (discriminant < 0) {
+      if (discriminant < -1e-18) continue
+      discriminant = 0
+    }
+    const root = Math.sqrt(discriminant)
+    for (let side = 0; side < 2; side++) {
+      const crossing = side === 0 ? (-b - root) / (2 * a) : (-b + root) / (2 * a)
+      if (!(crossing >= 0) || crossing > 1) continue
+      const value = vz[j] + (vz[k] - vz[j]) * crossing
+      if (value > best) best = value
+    }
+  }
+  // (c) The footprint's centre, which is in the region whenever the triangle
+  // covers it. A triangle far larger than the disc (a long facet strip) has
+  // every vertex and edge outside it, so this is its only interior point --
+  // and for a plane whose gradient is zero it is the only candidate carrying
+  // the plane's height at all.
+  if (contains(0, 0)) {
+    const value = vz[0] + gx * (0 - vx[0]) + gy * (0 - vy[0])
+    if (value > best) best = value
+  }
+  // (d) The disc's own highest point of this triangle's plane, when it lies
+  // inside the triangle. A plane over a disc peaks on the rim along its
+  // gradient, which is an arc's interior rather than a vertex.
+  const gradient = Math.hypot(gx, gy)
+  if (gradient > 1e-12) {
+    const px = (radius * gx) / gradient
+    const py = (radius * gy) / gradient
+    if (contains(px, py)) {
+      const value = vz[0] + gx * (px - vx[0]) + gy * (py - vy[0])
+      if (value > best) best = value
+    }
+  }
+  return best
+}
+
+/**
+ * Whether anything is under the cutter at each of `positions`, for one turn
+ * (#1258): the bounded half of a roughing layer's helix read.
+ *
+ * A roughing layer floors every pose at its own radius, so a pose whose model
+ * is provably below the layer (`rotaryReachBounds`) gets the layer radius
+ * whatever the model's exact height there is -- the one thing the exact read
+ * still decides is whether *any* facet is under the tool, because a pose with
+ * none (`NaN`) refuses the band. This answers exactly that, with the exact
+ * read's own candidates and tests: the facets the turn's plan lists whose span
+ * meets the pose's footprint along the bar, the same across and along bounds,
+ * and the same ball or flat contact. The first facet that gives a contact ends
+ * the pose; its height is written (a real contact, so never above the exact
+ * maximum), and a pose with none stays `NaN`, exactly as the full read leaves
+ * it. Facets are looked at from the footprint's centre outward, which is where
+ * a contact is found first.
+ */
+function coveredFootprintTips(
+  row: Float32Array,
+  prep: RotarySamplingPrep,
+  plan: RotaryStripPlan,
+  turn: number,
+  cos: number,
+  sin: number,
+  positions: readonly number[],
+): void {
+  const { mesh, stock, tool, along, pivot } = prep
+  const meshPositions = mesh.positions
+  const index = mesh.index
+  const across = plan.across
+  const up = plan.up
+  const ball = tool.type === 'ball_endmill'
+  const radius = tool.radius + (ball ? 0 : (prep.exactTipPad ?? 0))
+  const alongAxis = stock.axis === 'x' ? 0 : 1
+  const order = triangleAlongOrder(mesh, stock.axis)
+  const spans = triangleAlongSpan(mesh, stock.axis)
+  const flags = alwaysFlags(plan, spans.length / 2)
+  const words = plan.bucketWords
+  const bits = plan.bucketBits
+  const nearBase = words > 0 ? bucketIndex(Math.PI / 2 - turn, plan.bucketWidth) * words : 0
+  const farBase = words > 0 ? bucketIndex(Math.PI / 2 - turn + Math.PI, plan.bucketWidth) * words : 0
+  const vx = [0, 0, 0]
+  const vy = [0, 0, 0]
+  const vz = [0, 0, 0]
+  const contains = (px: number, py: number): boolean => {
+    const c0 = (vx[1] - px) * (vy[2] - py) - (vx[2] - px) * (vy[1] - py)
+    const c1 = (vx[2] - px) * (vy[0] - py) - (vx[0] - px) * (vy[2] - py)
+    const c2 = (vx[0] - px) * (vy[1] - py) - (vx[1] - px) * (vy[0] - py)
+    return (c0 >= -1e-12 && c1 >= -1e-12 && c2 >= -1e-12)
+      || (c0 <= 1e-12 && c1 <= 1e-12 && c2 <= 1e-12)
+  }
+  // The contact one facet gives at the pose `origin`, or -Infinity: the exact
+  // read's statements for one facet, from the plan listing to the contact.
+  const contactAt = (t: number, origin: number): number => {
+    if (flags[t] === 0) {
+      if (words === 0) return Number.NEGATIVE_INFINITY
+      const word = t >>> 5
+      const bit = t & 31
+      if (((bits[nearBase + word] >>> bit) & 1) === 0 && ((bits[farBase + word] >>> bit) & 1) === 0) {
+        return Number.NEGATIVE_INFINITY
+      }
+    }
+    if (spans[t * 2] - origin > radius || spans[t * 2 + 1] - origin < -radius) return Number.NEGATIVE_INFINITY
+    const offset = t * 3
+    let low = Number.POSITIVE_INFINITY
+    let high = Number.NEGATIVE_INFINITY
+    for (let j = 0; j < 3; j++) {
+      const v = index[offset + j]
+      const y = across[v] * cos - up[v] * sin
+      vx[j] = meshPositions[v * 3 + alongAxis] - origin
+      vy[j] = y
+      vz[j] = pivot + across[v] * sin + up[v] * cos
+      if (y < low) low = y
+      if (y > high) high = y
+    }
+    // The exact read files a facet whose across span misses the footprint in
+    // no bin at all.
+    if (low > radius || high < -radius) return Number.NEGATIVE_INFINITY
+    if (Math.min(vx[0], vx[1], vx[2]) > radius) return Number.NEGATIVE_INFINITY
+    if (Math.max(vx[0], vx[1], vx[2]) < -radius) return Number.NEGATIVE_INFINITY
+    const e1x = vx[1] - vx[0]
+    const e1y = vy[1] - vy[0]
+    const e2x = vx[2] - vx[0]
+    const e2y = vy[2] - vy[0]
+    const denom = e1x * e2y - e1y * e2x
+    if (Math.abs(denom) < 1e-15) {
+      return ball ? ballFootprintTip(vx, vy, vz, 0, 0, radius, contains, false) : Number.NEGATIVE_INFINITY
+    }
+    const rise1 = vz[1] - vz[0]
+    const rise2 = vz[2] - vz[0]
+    const gx = (rise1 * e2y - rise2 * e1y) / denom
+    const gy = (rise2 * e1x - rise1 * e2x) / denom
+    return ball
+      ? ballFootprintTip(vx, vy, vz, gx, gy, radius, contains, true)
+      : flatFootprintTip(vx, vy, vz, gx, gy, radius, contains, Number.NEGATIVE_INFINITY)
+  }
+  const { shortMin, shortMax, short, shortLength } = order
+  const lowerBound = (value: number): number => {
+    let lo = 0
+    let hi = shortMin.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (shortMin[mid] < value) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+  for (const i of positions) {
+    const origin = along[i]
+    let found = Number.NEGATIVE_INFINITY
+    const slack = 1e-9 * (1 + Math.abs(origin) + shortLength + radius)
+    const first = lowerBound(origin - radius - shortLength - slack)
+    // Facets starting at or after the one that may cover the pose's centre,
+    // outward to the footprint's end, then the ones before it, then the long.
+    const centre = Math.max(first, lowerBound(origin - shortLength - slack))
+    for (let k = centre; k < shortMin.length && shortMin[k] <= origin + radius && found === Number.NEGATIVE_INFINITY; k++) {
+      if (shortMax[k] < origin - radius) continue
+      found = contactAt(short[k], origin)
+    }
+    for (let k = centre - 1; k >= first && found === Number.NEGATIVE_INFINITY; k--) {
+      if (shortMax[k] < origin - radius) continue
+      found = contactAt(short[k], origin)
+    }
+    for (let k = 0; k < order.long.length && found === Number.NEGATIVE_INFINITY; k++) {
+      found = contactAt(order.long[k], origin)
+    }
+    row[i] = found === Number.NEGATIVE_INFINITY ? NaN : found - pivot
+  }
+}
+
+/** The per-mesh, per-axis bins of the farthest point from the axis (#1258). */
+interface ReachEnvelope {
+  readonly low: number
+  readonly width: number
+  /** Per bin, the farthest vertex of any facet overlapping it; `-Infinity` for none. */
+  readonly farthest: Float64Array
+  /** A facet with a coordinate that is not finite: no bound is offered at all. */
+  readonly unbounded: boolean
+}
+
+const reachEnvelopes = new WeakMap<RotaryModelMesh, { readonly x?: ReachEnvelope; readonly y?: ReachEnvelope }>()
+
+/** Bins along the mesh for {@link rotaryReachBounds}: fine enough to stay tight, few enough to scan. */
+const REACH_ENVELOPE_BINS = 1024
+
+function reachEnvelope(prep: RotarySamplingPrep): ReachEnvelope {
+  const { mesh, stock } = prep
+  const known = reachEnvelopes.get(mesh)
+  const cached = known?.[stock.axis]
+  if (cached !== undefined) return cached
+  const { positions, index } = mesh
+  const spans = triangleAlongSpan(mesh, stock.axis)
+  const acrossAxis = stock.axis === 'x' ? 1 : 0
+  const centre = prep.centre
+  const pivot = prep.pivot
+  let low = Number.POSITIVE_INFINITY
+  let high = Number.NEGATIVE_INFINITY
+  let unbounded = false
+  for (let t = 0; t * 2 < spans.length; t++) {
+    if (!Number.isFinite(spans[t * 2]) || !Number.isFinite(spans[t * 2 + 1])) { unbounded = true; continue }
+    if (spans[t * 2] < low) low = spans[t * 2]
+    if (spans[t * 2 + 1] > high) high = spans[t * 2 + 1]
+  }
+  const width = Number.isFinite(low) && high > low ? (high - low) / REACH_ENVELOPE_BINS : 1
+  const farthest = new Float64Array(REACH_ENVELOPE_BINS).fill(Number.NEGATIVE_INFINITY)
+  if (!unbounded && Number.isFinite(low)) {
+    for (let t = 0; t * 3 < index.length; t++) {
+      let far = Number.NEGATIVE_INFINITY
+      for (let j = 0; j < 3; j++) {
+        const v = index[t * 3 + j]
+        const distance = Math.hypot(positions[v * 3 + acrossAxis] - centre, positions[v * 3 + 2] - pivot)
+        if (!Number.isFinite(distance)) unbounded = true
+        if (distance > far) far = distance
+      }
+      const from = Math.min(REACH_ENVELOPE_BINS - 1, Math.max(0, Math.floor((spans[t * 2] - low) / width)))
+      const to = Math.min(REACH_ENVELOPE_BINS - 1, Math.max(0, Math.floor((spans[t * 2 + 1] - low) / width)))
+      for (let b = from; b <= to; b++) if (far > farthest[b]) farthest[b] = far
+    }
+  }
+  const envelope: ReachEnvelope = { low, width, farthest, unbounded }
+  reachEnvelopes.set(mesh, { ...known, [stock.axis]: envelope })
+  return envelope
+}
+
+/**
+ * An upper bound on the exact read's tip at each of `along`, at **any** turn
+ * (#1258), relative to the pivot like the read's own rows; `-Infinity` where no
+ * facet reaches the footprint along the bar, and `+Infinity` when the mesh
+ * offers no bound.
+ *
+ * Every contact the read takes is at or below the highest vertex of the facet
+ * it comes from (a flat's is a point of the facet; a ball's centre stands at
+ * most one radius above the point it touches, and the tip is that radius
+ * lower), and a turned vertex can be no higher above the pivot than its
+ * distance from the axis. So the farthest vertex of any facet whose span meets
+ * the footprint `[p - radius, p + radius]` bounds the tip at every turn; the
+ * bins only widen the set of facets looked at. The slack is far above the
+ * rounding of the turn and the pivot subtraction.
+ */
+export function rotaryReachBounds(
+  prep: RotarySamplingPrep,
+  along: readonly number[],
+  radius: number,
+): Float64Array {
+  const envelope = reachEnvelope(prep)
+  const bounds = new Float64Array(along.length)
+  for (let i = 0; i < along.length; i++) {
+    if (envelope.unbounded || !Number.isFinite(along[i])) {
+      bounds[i] = Number.POSITIVE_INFINITY
+      continue
+    }
+    const from = Math.max(0, Math.floor((along[i] - radius - envelope.low) / envelope.width) - 1)
+    const to = Math.min(REACH_ENVELOPE_BINS - 1, Math.floor((along[i] + radius - envelope.low) / envelope.width) + 1)
+    let far = Number.NEGATIVE_INFINITY
+    for (let b = from; b <= to; b++) if (envelope.farthest[b] > far) far = envelope.farthest[b]
+    bounds[i] = far === Number.NEGATIVE_INFINITY
+      ? far
+      : far + 1e-9 * (1 + far + Math.abs(prep.pivot))
+  }
+  return bounds
 }
 
 
@@ -2195,6 +2512,175 @@ function triangleAlongSpan(mesh: RotaryModelMesh, axis: 'x' | 'y'): Float64Array
 }
 
 /**
+ * One mesh's triangles in order along the bar, for one bar axis (#1258).
+ *
+ * The **short** triangles -- all but the longest 1 % -- are sorted by where they
+ * start along the bar, with their spans copied beside them, so the triangles
+ * meeting a stretch `[low, high]` are one contiguous run: those starting between
+ * `low - shortLength` and `high`, less the few of them that end before `low`. The
+ * rest (a facet running the length of a retained wall, a long strip, or one whose
+ * span is not a number) are kept on a list every query tests in full. The order
+ * only chooses which triangles are looked at; each is still put through the same
+ * span test the full candidate walk applies.
+ */
+interface TriangleAlongOrder {
+  /** Short triangles' numbers (index offset / 3), by ascending along-min. */
+  readonly short: Uint32Array
+  readonly shortMin: Float64Array
+  readonly shortMax: Float64Array
+  /** The longest along span of a short triangle. */
+  readonly shortLength: number
+  /** Every other triangle's number, ascending. */
+  readonly long: Uint32Array
+}
+
+const triangleAlongOrders = new WeakMap<RotaryModelMesh, { readonly x?: TriangleAlongOrder; readonly y?: TriangleAlongOrder }>()
+
+/** The share of triangles, by along length, that the order keeps in its sorted run. */
+const ALONG_ORDER_SHORT_SHARE = 0.99
+
+function triangleAlongOrder(mesh: RotaryModelMesh, axis: 'x' | 'y'): TriangleAlongOrder {
+  const known = triangleAlongOrders.get(mesh)
+  const cached = known?.[axis]
+  if (cached !== undefined) return cached
+  const spans = triangleAlongSpan(mesh, axis)
+  const triangleCount = spans.length / 2
+  // A span that is not a number has no length; it goes on the long list, whose
+  // span test keeps it exactly as the candidate walk does.
+  const lengths = new Float64Array(triangleCount)
+  for (let t = 0; t < triangleCount; t++) {
+    const length = spans[t * 2 + 1] - spans[t * 2]
+    lengths[t] = Number.isFinite(length) ? length : Number.POSITIVE_INFINITY
+  }
+  const sorted = lengths.slice().sort()
+  const cut = triangleCount === 0 ? 0 : sorted[Math.floor(ALONG_ORDER_SHORT_SHARE * (triangleCount - 1))]
+  let shortCount = 0
+  let shortLength = 0
+  for (let t = 0; t < triangleCount; t++) {
+    if (lengths[t] <= cut && Number.isFinite(lengths[t])) {
+      shortCount++
+      if (lengths[t] > shortLength) shortLength = lengths[t]
+    }
+  }
+  const short = new Uint32Array(shortCount)
+  const long = new Uint32Array(triangleCount - shortCount)
+  let s = 0
+  let l = 0
+  for (let t = 0; t < triangleCount; t++) {
+    if (lengths[t] <= cut && Number.isFinite(lengths[t])) short[s++] = t
+    else long[l++] = t
+  }
+  short.sort((a, b) => spans[a * 2] - spans[b * 2] || a - b)
+  const shortMin = new Float64Array(shortCount)
+  const shortMax = new Float64Array(shortCount)
+  for (let k = 0; k < shortCount; k++) {
+    shortMin[k] = spans[short[k] * 2]
+    shortMax[k] = spans[short[k] * 2 + 1]
+  }
+  const order: TriangleAlongOrder = { short, shortMin, shortMax, shortLength, long }
+  triangleAlongOrders.set(mesh, { ...known, [axis]: order })
+  return order
+}
+
+/** #1258: each strip plan's `always` list, as one flag per triangle. */
+const planAlwaysFlags = new WeakMap<RotaryStripPlan, Uint8Array>()
+
+function alwaysFlags(plan: RotaryStripPlan, triangleCount: number): Uint8Array {
+  const known = planAlwaysFlags.get(plan)
+  if (known !== undefined) return known
+  const flags = new Uint8Array(triangleCount)
+  for (let i = 0; i < plan.always.length; i++) flags[plan.always[i] / 3] = 1
+  planAlwaysFlags.set(plan, flags)
+  return flags
+}
+
+/**
+ * The candidates of one turn that meet the along stretch `[low, high]` (#1258).
+ *
+ * This is the set the full walk keeps -- `always` and the near and far buckets
+ * `runRotaryAngleJob` gathers, less every facet wholly outside the stretch, which
+ * `exactFootprintTips` skips by `max < low || min > high` -- found the other way
+ * round: the triangles meeting the stretch come from the mesh's along order, and
+ * each is kept when this turn's plan lists it. `work` counts **listings**, as the
+ * walk's count does: a triangle in both buckets is listed twice there, so it
+ * counts twice here. `out`, when given, receives each kept triangle once, as an
+ * index offset; a facet listed twice cannot change a maximum.
+ */
+function stretchCandidates(
+  prep: RotarySamplingPrep,
+  plan: RotaryStripPlan,
+  turn: number,
+  low: number,
+  high: number,
+  out?: Uint32Array,
+): { readonly count: number; readonly work: number } {
+  const order = triangleAlongOrder(prep.mesh, prep.stock.axis)
+  const spans = triangleAlongSpan(prep.mesh, prep.stock.axis)
+  const flags = alwaysFlags(plan, spans.length / 2)
+  const words = plan.bucketWords
+  const bits = plan.bucketBits
+  const nearBase = words > 0 ? bucketIndex(Math.PI / 2 - turn, plan.bucketWidth) * words : 0
+  const farBase = words > 0 ? bucketIndex(Math.PI / 2 - turn + Math.PI, plan.bucketWidth) * words : 0
+  let count = 0
+  let work = 0
+  const take = (t: number): void => {
+    let listings = flags[t]
+    if (listings === 0 && words > 0) {
+      const word = t >>> 5
+      const bit = t & 31
+      listings = ((bits[nearBase + word] >>> bit) & 1) + ((bits[farBase + word] >>> bit) & 1)
+    }
+    if (listings === 0) return
+    work += listings
+    if (out !== undefined) out[count] = t * 3
+    count++
+  }
+  // A short triangle starting before `low - shortLength` ends before `low`; the
+  // slack is far above the rounding of a length, and the span test decides.
+  const { shortMin, shortMax, short } = order
+  const from = low - order.shortLength - 1e-9 * (1 + Math.abs(low) + order.shortLength)
+  let lo = 0
+  let hi = shortMin.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (shortMin[mid] < from) lo = mid + 1
+    else hi = mid
+  }
+  for (let k = lo; k < shortMin.length && shortMin[k] <= high; k++) {
+    if (shortMax[k] < low) continue
+    take(short[k])
+  }
+  const long = order.long
+  for (let k = 0; k < long.length; k++) {
+    const t = long[k]
+    if (spans[t * 2 + 1] < low || spans[t * 2] > high) continue
+    take(t)
+  }
+  return { count, work }
+}
+
+/**
+ * The candidates of an exact read wanted at `columns` (#1258), gathered into
+ * `out` through the along index, with the work the full walk would report.
+ * `null` when the stretch is not a finite range -- no columns, or a position
+ * that is not a number -- and the caller keeps the full walk, whose span test
+ * treats such a stretch its own way.
+ */
+function exactStretchRead(
+  prep: RotarySamplingPrep,
+  plan: RotaryStripPlan,
+  turn: number,
+  out: Uint32Array,
+  columns: readonly number[],
+): { readonly count: number; readonly work: number } | null {
+  const ball = prep.tool.type === 'ball_endmill'
+  const radius = prep.tool.radius + (ball ? 0 : (prep.exactTipPad ?? 0))
+  const { low, high } = exactStretchWindow(prep.along, columns, radius)
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null
+  return stretchCandidates(prep, plan, turn, low, high, out)
+}
+
+/**
  * The candidates an exact read of one angle at the positions `along` actually
  * turns (#1237): the angle's candidate list -- `always` and both buckets, the
  * list `runRotaryAngleJob` gathers, repeats included -- less every facet wholly
@@ -2205,6 +2691,11 @@ function triangleAlongSpan(mesh: RotaryModelMesh, axis: 'x' | 'y'): Float64Array
  * The whole-angle price (`rotaryAngleRowWork`) charged an exact helix row for
  * every facet at its angle, about 171 k on Frank's busto, so every band was
  * refused before a row was read.
+ *
+ * #1258: the count comes from the along index (`stretchCandidates`), which
+ * looks only at the triangles meeting the stretch; it is the same count the
+ * bucket walk below makes, and the walk remains for a stretch that is not a
+ * finite range.
  */
 export function rotaryExactStretchWork(
   prep: RotarySamplingPrep,
@@ -2217,6 +2708,9 @@ export function rotaryExactStretchWork(
   const spans = triangleAlongSpan(prep.mesh, prep.stock.axis)
   const columns = Array.from({ length: along.length }, (_, i) => i)
   const { low, high } = exactStretchWindow(along, columns, radius)
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return stretchCandidates(prep, plan, (angleDeg * Math.PI) / 180, low, high).work
+  }
   const meets = (offset: number): boolean => {
     const t = offset / 3
     return !(spans[t * 2 + 1] < low || spans[t * 2] > high)
@@ -2341,6 +2835,8 @@ export function sampleAnglesWithPrep(
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'> = {},
   /** #1185 R3: per angle, the ring positions wanted (see `RotaryAngleJob.columns`). */
   columns?: readonly (readonly number[] | undefined)[],
+  /** #1258: per angle, the positions read only for coverage (see `RotaryAngleJob.covered`). */
+  covered?: readonly (readonly number[] | undefined)[],
 ): RotarySampling {
   // The prep's tool is what the window arithmetic divides by, so an invalid one
   // is refused here too, at the same point the single-call entry refuses it.
@@ -2356,7 +2852,13 @@ export function sampleAnglesWithPrep(
     }
     plan ??= prep.planFor(anglesDeg)
     const wanted = columns?.[jobs.length]
-    const job: RotaryAngleJob = { index: jobs.length, angle, ...(wanted !== undefined ? { columns: wanted } : {}) }
+    const coverage = covered?.[jobs.length]
+    const job: RotaryAngleJob = {
+      index: jobs.length,
+      angle,
+      ...(wanted !== undefined ? { columns: wanted } : {}),
+      ...(coverage !== undefined ? { covered: coverage } : {}),
+    }
     samples.push(runRotaryAngleJob(prep, plan, job))
     jobs.push(job)
     hooks.onAngle?.(jobs.length, anglesDeg.length)
