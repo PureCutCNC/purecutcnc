@@ -148,6 +148,7 @@ import {
   createRotarySamplingPrep,
   rotaryAngleRowWork,
   rotaryExactStretchWork,
+  rotaryReachBounds,
   sampleAnglesWithPrep,
 } from './rotarySampling'
 import type { RotarySamplingPrep } from './rotarySampling'
@@ -667,7 +668,23 @@ function rowAngle(startAngle: number, row: HelixRow, phaseScale: number): number
  * same rows again and pays for the sampling once. The cache is keyed by the
  * operation's prep (one object per operation) and dies with it.
  */
-const exactHelixRows = new WeakMap<RotarySamplingPrep, Map<string, Float32Array>>()
+const exactHelixRows = new WeakMap<RotarySamplingPrep, Map<string, ExactHelixRow>>()
+
+/**
+ * One cached exact row (#1258): the sampler's raw values, and which of them a
+ * roughing layer only **bounded**.
+ *
+ * A pose the layer proved sits at its own radius (`layerProvesPose`) was read
+ * only for coverage, so its value is a real contact at or below the exact
+ * height -- enough for every layer that proves the pose too, and nothing else.
+ * A later, deeper layer that cannot prove it re-reads just those poses exactly
+ * and clears their flags, so the row then holds what a full read would have.
+ */
+interface ExactHelixRow {
+  readonly raw: Float32Array
+  /** 1 where `raw` was only bounded; `null` once every pose is exact. */
+  bounded: Uint8Array | null
+}
 
 /** The most exact rows one operation may keep: far past any real band set. */
 const MAX_EXACT_HELIX_ROWS = 32768
@@ -702,7 +719,7 @@ function exactHelixRow(
   angle: number,
   stockToLeave: number,
   along: readonly number[],
-): Float32Array | undefined {
+): ExactHelixRow | undefined {
   return exactHelixRows.get(prep)?.get(exactRowKey(angle, stockToLeave, along))
 }
 
@@ -712,7 +729,7 @@ function storeExactHelixRow(
   angle: number,
   stockToLeave: number,
   along: readonly number[],
-  row: Float32Array,
+  row: ExactHelixRow,
 ): void {
   const rows = exactHelixRows.get(prep)
   if (rows === undefined) {
@@ -773,6 +790,27 @@ function applyHelixRowRules(
   return { tips, ineligible }
 }
 
+/**
+ * Whether a roughing layer can take a pose at its own radius without reading
+ * the model's exact height there (#1258).
+ *
+ * `bound` is an upper bound on the pose's raw tip at any turn
+ * (`rotaryReachBounds`). The exact raw value, once stored as the sampler's
+ * Float32, is at most `Math.fround(bound)`, and every step `applyHelixRowRules`
+ * takes from it -- the stock offset, the clamp to `[0, maxRadius]` -- keeps that
+ * order. So when the bound's own tip is at or below the layer and below the
+ * layer above, the exact tip is too: the pose is cut, and floored at exactly the
+ * layer radius, whatever the model's height under it. What the bound cannot
+ * say is whether anything is under the tool at all, so the pose is still read
+ * for that (`RotaryAngleJob.covered`).
+ */
+function layerProvesPose(bound: number, input: ContinuousHelixInput, maxRadius: number): boolean {
+  const layer = input.layer
+  if (layer === undefined) return false
+  const tip = Math.min(Math.max(Math.fround(bound) + input.stockToLeave, 0), maxRadius)
+  return tip <= layer.radius && tip < layer.previousRadius
+}
+
 function sampleHelixRows(
   rows: readonly HelixRow[],
   input: ContinuousHelixInput,
@@ -805,6 +843,9 @@ function sampleHelixRows(
   const exactRadius = prep.tool.radius
     + (prep.tool.type === 'ball_endmill' ? 0 : (input.exactTipPad ?? 0))
   let roundWork = 0
+  // #1258: an exact row is charged its price, which is the count the full read
+  // reports, so the work stays what it was when part of the row is only bounded.
+  const prices: number[] = []
   for (const row of rows) {
     const angle = rowAngle(startAngle, row, phaseScale)
     const price = exactRows
@@ -812,6 +853,7 @@ function sampleHelixRows(
         ? rotaryExactStretchWork(prep, angle, row.along, exactRadius)
         : 0)
       : rotaryAngleRowWork(prep, angle, readCache)
+    prices.push(price)
     roundWork += price
     // Once the round's price has passed what the budget has left, the rest of it
     // cannot change the answer, and pricing it would be the very work the price
@@ -819,7 +861,25 @@ function sampleHelixRows(
     if (roundWork > remaining) break
   }
   if (roundWork > remaining) return 'exhausted'
-  for (const row of rows) {
+  // #1258: a roughing layer's exact rows read a pose the layer proves only for
+  // coverage. A finish (no layer) and a conservative read prove nothing.
+  const proves = exactRows && input.layer !== undefined
+  const rowPrepFor = (row: HelixRow): RotarySamplingPrep => createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
+    along: row.along,
+    requestedCellSize: prep.requestedCellSize,
+    conservativeCellBounds: true,
+    ...(exactRows
+      ? { exactTipRows: true, ...(input.exactTipPad !== undefined ? { exactTipPad: input.exactTipPad } : {}) }
+      : {}),
+    ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
+    ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
+    workspace: prep.workspace,
+    // #1103 ca-e: the ring grid has just rasterised the same physical angles
+    // on this workspace; read those maps instead of building a second set.
+    ...(prep.angleMaps === 'off' ? {} : { angleMaps: 'read-write' as const }),
+  })
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r]
     if (input.shouldStop?.() === true) return 'stopped'
     if (spent.rows + sampling.rows + 1 > budget.rows) return 'exhausted'
     if (spent.samples + sampling.samples + row.along.length > budget.samples) return 'exhausted'
@@ -836,38 +896,65 @@ function sampleHelixRows(
     // An exact row is the operation's own geometry, so a layer that asks for the
     // same poses at the same angle is answered from the cache -- the same free
     // repeat the angle-map cache gives a conservative row (#1103 ca-e).
-    let raw = exactRows ? exactHelixRow(prep, angle, input.stockToLeave, row.along) : undefined
-    if (raw !== undefined) {
+    const cached = exactRows ? exactHelixRow(prep, angle, input.stockToLeave, row.along) : undefined
+    let raw: Float32Array
+    if (cached !== undefined) {
       sampling.reused++
+      // #1258: poses an earlier layer only bounded that this layer cannot
+      // prove are read exactly now, once, and the row then keeps their exact
+      // values. The row was charged when it was first read, as before.
+      if (cached.bounded !== null) {
+        const bounds = proves ? rotaryReachBounds(prep, row.along, exactRadius) : null
+        const exact: number[] = []
+        for (let i = 0; i < row.along.length; i++) {
+          if (cached.bounded[i] === 1 && (bounds === null || !layerProvesPose(bounds[i], input, maxRadius))) exact.push(i)
+        }
+        if (exact.length > 0) {
+          const sampled = sampleAnglesWithPrep(
+            rowPrepFor(row), [angle], input.warnings,
+            input.shouldStop ? { shouldStop: input.shouldStop } : {}, [exact])
+          if (!sampled.valid) return 'exhausted'
+          if (sampled.stopped) return 'stopped'
+          for (const i of exact) {
+            cached.raw[i] = sampled.tipRadius[0][i]
+            cached.bounded[i] = 0
+          }
+          if (cached.bounded.every((flag) => flag === 0)) cached.bounded = null
+        }
+      }
+      raw = cached.raw
     } else {
-      const rowPrep = createRotarySamplingPrep(prep.mesh, prep.stock, prep.tool, {
-        along: row.along,
-        requestedCellSize: prep.requestedCellSize,
-        conservativeCellBounds: true,
-        ...(exactRows
-          ? { exactTipRows: true, ...(input.exactTipPad !== undefined ? { exactTipPad: input.exactTipPad } : {}) }
-          : {}),
-        ...(prep.wallTriangleStart !== undefined ? { wallTriangleStart: prep.wallTriangleStart } : {}),
-        ...(prep.gridExtra !== undefined ? { gridExtra: prep.gridExtra } : {}),
-        workspace: prep.workspace,
-        // #1103 ca-e: the ring grid has just rasterised the same physical angles
-        // on this workspace; read those maps instead of building a second set.
-        ...(prep.angleMaps === 'off' ? {} : { angleMaps: 'read-write' as const }),
-      })
+      // #1258: on a roughing layer, the poses the layer proves are read only
+      // for coverage; the rest are read exactly, as every pose was before.
+      let exact: number[] | undefined
+      let covered: number[] | undefined
+      if (proves) {
+        const bounds = rotaryReachBounds(prep, row.along, exactRadius)
+        exact = []
+        covered = []
+        for (let i = 0; i < row.along.length; i++) {
+          if (layerProvesPose(bounds[i], input, maxRadius)) covered.push(i)
+          else exact.push(i)
+        }
+      } else if (exactRows) {
+        // #1237: every pose of the row is wanted, which bounds the exact read
+        // to the facets the row's stretch reaches; the values are unchanged.
+        exact = Array.from({ length: row.along.length }, (_, i) => i)
+      }
       const sampled = sampleAnglesWithPrep(
-        rowPrep,
+        rowPrepFor(row),
         [angle],
         input.warnings,
         input.shouldStop ? { shouldStop: input.shouldStop } : {},
-        // #1237: every pose of the row is wanted, which bounds the exact read
-        // to the facets the row's stretch reaches; the values are unchanged.
-        exactRows ? [Array.from({ length: row.along.length }, (_, i) => i)] : undefined,
+        exact !== undefined ? [exact] : undefined,
+        covered !== undefined && covered.length > 0 ? [covered] : undefined,
       )
       if (!sampled.valid) return 'exhausted'
       if (sampled.stopped) return 'stopped'
       sampling.reused += sampled.reused
-      // #1237: an exact row reports the facets its stretch-limited read turned.
-      sampling.work += sampled.rasterWork
+      // #1237: an exact row is charged the facets its stretch-limited read turns
+      // over every pose -- its price, which is what the full read reported.
+      sampling.work += exactRows ? prices[r] : sampled.rasterWork
       // The row arrives lifted by the angle's conservative cell rise, exactly as
       // the ring grid reads it -- or, in the exact mode, as the footprint
       // maximum itself. The **raw** row is what the cache keeps (the sampler's
@@ -875,7 +962,14 @@ function sampleHelixRows(
       // one row serves every layer that visits it and the offset arithmetic is
       // the same statement for a cached row and a fresh one.
       raw = sampled.tipRadius[0]
-      if (exactRows) storeExactHelixRow(prep, angle, input.stockToLeave, row.along, raw)
+      if (exactRows) {
+        let bounded: Uint8Array | null = null
+        if (covered !== undefined && covered.length > 0) {
+          bounded = new Uint8Array(row.along.length)
+          for (const i of covered) bounded[i] = 1
+        }
+        storeExactHelixRow(prep, angle, input.stockToLeave, row.along, { raw, bounded })
+      }
     }
     // A roughing layer (#1103 slice ca-d) adds the two rules the ring sample
     // takes there: a pose with no material standing (`tip >= previousRadius`)
