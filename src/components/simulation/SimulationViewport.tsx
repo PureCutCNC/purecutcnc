@@ -41,6 +41,8 @@ import type { Clamp, MachineOrigin, Operation, Stock, ToolType } from '../../typ
 import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
+import { toolpathWarningText } from '../../i18n/warningText'
+import type { SimulationExportDiagnostics } from '../../app/useSimulationModel'
 import { SimulationSetupInfo } from './SimulationSetupInfo'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
@@ -103,7 +105,7 @@ interface SimulationViewportProps {
   source?: 'planned' | 'exported'
   onSourceChange?: (source: 'planned' | 'exported') => void
   exportReady?: boolean
-  exportDiagnostics?: { status: 'verified' | 'unsupported' | 'failed'; warnings: string[] } | null
+  exportDiagnostics?: SimulationExportDiagnostics | null
   operationCount: number
   clamps: Clamp[]
   selectedClampId: string | null
@@ -1510,15 +1512,19 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         </div>
         <SimulationSetupInfo note={setupNote} />
       </div>
-      {source === 'exported' && exportDiagnostics && (exportDiagnostics.status !== 'verified' || exportDiagnostics.warnings.length > 0) && (
+      {source === 'exported' && exportDiagnostics && (exportDiagnostics.status !== 'verified' || exportDiagnostics.warnings.length > 0 || exportDiagnostics.postWarnings.length > 0) && (
         <div
           className="simulation-export-warning"
           role="alert"
           data-testid="simulation-export-warning"
         >
           <strong>{t('viewport.sim.exportWarningTitle')}</strong>
-          {exportDiagnostics.warnings.length > 0 && (
-            <div className="simulation-export-warning__detail">{exportDiagnostics.warnings[0]}</div>
+          {(exportDiagnostics.postWarnings[0] || exportDiagnostics.warnings[0]) && (
+            <div className="simulation-export-warning__detail">
+              {exportDiagnostics.postWarnings[0]
+                ? toolpathWarningText(exportDiagnostics.postWarnings[0])
+                : exportDiagnostics.warnings[0]}
+            </div>
           )}
         </div>
       )}

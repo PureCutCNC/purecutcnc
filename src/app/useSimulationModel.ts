@@ -23,6 +23,7 @@ import { machineExportDiagnostics } from '../engine/gcode/types'
 import type { GcodeParseStatus } from '../engine/gcode/gcodeMotionParser'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
+import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { Clamp, Operation, Project, Stock } from '../types/project'
 import { isSquareStock } from '../types/barStock'
@@ -92,6 +93,7 @@ function scopedOperations(project: Project, setup: Parameters<typeof setupOperat
 export interface SimulationExportDiagnostics {
   status: GcodeParseStatus
   warnings: string[]
+  postWarnings: ToolpathWarning[]
 }
 
 interface UseSimulationModelArgs {
@@ -281,6 +283,7 @@ export function useSimulationModel({
         paths: NO_PATHS,
         status: 'failed' as GcodeParseStatus,
         warnings: ['No valid machine selected for exported G-code simulation.'],
+        postWarnings: [],
       }
     }
     return buildExportedSimulationPaths({
@@ -573,7 +576,11 @@ export function useSimulationModel({
     simulationInputPending,
     simulationExportReady,
     simulationExportDiagnostics: exportedSimulation
-      ? { status: exportedSimulation.status, warnings: exportedSimulation.warnings }
+      ? {
+        status: exportedSimulation.status,
+        warnings: exportedSimulation.warnings,
+        postWarnings: exportedSimulation.postWarnings,
+      }
       : null,
     simulationSetup: simulationSetupView,
     simulationClamps,

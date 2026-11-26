@@ -193,7 +193,10 @@ function testUnsupportedConstructAlertsUser(): void {
     definition: withUnsupportedHeader,
   })
   assert.notEqual(exported.status, 'verified', 'rejected or unsupported G-code construct is never reported as verified')
-  assert.ok(exported.warnings.length > 0, 'rejected or unsupported G-code construct emits warning')
+  assert.ok(
+    exported.warnings.length > 0 || exported.postWarnings.length > 0,
+    'rejected or unsupported G-code construct emits warning',
+  )
 }
 
 testGrblAndShopBotRoundTrip()

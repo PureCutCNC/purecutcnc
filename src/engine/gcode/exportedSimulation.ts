@@ -19,6 +19,7 @@ import type { Operation, Project } from '../../types/project'
 import { setupFrameForOperation } from '../setupOrientation'
 import { DEFAULT_FLATTEN_ARC_STEP, normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from '../toolpaths/types'
+import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { exportGeometryTolerance } from '../../utils/units'
 import type { GcodeParseStatus, ParsedArcMove, ParsedGcodeMove } from './gcodeMotionParser'
 import { parseExportedMotion } from './motionDebug'
@@ -31,8 +32,10 @@ export interface ExportedSimulationResult {
   paths: Map<string, ToolpathResult>
   /** Worst parse status across all exported operations ('failed' > 'unsupported' > 'verified'). */
   status: GcodeParseStatus
-  /** Human-readable parser or postprocessor warnings encountered during export/parse. */
+  /** Human-readable parser warnings encountered during parse. */
   warnings: string[]
+  /** Structured postprocessor warnings (formatted via i18n in the UI). */
+  postWarnings: ToolpathWarning[]
 }
 
 const STATUS_RANK: Record<GcodeParseStatus, number> = {
@@ -173,6 +176,7 @@ export function buildExportedSimulationPaths(args: {
   const pinnedDefinition = pinRotaryAxis(definition, project.stock)
   const paths = new Map<string, ToolpathResult>()
   const warnings: string[] = []
+  const postWarnings: ToolpathWarning[] = []
   let status: GcodeParseStatus = 'verified'
 
   for (const operation of operations) {
@@ -195,7 +199,7 @@ export function buildExportedSimulationPaths(args: {
     })
 
     for (const warning of postResult.warnings) {
-      warnings.push(`${operation.name}: ${warning.code}`)
+      postWarnings.push(warning)
     }
 
     if (!postResult.gcode.trim()) {
@@ -224,5 +228,5 @@ export function buildExportedSimulationPaths(args: {
     })
   }
 
-  return { paths, status, warnings }
+  return { paths, status, warnings, postWarnings }
 }
