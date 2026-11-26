@@ -951,6 +951,7 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
     safeRadius: 30 * scale,
     requestedCellSize: 0.2 * scale,
     passDirection: 'around',
+    continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], `${label}: the chiral finish has no warning`)
   // A is one-way whether the band came out as a helix or as forward-only rings:
@@ -1118,7 +1119,7 @@ for (const { axis, units, type } of CHIRAL_SEEDS) {
   const pivot = barPivotZ(stock)
   const result = generateRotaryFinish('helix-chiral', chiralMesh(stock, model, 40), stock, tool, {
     stepover: 2.5, sampleSpacing: 1.5, stockToLeave: 0, alongStart: 6, alongEnd: 14,
-    safeRadius: 30, requestedCellSize: 0.2, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: 0.2, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the gentle chiral finish has no warning')
   baseResult = result
@@ -1267,6 +1268,8 @@ interface WalkRecord {
   readonly helices: string[]
   readonly rings: number[]
   readonly spends: ContinuousHelixSpend[]
+  /** Whether each attempt was asked to keep the refinement reserve (#1237). */
+  readonly reserves: boolean[]
   readonly result: ReturnType<typeof walkContinuousBand>
 }
 
@@ -1281,11 +1284,13 @@ function walkBand(
   const helices: string[] = []
   const rings: number[] = []
   const spends: ContinuousHelixSpend[] = []
+  const reserves: boolean[] = []
   const result = walkContinuousBand({
     along,
-    attempt: (from, to, spent) => {
+    attempt: (from, to, spent, reserve) => {
       spends.push(spent)
-      return attempt(from, to, spent)
+      reserves.push(reserve)
+      return attempt(from, to, spent, reserve)
     },
     emitHelix: (helix) => {
       order.push(`helix:${helix.turns}`)
@@ -1297,7 +1302,7 @@ function walkBand(
     },
     ...extra,
   }, fromRing, toRing)
-  return { order, helices, rings, spends, result }
+  return { order, helices, rings, spends, reserves, result }
 }
 
 // ── a middle feature: helix - rings - helix, on complete boundary rings ────
@@ -1367,6 +1372,39 @@ function walkBand(
   console.log('  ca-g refusals: cancelled / spent / uncovered / ineligible / uncovered case all keep rings')
 }
 
+// ── #1237: a band refused on its price alone is split until it fits ────────
+{
+  // Eleven rings; a range of more than three rings is over budget before it
+  // reads anything (no samples, rows or work), as a long busto band is.
+  const along = Array.from({ length: 11 }, (_, i) => 2 * i)
+  const priced = (from: number, to: number): ContinuousHelix => (
+    to - from + 1 > 3
+      ? { ...fakeHelix(to - from, 0, [], { exhausted: true }), samples: 0, rows: 0, rasterWork: 0 }
+      : fakeHelix(to - from, 7)
+  )
+  const record = walkBand(along, priced)
+  // 0-10 -> 0-5 / 6-10 -> 0-2, 3-5 / 6-8, 9-10: every piece a helix.
+  assert.deepEqual(record.order, ['helix:2', 'helix:2', 'helix:2', 'helix:1'],
+    `a priced refusal splits until each piece fits (got ${record.order.join(', ')})`)
+  assert.deepEqual(record.rings, [], 'no ring is cut where a piece fits')
+  assert.deepEqual(record.reserves, [false, true, true, true, true, true, true],
+    'the whole band is priced as before; every piece keeps the refinement reserve')
+  assert.deepEqual(record.spends.map((spent) => spent.work), [0, 0, 0, 0, 0, 0, 0],
+    'each piece has a budget of its own')
+  assert.equal(record.result.spent.work, 28, 'the walk still reports everything it spent')
+
+  // A piece too short to split (three rings or fewer) keeps its rings when it
+  // is still priced over budget, and a refusal after reading is not split.
+  const short = walkBand(along.slice(0, 3), () => ({
+    ...fakeHelix(2, 0, [], { exhausted: true }), samples: 0, rows: 0, rasterWork: 0,
+  }))
+  assert.deepEqual(short.rings, [0, 1, 2], 'a short over-budget band keeps its rings')
+  const spentRefusal = walkBand(along, () => fakeHelix(1, 10, [], { exhausted: true }))
+  assert.deepEqual(spentRefusal.rings, along.map((_, i) => i), 'a refusal after reading keeps every ring')
+  assert.equal(spentRefusal.reserves.length, 1, 'and is attempted once')
+  console.log(`  #1237 price split: ${record.order.join(' ')}`)
+}
+
 // ── the recursion is bounded, and a real budget stops the split ────────────
 {
   // Sixteen rings, so a middle failure still leaves a piece long enough to
@@ -1416,6 +1454,21 @@ function walkBand(
   assert.equal(broke.points.length, 0, 'a band over its shared budget emits no points')
   const free = build(RIDGE, FLAT, { spent: ZERO_HELIX_SPEND })
   assert.ok(free.points.length > 1, 'the same band with its budget unspent is a helix')
+  // #1237: a piece the walk split off keeps half its budget for refinement, so
+  // a first pass that fits the whole cap but not half of it is refused on its
+  // price, before reading anything, and the walk halves it again.
+  const whole = build(RIDGE, FLAT, { spent: ZERO_HELIX_SPEND })
+  assert.ok(whole.rasterWork > 0, 'the fixture reads model rows')
+  const firstPass = build(RIDGE, FLAT, { budget: { rounds: 0 } }).rasterWork
+  const cap = { work: 1.5 * firstPass }
+  const unreserved = build(RIDGE, FLAT, { budget: cap })
+  assert.ok(unreserved.rasterWork > 0, 'without the reserve the first pass is read')
+  const reserved = build(RIDGE, FLAT, { budget: cap, reserveRefinement: true })
+  assert.equal(reserved.exhausted, true, 'with the reserve the first pass is over half the cap')
+  assert.equal(reserved.rasterWork + reserved.rows + reserved.samples, 0,
+    'and is refused on its price, reading nothing')
+  const roomy = build(RIDGE, FLAT, { budget: { work: 2 * firstPass + 1 }, reserveRefinement: true })
+  assert.ok(roomy.rasterWork > 0, 'a first pass within half the cap is read with the reserve')
   console.log(`  ca-g budget: ${defaulted.spends.length} bounded attempts (0/1/2/deep caps), a spent band is rings, an unspent one is a helix`)
 }
 
@@ -1569,6 +1622,7 @@ function entryLink(
   const params = {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 8, alongEnd: 32,
     safeRadius: 12, requestedCellSize: 0.05, passDirection: 'around' as const,
+    continuousHelix: true,
   }
   // #1177: the middle feature's two side walls are **vertical** -- a mesh column
   // 0.001 deg outside each edge -- instead of one 1-degree segment wide. A ball

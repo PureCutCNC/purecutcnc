@@ -126,6 +126,9 @@ function turnOperation(project: Project, turnId: string, kind: 'rotary_rough' | 
     ),
     setupId: 'around',
     rotaryPassDirection: 'around',
+    // #1237: the helix is the operation's choice. This file is about the
+    // helix bands beside the Hex, so it asks for them.
+    rotaryContinuousHelix: true,
     name: kind === 'rotary_rough' ? 'Rotary rough 2' : 'Rotary finish 2',
     toolRef: FLAT_TOOL_ID,
     stepover: 0.32,

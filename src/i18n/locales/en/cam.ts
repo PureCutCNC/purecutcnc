@@ -758,6 +758,8 @@ export const camEn = {
   'cam.rotary.passesTooltip': 'Along the bar: passes run the length of the bar and step around it. Around the bar: the bar turns under the tool at one position, then steps along — smoother on turned shapes.',
   'cam.rotary.passAlong': 'Along the bar',
   'cam.rotary.passAround': 'Around the bar',
+  'cam.rotary.continuousHelix': 'Continuous helix',
+  'cam.rotary.continuousHelixTooltip': 'Around the bar: cuts runs of whole rings as one continuous helix. Slower: reads the model exactly between rings.',
   'cam.rotary.stepoverAlongTooltip': 'Along the bar: the stepover is the distance between passes around the bar.',
   'cam.rotary.stepoverAroundTooltip': 'Around the bar: the stepover is the distance between rings along the bar.',
   'cam.opDesc.rotaryRough.title': 'Rotary rough',

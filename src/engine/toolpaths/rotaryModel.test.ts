@@ -2358,8 +2358,10 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // exact sphere drop replaces the conservative cell row the ball shared with
     // a flat, so both programs' points move. The seeded property test below
     // checks both shapes against the exact solids.
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings.
     assert.equal(createHash('sha256').update(JSON.stringify(without.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '17b52177a490aa37' : '48c7dde6caed35d9',
+      direction === 'along' ? '17b52177a490aa37' : 'b2a2304f11f4ac4e',
       `rough ${direction}: zero stock to leave is the expected program`)
     const spanStart = base.alongStart + ball.radius
     const first = outermost(withLeave, spanStart)
@@ -2399,8 +2401,10 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     } as const
     const finish = generateRotaryFinish('finish', mesh, stock, ball, { ...params, stockToLeave: leave }, {})
     const zero = generateRotaryFinish('finish-zero', mesh, stock, ball, { ...params, stockToLeave: 0 }, {})
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings, and its links read exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(zero.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '34eae6a87b569932' : '96b24e623ebeab13',
+      direction === 'along' ? '34eae6a87b569932' : 'f29a2b4b99967b3b',
       `finish ${direction}: zero stock to leave is the expected program`)
     // Recaptured for #1095: the positive-leave fingerprints now carry the
     // un-thickened walls (the old values lifted the outermost pass to ~4.42).
@@ -2410,8 +2414,10 @@ function stripTestMesh(stock: RoundStock, seed: number): RotaryModelMesh {
     // band is one continuous helix (A one-way, never wrapped), so both its
     // zero-leave and positive-leave fingerprints moved; the along program is
     // the base commit's bytes exactly.
+    // #1237: the around value re-recorded: the helix is off unless the operation
+    // asks for it, so the band is cut as rings, and its links read exactly.
     assert.equal(createHash('sha256').update(JSON.stringify(finish.moves)).digest('hex').slice(0, 16),
-      direction === 'along' ? '0c76a254e8f861d7' : '4eb7eaea174b0d7a',
+      direction === 'along' ? '0c76a254e8f861d7' : '63ebcdf73a063845',
       `finish ${direction}: the leave reaches the model, not the retained wall`)
     const first = outermost(finish, base.alongStart + ball.radius)
     assert.ok(first <= modelRadius + leave + 0.03,

@@ -353,3 +353,37 @@ export function rotaryRefinementToleranceFloor(
   if (!Number.isFinite(leave) || !(leave > 0)) return surface
   return Math.max(surface, leave * ROUGH_REFINEMENT_LEAVE_SHARE)
 }
+
+/**
+ * The along spacing of an **exact** link row for a ball (#1237): fine enough
+ * that a chord between two samples on the arc the ball traces round a convex
+ * edge sags no more than {@link AROUND_ANGLE_TOLERANCE_MM} below it.
+ */
+export function exactLinkSpacing(radius: number, units: Units): number {
+  const tolerance = convertLength(AROUND_ANGLE_TOLERANCE_MM, 'mm', units)
+  return Math.sqrt(8 * radius * tolerance)
+}
+
+/**
+ * Lift an **exact** link row so the straight moves between its samples clear the
+ * surface (#1237). A link is a chord from one sample to the next, and the exact
+ * read is the ball's tip *at* each sample only: round a convex edge the tip
+ * traces an arc of the cutter's radius, and the chord between two samples on
+ * it cut 0.0135 mm into a neighbour's end face. Each sample takes the highest
+ * exact tip of itself and its two neighbours, so both ends of every chord stand
+ * at or above both samples, plus the arc's sag over one spacing. A run over a
+ * flat or a straight slope is unchanged but for that sag. The link's first and
+ * last chords start at the ring's own end, which is not lifted, so there the
+ * bound is about half the sag (0.003 mm at the default tolerance).
+ */
+export function chordSafeLinkTips(tips: Float32Array, radius: number, spacing: number): number[] {
+  const half = spacing / 2
+  const sag = radius > half ? radius - Math.sqrt(radius * radius - half * half) : radius
+  // A sample with no surface under the tool stays `NaN` (no link crosses it),
+  // and as a neighbour it has nothing to clear, so it raises nothing.
+  const finite = (value: number | undefined): number =>
+    value !== undefined && Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY
+  return Array.from(tips, (tip, i) => Number.isFinite(tip)
+    ? Math.max(finite(tips[i - 1]), tip, finite(tips[i + 1])) + sag
+    : NaN)
+}

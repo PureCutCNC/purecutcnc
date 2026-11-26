@@ -43,7 +43,9 @@ import {
 import {
   aroundArcStep,
   aroundGrid,
+  chordSafeLinkTips,
   exactLayerFloor,
+  exactLinkSpacing,
   rotaryAlongPositions,
   rotaryConservativeSampling,
   rotaryRefinementToleranceFloor,
@@ -856,10 +858,17 @@ function completeRotaryTargets(
   //
   // #1117 (square links): one sample budget per link path; see
   // `linkRowBudget`.
+  // #1237: a finish link between exactly read rings reads exactly too, on a
+  // grid fine enough for its chords (`chordSafeLinkTips`). A rough link rides
+  // `max(layer, row)`, and its at-layer proof weighs the row against what the
+  // earlier layers left, so the rough keeps the conservative row it was
+  // proved on.
+  const exactLinks = plan.prep.exactTipRows === true && !('stepdown' in params)
   const linkSpacing = Math.min(
     aroundArcStep(stock, params, tool.units),
     params.stepover,
     tool.radius / 4,
+    exactLinks ? exactLinkSpacing(samplingTool.radius, tool.units) : Number.POSITIVE_INFINITY,
   )
   const linkSpan = along[along.length - 1] - along[0]
   const linkIntervals = linkSpan > 0 ? Math.ceil(linkSpan / Math.max(linkSpacing, 1e-9)) : 0
@@ -901,6 +910,11 @@ function completeRotaryTargets(
         along: linkAlong,
         requestedCellSize: params.requestedCellSize,
         conservativeCellBounds: true,
+        // #1237: a link joins two rings, so it reads the surface the way they
+        // do. A ball's rings read the exact footprint maximum (#1177); a
+        // conservative link between them stood 0.023 mm above both ring ends
+        // over a flat, a step inside the cutting pass.
+        ...(exactLinks ? { exactTipRows: true } : {}),
         ...((gridExtra !== undefined) ? { gridExtra } : {}),
         ...(samplingMesh.retainedTriangleStart !== undefined
           ? { wallTriangleStart: samplingMesh.retainedTriangleStart }
@@ -912,7 +926,9 @@ function completeRotaryTargets(
     )
     if (sampled.stopped) return 'stopped'
     if (!sampled.valid) return null
-    const raw = sampled.tipRadius[0]
+    const raw = exactLinks
+      ? chordSafeLinkTips(sampled.tipRadius[0], samplingTool.radius, linkSpan / linkIntervals)
+      : sampled.tipRadius[0]
     const linkTips = Array.from(raw, (tip) =>
       Number.isFinite(tip) ? Math.min(Math.max(tip + stockToLeave, 0), maxRadius) : NaN)
     if (isSquareStock(stock)) {

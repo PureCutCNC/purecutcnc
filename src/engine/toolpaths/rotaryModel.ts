@@ -417,6 +417,8 @@ function continuousRoughInput(
   warnings: ToolpathWarning[],
   hooks: Pick<RotarySampleOptions, 'onAngle' | 'shouldStop'>,
 ): ContinuousBandInput | null {
+  // #1237: the helix is the operation's choice; off, no band is attempted.
+  if (params.continuousHelix !== true) return null
   const prep = sampling.prep
   if (prep === null) return null
   const stubFloor = continuousHelixStubFloor(prep.stock, tool, params, sampling.bandOverrun)
@@ -1849,7 +1851,9 @@ function roughFromTargets(
             // band's rings, so the layer's air skip is never relaxed.
             const walked = walkContinuousBand({
               along,
-              attempt: (from: number, to: number, spent: ContinuousHelixSpend): ContinuousHelix | null =>
+              attempt: (
+                from: number, to: number, spent: ContinuousHelixSpend, reserveRefinement: boolean,
+              ): ContinuousHelix | null =>
                 roughBand === null ? null : buildContinuousHelix({
                   ...roughBand,
                   band: { start: along[from], end: along[to] },
@@ -1874,6 +1878,7 @@ function roughFromTargets(
                       : {}),
                   },
                   spent,
+                  ...(reserveRefinement ? { reserveRefinement } : {}),
                 }),
               accept: (helix) => region === null
                 || continuousPathInsideRegion(region, stock, helix.points, angleBase),

@@ -129,6 +129,8 @@ function everyOperationShape(): Operation[] {
                     finishFloor: flags,
                     roundOutsideCorners: flags,
                     waterlineAdaptiveRefinement: flags,
+                    // #1237: the helix row is an around-pass setting.
+                    ...(flags ? { rotaryPassDirection: 'around' as const } : {}),
                   }))
                 }
               }

@@ -147,6 +147,7 @@ import {
   cachedAngleKey,
   createRotarySamplingPrep,
   rotaryAngleRowWork,
+  rotaryExactStretchWork,
   sampleAnglesWithPrep,
 } from './rotarySampling'
 import type { RotarySamplingPrep } from './rotarySampling'
@@ -404,6 +405,15 @@ export interface ContinuousHelixInput {
    * Absent on a first attempt; {@link walkContinuousBand} supplies it.
    */
   readonly spent?: ContinuousHelixSpend
+  /**
+   * #1237: the first pass must fit in half of what the budget has left, keeping
+   * the other half for the refinement round that follows it. Refinement's first
+   * round bisects every segment, so it reads as many rows as the first pass
+   * did. {@link walkContinuousBand} asks this of the pieces of a band it split
+   * because the whole band was priced over budget, so the price, not a spent
+   * refinement, sizes each piece.
+   */
+  readonly reserveRefinement?: boolean
 }
 
 export interface ContinuousHelix {
@@ -769,6 +779,7 @@ function sampleHelixRows(
   phaseScale: number,
   sampling: HelixSampling,
   budget: ContinuousHelixBudget,
+  firstPass = false,
 ): HelixStatus {
   const prep = input.prep
   const startAngle = input.startAngle ?? 0
@@ -784,13 +795,21 @@ function sampleHelixRows(
   // A row's prep reads the angle-map cache whenever the operation's does (see
   // the `'read-write'` prep below), and a price must know which rows are free.
   const readCache = prep.angleMaps !== 'off'
-  const remaining = budget.work - spent.work - sampling.work
+  const left = budget.work - spent.work - sampling.work
+  // #1237: see `ContinuousHelixInput.reserveRefinement`.
+  const remaining = firstPass && input.reserveRefinement === true ? left / 2 : left
+  // #1237: an exact row turns only the facets its own stretch of the bar
+  // reaches (`exactFootprintTips` with the row's poses as its columns), so it is
+  // priced and charged by that count, not by every facet at its angle. The disc
+  // is the read's own: the cutter's radius plus the flat's exact pad.
+  const exactRadius = prep.tool.radius
+    + (prep.tool.type === 'ball_endmill' ? 0 : (input.exactTipPad ?? 0))
   let roundWork = 0
   for (const row of rows) {
     const angle = rowAngle(startAngle, row, phaseScale)
     const price = exactRows
       ? (exactHelixRow(prep, angle, input.stockToLeave, row.along) === undefined
-        ? rotaryAngleRowWork(prep, angle, false)
+        ? rotaryExactStretchWork(prep, angle, row.along, exactRadius)
         : 0)
       : rotaryAngleRowWork(prep, angle, readCache)
     roundWork += price
@@ -840,10 +859,14 @@ function sampleHelixRows(
         [angle],
         input.warnings,
         input.shouldStop ? { shouldStop: input.shouldStop } : {},
+        // #1237: every pose of the row is wanted, which bounds the exact read
+        // to the facets the row's stretch reaches; the values are unchanged.
+        exactRows ? [Array.from({ length: row.along.length }, (_, i) => i)] : undefined,
       )
       if (!sampled.valid) return 'exhausted'
       if (sampled.stopped) return 'stopped'
       sampling.reused += sampled.reused
+      // #1237: an exact row reports the facets its stretch-limited read turned.
       sampling.work += sampled.rasterWork
       // The row arrives lifted by the angle's conservative cell rise, exactly as
       // the ring grid reads it -- or, in the exact mode, as the footprint
@@ -1086,7 +1109,7 @@ export function buildContinuousHelix(input: ContinuousHelixInput): ContinuousHel
   }
   const nodes = initialNodes(band, turns, intervals, startAngle)
   const rows = helixRows(nodes, phaseScale)
-  const initial = sampleHelixRows(rows, input, phaseScale, sampling, budget)
+  const initial = sampleHelixRows(rows, input, phaseScale, sampling, budget, true)
   if (initial === 'stopped') return emptyHelix(turns, pitch, sampling, { stopped: true })
   if (initial === 'exhausted') return emptyHelix(turns, pitch, sampling, { exhausted: true })
   if (initial === 'ineligible') return emptyHelix(turns, pitch, sampling, { ineligible: true })
@@ -1177,7 +1200,12 @@ export interface ContinuousBandVisit {
    * precondition the caller's prep does not meet): the whole range is cut as
    * rings and nothing is split.
    */
-  readonly attempt: (fromRing: number, toRing: number, spent: ContinuousHelixSpend) => ContinuousHelix | null
+  readonly attempt: (
+    fromRing: number,
+    toRing: number,
+    spent: ContinuousHelixSpend,
+    reserveRefinement: boolean,
+  ) => ContinuousHelix | null
   /**
    * Whether the caller will cut this verified helix -- the region test, in
    * practice. `false` keeps that range's rings, and is **not** a tolerance
@@ -1210,8 +1238,9 @@ export interface ContinuousBandResult {
  * ends. A refusal with **failing spans** (a tolerance refusal -- see
  * {@link ContinuousHelix.failures}) is split: the rings covering each span are
  * cut as rings, every remaining run of two or more rings is attempted as its own
- * helix, and the split recurses up to `maxDepth`. Any other refusal -- a spent
- * budget, cancellation, no model under the tool, no material at a roughing
+ * helix, and the split recurses up to `maxDepth`. A band refused on its price
+ * before reading anything is halved until its pieces fit (#1237). Any other
+ * refusal -- a spent budget, cancellation, no model under the tool, no material at a roughing
  * layer, a case this module does not cover, the caller's region -- keeps that
  * range's rings, so nothing here can relax a rule the caller relies on.
  */
@@ -1222,7 +1251,8 @@ export function walkContinuousBand(
 ): ContinuousBandResult {
   const { along } = visit
   const maxDepth = visit.maxDepth ?? MAX_HELIX_SPLIT_DEPTH
-  const spend = {
+  // Everything the walk spent, every scope included.
+  const total = {
     samples: visit.spent?.samples ?? 0,
     rows: visit.spent?.rows ?? 0,
     work: visit.spent?.work ?? 0,
@@ -1236,19 +1266,40 @@ export function walkContinuousBand(
     }
   }
 
-  const walk = (from: number, to: number, depth: number): void => {
+  type Spend = { samples: number, rows: number, work: number }
+  const walk = (from: number, to: number, depth: number, spend: Spend, reserve: boolean): void => {
     if (stopped) return
     if (!(to > from)) { rings(from, to); return }
-    const helix = visit.attempt(from, to, { ...spend })
+    const unspent = spend.samples === 0 && spend.rows === 0 && spend.work === 0
+    const helix = visit.attempt(from, to, { ...spend }, reserve)
     if (helix === null) { rings(from, to); return }
     spend.samples += helix.samples
     spend.rows += helix.rows
     spend.work += helix.rasterWork
+    total.samples += helix.samples
+    total.rows += helix.rows
+    total.work += helix.rasterWork
     if (helix.stopped) { stopped = true; return }
     if (helix.points.length > 1 && !helix.exhausted && !helix.uncovered && !helix.ineligible
       && (visit.accept === undefined || visit.accept(helix))) {
       if (visit.shouldStop?.() === true) { stopped = true; return }
       visit.emitHelix(helix)
+      return
+    }
+    // #1237: a band refused on its price alone read nothing, so it is split in
+    // two, each half a piece of at least two rings with a budget of its own and
+    // the refinement reserve (`ContinuousHelixInput.reserveRefinement`). The
+    // pieces shrink until their price fits, so a long band of whole rings is cut
+    // as several helices rather than all rings. A piece's own budget bounds what
+    // a refused piece can spend, and the pieces together read about what one
+    // band that long costs. A refusal after reading still keeps its rings, and
+    // so does a band that was handed an already spent cap (`visit.spent`): it
+    // was refused for that, not for its length.
+    const priced = unspent && helix.exhausted && helix.samples === 0 && helix.rows === 0 && helix.rasterWork === 0
+    if (priced && to - from >= 3) {
+      const mid = Math.floor((from + to) / 2)
+      walk(from, mid, depth, { samples: 0, rows: 0, work: 0 }, true)
+      walk(mid + 1, to, depth, { samples: 0, rows: 0, work: 0 }, true)
       return
     }
     // Only a tolerance refusal says where it failed; everything else is a
@@ -1270,13 +1321,13 @@ export function walkContinuousBand(
       }
       let end = k
       while (end + 1 <= to && !marked.has(end + 1)) end++
-      walk(k, end, depth + 1)
+      walk(k, end, depth + 1, spend, reserve)
       k = end + 1
     }
   }
 
-  walk(fromRing, toRing, 0)
-  return { stopped, spent: { ...spend } }
+  walk(fromRing, toRing, 0, { ...total }, false)
+  return { stopped, spent: { ...total } }
 }
 
 /**

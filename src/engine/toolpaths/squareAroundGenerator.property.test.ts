@@ -2687,8 +2687,13 @@ function coalesceCommandedMoves(moves: readonly ToolpathMove[], tolerance = 0): 
     if (!(fraction > -1e-9 && fraction < 1 + 1e-9)) return false
     const f = Math.min(1, Math.max(0, fraction))
     const x = chord.from.x + (chord.to.x - chord.from.x) * f
+    // #1237: Y too. An axis-Y case carries its along position in Y, so a check
+    // on X and Z alone fused a ring-to-ring link with the rings either side of
+    // it, and the reference never cut the corners those rings swept.
+    const y = chord.from.y + (chord.to.y - chord.from.y) * f
     const z = chord.from.z + (chord.to.z - chord.from.z) * f
-    return Math.abs(point.x - x) <= tol + 1e-12 && Math.abs(point.z - z) <= tol + 1e-12
+    return Math.abs(point.x - x) <= tol + 1e-12 && Math.abs(point.y - y) <= tol + 1e-12
+      && Math.abs(point.z - z) <= tol + 1e-12
   }
   for (const move of moves) {
     const last = out[out.length - 1]

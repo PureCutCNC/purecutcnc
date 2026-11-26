@@ -138,11 +138,13 @@ const ROUGH = {
   stepover: 2, sampleSpacing: 2, stockToLeave: 0, alongStart: 3, alongEnd: 21,
   safeRadius: barMaxRadius(STOCK) * 2, requestedCellSize: 0.25, stepdown: 2,
   passDirection: 'around' as const,
+  continuousHelix: true,
 }
 const FINISH = {
   stepover: 2, sampleSpacing: 2, stockToLeave: 0, alongStart: 3, alongEnd: 21,
   safeRadius: barMaxRadius(STOCK) * 2, requestedCellSize: 0.25,
   passDirection: 'around' as const,
+  continuousHelix: true,
 }
 
 const alongOf = (point: ToolpathPoint): number => STOCK.axis === 'x' ? point.x : point.y

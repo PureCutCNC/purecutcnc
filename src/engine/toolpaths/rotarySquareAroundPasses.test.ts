@@ -288,13 +288,13 @@ function helixMovesOf(moves: readonly ToolpathMove[]): Set<ToolpathMove> {
 console.log('Testing that a square blank generates around passes...')
 {
   const rough = generateRotaryRough('square-rough', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+    ...SQUARE_BASE, stepdown: 2, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(rough.warnings, [], 'the square around rough has no warning')
   assert.ok(rough.moves.length > 0, 'the square around rough cuts')
   assert.ok(rough.bounds !== null, 'the square around rough has bounds')
   const finish = generateRotaryFinish('square-finish', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(finish.warnings, [], 'the square around finish has no warning')
   assert.ok(finish.moves.length > 0, 'the square around finish cuts')
@@ -348,7 +348,7 @@ console.log('Testing the square touch-radius gate on every cut point...')
   let probedTools = 0
   for (const tool of [FLAT, BALL]) {
     const rough = generateRotaryRough('gate-rough', SQUARE_MODEL, SQUARE, tool, {
-      ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+      ...SQUARE_BASE, stepdown: 2, passDirection: 'around', continuousHelix: true,
     }, {})
     let checked = 0
     for (const move of rough.moves) {
@@ -395,7 +395,7 @@ console.log('Testing that a split square ring retracts instead of linking low...
   // so a ring is split into runs and cannot be linked end to end.
   const model = box(SQUARE, 12, 28, -1, 1, 6, 10)
   const finish = generateRotaryFinish('split-link', model, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, passDirection: 'around', continuousHelix: true,
   }, {})
   // The offset box reaches below the turning centre at some angles, which is
   // the advisory this fixture legitimately carries; no other warning is.
@@ -414,7 +414,7 @@ console.log('Testing that a split square ring retracts instead of linking low...
   // (the dead version filtered constant-angle along links and then asked
   // whether their angle was not A0/A360, which was never true).
   const rough = generateRotaryRough('split-link-rough', model, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+    ...SQUARE_BASE, stepdown: 2, passDirection: 'around', continuousHelix: true,
   }, {})
   let turningLinks = 0
   let turningTravelLinks = 0
@@ -447,7 +447,7 @@ console.log('Testing that a split ring whose last run reaches 360 retracts...')
 {
   const model = boxPrism(SQUARE, 12, 28, -2, 2, 4, 8)
   const finish = generateRotaryFinish('split-360', model, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.ok(finish.warnings.every((warning) => warning.code === 'rotaryBelowCentreline'),
     'the split-360 finish carries only the below-centreline advisory')
@@ -497,7 +497,7 @@ console.log('Testing that forward-only rings keep the square blank\'s at-layer l
   const result = generateRotaryRough('window-budget', model, stock, ball4, {
     stepover: 1, sampleSpacing: 1, stockToLeave: 0, alongStart: 2, alongEnd: 398,
     safeRadius: barMaxRadius(stock) * 2, requestedCellSize: 0.5, stepdown: 5,
-    passDirection: 'around',
+    passDirection: 'around', continuousHelix: true,
   }, {})
   const pivot = barPivotZ(stock)
   const plunges = result.moves.filter((move) => move.kind === 'plunge')
@@ -605,7 +605,7 @@ console.log('Testing that the square around rough links its forward-only arcs at
   const inscribed = barInscribedRadius(SQUARE)
   const stepdown = 2
   const rough = generateRotaryRough('corner-links', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown, passDirection: 'around',
+    ...SQUARE_BASE, stepdown, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(rough.warnings, [], 'the corner-link rough has no warning')
   /** The commanded angle wrapped into one turn. */
@@ -915,7 +915,7 @@ console.log(`Testing the ${PROP_SEEDS}-seed square around rough property...`)
       safeRadius: 20,
       requestedCellSize: cell,
       stepdown,
-      passDirection: 'around',
+      passDirection: 'around', continuousHelix: true,
     }, {})
     assert.deepEqual(result.warnings, [], `seed ${seed}: no warning`)
     const pivot = barPivotZ(stock)
@@ -1136,10 +1136,10 @@ console.log('Testing the retained-square shoulders on the forward-only rings...'
   // support or keep-out would.
   const boundedModel = cylinder(SQUARE, ROUND_RADIUS, 8, 32)
   const rough = generateRotaryRough('shoulder-rough', boundedModel, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+    ...SQUARE_BASE, stepdown: 2, passDirection: 'around', continuousHelix: true,
   }, {})
   const finish = generateRotaryFinish('shoulder-finish', boundedModel, SQUARE, FLAT, {
-    ...SQUARE_BASE, passDirection: 'around',
+    ...SQUARE_BASE, passDirection: 'around', continuousHelix: true,
   }, {})
   const pulled = { start: SQUARE_BASE.alongStart + FLAT.radius, end: SQUARE_BASE.alongEnd - FLAT.radius }
   const pivot = barPivotZ(SQUARE)
@@ -1216,7 +1216,7 @@ console.log('Testing the square around rough on a band with no model under the t
   const model = cylinder(stock, 5, 12, 28)
   const result = generateRotaryRough('square-nan', model, stock, FLAT, {
     stepover: 2, sampleSpacing: 1, stockToLeave: 0, alongStart: 5, alongEnd: 35,
-    safeRadius: 30, requestedCellSize: 0.1, stepdown: 2, passDirection: 'around',
+    safeRadius: 30, requestedCellSize: 0.1, stepdown: 2, passDirection: 'around', continuousHelix: true,
   }, {})
   assert.deepEqual(result.warnings, [], 'the missing-model square rough has no warning')
   const cuts = result.moves.filter((move) => move.kind === 'cut').flatMap((move) => [move.from, move.to])
@@ -1578,7 +1578,7 @@ console.log('Testing the square simulation path on around-mode rings...')
   }
   const grid = createSimulationGrid(sheet, { squareBar: { side, frame }, targetLongAxisCells: 96 })
   const rough = generateRotaryRough('sim-rough', SQUARE_MODEL, SQUARE, FLAT, {
-    ...SQUARE_BASE, stepdown: 2, passDirection: 'around',
+    ...SQUARE_BASE, stepdown: 2, passDirection: 'around', continuousHelix: true,
   }, {})
   // #1103 slice ca-d: commanded A is one-way, so the rough's path runs over many
   // turns. The sheet's own fold (`foldToolpath`, what the app's simulation does)

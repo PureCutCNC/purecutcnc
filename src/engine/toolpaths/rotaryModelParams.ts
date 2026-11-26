@@ -49,6 +49,14 @@ export interface RotaryFinishParams {
    */
   readonly passDirection?: RotaryPassDirection
   /**
+   * Whether an around pass may replace a band of whole rings with one
+   * continuous helix (#1103), read exactly between the rings (#1237). Missing
+   * or false cuts rings only and attempts no helix at all, which is what every
+   * project saved before the setting existed gets: the exact helix read costs
+   * generation time the rings do not.
+   */
+  readonly continuousHelix?: boolean
+  /**
    * The operation target's region features as one mask, in the Around sheet's
    * **unwrapped** coordinates (#1096): along is the bar's axis, across is
    * `zero + a * pi * thickness / 360` -- the same convention the 2.5D Around

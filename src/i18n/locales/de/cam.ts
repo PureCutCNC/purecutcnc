@@ -755,6 +755,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.rotary.passesTooltip': 'Längs der Stange: Die Bahnen laufen über die Länge der Stange und schreiten rundum. Rund um die Stange: Die Stange dreht sich an einer Position unter dem Werkzeug, dann folgt ein Schritt längs — glatter bei gedrehten Formen.',
   'cam.rotary.passAlong': 'Längs der Stange',
   'cam.rotary.passAround': 'Rund um die Stange',
+  'cam.rotary.continuousHelix': 'Durchgehende Helix',
+  'cam.rotary.continuousHelixTooltip': 'Rund um die Stange: schneidet zusammenhängende ganze Ringe als eine durchgehende Helix. Langsamer: liest das Modell zwischen den Ringen exakt.',
   'cam.rotary.stepoverAlongTooltip': 'Längs der Stange: Der Bahnabstand ist der Abstand zwischen den Bahnen rund um die Stange.',
   'cam.rotary.stepoverAroundTooltip': 'Rund um die Stange: Der Bahnabstand ist der Abstand zwischen den Ringen längs der Stange.',
   'cam.opDesc.rotaryRough.title': 'Rotationsschruppen',

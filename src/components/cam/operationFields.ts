@@ -248,6 +248,7 @@ export const OPERATION_FIELD_IDS = [
   // Rotary strategy, listed beside the rotary depth rows because the Passes
   // choice belongs to the same family (#1045 slice B).
   'rotaryPassDirection',
+  'rotaryContinuousHelix',
   // Speeds & feeds.
   'feed',
   'plungeFeed',
@@ -391,6 +392,13 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'rotaryPassDirection',
     group: 'strategy',
     appliesTo: (operation) => isRotaryOperationKind(operation.kind),
+  },
+  {
+    // #1237: only an around pass cuts rings a helix can replace. Missing reads
+    // as off, so the row shows that without writing the field.
+    id: 'rotaryContinuousHelix',
+    group: 'strategy',
+    appliesTo: (operation) => isRotaryOperationKind(operation.kind) && operation.rotaryPassDirection === 'around',
   },
   // ── Speeds & feeds — the numbers that change with the material. Slot feed and
   //   its engagement mode stay adjacent: the mode governs how the reduction
@@ -664,7 +672,7 @@ export function operationFieldsForGroup(
 ): OperationFieldSpec[] {
   return OPERATION_FIELDS.filter((field) => {
     const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
-    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport', 'rotaryPassDirection'].includes(field.id)) return false
+    if (isRotaryOperationKind(operation.kind) && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'stepover', 'stepdown', 'stockToLeaveRadial', 'feed', 'plungeFeed', 'rpm', 'rotaryChuckSupport', 'rotaryTailSupport', 'rotaryPassDirection', 'rotaryContinuousHelix'].includes(field.id)) return false
     if (operation.kind === 'plasma_profile' && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'feed', 'arcFitting'].includes(field.id)) return false
     return fieldGroup === group && field.appliesTo(operation, tool)
   })

@@ -85,6 +85,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   rotaryChuckSupport: { role: 'computation', change: { rotaryChuckSupport: 8 } },
   rotaryTailSupport: { role: 'computation', change: { rotaryTailSupport: 7 } },
   rotaryPassDirection: { role: 'computation', change: { rotaryPassDirection: 'around' } },
+  rotaryContinuousHelix: { role: 'computation', change: { rotaryContinuousHelix: true } },
   plasmaSide: { role: 'computation', change: { plasmaSide: 'inside' } },
   plasmaReverseDirection: { role: 'computation', change: { plasmaReverseDirection: true } },
   plasmaLeadIn: { role: 'computation', change: { plasmaLeadIn: 'line' } },

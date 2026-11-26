@@ -286,6 +286,8 @@ function rotaryContext(project: Project, operation: Operation): RotaryContext | 
     // Missing reads as 'along' inside the generators, so a saved operation keeps
     // the motion it was saved with (#1045 slice A).
     passDirection: operation.rotaryPassDirection,
+    // #1237: missing reads as off, so a saved operation cuts rings only.
+    ...(operation.rotaryContinuousHelix === true ? { continuousHelix: true } : {}),
     ...(region !== null ? { region } : {}),
     ...(neighbourMesh !== null ? { neighbours: [neighbourMesh] } : {}),
   }

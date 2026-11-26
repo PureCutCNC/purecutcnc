@@ -1972,10 +1972,10 @@ function continuousCylinder(radius: number, from: number, to: number, segments =
 
 const CONTINUOUS_MESH = continuousCylinder(5, 12, 28)
 const CONTINUOUS_ROUGH = generateRotaryRough('continuous-rough', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
-  ...CONTINUOUS_BASE, passDirection: 'around', stepdown: 2,
+  ...CONTINUOUS_BASE, passDirection: 'around', stepdown: 2, continuousHelix: true,
 }, {})
 const CONTINUOUS_FINISH = generateRotaryFinish('continuous-finish', CONTINUOUS_MESH, CONTINUOUS_STOCK, CONTINUOUS_TOOL, {
-  ...CONTINUOUS_BASE, passDirection: 'around',
+  ...CONTINUOUS_BASE, passDirection: 'around', continuousHelix: true,
 }, {})
 
 /** Every feed move that changes the commanded angle. */

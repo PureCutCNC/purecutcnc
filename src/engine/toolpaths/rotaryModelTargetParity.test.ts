@@ -29,22 +29,25 @@ import { createRotaryAnglePool, type RotaryAnglePool } from './rotaryAnglePool'
 // #1190 re-recorded all eight square rows: an around pass reads, bounds and overruns
 // a square blank as it does a round bar, and an along pass overruns its owned ends
 // too. Every round row is unchanged.
+// #1237 re-recorded the eight around rows: the helix is off unless the operation
+// asks for it, so each band is cut as rings, and a finish link between a ball's
+// exactly read rings is read exactly too. Every along row is unchanged.
 const baseline: Readonly<Record<string, string>> = {
-  'round x rotary_finish around': '8668ea5303fa53bf4809fa3b925dfb2ac7da4a326a74ee9fab81f2a939ed427f',
+  'round x rotary_finish around': '9287470663d9e7956ac141d4aebf0815413064c9b8f8b35576be856c68955848',
   'round x rotary_finish along': 'f063e6118a19ec1412c75f2717e4bd1dced1bd58f1f23102a9ca5157fd075150',
-  'round x rotary_rough around': 'feece078ad0864957c0255cc758e0557d7f8cf6da7622d6142cf5025361b57d6',
+  'round x rotary_rough around': 'e305dd015065cd03b586be25336c33de3f435c40eaf9fbc724771b0b9feea3bb',
   'round x rotary_rough along': '5d8a9d5a1d99792f45f9ec715a9ccd5d98970050713baeadbf60e6e63e36d7c1',
-  'round y rotary_finish around': 'bba049a2b7cdb8fd0365e083b1664cd32b69ffbb8cef65a0248e86c49b02f9f8',
+  'round y rotary_finish around': '3d0c31fda9f1813f4e1bb91c4968d4795ef43c2d2f06bc67a0fc503635f37961',
   'round y rotary_finish along': '13488876228afa952eda133cc92413c5552a87fca5f9cf1c677af2fb1c1a0ba6',
-  'round y rotary_rough around': '6d093f5af3eec76dca829040a84ef3c4252f290d0c5d48fcef0619905796b07f',
+  'round y rotary_rough around': '49afb08eb92dd019adf11c79431a7a64f32fc1c955aafe1564716fd3cfbfb790',
   'round y rotary_rough along': 'bcef20596e2607e78afb41b8ff1a6335b0559920729dd14c512f336455837551',
-  'square x rotary_finish around': '7b3585bdf4bba7bf5e0f81b37ac398ffc5515027f86a1ce7c8b92deb23409239',
+  'square x rotary_finish around': '6fa4e4394e6c8efd743038f030f9e6668bb8f190034e23bb933ea749c55739ec',
   'square x rotary_finish along': '9befa7527347dead8b765ce63fdf7d4ac39e3b97c8bde4931f7573998c1c5e5a',
-  'square x rotary_rough around': 'b8fe8ef74d7eff769e8e3c63dc0d85bdd416f47bd64ff2bf31c500818d91b526',
+  'square x rotary_rough around': 'a0df941e758e105fa1831b110c5e178669d7e3bde01c30aeff3d17a8543bff46',
   'square x rotary_rough along': '3458370b5776018d8722e3a64d2582656d8d7fcacd2563430019bfd9f33d6bbc',
-  'square y rotary_finish around': '56873bbf3d2c57a42ec14e14a871aa1e83bead3d162be8420eb9c3a308a33645',
+  'square y rotary_finish around': 'dd09c49f92a029b5b785d66ac92a85254ec9750be732532828da09b8220d45d5',
   'square y rotary_finish along': '5438c2e0b4f273847a186fb061e69296b55c7ded578f14af673b3699956b5d1e',
-  'square y rotary_rough around': 'ad913cf04ea9926156146b57a28e257fd42e375a967de41e1752a1bf0513d2a2',
+  'square y rotary_rough around': 'f2e9ca4e4d7d1a4592427a15940e075789ec9c87d60b9145813630844b23d7ef',
   'square y rotary_rough along': '92146a27dba86977d0e460212ed914b480eb6d72d29286572e5ce7d618061663',
   'round x region rough around': '546c11444e1c79c0377e9d2d1b0c14eb9ed80d64f6d96517bb23dfefbbce4fbf',
 }
