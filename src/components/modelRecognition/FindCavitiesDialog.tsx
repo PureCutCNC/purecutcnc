@@ -152,7 +152,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
     const first = controls[0]
     const last = controls[controls.length - 1]
     const edge = event.shiftKey ? first : last
-    if (document.activeElement !== edge) return
+    if (document.activeElement !== edge && document.activeElement !== event.currentTarget) return
     event.preventDefault()
     const next = event.shiftKey ? last : first
     next?.focus()
@@ -304,6 +304,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
         className="dialog dialog--find-cavities"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleKeyDown}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="find-cavities-title"

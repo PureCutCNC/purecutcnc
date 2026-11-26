@@ -338,6 +338,13 @@ test.describe('find pockets and holes', () => {
       await page.keyboard.press('Escape')
       await expect(dialog).not.toBeVisible()
       await expect(launcher).toBeFocused()
+
+      await launcher.focus()
+      await page.keyboard.press('Enter')
+      await expect(row).toBeVisible()
+      await dialog.getByTestId('find-cavities-preview').click({ position: { x: 2, y: 2 } })
+      await page.keyboard.press('Escape')
+      await expect(dialog).not.toBeVisible()
     })
   })
 

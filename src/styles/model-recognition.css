@@ -91,6 +91,12 @@ label.find-cavities__label {
   cursor: pointer;
 }
 
+/* The dialog takes focus from clicks on its non-control areas, so Escape and
+ * the Tab trap keep working; it is never a visible focus stop. */
+.dialog--find-cavities:focus {
+  outline: none;
+}
+
 @media (any-pointer: coarse) {
   label.find-cavities__label {
     min-width: 44px;
