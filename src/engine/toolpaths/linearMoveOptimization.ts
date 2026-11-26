@@ -47,10 +47,10 @@ export function optimizeLinearMoves(result: ToolpathResult): ToolpathResult {
 
     const prev = optimized[optimized.length - 1]
     if (canMerge(prev, move)) {
-      optimized[optimized.length - 1] = {
-        ...prev,
-        to: move.to,
-      }
+      const merged = { ...prev, to: move.to }
+      // Neither sample describes the new, longer chord.
+      delete merged.arcChordError
+      optimized[optimized.length - 1] = merged
     } else {
       optimized.push(move)
     }

@@ -344,6 +344,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   which judge an arc by the numbers actually written. A move that turns the
   stock is never part of a run (#393): an arc is one planar circular motion, and
   a rotary axis moving through it is not.
+- `edgeArcExport.test.ts` — #1253 inside edge route on the reported opening.
+- `sharedArcExport.test.ts` — metric and imperial edge routes, pocket rings, generated round joins, and a straight polygon with the same input vertices as a sampled circle.
+  GRBL and ShopBot preserve the straight roughing moves at all five depths
+  and still post the finish fillets as arcs.
 - `gcodeMotionParser.ts` — read-only parser for the emitted G-code (issue
   #356); reconstructs planar motion analytically. Given the definition's rotary
   word and inverse-time commands (issue #393) it reads the angle modally — the

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { offsetPathsWithCurves } from './curveChordEvidence'
 import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
@@ -73,11 +74,7 @@ function offsetClosedPaths(paths: ClipperPath[], delta: number, joinType: number
   if (paths.length === 0) return []
   if (Math.abs(delta) <= 1e-9) return paths
 
-  const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
-  return solution as ClipperPath[]
+  return offsetPathsWithCurves(paths, Math.round(delta * DEFAULT_CLIPPER_SCALE), joinType)
 }
 
 function splitNarrowConnections(paths: ClipperPath[], clearance: number): ClipperPath[] {

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { sampledCutMove } from './curveChordEvidence'
 import { findOperationTool } from '../../toolPolicy'
 import type { Operation, Point, Project } from '../../types/project'
 import { isTrochoidalCarve } from '../../types/project'
@@ -39,6 +40,7 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type Trochoida
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import {
+  appendOrbitCuts,
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
   trochoidalEntryMoveCount,
@@ -91,22 +93,14 @@ function toProfileCutMoves(points: Point[], z: number, closed: boolean): Toolpat
 
   const moves: ToolpathMove[] = []
   for (let index = 0; index < points.length - 1; index += 1) {
-    moves.push({
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    })
+    moves.push(sampledCutMove(points[index], points[index + 1], z))
   }
 
   if (closed) {
     const first = points[0]
     const last = points[points.length - 1]
     if (first.x !== last.x || first.y !== last.y) {
-      moves.push({
-        kind: 'cut',
-        from: { x: last.x, y: last.y, z },
-        to: { x: first.x, y: first.y, z },
-      })
+      moves.push(sampledCutMove(last, first, z))
     }
   }
 
@@ -647,9 +641,8 @@ export function generateFollowLineToolpath(
           )
         }
 
-        const cutMoves = toProfileCutMoves(built.points, z, closed)
-        appendAll(moves, cutMoves)
-        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        appendOrbitCuts(moves, built.points, z, tool.diameter, closed)
+        currentPosition = moves.at(-1)?.to ?? currentPosition
       }
     } else {
       for (const fragment of target.work.fragments) {

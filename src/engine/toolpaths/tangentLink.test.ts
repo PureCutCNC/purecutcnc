@@ -28,6 +28,7 @@ import {
   type TangentLinkOptions,
 } from './tangentLink'
 import type { Point } from '../../types/project'
+import { curveChordError } from './curveChordEvidence'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
@@ -404,6 +405,9 @@ function testCheapTestsRunBeforeDomainGate() {
   const counts = slinkProbeCounts()
   assert(result !== null && result.arrivalIndex === 31, 'expected the S to arrive at vertex 31, got ' + result?.arrivalIndex)
   assert(counts.candidatesEvaluated === 104, 'expected 104 solved candidates, got ' + counts.candidatesEvaluated)
+  assert(counts.pathsRecordingCurves === 1, 'only the emitted path should record curve evidence')
+  assert(result.points.some((to, i, points) => i > 0 && curveChordError(points[i - 1], to) !== undefined),
+    'the emitted path must include at least one proven curved chord')
   const DOMAIN_CHECKED_BUDGET = 38
   assert(
     counts.candidatesDomainChecked <= DOMAIN_CHECKED_BUDGET,

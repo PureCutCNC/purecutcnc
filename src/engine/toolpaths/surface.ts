@@ -16,6 +16,7 @@
 
 import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
+import { createCurveClipper, offsetPathsWithCurves } from './curveChordEvidence'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
 import type { CutDirection, Operation, Point, Project, SketchFeature } from '../../types/project'
@@ -175,7 +176,7 @@ function executeClip(
   clipPaths: ClipperPath[],
   clipType: number,
 ): PolyTreeNode {
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   }
@@ -198,7 +199,7 @@ function executeClipPaths(
   clipPaths: ClipperPath[],
   clipType: number,
 ): ClipperPath[] {
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   }
@@ -221,11 +222,7 @@ function offsetPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
     return []
   }
 
-  const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
-  return solution as ClipperPath[]
+  return offsetPathsWithCurves(paths, delta, ClipperLib.JoinType.jtMiter)
 }
 
 /** Every closed loop of a tool-centre region set, for the bar section's own tests. */

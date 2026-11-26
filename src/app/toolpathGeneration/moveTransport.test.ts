@@ -198,6 +198,35 @@ check(
 
 console.log('\nEdge cases')
 
+{
+  const line: ToolpathMove = { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0 } }
+  const moves = [line, { ...line, arcChordError: 0.0132 }, { ...line, arcChordError: 0 }]
+  const packed = packResult({ operationId: 'curve', moves, bounds: null, warnings: [] })
+  const received = structuredClone(packed, { transfer: transferablesOf(packed) }).packedMoves
+  check(
+    'curve allowances round-trip only on their original moves',
+    packed.packedMoves.arcChordErrors?.byteLength === 0 && isPackedMoves(received)
+      && canonicalize(unpackMoves(received)) === canonicalize(moves),
+    'the worker lost, changed, or misplaced curve evidence',
+  )
+  check(
+    'an ordinary path needs no curve allowance buffer',
+    packMoves([line]).arcChordErrors === undefined,
+    'plain linear moves allocated curve evidence',
+  )
+  check(
+    'an allowance buffer of the wrong length is rejected',
+    !isPackedMoves({ ...received, arcChordErrors: new Float64Array(2) }),
+    'a mismatched allowance buffer was accepted',
+  )
+  const malformedValues = { ...received, arcChordErrors: Float64Array.of(NaN, -1, Infinity) }
+  check(
+    'invalid curve allowances are dropped while unpacking',
+    isPackedMoves(malformedValues) && unpackMoves(malformedValues).every(move => move.arcChordError === undefined),
+    'an invalid allowance could relax the export tolerance',
+  )
+}
+
 check('an empty path packs and unpacks', unpackMoves(packMoves([])).length === 0, 'empty round trip failed')
 
 check(

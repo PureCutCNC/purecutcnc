@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { copyCurveChord, mergeCurveChord } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
@@ -36,16 +37,24 @@ function clonePoint(point: Point): Point {
 }
 
 function normalizeClosedGuide(guide: Point[]): Point[] {
-  const points: Point[] = []
+  // Each kept vertex stands for a run of duplicate points, and a chord's curve
+  // evidence may sit on any point of the runs it joins. Merge it from there.
+  const runs: Point[][] = []
   for (const point of guide) {
-    if (points.length === 0 || !samePoint(points.at(-1)!, point)) {
-      points.push(clonePoint(point))
-    }
+    const run = runs.at(-1)
+    if (run && samePoint(run.at(-1)!, point)) run.push(point)
+    else runs.push([point])
   }
-  if (points.length > 1 && samePoint(points[0], points.at(-1)!)) {
-    points.pop()
+  const copies = runs.map(run => clonePoint(run[0]))
+  if (copies.length > 1 && samePoint(copies[0], copies.at(-1)!)) {
+    copies.pop()
+    runs[0] = [...runs.pop()!, ...runs[0]]
   }
-  return points
+  for (let i = 0; i < copies.length; i++) {
+    const j = (i + 1) % copies.length
+    mergeCurveChord(runs[i], runs[j], copies[i], copies[j])
+  }
+  return copies
 }
 
 export function normalizeClipperPath(path: ClipperPath, scale: number): Point[] {
@@ -278,6 +287,8 @@ export function splitClosedGuideByForbiddenPaths(
         finishCurrent()
         current = [startPoint, endPoint]
       }
+      // The span lies on this guide chord, so it keeps the chord's evidence.
+      copyCurveChord(from, to, current.at(-2)!, endPoint)
     }
   }
   finishCurrent()
@@ -294,6 +305,8 @@ export function splitClosedGuideByForbiddenPaths(
   const last = fragments.at(-1)!
   if (samePoint(last.at(-1)!, first[0])) {
     const seamMerged = [...last, ...first.slice(1)]
+    // The seam joins the last span's end to the first span's second point.
+    if (first.length > 1) copyCurveChord(first[0], first[1], last.at(-1)!, first[1])
     return [seamMerged, ...fragments.slice(1, -1)].map((points) => ({ points, closed: false }))
   }
   return fragments.map((points) => ({ points, closed: false }))

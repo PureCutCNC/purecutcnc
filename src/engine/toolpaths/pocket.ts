@@ -16,6 +16,7 @@
 
 import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
+import { createCurveClipper, offsetPathsWithCurves, sampledCutMove } from './curveChordEvidence'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
 import { addOpenSubject, openPathsFromPolyTree } from '../clipperOpenPaths'
@@ -132,8 +133,9 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, ORBIT_SAGITTA_
 import type { TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
-import { appendLinkedTrochoidalRing, appendOrbitCuts, recordTrochoidalRingEnd } from './trochoidalRingLinks'
+import { appendLinkedTrochoidalRing, recordTrochoidalRingEnd } from './trochoidalRingLinks'
 import {
+  appendOrbitCuts,
   appendTrochoidalEntry,
   resolveTrochoidalGeometry,
   trochoidalEntryMoveCount,
@@ -304,20 +306,16 @@ function offsetPaths(
     return []
   }
 
-  const offset = new ClipperLib.ClipperOffset()
-  offset.ArcTolerance = Math.max(
+  const arcTolerance = Math.max(
     1,
     Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(delta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
   )
-  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
   // Filter near-duplicate vertices (threshold: 1 Clipper unit ≈ 1/scale project units)
-  return (solution as ClipperPath[]).map((path) => cleanClipperPath(path, 1.0))
+  return offsetPathsWithCurves(paths, delta, joinType, arcTolerance).map(path => cleanClipperPath(path, 1.0))
 }
 
 export function executeDifference(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): PolyTreeNode {
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   }
@@ -378,21 +376,13 @@ export function toClosedCutMoves(points: Point[], z: number): ToolpathMove[] {
 
   const moves: ToolpathMove[] = []
   for (let index = 0; index < points.length - 1; index += 1) {
-    moves.push({
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    })
+    moves.push(sampledCutMove(points[index], points[index + 1], z))
   }
 
   const first = points[0]
   const last = points[points.length - 1]
   if (first.x !== last.x || first.y !== last.y) {
-    moves.push({
-      kind: 'cut',
-      from: { x: last.x, y: last.y, z },
-      to: { x: first.x, y: first.y, z },
-    })
+    moves.push(sampledCutMove(last, first, z))
   }
 
   return moves
@@ -682,6 +672,17 @@ function interpolateMovePoint(move: ToolpathMove, t: number): ToolpathPoint {
   }
 }
 
+function sliceMoveForFeed(move: ToolpathMove, start: number, end: number, feedScale?: number): ToolpathMove {
+  // The slice keeps any sampling allowance: a sub-span of a straight chord
+  // bows from the source curve no more than the whole chord does.
+  return {
+    ...move,
+    from: interpolateMovePoint(move, start),
+    to: interpolateMovePoint(move, end),
+    ...(feedScale === undefined ? {} : { feedScale }),
+  }
+}
+
 /**
  * Stamp the reduced slot feed onto the fully engaged portions of the cut
  * moves appended since startIndex (one Z level's worth of cutting).
@@ -740,9 +741,7 @@ function applySlotFeedToLevel(
     let fragmentEngaged: boolean | null = null
 
     const emitFragment = (t0: number, t1: number, engaged: boolean) => {
-      const from = interpolateMovePoint(move, t0)
-      const to = interpolateMovePoint(move, t1)
-      stamped.push(engaged ? { ...move, from, to, feedScale: scale } : { ...move, from, to })
+      stamped.push(sliceMoveForFeed(move, t0, t1, engaged ? scale : undefined))
     }
 
     for (let chunk = 0; chunk < chunkCount; chunk += 1) {
@@ -1222,9 +1221,7 @@ function applyEngagementFeedToLevel(
     let fragmentStartT = 0
     let fragmentScale: number | null = null
     const emitFragment = (t0: number, t1: number, scale: number) => {
-      const from = interpolateMovePoint(move, t0)
-      const to = interpolateMovePoint(move, t1)
-      stamped.push(scale < 1 ? { ...move, from, to, feedScale: scale } : { ...move, from, to })
+      stamped.push(sliceMoveForFeed(move, t0, t1, scale < 1 ? scale : undefined))
     }
     for (const chunk of moveChunks) {
       if (fragmentScale === null) {
@@ -2273,11 +2270,7 @@ export function spliceTangentSLink(
   const z = linkMove.from.z
   const sMoves: ToolpathMove[] = []
   for (let index = 1; index < result.points.length; index += 1) {
-    sMoves.push({
-      kind: 'cut',
-      from: { x: result.points[index - 1].x, y: result.points[index - 1].y, z },
-      to: { x: result.points[index].x, y: result.points[index].y, z },
-    })
+    sMoves.push(sampledCutMove(result.points[index - 1], result.points[index], z))
   }
   if (sMoves.length === 0) return null
 
@@ -3519,7 +3512,7 @@ function cutTrochoidalRingMoves(
       angularDirection,
     )
 
-    appendOrbitCuts(moves, built.points, z)
+    appendOrbitCuts(moves, built.points, z, toolDiameter, true)
     recordTrochoidalRingEnd(moves, root, built.entryCenter, pathParams)
     nextPosition = { x: built.points[built.points.length - 1].x, y: built.points[built.points.length - 1].y, z }
   }
@@ -3726,11 +3719,7 @@ export function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
 
   const moves: ToolpathMove[] = []
   for (let index = 0; index < points.length - 1; index += 1) {
-    moves.push({
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    })
+    moves.push(sampledCutMove(points[index], points[index + 1], z))
   }
 
   return moves

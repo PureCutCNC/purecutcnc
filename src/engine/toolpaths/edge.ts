@@ -71,6 +71,7 @@ import {
   helixAngularDirection,
 } from './entry'
 import {
+  appendOrbitCuts,
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
   type TrochoidalOperationBudget,
@@ -1153,9 +1154,9 @@ export function appendTrochoidalContoursAtLevels(
         angularDirection,
       )
     }
-    const cutMoves = closed ? toClosedCutMoves(built.points, z) : toOpenCutMoves(built.points, z)
-    appendAll(moves, cutMoves)
-    nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+    // The orbit sampler includes the seam for closed rings.
+    appendOrbitCuts(moves, built.points, z, toolDiameter, closed)
+    nextPosition = moves.at(-1)?.to ?? nextPosition
   }
   return nextPosition
 }

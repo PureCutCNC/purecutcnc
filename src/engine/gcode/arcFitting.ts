@@ -605,6 +605,10 @@ export function fitArcsInMachineMoves(
       minChordRatio: 0.15,       // reject tiny-chord fits
       minTotalSweepRad: MIN_TOTAL_SWEEP_RAD,
       maxAngularStepRatio: 4,    // never blend a long G1 with tiny corner chords
+      maxSegmentDeviation: (index) => {
+        const allowance = run[index].arcChordError ?? 0
+        return Number.isFinite(allowance) && allowance > 0 ? tolerance + allowance : tolerance
+      },
       endpointConstrained: true, // arcs must pass through their source endpoints
     })
 

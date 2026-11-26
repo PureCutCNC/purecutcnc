@@ -25,6 +25,7 @@
  * Run with: npx tsx src/engine/gcode/rotaryOutput.test.ts
  */
 
+import { arcChordSagitta } from '../toolpaths/arcReconstruction'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { defaultTool, getStockBounds, newProject, roundStock, rectProfile } from '../../types/project'
@@ -420,7 +421,7 @@ function circleMoves(
   }
   const moves: ToolpathMove[] = []
   for (let index = 0; index < count; index++) {
-    moves.push({ kind: 'cut', from: point(index), to: point(index + 1) })
+    moves.push({ kind: 'cut', from: point(index), to: point(index + 1), arcChordError: arcChordSagitta(r, Math.PI * 2 / count) })
   }
   return moves
 }

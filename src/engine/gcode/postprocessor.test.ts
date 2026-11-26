@@ -20,6 +20,7 @@
  * Run with: npx tsx src/engine/gcode/postprocessor.test.ts
  */
 
+import { arcChordSagitta } from '../toolpaths/arcReconstruction'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, SketchFeature } from '../../types/project'
@@ -997,6 +998,7 @@ function circularCutMoves(): ToolpathMove[] {
       kind: 'cut',
       from: { ...projectPoints[i] },
       to: { ...projectPoints[i + 1] },
+      arcChordError: arcChordSagitta(r, Math.PI * 2 / n),
     })
   }
   return moves
@@ -1328,6 +1330,7 @@ function testArcMixedRapidAndCut(): void {
       kind: 'cut',
       from: { ...arcPoints[i] },
       to: { ...arcPoints[i + 1] },
+      arcChordError: arcChordSagitta(r, Math.PI / 8),
     })
   }
 

@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { copyCurveChords, markCurveChord, offsetPathsWithCurves } from './curveChordEvidence'
 import type { ToolpathWarning } from './warningCodes'
 import type {
   DimensionRef,
@@ -198,19 +199,27 @@ export function resolveOperationTool(project: Project, operation: Operation): Re
 }
 
 export function flattenProfile(profile: SketchProfile, curveSamples = DEFAULT_FLATTEN_CURVE_SAMPLES, arcStepRadians = DEFAULT_FLATTEN_ARC_STEP): FlattenedPath {
-  const sampled = sampleProfilePoints(profile, curveSamples, arcStepRadians)
-  return {
-    points: sampled.map(clonePoint),
-    closed: profile.closed,
+  const spans: Array<{ start: number; count: number; center: Point }> = []
+  const points = sampleProfilePoints(profile, curveSamples, arcStepRadians, (start, count, center) => {
+    spans.push({ start, count, center })
+  }).map(clonePoint)
+  for (const { start, count, center } of spans) {
+    for (let i = start; i < start + count; i++) {
+      // A closed profile drops its duplicate last vertex in the sampler.
+      markCurveChord(points[i], points[(i + 1) % points.length], center)
+    }
   }
+  return { points, closed: profile.closed }
 }
 
 export function ensureClosedPath(points: Point[]): Point[] {
   if (points.length === 0) return []
   const first = points[0]
   const last = points[points.length - 1]
-  if (first.x === last.x && first.y === last.y) return points.map(clonePoint)
-  return [...points.map(clonePoint), clonePoint(first)]
+  const closed = points.map(clonePoint)
+  if (first.x !== last.x || first.y !== last.y) closed.push(clonePoint(first))
+  copyCurveChords(points, closed)
+  return closed
 }
 
 export function signedArea(points: Point[]): number {
@@ -339,11 +348,16 @@ export function applyContourDirectionBySide(
 }
 
 export function toClipperPath(points: Point[], scale = DEFAULT_CLIPPER_SCALE): ClipperPath {
-  return ensureClosedPath(points).map((p) => ({ X: Math.round(p.x * scale), Y: Math.round(p.y * scale) }))
+  const closed = ensureClosedPath(points)
+  const path = closed.map(p => ({ X: Math.round(p.x * scale), Y: Math.round(p.y * scale) }))
+  copyCurveChords(closed, path, center => ({ x: center.x * scale, y: center.y * scale }))
+  return path
 }
 
 export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE): Point[] {
-  return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
+  const points = path.map(p => ({ x: p.X / scale, y: p.Y / scale }))
+  copyCurveChords(path, points, center => ({ x: center.x / scale, y: center.y / scale }))
+  return points
 }
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
@@ -383,15 +397,11 @@ export function offsetKeepOutPaths(
     return []
   }
 
-  const offset = new ClipperLib.ClipperOffset()
-  offset.ArcTolerance = Math.max(
+  const arcTolerance = Math.max(
     1,
     Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(delta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
   )
-  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
-  return solution as ClipperPath[]
+  return offsetPathsWithCurves(paths, delta, joinType, arcTolerance)
 }
 
 export function checkMaxCutDepthWarning(tool: NormalizedTool, cutDepth: number): ToolpathWarning | null {

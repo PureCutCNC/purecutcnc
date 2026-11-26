@@ -25,6 +25,7 @@
  * Run with: npx tsx src/engine/gcode/opensbpEmitter.test.ts
  */
 
+import { arcChordSagitta } from '../toolpaths/arcReconstruction'
 import { circleProfile, defaultTool, newProject } from '../../types/project'
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
@@ -192,8 +193,12 @@ function circleMoves(cx: number, cy: number, r: number, n: number, reverse = fal
   }
   return chain(pt(points[0].x, points[0].y, 5), [
     ['plunge', points[0]],
-    ...points.slice(1).map((point): [ToolpathMove['kind'], ToolpathPoint] => ['cut', point]),
-  ])
+  ]).concat(points.slice(1).map((to, index) => ({
+    kind: 'cut',
+    from: points[index],
+    to,
+    arcChordError: arcChordSagitta(r, Math.PI * 2 / n),
+  })))
 }
 
 /** `n` chords along part of a circle, from `startAngle` over `sweep` radians. */
@@ -206,8 +211,12 @@ function partialArcMoves(cx: number, cy: number, r: number, startAngle: number, 
   return chain(pt(0, 0, 5), [
     ['rapid', pt(points[0].x, points[0].y, 5)],
     ['plunge', points[0]],
-    ...points.slice(1).map((point): [ToolpathMove['kind'], ToolpathPoint] => ['cut', point]),
-  ])
+  ]).concat(points.slice(1).map((to, index) => ({
+    kind: 'cut',
+    from: points[index],
+    to,
+    arcChordError: arcChordSagitta(r, sweep / n),
+  })))
 }
 
 /** The #447 span: a small-radius trochoid whose points sit off the output grid. */

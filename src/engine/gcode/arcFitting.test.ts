@@ -20,6 +20,8 @@
  * Run with: npx tsx src/engine/gcode/arcFitting.test.ts
  */
 
+import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { arcChordSagitta } from '../toolpaths/arcReconstruction'
 import {
   fitArcsInMachineMoves,
   resolveEmittedArc,
@@ -33,6 +35,7 @@ import type {
   EmittedArcOptions,
 } from './arcFitting'
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
+import { optimizeLinearMoves } from '../toolpaths/linearMoveOptimization'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -69,7 +72,7 @@ function testAcceptedCircularRun(): void {
   // Build chord moves: from points[i] to points[i+1].
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1]))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 2 / n) }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -118,7 +121,7 @@ function testClockwiseAfterYInvert(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1]))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 2 / n) }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -181,7 +184,7 @@ function testRejectsMixedFeedScaleRun(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1], { feedScale: i % 2 === 0 ? 0.5 : 1 }))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 2 / n), feedScale: i % 2 === 0 ? 0.5 : 1 }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -232,9 +235,9 @@ function testSplitsAroundRapids(): void {
   }
 
   const moves: ToolpathMove[] = []
-  for (let i = 0; i < 4; i++) moves.push(cut(arc1Points[i], arc1Points[i + 1]))
+  for (let i = 0; i < 4; i++) moves.push(cut(arc1Points[i], arc1Points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / 8) }))
   moves.push(rapid(arc1Points[4], arc2Points[0]))
-  for (let i = 0; i < 4; i++) moves.push(cut(arc2Points[i], arc2Points[i + 1]))
+  for (let i = 0; i < 4; i++) moves.push(cut(arc2Points[i], arc2Points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / 8) }))
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
   const arcs = result.filter(d => d.kind === 'arc')
@@ -276,7 +279,7 @@ function testSourceTagCarriedThrough(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1], { source: 'debug:offset-ring' }))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)), source: 'debug:offset-ring' }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -299,7 +302,7 @@ function testFeedScaleCarriedThrough(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1], { feedScale: 0.5 }))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)), feedScale: 0.5 }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -338,10 +341,10 @@ function testSplitsOnDifferentSource(): void {
   const points2: ToolpathPoint[] = [pt(-r, 0, 0), pt(0, -r, 0), pt(r, 0, 0)]
 
   const moves: ToolpathMove[] = [
-    cut(points1[0], points1[1], { source: 'tag-a' }),
-    cut(points1[1], points1[2], { source: 'tag-a' }),
-    cut(points2[0], points2[1], { source: 'tag-b' }),
-    cut(points2[1], points2[2], { source: 'tag-b' }),
+    cut(points1[0], points1[1], { arcChordError: arcChordSagitta(r, Math.PI / 2), source: 'tag-a' }),
+    cut(points1[1], points1[2], { arcChordError: arcChordSagitta(r, Math.PI / 2), source: 'tag-a' }),
+    cut(points2[0], points2[1], { arcChordError: arcChordSagitta(r, Math.PI / 2), source: 'tag-b' }),
+    cut(points2[1], points2[2], { arcChordError: arcChordSagitta(r, Math.PI / 2), source: 'tag-b' }),
   ]
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -366,10 +369,10 @@ function testExcludesPlungeAndLead(): void {
 
   const moves: ToolpathMove[] = [
     { kind: 'lead_in', from: pt(0, 0, 5), to: pt(r, 0, 0) },
-    cut(points[0], points[1]),
-    cut(points[1], points[2]),
-    cut(points[2], points[3]),
-    cut(points[3], points[4]),
+    cut(points[0], points[1], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)) }),
+    cut(points[1], points[2], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)) }),
+    cut(points[2], points[3], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)) }),
+    cut(points[3], points[4], { arcChordError: arcChordSagitta(r, Math.PI / (2 * n)) }),
     { kind: 'lead_out', from: points[4], to: pt(0, 0, 5) },
     { kind: 'plunge', from: pt(0, 0, 5), to: pt(0, 0, -2) },
   ]
@@ -452,7 +455,7 @@ function testSplitsLargeArc(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1]))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 3 / (2 * n)) }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -492,7 +495,7 @@ function testSplitArcOffsetsRelative(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1]))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 2 / n) }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -610,12 +613,78 @@ function testRejectsLongStraightWithCornerFragment(): void {
 
 // ── near-collinear: accepted ordinary circular arc ──────────────
 
+// #1253: both candidate spans from the first roughing level, in machine XY.
+function testPreservesStraightSidesAroundCornerChords(): void {
+  const opening = [
+    [311.2895, 253.2893],
+    [208.2165, 253.2893],
+    [208.1988, 253.2888],
+    [208.185, 253.2832],
+    [90.9864, 201.5596],
+    [54.7124, 31.6393],
+  ]
+  for (const units of ['mm', 'inch'] as const) {
+    const scale = units === 'mm' ? 1 : 1 / MM_PER_INCH
+    const tolerance = exportGeometryTolerance(units)
+    for (const candidate of [opening.slice(0, 5), opening.slice(2)]) {
+      const points = candidate.map(([x, y]) => pt(x * scale, y * scale))
+      const moves = points.slice(1).map((point, index) => cut(points[index], point))
+      const result = fitArcsInMachineMoves(moves, tolerance, MAX_DEG)
+      assert(result.length === moves.length, `${units}: all straight moves and corner chords must survive`)
+      for (const [index, descriptor] of result.entries()) {
+        const expected = moves[index].to
+        assert(descriptor.kind === 'linear' && descriptor.point.x === expected.x
+          && descriptor.point.y === expected.y && descriptor.point.z === expected.z,
+          `${units}: the fitter must preserve every source endpoint in order`)
+      }
+    }
+  }
+}
+
+function testAcceptsCircularRunWithOneShortEndpointChord(): void {
+  const points = [0, 0.001, 0.06, 0.12, 0.18].map(
+    angle => pt(10 * Math.cos(angle), 10 * Math.sin(angle)),
+  )
+  const moves = points.slice(1).map((point, index) => cut(points[index], point))
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  assert(result.length === 1 && result[0].kind === 'arc',
+    'one short endpoint fragment must not prevent a fit through the sampled arc')
+}
+
+function testCurveAllowanceAppliesToOneSourceMoveOnly(): void {
+  const radius = 10
+  const step = Math.PI / 8
+  const points = Array.from({ length: 5 }, (_, i) => pt(radius * Math.cos(i * step), radius * Math.sin(i * step)))
+  const moves = points.slice(1).map((to, index) =>
+    cut(points[index], to, { arcChordError: arcChordSagitta(radius, step) }))
+  const fitted = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  assert(fitted.length === 1 && fitted[0].kind === 'arc', 'known sampled curve must still fit')
+
+  moves[1] = cut(points[1], points[2])
+  const unverified = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  assert(unverified.length === moves.length && unverified.every(move => move.kind === 'linear'),
+    'adjacent curved moves cannot extend their allowance across an unverified chord')
+}
+
+function testMergingCollinearMovesDropsChordAllowance(): void {
+  const moves = [
+    cut(pt(0, 0), pt(1, 0), { arcChordError: 0.004 }),
+    cut(pt(1, 0), pt(2, 0), { arcChordError: 0.002 }),
+    cut(pt(2, 0), pt(2, 1), { arcChordError: 0.003 }),
+  ]
+  const optimized = optimizeLinearMoves({ operationId: 'op', moves, bounds: null, warnings: [] })
+  assert(optimized.moves.length === 2, 'collinear moves still compact')
+  assert(optimized.moves[0].to.x === 2 && optimized.moves[0].arcChordError === undefined,
+    'the merged span keeps both moves but gets its own ordinary export tolerance')
+  assert(optimized.moves[1].arcChordError === 0.003, 'an untouched chord retains its own allowance')
+}
+
 function testAcceptsOrdinaryCircularArcAfterCollinearGate(): void {
   console.log('Testing that ordinary circular arcs still pass the collinearity gate...')
 
   // A 30° arc on R=5 — total sweep ≈ 0.524 rad, well above the 0.5° threshold.
   const r = 5
-  const n = 4
+  const n = 5
   const totalSweep = Math.PI / 6  // 30°
   const points: ToolpathPoint[] = []
   for (let i = 0; i <= n; i++) {
@@ -649,7 +718,7 @@ function testFullCircularChordLoop(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < n; i++) {
-    moves.push(cut(points[i], points[i + 1]))
+    moves.push(cut(points[i], points[i + 1], { arcChordError: arcChordSagitta(r, Math.PI * 2 / n) }))
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -686,7 +755,7 @@ function testPartialArcWithStraightLeads(): void {
   }
   const arcMoves: ToolpathMove[] = []
   for (let i = 0; i < arcN; i++) {
-    arcMoves.push(cut(arcPoints[i], arcPoints[i + 1]))
+    arcMoves.push(cut(arcPoints[i], arcPoints[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / arcN) }))
   }
 
   // Lead-out: 3 straight segments from (-r, 0) going further left.
@@ -959,7 +1028,7 @@ function testFallbackLeavesValidRunsAlone(): void {
     circle.push(pt(r * Math.cos(angle), r * Math.sin(angle), -10.5))
   }
   const moves: ToolpathMove[] = []
-  for (let i = 0; i < 16; i++) moves.push(cut(circle[i], circle[i + 1]))
+  for (let i = 0; i < 16; i++) moves.push(cut(circle[i], circle[i + 1], { arcChordError: arcChordSagitta(r, Math.PI / 8) }))
   moves.push(rapid(circle[16], pt(122.3941767939508, 167.17278330912177, -10.5)))
   moves.push(...issue447Moves())
 
@@ -1146,7 +1215,7 @@ function testPlanarLeadRunFitsToAnArc(): void {
   }
   const lead: ToolpathMove[] = []
   for (let i = 0; i < leadPoints.length - 1; i++) {
-    lead.push({ kind: 'lead_in', from: leadPoints[i], to: leadPoints[i + 1], feedScale: 0.375 })
+    lead.push({ kind: 'lead_in', arcChordError: arcChordSagitta(r, Math.PI / 12), from: leadPoints[i], to: leadPoints[i + 1], feedScale: 0.375 })
   }
 
   const result = fitArcsInMachineMoves(lead, TOL, MAX_DEG)
@@ -1169,7 +1238,7 @@ function testLeadWithVaryingFeedCannotFit(): void {
   }
   const ramped: ToolpathMove[] = []
   for (let i = 0; i < points.length - 1; i++) {
-    ramped.push({ kind: 'lead_in', from: points[i], to: points[i + 1], feedScale: 0.4 + i * 0.05 })
+    ramped.push({ kind: 'lead_in', arcChordError: arcChordSagitta(r, Math.PI / 12), from: points[i], to: points[i + 1], feedScale: 0.4 + i * 0.05 })
   }
 
   const result = fitArcsInMachineMoves(ramped, TOL, MAX_DEG)
@@ -1191,10 +1260,10 @@ function testLeadIsNeverFittedTogetherWithItsCut(): void {
   }
   const moves: ToolpathMove[] = []
   for (let i = 0; i < 6; i++) {
-    moves.push({ kind: 'lead_in', from: all[i], to: all[i + 1], feedScale: 0.375 })
+    moves.push({ kind: 'lead_in', arcChordError: arcChordSagitta(r, Math.PI / 12), from: all[i], to: all[i + 1], feedScale: 0.375 })
   }
   for (let i = 6; i < all.length - 1; i++) {
-    moves.push({ kind: 'cut', from: all[i], to: all[i + 1], feedScale: 0.375 })
+    moves.push({ kind: 'cut', from: all[i], to: all[i + 1], feedScale: 0.375, arcChordError: arcChordSagitta(r, Math.PI / 12) })
   }
 
   const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
@@ -1225,6 +1294,10 @@ testSplitArcOffsetsRelative()
 testRejectsPlanarWithZChangingFirstCut()
 testRejectsNearCollinearRun()
 testRejectsLongStraightWithCornerFragment()
+testPreservesStraightSidesAroundCornerChords()
+testAcceptsCircularRunWithOneShortEndpointChord()
+testCurveAllowanceAppliesToOneSourceMoveOnly()
+testMergingCollinearMovesDropsChordAllowance()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
 testFullCircularChordLoop()
 testPartialArcWithStraightLeads()

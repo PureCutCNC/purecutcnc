@@ -38,6 +38,9 @@ export interface ToolpathMove {
    *  Populated when operation.debugToolpath is active. Used in the 3D viewport
    *  to render shape markers that help visualise toolpath provenance. */
   source?: string
+  /** Chord error of this generator-sampled curve span, in project units.
+   *  Export adds this allowance to its segment check for this move only. */
+  arcChordError?: number
   /** Multiplier applied to the operation's cut feed at G-code export time.
    *  Absent means 1 (normal feed). Set on fully engaged (slotting) pocket cuts
    *  when the operation's pocketSlotFeedPercent is below 100, or — when the

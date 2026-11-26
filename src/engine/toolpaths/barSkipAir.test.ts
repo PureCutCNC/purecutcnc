@@ -122,7 +122,9 @@ function moveHash(result: ToolpathResult): string {
     from: roundPointForChecksum(move.from),
     to: roundPointForChecksum(move.to),
   }))
-  return createHash('sha256').update(JSON.stringify(moves)).digest('hex').slice(0, 16)
+  // This fixture pins the clearing path. Arc evidence affects export only.
+  const motion = JSON.stringify(moves, (key, value: unknown) => key === 'arcChordError' ? undefined : value)
+  return createHash('sha256').update(motion).digest('hex').slice(0, 16)
 }
 
 // ── Fixtures ──────────────────────────────────────────────────
