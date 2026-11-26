@@ -50,6 +50,7 @@
 // never more than the tool diameter. `seedStartRadius` is what guarantees the
 // first half of that.
 
+import { markCurveChord } from './curveChordEvidence'
 import { isClockwise, normalizeWinding } from './geometry'
 import { findLargestClearanceCircle } from './entry'
 import { DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT } from './entry'
@@ -173,6 +174,7 @@ export function seedCircleContour(centre: Point, radius: number, arcTolerance: n
     const angle = (2 * Math.PI * index) / segments
     points.push({ x: centre.x + radius * Math.cos(angle), y: centre.y + radius * Math.sin(angle) })
   }
+  for (let i = 0; i < points.length; i++) markCurveChord(points[i], points[(i + 1) % points.length], centre)
   return normalizeWinding(points, isClockwise(points))
 }
 

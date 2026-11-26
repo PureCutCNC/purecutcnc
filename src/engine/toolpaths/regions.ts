@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { createCurveClipper } from './curveChordEvidence'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import type { Point, Project, SketchFeature } from '../../types/project'
@@ -167,7 +168,7 @@ function pointInClipperPaths(point: Point, paths: ClipperPath[]): boolean {
 
 function unionPaths(paths: ClipperPath[]): ClipperPath[] {
   if (paths.length === 0) return []
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
   const solution = new ClipperLib.Paths()
   clipper.Execute(
@@ -187,7 +188,7 @@ function executeClipPaths(
   if (subjectPaths.length === 0) return []
   if (clipPaths.length === 0) return subjectPaths
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
   const solution = new ClipperLib.Paths()

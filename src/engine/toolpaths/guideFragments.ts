@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { copyCurveChords } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
@@ -39,13 +40,13 @@ function normalizeClosedGuide(guide: Point[]): Point[] {
   const points: Point[] = []
   for (const point of guide) {
     if (points.length === 0 || !samePoint(points.at(-1)!, point)) {
-      points.push(clonePoint(point))
+      points.push(point)
     }
   }
-  if (points.length > 1 && samePoint(points[0], points.at(-1)!)) {
-    points.pop()
-  }
-  return points
+  const copies = points.map(clonePoint)
+  if (copies.length > 1 && samePoint(copies[0], copies.at(-1)!)) copies.pop()
+  copyCurveChords(points, copies)
+  return copies
 }
 
 export function normalizeClipperPath(path: ClipperPath, scale: number): Point[] {

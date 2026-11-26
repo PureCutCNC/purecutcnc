@@ -63,6 +63,7 @@
 //     back to the unchanged source if the planned ring self-intersects or any
 //     coordinate stops being finite.
 
+import { markCurveChord } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { findBroadCornerArc, type BroadCornerArc } from './broadCornerArc'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
@@ -622,6 +623,7 @@ function tessellateArc(
     })
   }
   points.push(exit)
+  for (let i = 1; i < points.length; i++) markCurveChord(points[i - 1], points[i], centre)
   return points
 }
 

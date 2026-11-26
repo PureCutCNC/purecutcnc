@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { createCurveClipper, offsetPathsWithCurves } from './curveChordEvidence'
 import { rectProfile, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -73,17 +74,13 @@ export function offsetClipperPaths(paths: ClipperPath[], delta: number): Clipper
   if (paths.length === 0) return []
   if (Math.abs(delta) <= 1e-9) return paths
 
-  const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(paths, ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, Math.round(delta * DEFAULT_CLIPPER_SCALE))
-  return solution as ClipperPath[]
+  return offsetPathsWithCurves(paths, Math.round(delta * DEFAULT_CLIPPER_SCALE), ClipperLib.JoinType.jtMiter)
 }
 
 export function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
   if (paths.length === 0) return []
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
   const solution = new ClipperLib.Paths()
   clipper.Execute(
@@ -98,7 +95,7 @@ export function unionClipperPaths(paths: ClipperPath[]): ClipperPath[] {
 export function unionClipperPathsEvenOdd(paths: ClipperPath[]): ClipperPath[] {
   if (paths.length === 0) return []
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
   const solution = new ClipperLib.Paths()
   clipper.Execute(
@@ -113,7 +110,7 @@ export function unionClipperPathsEvenOdd(paths: ClipperPath[]): ClipperPath[] {
 export function differenceClipperPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
   if (subjectPaths.length === 0 || clipPaths.length === 0) return subjectPaths
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
   const solution = new ClipperLib.Paths()
@@ -129,7 +126,7 @@ export function differenceClipperPaths(subjectPaths: ClipperPath[], clipPaths: C
 export function intersectClipperPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
   if (subjectPaths.length === 0 || clipPaths.length === 0) return []
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   clipper.AddPaths(clipPaths, ClipperLib.PolyType.ptClip, true)
   const solution = new ClipperLib.Paths()

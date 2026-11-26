@@ -1934,6 +1934,7 @@ export function sampleProfilePoints(
   profile: SketchProfile,
   curveSamples = 16,
   arcStepRadians = Math.PI / 18,
+  observeCircularSpan?: (start: number, count: number, center: Point) => void,
 ): Point[] {
   const points: Point[] = [profile.start]
   let current = profile.start
@@ -1961,6 +1962,7 @@ export function sampleProfilePoints(
       // Sample density matches the arc path (issue #359): use arcStepRadians
       // so full circles and broken-circle arcs have identical tessellation.
       const segmentCount = Math.max(8, Math.ceil((Math.PI * 2) / arcStepRadians))
+      observeCircularSpan?.(points.length - 1, segmentCount, segment.center)
       for (let index = 1; index <= segmentCount; index += 1) {
         const angle = startAngle + (segment.clockwise ? -1 : 1) * (Math.PI * 2 * index) / segmentCount
         points.push({
@@ -1984,6 +1986,7 @@ export function sampleProfilePoints(
     }
 
     const segmentCount = Math.max(8, Math.ceil(Math.abs(sweep) / arcStepRadians))
+    observeCircularSpan?.(points.length - 1, segmentCount, segment.center)
     for (let index = 1; index <= segmentCount; index += 1) {
       const angle = startAngle + (sweep * index) / segmentCount
       points.push({

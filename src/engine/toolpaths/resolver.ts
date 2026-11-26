@@ -15,6 +15,7 @@
  */
 
 import ClipperLib from 'clipper-lib'
+import { createCurveClipper } from './curveChordEvidence'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, OperationKind, Project, SketchFeature } from '../../types/project'
 import { getEffectiveStockProfile, rectProfile } from '../../types/project'
@@ -88,7 +89,7 @@ function executeClip(
   clipPaths: ClipperPath[],
   clipType: number,
 ): PolyTreeNode {
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   }
@@ -111,7 +112,7 @@ function executeClipPaths(
   clipPaths: ClipperPath[],
   clipType: number,
 ): ClipperPath[] {
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   if (subjectPaths.length > 0) {
     clipper.AddPaths(subjectPaths, ClipperLib.PolyType.ptSubject, true)
   }
@@ -134,7 +135,7 @@ function unionPaths(paths: ClipperPath[]): ClipperPath[] {
     return []
   }
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
   const solution = new ClipperLib.Paths()
   clipper.Execute(
@@ -158,7 +159,7 @@ function unionPathsEvenOdd(paths: ClipperPath[]): ClipperPath[] {
     return []
   }
 
-  const clipper = new ClipperLib.Clipper()
+  const clipper = createCurveClipper()
   clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
   const solution = new ClipperLib.Paths()
   clipper.Execute(

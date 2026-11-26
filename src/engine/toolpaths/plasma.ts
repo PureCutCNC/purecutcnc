@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { curveChordError, splitCurveChord } from './curveChordEvidence'
 import { plasmaStartPointForContour } from './plasmaStartPoint'
 import type { Operation, Point, Project } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
@@ -127,7 +128,8 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     arcChordError?: number,
   ): void => {
     const motion: ToolpathMove = { kind, from: { ...from, z: from.z ?? z }, to: { ...to, z: to.z ?? z } }
-    if (arcChordError !== undefined) motion.arcChordError = arcChordError
+    const allowance = arcChordError ?? curveChordError(from, to)
+    if (allowance !== undefined) motion.arcChordError = allowance
     result.moves.push(motion)
   }
   // Step 1: resolve every contour to its finished cut, in selection order, so
@@ -207,6 +209,8 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     if (chosen.centrePierce) warn('plasmaCentrePierce', target.name)
     else if (chosen.straightFallback) warn('plasmaStraightLead', target.name)
     if (outLength > 0 && chosen.exit.length === 0) warn('plasmaLeadOutOmitted', target.name)
+    // This is a point on the existing chord selected by plasmaArrivals.
+    splitCurveChord(chosen.ring[chosen.ring.length - 2], chosen.ring[1], chosen.ring[0])
     const profile = target.sketch.profile
     const segment = profile.segments[0]
     let circle: PlasmaCut['circle']

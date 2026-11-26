@@ -40,6 +40,7 @@
  * wall — which the root already stands off — is inset from.
  */
 
+import { offsetPathsWithCurves } from './curveChordEvidence'
 import ClipperLib from 'clipper-lib'
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, fromClipperPath, toClipperPath } from './geometry'
@@ -67,12 +68,7 @@ function filledLoop(points: Point[]): ClipperPath {
 /** Round-joined offset; `delta` in Clipper units, arcs drawn to `arcTolerance`. */
 function roundOffset(paths: ClipperPath[], delta: number, arcTolerance: number): ClipperPath[] {
   if (paths.length === 0) return []
-  const offset = new ClipperLib.ClipperOffset()
-  offset.ArcTolerance = arcTolerance
-  offset.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
-  return solution as ClipperPath[]
+  return offsetPathsWithCurves(paths, delta, ClipperLib.JoinType.jtRound, arcTolerance)
 }
 
 /** The area regions cover — each outer less its islands — as one path set. */

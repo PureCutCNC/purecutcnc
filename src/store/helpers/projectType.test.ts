@@ -299,9 +299,9 @@ const BASE_HASHES = {
   plasma: '434b37ddb9dfaf24',
   // #1253 retains line segments that a fitted arc would deviate from.
   // Both pocket programs still match their previous exports with fitting off.
-  'pocket-feed-reduction.camj': 'a9bdac583b24e00b',
+  'pocket-feed-reduction.camj': '09423730cb684d16',
   'v-carve-noise-test.camj': '24623f98ba01c484',
-  'another-pocket-test.camj': 'dc30f3e3898676bc',
+  'another-pocket-test.camj': 'e6453a3f2d7cee4e',
   // #1177 recaptured the `around` pair: the fixture's ball reads the exact
   // sphere drop, so the rough's layers are level and merge (1465 -> 407
   // moves, the same cut length). The non-rotary rows are untouched.

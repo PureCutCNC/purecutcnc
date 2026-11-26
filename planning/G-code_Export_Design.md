@@ -492,10 +492,12 @@ project→machine coordinate transform and G-code emission. It does not modify
   vertices. Its closest point to the fitted centre must be within the
   0.01 mm radial error budget on the inside of the circle (#1253).
   Each move sampled from a known curve can also carry that chord's sampling
-  allowance. Trochoidal orbits use their sampler's sagitta budget, and a
-  verified circular plasma contour uses the sagitta of each offset-circle
-  chord. The fitting check retains the original linear moves when a span
-  would exceed its budget.
+  allowance. Shared samplers record authored circular geometry and generated
+  round joins. Offsets and boolean operations retain evidence for chords that
+  can be traced to those sources. Trochoidal orbits and circular plasma
+  contours carry the allowance from their own samplers. An unproven chord
+  keeps the 0.01 mm budget. The fitting check retains the original linear
+  moves when a span would exceed its budget.
 - A qualifying cut run may contain a circular sub-run embedded in straight
   lead-in/lead-out geometry. The shared partial-run search finds the circular
   portion; the surrounding straight moves remain as linear G1 output.

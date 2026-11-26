@@ -35,6 +35,7 @@
 // link. Feed and engagement classification run downstream on the emitted
 // moves, so the S needs no special feed handling.
 
+import { markCurveChord } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { boxLoop, pointInBoxedLoop, pointOnBoxedLoopEdge, type BoxedLoop } from './boxedLoop'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
@@ -166,12 +167,14 @@ function tessellateArc(
   arcStep: number,
 ): void {
   const centre: Point = { x: from.x - radius * tangent.y, y: from.y + radius * tangent.x }
+  const first = pts.length - 1
   const steps = Math.max(1, Math.ceil(Math.abs(turn) / arcStep))
   for (let step = 1; step < steps; step += 1) {
     const dir = rot(tangent, (turn * step) / steps)
     pts.push({ x: centre.x + radius * dir.y, y: centre.y - radius * dir.x })
   }
   pts.push(to)
+  for (let i = first + 1; i < pts.length; i++) markCurveChord(pts[i - 1], pts[i], centre)
 }
 
 /**

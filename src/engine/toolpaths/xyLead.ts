@@ -54,6 +54,7 @@
 // wall is its own source of marking. One constant-radius arc at one feed is
 // what round-trips to a single G2/G3.
 
+import { curveChordError } from './curveChordEvidence'
 import ClipperLib from 'clipper-lib'
 import type { Operation, OperationKind, Point } from '../../types/project'
 import { usesTangentLinks } from './pocketPatterns'
@@ -1001,12 +1002,16 @@ export function emitXyLead(
   let current: ToolpathPoint = from
   for (let index = 0; index < segments; index += 1) {
     const next: ToolpathPoint = { x: plan.points[index + 1].x, y: plan.points[index + 1].y, z }
-    moves.push({
+    const move: ToolpathMove = {
       kind,
       from: current,
       to: next,
       ...(scale < 1 ? { feedScale: scale } : {}),
-    })
+    }
+    const start = plan.points[index]
+    const allowance = current.x === start.x && current.y === start.y ? curveChordError(start, plan.points[index + 1]) : undefined
+    if (allowance !== undefined) move.arcChordError = allowance
+    moves.push(move)
     current = next
   }
   return current
