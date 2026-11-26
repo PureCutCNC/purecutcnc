@@ -50,6 +50,7 @@ let slinkArrivalsConsidered = 0
 let slinkArrivalsPruned = 0
 let slinkCandidatesEvaluated = 0
 let slinkCandidatesDomainChecked = 0
+let slinkPathsRecordingCurves = 0
 let slinkDomainChecks = 0
 let slinkDomainScans = 0
 
@@ -60,6 +61,7 @@ export function slinkProbeCounts(): {
   arrivalsPruned: number
   candidatesEvaluated: number
   candidatesDomainChecked: number
+  pathsRecordingCurves: number
   domainChecks: number
   domainScans: number
 } {
@@ -68,6 +70,7 @@ export function slinkProbeCounts(): {
     arrivalsPruned: slinkArrivalsPruned,
     candidatesEvaluated: slinkCandidatesEvaluated,
     candidatesDomainChecked: slinkCandidatesDomainChecked,
+    pathsRecordingCurves: slinkPathsRecordingCurves,
     domainChecks: slinkDomainChecks,
     domainScans: slinkDomainScans,
   }
@@ -79,6 +82,7 @@ export function resetSlinkProbeCounts(): void {
   slinkArrivalsPruned = 0
   slinkCandidatesEvaluated = 0
   slinkCandidatesDomainChecked = 0
+  slinkPathsRecordingCurves = 0
   slinkDomainChecks = 0
   slinkDomainScans = 0
 }
@@ -124,25 +128,24 @@ export interface TangentLinkResult {
 function buildS(
   exit: Point,
   t0: Vec,
-  phi1: number,
-  rho1: number,
   m: Vec,
-  s: number,
-  phi2: number,
-  rho2: number,
+  shape: TangentLeadShape,
   arrival: Point,
   arcStep: number,
+  recordCurves = false,
 ): Point[] {
+  if (recordCurves) slinkPathsRecordingCurves += 1
+  const { turn1: phi1, radius1: rho1, straight: s, turn2: phi2, radius2: rho2 } = shape
   const pts: Point[] = [exit]
   if (Math.abs(phi1) > 1e-9) {
     const end1 = add(exit, mul(rot(t0, phi1 / 2), 2 * rho1 * Math.sin(phi1 / 2)))
-    tessellateArc(pts, exit, t0, phi1, rho1, end1, arcStep)
+    tessellateArc(pts, exit, t0, phi1, rho1, end1, arcStep, recordCurves)
   }
   if (s > 1e-9) {
     pts.push(add(pts[pts.length - 1], mul(m, s)))
   }
   if (Math.abs(phi2) > 1e-9) {
-    tessellateArc(pts, pts[pts.length - 1], m, phi2, rho2, arrival, arcStep)
+    tessellateArc(pts, pts[pts.length - 1], m, phi2, rho2, arrival, arcStep, recordCurves)
   }
   pts[pts.length - 1] = arrival
   return pts
@@ -165,6 +168,7 @@ function tessellateArc(
   radius: number,
   to: Point,
   arcStep: number,
+  recordCurves: boolean,
 ): void {
   const centre: Point = { x: from.x - radius * tangent.y, y: from.y + radius * tangent.x }
   const first = pts.length - 1
@@ -174,7 +178,9 @@ function tessellateArc(
     pts.push({ x: centre.x + radius * dir.y, y: centre.y - radius * dir.x })
   }
   pts.push(to)
-  for (let i = first + 1; i < pts.length; i++) markCurveChord(pts[i - 1], pts[i], centre)
+  if (recordCurves) {
+    for (let i = first + 1; i < pts.length; i++) markCurveChord(pts[i - 1], pts[i], centre)
+  }
 }
 
 /**
@@ -212,7 +218,7 @@ export function buildTangentLeadPath(
   const arc = (turn: number, radius: number): void => {
     if (Math.abs(turn) <= 1e-9 || Math.abs(radius) <= 1e-12) return
     const end = add(current, mul(rot(dir, turn / 2), 2 * radius * Math.sin(turn / 2)))
-    tessellateArc(pts, current, dir, turn, radius, end, arcStep)
+    tessellateArc(pts, current, dir, turn, radius, end, arcStep, true)
     current = end
     dir = rot(dir, turn)
   }
@@ -289,7 +295,7 @@ export function tangentSLink(
   const arcStep = Math.max(options.arcStepRadians ?? DEFAULT_FLATTEN_ARC_STEP, 1e-3)
   const rMin = options.minRadius
 
-  let best: TangentLinkResult | null = null
+  let best: { shape: TangentLeadShape; middle: Vec; arrivalIndex: number } | null = null
   let bestLength = Number.POSITIVE_INFINITY
 
   for (let index = 0; index < count; index += 1) {
@@ -333,13 +339,13 @@ export function tangentSLink(
       const a1 = mul(rot(exitTangent, phi1 / 2), 2 * sigma1 * Math.sin(phi1 / 2))
       const a2 = mul(rot(m, phi2 / 2), 2 * sigma2 * Math.sin(phi2 / 2))
 
-      const candidates: Point[][] = []
+      const candidates: TangentLeadShape[] = []
       const denom2 = cross(m, a2)
       if (Math.abs(denom2) > 1e-12) {
         const r2 = cross(m, sub(D, mul(a1, rMin))) / denom2
         if (r2 >= rMin) {
           const s = dot(m, sub(D, add(mul(a1, rMin), mul(a2, r2))))
-          if (s >= 0) candidates.push(buildS(exit, exitTangent, phi1, sigma1 * rMin, m, s, phi2, sigma2 * r2, arrival, arcStep))
+          if (s >= 0) candidates.push({ turn1: phi1, radius1: sigma1 * rMin, straight: s, turn2: phi2, radius2: sigma2 * r2 })
         }
       }
       const denom1 = cross(m, a1)
@@ -347,7 +353,7 @@ export function tangentSLink(
         const r1 = cross(m, sub(D, mul(a2, rMin))) / denom1
         if (r1 >= rMin) {
           const s = dot(m, sub(D, add(mul(a1, r1), mul(a2, rMin))))
-          if (s >= 0) candidates.push(buildS(exit, exitTangent, phi1, sigma1 * r1, m, s, phi2, sigma2 * rMin, arrival, arcStep))
+          if (s >= 0) candidates.push({ turn1: phi1, radius1: sigma1 * r1, straight: s, turn2: phi2, radius2: sigma2 * rMin })
         }
       }
 
@@ -357,7 +363,8 @@ export function tangentSLink(
       // arcs use. A concavity straddling the middle must reject the path.
       // Absolute floor so a degenerate minRadius cannot explode the samples.
       const chordBudget = Math.max(2 * rMin * Math.sin(arcStep / 2), 1e-6)
-      for (const candidate of candidates) {
+      for (const shape of candidates) {
+        const candidate = buildS(exit, exitTangent, m, shape, arrival, arcStep)
         slinkCandidatesEvaluated += 1
         // Every test that reads only the candidate's own vertices runs before
         // the domain gate (issue #923): the gate samples the whole path at the
@@ -397,12 +404,17 @@ export function tangentSLink(
         }
         if (!domainOk) continue
         bestLength = pathLength
-        best = { points: candidate, arrivalIndex: index }
+        best = { shape, middle: m, arrivalIndex: index }
       }
     }
   }
 
-  return best
+  if (!best) return null
+  // The search samples many rejected paths from the same entry point. Only
+  // record curve evidence for the path that will be emitted.
+  const { shape, middle, arrivalIndex } = best
+  const points = buildS(exit, exitTangent, middle, shape, ringVertices[arrivalIndex], arcStep, true)
+  return { points, arrivalIndex }
 }
 
 /** Region roots at tool-centre offset: the cleared-domain boundary for links. */
