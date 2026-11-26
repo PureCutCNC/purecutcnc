@@ -74,10 +74,14 @@ export interface SimulationPathEntry {
  * provisional setup is one cached default per axis, so it is stable for as long
  * as the face is.
  */
+export type SimulationPathSource = 'planned' | 'exported'
+
 export interface SimulationReplayKey {
   project: Project
   setup: MachiningSetup
   detailCells: number
+  /** Whether the replay used planned moves or parsed exported machine output (issue #1261). */
+  source?: SimulationPathSource
   /** The replayed paths, in cut order. */
   items: readonly SimulationPathEntry[]
 }
@@ -115,6 +119,7 @@ export function simulationReplayEntries(
 export function sameSimulationReplayKey(a: SimulationReplayKey, b: SimulationReplayKey): boolean {
   if (a === b) return true
   if (a.project !== b.project || a.setup !== b.setup || a.detailCells !== b.detailCells) return false
+  if ((a.source ?? 'planned') !== (b.source ?? 'planned')) return false
   if (a.items.length !== b.items.length) return false
   for (let index = 0; index < a.items.length; index += 1) {
     const left = a.items[index]

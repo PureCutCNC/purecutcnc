@@ -141,6 +141,10 @@ function testKeyEquality(): void {
     !sameSimulationReplayKey(key(), key({ detailCells: 201 })),
     'the grid detail is a different replay',
   )
+  assert(
+    !sameSimulationReplayKey(key({ source: 'planned' }), key({ source: 'exported' })),
+    'planned and exported G-code sources are distinct replays',
+  )
 }
 
 function testEntries(): void {

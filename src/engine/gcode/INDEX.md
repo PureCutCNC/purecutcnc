@@ -31,6 +31,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 ## Files
 
 - `index.ts` — public API.
+- `exportedSimulation.ts` — `buildExportedSimulationPaths` (issue #1261): post-processes planned operations, parses the emitted G-code/ShopBot program via `parseExportedMotion`, flattens arcs, and transforms back to canonical stock coordinates for simulation, preserving parser `status` and `warnings`.
+- `exportedSimulation.test.ts` — GRBL/ShopBot round-trip and unsupported-construct warning tests for `buildExportedSimulationPaths`.
 - `machineTemplateDiagnostics.test.ts` — #1119: the structural reader is
   byte-identical to the strict one for valid definitions, every offending line
   is diagnosed, the still-invalid #1109 variant is kept and selected, and

@@ -100,6 +100,10 @@ interface SimulationViewportProps {
   onDetailCellsChange: (cells: number) => void
   mode: 'selected' | 'visible'
   onModeChange: (mode: 'selected' | 'visible') => void
+  source?: 'planned' | 'exported'
+  onSourceChange?: (source: 'planned' | 'exported') => void
+  exportReady?: boolean
+  exportDiagnostics?: { status: 'verified' | 'unsupported' | 'failed'; warnings: string[] } | null
   operationCount: number
   clamps: Clamp[]
   selectedClampId: string | null
@@ -304,6 +308,10 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   onDetailCellsChange,
   mode,
   onModeChange,
+  source = 'planned',
+  onSourceChange,
+  exportReady = true,
+  exportDiagnostics = null,
   clamps,
   selectedClampId,
   collidingClampIds,
@@ -1442,6 +1450,26 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               {t('viewport.sim.modeVisible')}
             </button>
           </div>
+          {onSourceChange && (
+            <div className="simulation-mode-toggle" role="tablist" aria-label={t('viewport.sim.sourceLabel')}>
+              <button
+                className={`simulation-mode-toggle__btn ${source === 'planned' ? 'simulation-mode-toggle__btn--active' : ''}`}
+                type="button"
+                onClick={() => onSourceChange('planned')}
+              >
+                {t('viewport.sim.sourcePlanned')}
+              </button>
+              <button
+                className={`simulation-mode-toggle__btn ${source === 'exported' ? 'simulation-mode-toggle__btn--active' : ''}`}
+                type="button"
+                disabled={!exportReady}
+                title={!exportReady ? t('viewport.sim.sourceExportedDisabled') : t('viewport.sim.sourceExportedTitle')}
+                onClick={() => onSourceChange('exported')}
+              >
+                {t('viewport.sim.sourceExported')}
+              </button>
+            </div>
+          )}
           <label className="simulation-detail-control" title={t('viewport.sim.detailTitle')}>
             <span className="simulation-detail-control__label">{t('viewport.sim.detailLabel')}</span>
             <input
@@ -1482,6 +1510,18 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         </div>
         <SimulationSetupInfo note={setupNote} />
       </div>
+      {source === 'exported' && exportDiagnostics && (exportDiagnostics.status !== 'verified' || exportDiagnostics.warnings.length > 0) && (
+        <div
+          className="simulation-export-warning"
+          role="alert"
+          data-testid="simulation-export-warning"
+        >
+          <strong>{t('viewport.sim.exportWarningTitle')}</strong>
+          {exportDiagnostics.warnings.length > 0 && (
+            <div className="simulation-export-warning__detail">{exportDiagnostics.warnings[0]}</div>
+          )}
+        </div>
+      )}
       {playbackEnabled && playbackInput && (
         <div
           className={`simulation-playback-bar${barPosition ? ' simulation-playback-bar--dragged' : ''}`}

@@ -70,6 +70,7 @@ function App() {
   const { selectedOperationId, selectOperation } = useOperationSelection()
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
   const [simulationMode, setSimulationMode] = useState<'selected' | 'visible'>('selected')
+  const [simulationSource, setSimulationSource] = useState<'planned' | 'exported'>('planned')
   // Non-null opens the Export G-code dialog; operationIds narrows the
   // pre-checked set to specific operations (per-operation export, issue #274).
   const [exportDialogRequest, setExportDialogRequest] = useState<{ operationIds?: string[] } | null>(null)
@@ -249,14 +250,9 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationInputPending, simulationPlaybackInput, simulationSetup, simulationClamps, simulationStock, simulationBar, simulationFlatRoundBar } = useSimulationModel({
-    project,
-    centerTab,
-    simulationMode,
-    simulationDetailCells,
-    selectedOperation,
-    selectedToolpath,
-    requestToolpath,
+  const sim = useSimulationModel({
+    project, centerTab, simulationMode, simulationSource, simulationDetailCells,
+    selectedOperation, selectedToolpath, requestToolpath,
   })
 
   // Surface a one-time warning when a loaded file is newer than this build supports.
@@ -443,26 +439,30 @@ function App() {
           <SimulationViewport
             ref={simulationViewportRef}
             operation={selectedOperation}
-            simulation={simulationResult}
+            simulation={sim.simulationResult}
             isActive={centerTab === 'simulation'}
             detailCells={simulationDetailCells}
             onDetailCellsChange={setSimulationDetailCells}
-            isComputing={simulationInputPending}
+            isComputing={sim.simulationInputPending}
             mode={simulationMode}
             onModeChange={setSimulationMode}
-            operationCount={simulationOperationCount}
-            clamps={simulationClamps}
-            bar={simulationBar}
-            flatRoundBar={simulationFlatRoundBar}
-            setup={simulationSetup}
+            source={simulationSource}
+            onSourceChange={setSimulationSource}
+            exportReady={sim.simulationExportReady}
+            exportDiagnostics={sim.simulationExportDiagnostics}
+            operationCount={sim.simulationOperationCount}
+            clamps={sim.simulationClamps}
+            bar={sim.simulationBar}
+            flatRoundBar={sim.simulationFlatRoundBar}
+            setup={sim.simulationSetup}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
-            origin={project.origin} units={project.meta.units} stock={simulationStock}
+            origin={project.origin} units={project.meta.units} stock={sim.simulationStock}
             stockColor={project.stock.color}
             stockHasProfile={!!project.stock.sourceFeatureId}
             zoomWindowActive={zoomWindowActive && centerTab === 'simulation'}
             onZoomWindowComplete={onZoomWindowComplete}
-            playbackInput={simulationPlaybackInput}
+            playbackInput={sim.simulationPlaybackInput}
             projectKey={projectKey}
           />
         }

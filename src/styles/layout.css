@@ -1250,6 +1250,31 @@
   color: var(--text);
 }
 
+.simulation-mode-toggle__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.simulation-export-warning {
+  position: absolute;
+  top: 48px;
+  left: 12px;
+  max-width: 420px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-translucent);
+  color: var(--text);
+  font-size: 12px;
+  z-index: 12;
+  pointer-events: auto;
+}
+
+.simulation-export-warning__detail {
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
 .simulation-playback-toggle {
   box-sizing: border-box;
   margin-left: 0;

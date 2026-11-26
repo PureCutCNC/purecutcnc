@@ -17,6 +17,10 @@
 import { findOperationTool } from '../toolPolicy'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { SimulationPlaybackInput, SimulationSetupView } from '../components/simulation/SimulationViewport'
+import { buildExportedSimulationPaths } from '../engine/gcode/exportedSimulation'
+import { getActiveMachineDefinition } from '../engine/gcode/definitions/index'
+import { machineExportDiagnostics } from '../engine/gcode/types'
+import type { GcodeParseStatus } from '../engine/gcode/gcodeMotionParser'
 import type { FlatRoundBarDescriptor, SimulationGrid, SimulationResult } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
@@ -40,6 +44,7 @@ import {
   simulationReplayEntries,
   SimulationReplayCache,
   type SimulationPathEntry,
+  type SimulationPathSource,
   type SimulationReplayKey,
 } from './simulationReuse'
 import {
@@ -84,10 +89,16 @@ function scopedOperations(project: Project, setup: Parameters<typeof setupOperat
   }
 }
 
+export interface SimulationExportDiagnostics {
+  status: GcodeParseStatus
+  warnings: string[]
+}
+
 interface UseSimulationModelArgs {
   project: Project
   centerTab: 'sketch' | 'preview3d' | 'simulation'
   simulationMode: 'selected' | 'visible'
+  simulationSource?: SimulationPathSource
   simulationDetailCells: number
   selectedOperation: Operation | null
   selectedToolpath: ToolpathResult | null
@@ -103,6 +114,7 @@ export function useSimulationModel({
   project,
   centerTab,
   simulationMode,
+  simulationSource = 'planned',
   simulationDetailCells,
   selectedOperation,
   selectedToolpath,
@@ -113,6 +125,10 @@ export function useSimulationModel({
   simulationPlaybackInput: SimulationPlaybackInput | null
   /** True while the paths simulation needs are still being produced. */
   simulationInputPending: boolean
+  /** True when the project has a valid machine definition for exported G-code simulation. */
+  simulationExportReady: boolean
+  /** Parser/postprocessor diagnostics when simulating from exported G-code; null in planned mode. */
+  simulationExportDiagnostics: SimulationExportDiagnostics | null
   /**
    * The setup the simulation shows (issue #1112 F3): the one the workspace
    * face control is on, plus whether the fresh-stock note applies.
@@ -252,10 +268,37 @@ export function useSimulationModel({
     return canonical
   }, [paths, selectedCanonicalToolpath, selectedInSetup])
 
+  const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
+  const simulationExportReady = useMemo(
+    () => Boolean(activeDefinition && machineExportDiagnostics(activeDefinition).length === 0),
+    [activeDefinition],
+  )
+
+  const exportedSimulation = useMemo(() => {
+    if (centerTab !== 'simulation' || simulationSource !== 'exported') return null
+    if (!activeDefinition || !simulationExportReady) {
+      return {
+        paths: NO_PATHS,
+        status: 'failed' as GcodeParseStatus,
+        warnings: ['No valid machine selected for exported G-code simulation.'],
+      }
+    }
+    return buildExportedSimulationPaths({
+      project,
+      operations: setupScopedOperations,
+      plannedPaths: canonicalPaths,
+      definition: activeDefinition,
+    })
+  }, [activeDefinition, canonicalPaths, centerTab, project, setupScopedOperations, simulationExportReady, simulationSource])
+
+  const effectivePaths = simulationSource === 'exported'
+    ? (exportedSimulation?.paths ?? NO_PATHS)
+    : canonicalPaths
+
   const setupInput = useMemo<SimulationSetupInput | null>(() => {
     if (centerTab !== 'simulation') return null
     try {
-      return buildSimulationSetupInput(project, simulationSetup, canonicalPaths)
+      return buildSimulationSetupInput(project, simulationSetup, effectivePaths)
     } catch (error) {
       // A square blank's actual material has no flat fallback: propagating
       // here reaches the app's existing error surface instead of drawing a
@@ -263,7 +306,7 @@ export function useSimulationModel({
       if (isSquareStock(project.stock)) throw error
       return null
     }
-  }, [centerTab, canonicalPaths, project, simulationSetup])
+  }, [centerTab, effectivePaths, project, simulationSetup])
 
   /**
    * The finished replays this panel may show again (issue #1112 rt2-h). Opening
@@ -292,16 +335,16 @@ export function useSimulationModel({
   const shownEntries = useMemo<SimulationPathEntry[] | null>(() => {
     if (centerTab !== 'simulation') return null
     if (simulationMode === 'visible') {
-      return paths === null ? null : simulationReplayEntries(visibleOperations, canonicalPaths)
+      return paths === null ? null : simulationReplayEntries(visibleOperations, effectivePaths)
     }
-    return selectedInSetup ? simulationReplayEntries([selectedInSetup], canonicalPaths) : []
-  }, [centerTab, canonicalPaths, paths, selectedInSetup, simulationMode, visibleOperations])
+    return selectedInSetup ? simulationReplayEntries([selectedInSetup], effectivePaths) : []
+  }, [centerTab, effectivePaths, paths, selectedInSetup, simulationMode, visibleOperations])
 
   const shownKey = useMemo<SimulationReplayKey | null>(() => (
     centerTab === 'simulation' && shownEntries !== null
-      ? { project, setup: simulationSetup, detailCells: simulationDetailCells, items: shownEntries }
+      ? { project, setup: simulationSetup, detailCells: simulationDetailCells, source: simulationSource, items: shownEntries }
       : null
-  ), [centerTab, project, shownEntries, simulationDetailCells, simulationSetup])
+  ), [centerTab, project, shownEntries, simulationDetailCells, simulationSetup, simulationSource])
 
   // Read during the render on purpose: a replay finished for these exact inputs
   // is what the panel shows, so returning to the operation does not paint a
@@ -322,9 +365,9 @@ export function useSimulationModel({
       simulationMode,
       simulationDetailCells,
       selectedInSetup,
-      paths,
+      paths: effectivePaths,
     }
-  }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
+  }, [centerTab, effectivePaths, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
   const [simulationBuild, setSimulationBuild] = useState<SimulationBuild | null>(null)
   /**
@@ -379,11 +422,14 @@ export function useSimulationModel({
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {
+      if (simulationSource === 'exported') {
+        return selectedInSetup && effectivePaths.has(selectedInSetup.id) ? 1 : 0
+      }
       return selectedInSetup && selectedCanonicalToolpath ? 1 : 0
     }
 
     return setupScopedOperations.filter((operation) => operation.enabled && operation.showToolpath).length
-  }, [selectedCanonicalToolpath, selectedInSetup, setupScopedOperations, simulationMode])
+  }, [effectivePaths, selectedCanonicalToolpath, selectedInSetup, setupScopedOperations, simulationMode, simulationSource])
 
   const simulationPlaybackInput = useMemo<SimulationPlaybackInput | null>(() => {
     if (centerTab !== 'simulation' || simulationMode !== 'selected' || !setupInput) {
@@ -432,9 +478,10 @@ export function useSimulationModel({
       project,
       setup: simulationSetup,
       detailCells: simulationDetailCells,
+      source: simulationSource,
       // The operations `buildPriorReplayItems` replays, not the whole slice: the
       // key names what the replay cuts (review P2).
-      items: simulationReplayEntries(visibleReplayOperations(project, priorOperations), canonicalPaths),
+      items: simulationReplayEntries(visibleReplayOperations(project, priorOperations), effectivePaths),
     }
     const getBaseGrid: () => SimulationGrid = lazyOnce((): SimulationGrid => rememberedReplay(
       replayCache,
@@ -488,8 +535,8 @@ export function useSimulationModel({
       plungeFeedPerSecond,
     }
   }, [
-    canonicalPaths,
     centerTab,
+    effectivePaths,
     paths,
     project,
     replayCache,
@@ -499,6 +546,7 @@ export function useSimulationModel({
     simulationDetailCells,
     simulationMode,
     simulationSetup,
+    simulationSource,
   ])
 
   // A single-setup project has nothing carried over to explain, so the panel
@@ -523,6 +571,10 @@ export function useSimulationModel({
     simulationOperationCount,
     simulationPlaybackInput,
     simulationInputPending,
+    simulationExportReady,
+    simulationExportDiagnostics: exportedSimulation
+      ? { status: exportedSimulation.status, warnings: exportedSimulation.warnings }
+      : null,
     simulationSetup: simulationSetupView,
     simulationClamps,
     simulationStock,
