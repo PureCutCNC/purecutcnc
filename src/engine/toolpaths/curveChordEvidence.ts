@@ -48,6 +48,15 @@ export function splitCurveChord(from: Point, to: Point, split: Point): void {
 }
 
 /**
+ * Give `copyFrom`-`copyTo` the evidence of the source chord `from`-`to`. The
+ * copy may be a sub-span on that chord, which bows no more than the chord.
+ */
+export function copyCurveChord(from: object, to: object, copyFrom: object, copyTo: object): void {
+  const center = chordCenter(from, to)
+  if (center) markCurveChord(copyFrom, copyTo, center)
+}
+
+/**
  * Give a copied chord the evidence of the source chord it replaces, where
  * each end stands for a run of duplicate source points. The latest pair wins.
  */

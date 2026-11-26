@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { mergeCurveChord } from './curveChordEvidence'
+import { copyCurveChord, mergeCurveChord } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
@@ -287,6 +287,8 @@ export function splitClosedGuideByForbiddenPaths(
         finishCurrent()
         current = [startPoint, endPoint]
       }
+      // The span lies on this guide chord, so it keeps the chord's evidence.
+      copyCurveChord(from, to, current.at(-2)!, endPoint)
     }
   }
   finishCurrent()
@@ -303,6 +305,8 @@ export function splitClosedGuideByForbiddenPaths(
   const last = fragments.at(-1)!
   if (samePoint(last.at(-1)!, first[0])) {
     const seamMerged = [...last, ...first.slice(1)]
+    // The seam joins the last span's end to the first span's second point.
+    if (first.length > 1) copyCurveChord(first[0], first[1], last.at(-1)!, first[1])
     return [seamMerged, ...fragments.slice(1, -1)].map((points) => ({ points, closed: false }))
   }
   return fragments.map((points) => ({ points, closed: false }))

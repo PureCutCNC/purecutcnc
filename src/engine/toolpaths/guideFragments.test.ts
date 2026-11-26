@@ -18,6 +18,7 @@ import type { Point } from '../../types/project'
 import { curveChordError, markCurveChord } from './curveChordEvidence'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import { splitClosedGuideByForbiddenPaths } from './guideFragments'
+import { splitGuideFragmentsOutside } from './regionDomain'
 import type { ClipperPath } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -213,6 +214,46 @@ function testDuplicateRunsKeepCurveEvidence(): void {
   })
 }
 
+function testSplitFragmentsKeepCurveEvidence(): void {
+  // Split spans are new points on the guide's chords. Every chord of a
+  // fragment between two ring vertices keeps the source chord's evidence,
+  // including the chord that joins the seam (#1253).
+  const radius = 20
+  const ring = Array.from({ length: 72 }, (_, i) => ({
+    x: radius * Math.cos((i * Math.PI) / 36), y: radius * Math.sin((i * Math.PI) / 36),
+  }))
+  ring.forEach((point, i) => markCurveChord(point, ring[(i + 1) % ring.length], { x: 0, y: 0 }))
+  const square = (x: number, y: number): ClipperPath => [
+    { X: x - 3, Y: y - 3 }, { X: x + 3, Y: y - 3 }, { X: x + 3, Y: y + 3 }, { X: x - 3, Y: y + 3 },
+  ].map(p => ({ X: p.X * DEFAULT_CLIPPER_SCALE, Y: p.Y * DEFAULT_CLIPPER_SCALE }))
+  const onRing = (p: Point): boolean => Math.abs(Math.hypot(p.x, p.y) - radius) < 1e-9
+  const checkFragments = (fragments: Array<{ points: Point[] }>, label: string): number => {
+    let checked = 0
+    for (const { points } of fragments) {
+      for (let i = 0; i + 1 < points.length; i++) {
+        if (!onRing(points[i]) || !onRing(points[i + 1])) continue
+        checked += 1
+        assert(curveChordError(points[i], points[i + 1]) !== undefined, `${label}: chord ${i} keeps its curve evidence`)
+      }
+    }
+    return checked
+  }
+  // One keep-out across the seam at angle 0, one at the top.
+  const forbidden = [square(radius, 0), square(0, radius)]
+  const outside = splitClosedGuideByForbiddenPaths(ring, forbidden)
+  assert(outside.length === 2 && outside.every(f => !f.closed), 'two open spans outside the keep-outs')
+  assert(checkFragments(outside, 'outside') > 50, 'outside spans cover most ring chords')
+  // The span inside the seam keep-out wraps index 0 and is joined at the seam.
+  const inside = splitClosedGuideByForbiddenPaths(ring, forbidden, 'inside')
+  assert(inside.length === 2, 'two spans inside the keep-outs')
+  assert(checkFragments(inside, 'inside') >= 4, 'inside spans cover their ring chords')
+
+  // An open guide is split chord by chord.
+  const open = splitGuideFragmentsOutside([{ points: ring.slice(0, 30), closed: false }], [square(0, radius)])
+  assert(open.length === 2, 'the open arc splits around the keep-out')
+  assert(checkFragments(open, 'open') > 20, 'open spans cover their ring chords')
+}
+
 function run(): void {
   testNoForbiddenPathPassesThroughAsClosedGuide()
   testRepeatedClosingVertexAndOneForbiddenInterval()
@@ -223,6 +264,7 @@ function run(): void {
   testInsideRetainsAlreadyUnionedOverlappingKeepOut()
   testConcaveForbiddenPathDoesNotCollapseSeparatedIntervals()
   testDuplicateRunsKeepCurveEvidence()
+  testSplitFragmentsKeepCurveEvidence()
 }
 
 run()

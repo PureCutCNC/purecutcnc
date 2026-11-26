@@ -29,6 +29,7 @@ import { differenceClipperPaths, intersectClipperPaths, offsetClipperPaths, unio
 import type { RegionMask } from './regions'
 import type { ClipperPath } from './types'
 import { appendAll } from './appendAll'
+import { copyCurveChord } from './curveChordEvidence'
 
 /**
  * Resolve a region mask into an area domain (polygon set) so the generator
@@ -377,6 +378,8 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
         finishCurrent()
         current = [startPt, endPt]
       }
+      // The span lies on this guide chord, so it keeps the chord's evidence.
+      copyCurveChord(from, to, current.at(-2)!, endPt)
     }
   }
   finishCurrent()
