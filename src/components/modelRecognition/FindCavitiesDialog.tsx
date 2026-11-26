@@ -26,7 +26,7 @@
  * adds nothing twice.
  *
  * The preview is the dialog's own: the model's outline with every shape on it,
- * the solids under the cavities, the hovered row lit. The sketch behind a modal
+ * the solids under the cavities, the active row lit. The sketch behind a modal
  * dialog is dimmed, so a highlight there would not be seen.
  *
  * The model is looked at from Top and from Bottom, whether or not the project
@@ -34,7 +34,7 @@
  * face chip, and its preview outline is dotted: it is on the far side.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { loadSTLTransformedGeometry } from '../../engine/csg'
 import {
@@ -51,7 +51,6 @@ import { modelRecognitionRefusal } from '../../store/helpers/recognizedFeatures'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import type { Point } from '../../types/project'
 import { formatLength } from '../../utils/units'
-import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { FaceChip } from '../feature-tree/FaceChip'
 import {
   candidateSize,
@@ -91,7 +90,7 @@ export function FindCavitiesDialog() {
 }
 
 function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
-  useRestoreCanvasFocus()
+  const closeButton = useRef<HTMLButtonElement>(null)
   const { t, tPlural } = useI18n()
   const project = useProjectStore((state) => state.project)
   const addRecognizedFeatures = useProjectStore((state) => state.addRecognizedFeatures)
@@ -105,6 +104,18 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
   const [run, setRun] = useState<RunState>({ status: 'running', progress: 0 })
   const [checked, setChecked] = useState<ReadonlySet<string> | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    const previous = document.activeElement
+    closeButton.current?.focus({ preventScroll: true })
+    return () => {
+      const target = previous instanceof HTMLElement && previous !== document.body && previous.isConnected
+        ? previous
+        : document.querySelector<HTMLElement>('.sketch-canvas')
+      target?.focus({ preventScroll: true })
+    }
+  }, [])
 
   // One run per open dialog. The project is read once, at the start: the
   // dialog is modal, so nothing else can edit the model while it is up.
@@ -130,13 +141,22 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
     return () => controller.abort()
   }, [modelId])
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') close()
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      close()
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [close])
+    if (event.key !== 'Tab') return
+    const controls = event.currentTarget.querySelectorAll<HTMLElement>('button:enabled, input:enabled')
+    const first = controls[0]
+    const last = controls[controls.length - 1]
+    const edge = event.shiftKey ? first : last
+    if (document.activeElement !== edge && document.activeElement !== event.currentTarget) return
+    event.preventDefault()
+    const next = event.shiftKey ? last : first
+    next?.focus()
+  }
 
   const result = run.status === 'done' ? run.result : null
   const candidates = useMemo(() => (
@@ -202,8 +222,9 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
 
   const skipped = result ? skippedCounts(result.skipped) : []
   const skippedSolids = result ? solidSkippedCounts(result.skippedSolids) : []
+  const activeCandidate = hovered ?? highlighted
   const isLit = (candidate: RecognitionCandidate): boolean => (
-    hovered !== null && (candidate.id === hovered || candidate.parentId === hovered)
+    activeCandidate !== null && (candidate.parentId ?? candidate.id) === activeCandidate
   )
 
   const solidCandidates = candidates.filter((candidate) => candidate.kind === 'solid')
@@ -215,6 +236,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
   const rowOf = (candidate: RecognitionCandidate) => {
     const notes = notesOf(candidate)
     const island = candidate.parentId !== null
+    const Label = island ? 'span' : 'label'
     return (
       <tr
         key={candidate.id}
@@ -225,24 +247,33 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
         ].filter(Boolean).join(' ')}
         data-testid={`find-cavities-row-${candidate.id}`}
         data-kind={candidate.kind}
-        onPointerEnter={() => setHovered(candidate.parentId ?? candidate.id)}
-        onPointerLeave={() => setHovered(null)}
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'mouse') setHovered(candidate.parentId ?? candidate.id)
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse') setHovered(null)
+        }}
       >
-        <td>
-          {island ? null : (
-            <input
-              type="checkbox"
-              checked={checkedIds.has(candidate.id)}
-              onChange={() => toggle(candidate.id)}
-              aria-label={t('featureTree.findCavities.include', { name: nameOf(candidate) })}
-            />
-          )}
-        </td>
         <th scope="row">
-          <span className="find-cavities__label">
+          <Label className="find-cavities__label">
+            {island ? null : (
+              <input
+                type="checkbox"
+                checked={checkedIds.has(candidate.id)}
+                onFocus={() => {
+                  setHovered(null)
+                  setHighlighted(candidate.id)
+                }}
+                onChange={() => {
+                  setHighlighted(candidate.id)
+                  toggle(candidate.id)
+                }}
+                aria-label={t('featureTree.findCavities.include', { name: nameOf(candidate) })}
+              />
+            )}
             <span>{t(KIND_KEY[candidate.kind])}</span>
             {showsFaces ? <FaceChip face={candidate.face} /> : null}
-          </span>
+          </Label>
           {notes.length > 0 ? <span className="find-cavities__notes">{notes.join(' · ')}</span> : null}
         </th>
         <td className="find-cavities__value">{sizeText(candidate)}</td>
@@ -258,7 +289,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
     rows.length === 0 ? null : (
       <tbody className="find-cavities__group" data-group={kind}>
         <tr className="find-cavities__group-row">
-          <th scope="rowgroup" colSpan={5}>
+          <th scope="rowgroup" colSpan={4}>
             {t(kind === 'solids' ? 'featureTree.findCavities.group.solids' : 'featureTree.findCavities.group.cavities')}
           </th>
         </tr>
@@ -272,6 +303,8 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
       <div
         className="dialog dialog--find-cavities"
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleKeyDown}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="find-cavities-title"
@@ -281,7 +314,7 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
           <h2 className="dialog-title" id="find-cavities-title">
             {t('featureTree.findCavities.title', { name: model?.name ?? '' })}
           </h2>
-          <button className="dialog-close" onClick={close} aria-label={t('dialogs.common.close')} type="button">
+          <button ref={closeButton} className="dialog-close" onClick={close} aria-label={t('dialogs.common.close')} type="button">
             ✕
           </button>
         </div>
@@ -317,7 +350,6 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                     <table className="find-cavities__table">
                       <thead>
                         <tr>
-                          <th scope="col" />
                           <th scope="col">{t('featureTree.findCavities.col.shape')}</th>
                           <th scope="col">{t('featureTree.findCavities.col.size')}</th>
                           <th scope="col">{t('featureTree.findCavities.col.depth')}</th>
@@ -349,8 +381,12 @@ function FindCavitiesDialogBody({ modelId }: { modelId: string }) {
                             isLit(candidate) ? 'find-cavities__shape--lit' : '',
                           ].filter(Boolean).join(' ')}
                           d={pathData(candidate.outline)}
-                          onPointerEnter={() => setHovered(candidate.parentId ?? candidate.id)}
-                          onPointerLeave={() => setHovered(null)}
+                          onPointerEnter={(event) => {
+                            if (event.pointerType === 'mouse') setHovered(candidate.parentId ?? candidate.id)
+                          }}
+                          onPointerLeave={(event) => {
+                            if (event.pointerType === 'mouse') setHovered(null)
+                          }}
                         />
                       ))}
                     </svg>

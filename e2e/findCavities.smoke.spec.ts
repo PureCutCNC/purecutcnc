@@ -291,6 +291,63 @@ test.describe('find pockets and holes', () => {
     )
   })
 
+  test.describe('touch and keyboard', () => {
+    test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
+
+    test('a labelled row toggles by touch and previews by touch and keyboard', async ({ app, ui }) => {
+      test.setTimeout(90_000)
+      const { page } = app
+      await importPlate(page)
+      await ui.tree.openProjectPanelButton(page).tap()
+      const launcher = page.getByTestId('find-cavities-open')
+      await launcher.focus()
+      await page.keyboard.press('Enter')
+      const dialog = page.getByTestId('find-cavities-dialog')
+      const row = dialog.getByTestId('find-cavities-row-c0')
+      const solidRow = dialog.getByTestId('find-cavities-row-s0')
+      const close = dialog.getByRole('button', { name: 'Close', exact: true })
+      const cancel = dialog.getByRole('button', { name: 'Cancel' })
+      const add = dialog.getByTestId('find-cavities-add')
+      const checkbox = row.getByRole('checkbox')
+      const highlightedShape = dialog.getByTestId('find-cavities-preview').locator('.find-cavities__shape--lit')
+
+      await expect(row).toBeVisible()
+      await expect(close).toBeFocused()
+      await page.keyboard.press('Shift+Tab')
+      await expect(add).toBeFocused()
+      await page.keyboard.press('Tab')
+      await expect(close).toBeFocused()
+      await page.keyboard.press('Tab')
+      await expect(solidRow.getByRole('checkbox')).toBeFocused()
+      await expect(highlightedShape).toHaveClass(/find-cavities__shape--solid/)
+
+      const label = row.locator('label')
+      const hitTarget = await label.boundingBox()
+      expect(hitTarget?.width).toBeGreaterThanOrEqual(44)
+      expect(hitTarget?.height).toBeGreaterThanOrEqual(44)
+      await label.getByText('Pocket', { exact: true }).tap()
+      await expect(checkbox).not.toBeChecked()
+      await expect(row).toHaveClass(/find-cavities__row--lit/)
+      await expect(highlightedShape).toHaveCount(1)
+      await expect(highlightedShape).not.toHaveClass(/find-cavities__shape--solid/)
+      await expect(add).toBeDisabled()
+
+      await close.focus()
+      await page.keyboard.press('Shift+Tab')
+      await expect(cancel).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(dialog).not.toBeVisible()
+      await expect(launcher).toBeFocused()
+
+      await launcher.focus()
+      await page.keyboard.press('Enter')
+      await expect(row).toBeVisible()
+      await dialog.getByTestId('find-cavities-preview').click({ position: { x: 2, y: 2 } })
+      await page.keyboard.press('Escape')
+      await expect(dialog).not.toBeVisible()
+    })
+  })
+
   test('the tree context menu opens the same dialog', async ({ app }) => {
     test.setTimeout(90_000)
     const { page } = app
