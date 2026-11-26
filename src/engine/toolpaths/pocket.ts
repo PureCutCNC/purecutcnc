@@ -673,16 +673,14 @@ function interpolateMovePoint(move: ToolpathMove, t: number): ToolpathPoint {
 }
 
 function sliceMoveForFeed(move: ToolpathMove, start: number, end: number, feedScale?: number): ToolpathMove {
-  const fragment = {
+  // The slice keeps any sampling allowance: a sub-span of a straight chord
+  // bows from the source curve no more than the whole chord does.
+  return {
     ...move,
     from: interpolateMovePoint(move, start),
     to: interpolateMovePoint(move, end),
     ...(feedScale === undefined ? {} : { feedScale }),
   }
-  // An interpolated endpoint is on the straight chord. Keep the original
-  // sampling allowance only when this feed change preserves both endpoints.
-  if (start > 0 || end < 1) delete fragment.arcChordError
-  return fragment
 }
 
 /**

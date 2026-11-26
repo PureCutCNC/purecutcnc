@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { copyCurveChords } from './curveChordEvidence'
+import { mergeCurveChord } from './curveChordEvidence'
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
@@ -37,15 +37,23 @@ function clonePoint(point: Point): Point {
 }
 
 function normalizeClosedGuide(guide: Point[]): Point[] {
-  const points: Point[] = []
+  // Each kept vertex stands for a run of duplicate points, and a chord's curve
+  // evidence may sit on any point of the runs it joins. Merge it from there.
+  const runs: Point[][] = []
   for (const point of guide) {
-    if (points.length === 0 || !samePoint(points.at(-1)!, point)) {
-      points.push(point)
-    }
+    const run = runs.at(-1)
+    if (run && samePoint(run.at(-1)!, point)) run.push(point)
+    else runs.push([point])
   }
-  const copies = points.map(clonePoint)
-  if (copies.length > 1 && samePoint(copies[0], copies.at(-1)!)) copies.pop()
-  copyCurveChords(points, copies)
+  const copies = runs.map(run => clonePoint(run[0]))
+  if (copies.length > 1 && samePoint(copies[0], copies.at(-1)!)) {
+    copies.pop()
+    runs[0] = [...runs.pop()!, ...runs[0]]
+  }
+  for (let i = 0; i < copies.length; i++) {
+    const j = (i + 1) % copies.length
+    mergeCurveChord(runs[i], runs[j], copies[i], copies[j])
+  }
   return copies
 }
 

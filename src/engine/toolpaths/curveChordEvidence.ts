@@ -47,6 +47,27 @@ export function splitCurveChord(from: Point, to: Point, split: Point): void {
   markCurveChord(split, to, center)
 }
 
+/**
+ * Give a copied chord the evidence of the source chord it replaces, where
+ * each end stands for a run of duplicate source points. The latest pair wins.
+ */
+export function mergeCurveChord(
+  fromRun: readonly object[],
+  toRun: readonly object[],
+  copyFrom: object,
+  copyTo: object,
+): void {
+  for (let i = fromRun.length - 1; i >= 0; i--) {
+    for (const to of toRun) {
+      const center = chordCenter(fromRun[i], to)
+      if (center) {
+        markCurveChord(copyFrom, copyTo, center)
+        return
+      }
+    }
+  }
+}
+
 /** Carry evidence between copies made in contour order, with optional closure. */
 export function copyCurveChords(
   source: readonly object[],
@@ -119,8 +140,9 @@ function clipperChords(paths: readonly ClipperPath[]): IntChord[] {
 function matchClipperChords(paths: ClipperPath[], chords: IntChord[], gridTolerance = 0): void {
   if (chords.length === 0) return
   const width = Math.max(gridTolerance, 1)
-  const buckets = new Map<string, IntChord[]>()
-  const key = (x: number, y: number): string => `${x},${y}`
+  // A colliding cell only adds candidates, which the endpoint check rejects.
+  const buckets = new Map<number, IntChord[]>()
+  const key = (x: number, y: number): number => Math.imul(x, 73856093) ^ Math.imul(y, 19349663)
   for (const chord of chords) {
     for (const directed of [chord, { ...chord, from: chord.to, to: chord.from }]) {
       const cell = key(Math.floor(directed.from.X / width), Math.floor(directed.from.Y / width))

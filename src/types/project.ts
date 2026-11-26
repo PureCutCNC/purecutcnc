@@ -1930,6 +1930,20 @@ export function profileVertices(profile: SketchProfile): Point[] {
   return points
 }
 
+// Centre of the circle through a, b and c, or undefined when they are
+// effectively collinear (the chord a-c bows by less than 1e-9 of its length).
+function circumcenter(a: Point, b: Point, c: Point): Point | undefined {
+  const bx = b.x - a.x, by = b.y - a.y
+  const cx = c.x - a.x, cy = c.y - a.y
+  const chord = Math.hypot(cx, cy)
+  const cross = cx * by - cy * bx
+  if (!(chord > 0) || !(Math.abs(cross) > chord * chord * 1e-9)) return undefined
+  const b2 = bx * bx + by * by, c2 = cx * cx + cy * cy
+  const x = a.x + (cy * b2 - by * c2) / (2 * (bx * cy - by * cx))
+  const y = a.y + (bx * c2 - cx * b2) / (2 * (bx * cy - by * cx))
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined
+}
+
 export function sampleProfilePoints(
   profile: SketchProfile,
   curveSamples = 16,
@@ -1948,9 +1962,17 @@ export function sampleProfilePoints(
 
     if (segment.type === 'bezier') {
       for (let sample = 1; sample <= curveSamples; sample += 1) {
-        points.push(
-          bezierPoint(current, segment.control1, segment.control2, segment.to, sample / curveSamples),
-        )
+        const point = bezierPoint(current, segment.control1, segment.control2, segment.to, sample / curveSamples)
+        if (observeCircularSpan) {
+          // Each chord bows from the curve by the sagitta of the circle through
+          // its samples and the curve's midpoint. A straight chord reports none.
+          const middle = bezierPoint(
+            current, segment.control1, segment.control2, segment.to, (sample - 0.5) / curveSamples,
+          )
+          const center = circumcenter(points[points.length - 1], middle, point)
+          if (center) observeCircularSpan(points.length - 1, 1, center)
+        }
+        points.push(point)
       }
       current = segment.to
       continue

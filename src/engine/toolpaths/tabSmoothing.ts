@@ -500,6 +500,8 @@ export function splitCutMoveWithSmoothTabs(
         kind: 'cut',
         from: { ...segmentStart },
         to: { ...segmentEnd },
+        // A piece of a sampled chord bows no more than the whole chord.
+        ...(move.arcChordError === undefined ? {} : { arcChordError: move.arcChordError }),
       })
       current = { ...segmentEnd }
     }

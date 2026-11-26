@@ -15,6 +15,7 @@
  */
 
 import type { Point } from '../../types/project'
+import { curveChordError, markCurveChord } from './curveChordEvidence'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import { splitClosedGuideByForbiddenPaths } from './guideFragments'
 import type { ClipperPath } from './types'
@@ -187,6 +188,31 @@ function testConcaveForbiddenPathDoesNotCollapseSeparatedIntervals(): void {
   assertPoint(fragments[1].points.at(-1)!, { x: 6, y: 0 }, 'middle span ends at the second exact entry')
 }
 
+function testDuplicateRunsKeepCurveEvidence(): void {
+  // Each chord's evidence sits on the points it was sampled between. A run of
+  // duplicates is left at its last point and entered at its first (#1253).
+  const center = { x: 0, y: 0 }
+  const ring = Array.from({ length: 12 }, (_, i) => ({
+    x: 10 * Math.cos((i * Math.PI) / 6), y: 10 * Math.sin((i * Math.PI) / 6),
+  }))
+  const guide: Point[] = []
+  for (let i = 0; i < ring.length; i++) {
+    const enter = ring[i]
+    const leave = i % 3 === 0 ? { ...enter } : enter
+    guide.push(enter)
+    if (leave !== enter) guide.push(leave)
+    markCurveChord(leave, ring[(i + 1) % ring.length], center)
+  }
+  // A repeated closing vertex that carries no evidence of its own.
+  guide.push({ ...ring[0] })
+  const [fragment] = splitClosedGuideByForbiddenPaths(guide, [])
+  assert(fragment?.closed && fragment.points.length === ring.length, 'duplicates collapse to one ring')
+  fragment.points.forEach((point, i) => {
+    const error = curveChordError(point, fragment.points[(i + 1) % fragment.points.length])
+    assert(error !== undefined && error > 0, `chord ${i} keeps its curve evidence`)
+  })
+}
+
 function run(): void {
   testNoForbiddenPathPassesThroughAsClosedGuide()
   testRepeatedClosingVertexAndOneForbiddenInterval()
@@ -196,6 +222,7 @@ function run(): void {
   testInsideSeamCutReordersIntoOneContinuousSpan()
   testInsideRetainsAlreadyUnionedOverlappingKeepOut()
   testConcaveForbiddenPathDoesNotCollapseSeparatedIntervals()
+  testDuplicateRunsKeepCurveEvidence()
 }
 
 run()

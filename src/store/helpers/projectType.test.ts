@@ -301,7 +301,10 @@ const BASE_HASHES = {
   // Both pocket programs still match their previous exports with fitting off.
   'pocket-feed-reduction.camj': '09423730cb684d16',
   'v-carve-noise-test.camj': '24623f98ba01c484',
-  'another-pocket-test.camj': 'e6453a3f2d7cee4e',
+  // Its four Bézier edges now carry sampling allowances, so runs of their
+  // short chords fit as arcs. With fitting off it still matches its previous
+  // export (2d329ad3961f65f4).
+  'another-pocket-test.camj': '89fccd2d7ccc1742',
   // #1177 recaptured the `around` pair: the fixture's ball reads the exact
   // sphere drop, so the rough's layers are level and merge (1465 -> 407
   // moves, the same cut length). The non-rotary rows are untouched.
