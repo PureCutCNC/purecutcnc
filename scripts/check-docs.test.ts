@@ -109,7 +109,7 @@ function testDocumentLinkValidation(): void {
 }
 
 function testAgentEntrypointValidation(): void {
-  const valid = 'INDEX.md PROJECT.md AGENTS.md GitHub issue durable design Replies are short by default'
+  const valid = "INDEX.md PROJECT.md AGENTS.md GitHub issue maintainer's approval durable design Replies are short by default"
   assert.deepEqual(validateAgentEntrypoint('CLAUDE.md', valid), [])
   assert.deepEqual(
     validateAgentEntrypoint('CLAUDE.md', 'INDEX.md').map((problem) => problem.message),
@@ -117,6 +117,7 @@ function testAgentEntrypointValidation(): void {
       'agent entrypoint is missing PROJECT.md',
       'agent entrypoint is missing AGENTS.md',
       'agent entrypoint is missing GitHub issue',
+      "agent entrypoint is missing maintainer's approval",
       'agent entrypoint is missing durable design',
       'agent entrypoint is missing Replies are short by default',
     ],

@@ -6,7 +6,7 @@ labels: []
 ---
 
 <!--
-This issue IS the plan. Fill in each section, then ask the user for approval BEFORE changing any code.
+This issue IS the plan. Fill in each section, then ask a maintainer for approval on this issue BEFORE changing any code. Only a maintainer's approval counts — never the author's or an agent's own.
 Add this issue to the Project board, set the area label and Size, set the issue's PRIORITY, and set Status to Backlog/Ready.
 When work is done, open a PR with "Closes #<this issue>" — the PR is the delivery, not the plan.
 -->
