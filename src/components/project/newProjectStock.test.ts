@@ -184,13 +184,29 @@ test('a rotary round bar takes a typed diameter, length and axis exactly', () =>
 test('milling and plasma blank creation is unchanged', () => {
   const block: BlockStockDraft = { width: '254', height: '127', thickness: '19' }
   for (const type of ['milling', 'plasma'] as ProjectType[]) {
-    // The path before #1046: the typed block, then the type applied to it.
-    const before = projectWithProjectType({ ...METRIC, stock: defaultStock(254, 127, 19) }, type, [])
+    // The path before #1046: the typed block, then the type applied to it —
+    // with the typed block's own origin since #1245.
+    const typed = defaultStock(254, 127, 19)
+    const before = projectWithProjectType({ ...METRIC, stock: typed, origin: defaultOrigin(typed) }, type, [])
     const after = blankTemplateProject(METRIC, type, [], block, BAR_MM)
     assert.ok(after, `${type}: the block draft creates a project`)
     assert.deepEqual(withoutTimestamp(after), withoutTimestamp(before), `${type}: the created project is unchanged`)
     assert.equal('shape' in after.stock, false, `${type}: still a plain block`)
     assert.deepEqual(getStockBounds(after.stock), getStockBounds(defaultStock(254, 127, 19)), `${type}: the typed box`)
+  }
+})
+
+test('a resized milling or plasma blank puts the origin on its own front-left top corner (#1245)', () => {
+  const block: BlockStockDraft = { width: '200', height: '120', thickness: '18' }
+  for (const type of ['milling', 'plasma'] as ProjectType[]) {
+    const project = blankTemplateProject(METRIC, type, [], block, BAR_MM)
+    assert.ok(project, `${type}: the block draft creates a project`)
+    const bounds = getStockBounds(project.stock)
+    assert.equal(project.origin.x, bounds.minX, `${type}: X at the left edge`)
+    assert.equal(project.origin.y, bounds.maxY, `${type}: Y at the front edge`)
+    assert.equal(project.origin.z, 18, `${type}: Z on the typed top`)
+    assert.equal(project.origin.name, METRIC.origin.name, `${type}: the template's origin name`)
+    assert.equal(project.origin.visible, METRIC.origin.visible, `${type}: the template's visibility`)
   }
 })
 
