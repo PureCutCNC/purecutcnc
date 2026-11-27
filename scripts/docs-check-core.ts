@@ -42,12 +42,15 @@ export const AGENT_ENTRYPOINTS = [
 // agent driven by its own native file (Codex, Gemini, Cursor, Cline, Roo,
 // Windsurf, Copilot, Claude) gets them without opening AGENTS.md first.
 // 'Replies are short by default' is here because the reply-length rule lived
-// only in AGENTS.md and never reached any of them (#761).
+// only in AGENTS.md and never reached any of them (#761). "maintainer's
+// approval" is here because an external contributor's agent read "approval"
+// as its own operator's and recorded its plan as approved (#1265).
 const REQUIRED_AGENT_MARKERS = [
   'INDEX.md',
   'PROJECT.md',
   'AGENTS.md',
   'GitHub issue',
+  "maintainer's approval",
   'durable design',
   'Replies are short by default',
 ] as const

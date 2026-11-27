@@ -16,7 +16,7 @@ reference.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
 
 Every task gets a GitHub issue; its plan and acceptance criteria live there and
-need approval before implementation. Small changes that pass the `AGENTS.md`
+need a maintainer's approval on the issue before implementation. Small changes that pass the `AGENTS.md`
 fast-lane check skip the plan and approval, nothing else.
 `planning/` contains durable design references, not implementation plans.
 

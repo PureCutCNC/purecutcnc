@@ -34,7 +34,7 @@ If the `codebase-memory-mcp` server is connected, prefer its graph tools (`searc
 
 1. **Issue.** Open a GitHub issue for the work (`gh issue create`). Add it to the Project board, set the area label and Size, and set Status to `Backlog` (or `Ready` once planned).
 2. **Plan.** Before changing any code, write the plan **in the issue** — in the body, or a follow-up comment if it grows. Do not create a `planning/*_Plan.md` file; the issue is the plan's home. **Fast lane: skipped — check below before you write a plan.**
-3. **Approve.** Share the issue with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, edit the issue and re-confirm. On approval, set Status to `Ready`. **Fast lane: skipped — do not ask.**
+3. **Approve.** Share the issue with a PureCutCNC maintainer and **wait for an explicit "approved" (or equivalent) signal from that maintainer, recorded on the issue**. Approval from anyone else does not count — not the issue author, not the operator running your agent, and never the agent itself; an agent never marks its own plan "approved". For a maintainer's own agent the user is a maintainer; for an external contributor's agent the user is not, so post the plan on the issue and stop: no branch and no PR until a maintainer has approved it there. A PR whose issue has no maintainer approval may be closed, pending plan approval (#1265). Do not start implementation before approval. If the maintainer asks for changes, edit the issue and re-confirm. On approval, set Status to `Ready`. **Fast lane: skipped — do not ask.**
 4. **Implement.** Branch (`<type>/issue-<NN>-<slug>`), set the board Status to `In progress`, and implement against the plan in the issue. If the plan changes mid-flight, edit the issue so it stays the source of truth.
 5. **PR when done.** When work is complete and the build is green, open the PR with `Closes #NN` in the description, plus the **Manual impact** section written with the [`manual-impact` skill](.agents/skills/manual-impact/SKILL.md): the required `manual-impact-check` fails without it, and on merge it becomes an issue in the user-manual repo (#818). Move Status to `In review`. The PR is created at the **end** as the delivery — it is not where the plan lives.
 6. **Merge.** Merging auto-closes the issue and moves the card to `Done`.
@@ -67,7 +67,7 @@ Green → skip Plan and Approve. Red → full lane: write the plan into the issu
 
 **Growing past the criteria converts the change to the full lane.** The check failing is the decision, not the author's read of it: stop before the next commit, write the plan into the issue, wait for explicit approval, drop the label. Never split a change across PRs to stay under the budget.
 
-**Audit, monthly.** Every merged PR since the last audit must have either the `fast-lane` label or an approval on its issue predating the branch's first commit — a PR with neither is a process escape.
+**Audit, monthly.** Every merged PR since the last audit must have either the `fast-lane` label or a maintainer's approval on its issue predating the branch's first commit — a PR with neither is a process escape.
 
 ```bash
 gh pr list --state merged --limit 50 --json number,title,labels,mergedAt

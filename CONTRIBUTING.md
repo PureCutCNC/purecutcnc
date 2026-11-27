@@ -11,8 +11,13 @@ As the project owner and architect, I oversee the design, architecture, and qual
    [`INDEX.md`](INDEX.md), and [`AGENTS.md`](AGENTS.md), then load only the
    architecture or durable design reference for the area you are changing.
 2. **Issue, plan, approval:** every change starts with a GitHub issue. Put the
-   plan and acceptance criteria in the issue and wait for explicit approval
-   before implementation. Checked-in `planning/` documents are not task plans.
+   plan and acceptance criteria in the issue and wait for a maintainer's
+   approval on the issue before implementation. Approval from anyone else —
+   the issue author, or the person running an AI agent on your behalf — does
+   not count, and an agent must never mark its own plan approved. A PR whose
+   issue has no maintainer approval may be closed, pending plan approval; once
+   the plan is approved on the issue, reopen or resubmit it. Checked-in
+   `planning/` documents are not task plans.
 3. **Branch and PR:** never commit directly to `main`; deliver completed work
    through a branch and a PR that closes the issue.
 4. **Quality first:** run `npm run build` before committing. Run
