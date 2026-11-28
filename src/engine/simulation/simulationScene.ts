@@ -92,6 +92,8 @@ function buildHeightfieldSurfaceObject(
  * (issue #1112 rt3-b) clamps the wrapped surface and its walls onto the
  * blank's own cross-section, so the bar view cannot draw outside the square it
  * represents; it mounts nothing and changes no heightfield value.
+ * `cellTint` (issue #1269, `cellTint.ts`) colours the top surface per cell;
+ * the caller owns and disposes it. Without it the shader is unchanged.
  */
 export function buildSimulationStockScene(
   grid: SimulationGrid,
@@ -99,12 +101,13 @@ export function buildSimulationStockScene(
   frame?: AroundFrame,
   flatRoundBar?: FlatRoundBarDescriptor,
   squareBlankSide?: number,
+  cellTint?: THREE.Texture,
 ): SimulationStockScene {
   const heightfieldTexture = createHeightfieldTexture(grid)
   const outline = frame === undefined ? createOutlineCorners(heightfieldTexture, grid) : null
   const winners = frame === undefined && !flatRoundBar && squareBlankSide === undefined ? createWinnerShading(grid) : null
   const material = createHeightfieldMaterial(
-    heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide, outline?.texture, winners,
+    heightfieldTexture, grid, stockColor, frame, flatRoundBar, squareBlankSide, outline?.texture, winners, cellTint,
   )
   const surface = buildHeightfieldSurfaceObject(grid, material, frame)
   const boundary = createInstancedBoundaryGroup(
