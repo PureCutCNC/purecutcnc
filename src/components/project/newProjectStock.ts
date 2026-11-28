@@ -32,7 +32,7 @@
 
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { projectWithProjectType } from '../../store/helpers/projectTypeApply'
-import { isBarStock, normalizeSquareStock, squareStock } from '../../types/barStock'
+import { normalizeSquareStock, squareStock } from '../../types/barStock'
 import {
   defaultOrigin,
   defaultStock,
@@ -141,12 +141,9 @@ export function blankTemplateProject(
 ): Project | null {
   const stock = blankTemplateStock(type, block, bar)
   if (!stock) return null
-  // A block keeps the template's origin, exactly as the block-only dialog did.
-  // A bar takes its own default origin, which is what the old block→bar
-  // conversion (`projectWithStockShape`) did when the type turned the stock
-  // into a bar; the origin's name and visibility stay the template's.
-  const origin = isBarStock(stock)
-    ? { ...template.origin, ...defaultOrigin(stock), name: template.origin.name, visible: template.origin.visible }
-    : template.origin
+  // The typed stock takes its own default origin — a block's front-left top
+  // corner, a bar's centreline start (#1245: a block kept the template's,
+  // stale once the typed size differed). Name and visibility stay the template's.
+  const origin = { ...template.origin, ...defaultOrigin(stock), name: template.origin.name, visible: template.origin.visible }
   return projectWithProjectType({ ...template, stock, origin }, type, candidates)
 }
