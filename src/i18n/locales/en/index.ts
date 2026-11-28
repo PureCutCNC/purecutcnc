@@ -27,6 +27,7 @@ import { languageManagerEn } from './languageManager'
 import { themeManagerEn } from './themeManager'
 import { bookletEn } from './booklet'
 import { printEn } from './print'
+import { verifyEn } from './verify'
 
 /**
  * The complete English catalog — the single source of the key space. Each UI
@@ -48,6 +49,7 @@ export const en = {
   ...themeManagerEn,
   ...bookletEn,
   ...printEn,
+  ...verifyEn,
 } as const
 
 export type MessageKey = keyof typeof en

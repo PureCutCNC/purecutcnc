@@ -277,6 +277,11 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   three('toolShank', '3D tool shank'),
   three('lineDefault', '3D line overlay default'),
   three('lineSubtract', '3D line overlay subtract'),
+  three('verifyGouge', 'Verify: gouge'),
+  three('verifyIntendedLeftover', 'Verify: intended leftover'),
+  three('verifyUnintendedLeftover', 'Verify: unintended leftover'),
+  three('verifyUnverified', 'Verify: unverified operation'),
+  three('verifyMarker', 'Verify: deviation marker'),
 ] as const
 
 export type ThemeTokenKey = (typeof THEME_TOKENS)[number]['key']

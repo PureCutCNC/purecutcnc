@@ -23,6 +23,7 @@ import { dialogsFr } from './dialogs'
 import { featureTreeFr } from './featureTree'
 import { languageManagerFr } from './languageManager'
 import { printFr } from './print'
+import { verifyFr } from './verify'
 import { shellFr } from './shell'
 import { sketchFr } from './sketch'
 import { themeManagerFr } from './themeManager'
@@ -44,4 +45,5 @@ export const fr: Record<MessageKey, string> = {
   ...themeManagerFr,
   ...bookletFr,
   ...printFr,
+  ...verifyFr,
 }

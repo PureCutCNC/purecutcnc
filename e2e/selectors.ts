@@ -987,6 +987,18 @@ export const simSetup = {
   stop: (page: Page) => page.locator('#workspace-panel-simulation .simulation-playback-bar__btn[title="Stop & reset"]'),
 }
 
+// The simulation viewport's Verify mode (issue #1269).
+export const verify = {
+  modeButton: (page: Page) => page.locator('#workspace-panel-simulation [data-simulation-mode="verify"]'),
+  panel: (page: Page) => page.locator('#workspace-panel-simulation .verify-panel'),
+  comparison: (page: Page) => page.locator('#workspace-panel-simulation .verify-panel__select'),
+  run: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Run verification', exact: true }),
+  results: (page: Page) => page.locator('#workspace-panel-simulation .verify-panel__results'),
+  operation: (page: Page, operationId: string) => page.locator(`#workspace-panel-simulation .verify-panel__operation[data-verify-operation="${operationId}"]`),
+  operations: (page: Page) => page.locator('#workspace-panel-simulation .verify-panel__operation[data-verify-verdict]'),
+  findings: (page: Page) => page.locator('#workspace-panel-simulation .verify-panel__finding'),
+}
+
 // CAM setup sections, scoped Add targets and setup dialogs (#946, #395).
 export const setupCam = {
   section: (page: Page, face: 'top' | 'bottom' | 'around') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),

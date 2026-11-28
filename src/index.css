@@ -19,6 +19,7 @@
 @import './styles/canvas-workflow.css';
 @import './styles/face.css';
 @import './styles/model-recognition.css';
+@import './styles/verify.css';
 @import './styles/tablet.css';
 
 :root {
