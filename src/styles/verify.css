@@ -20,13 +20,14 @@
   position: absolute;
   top: 56px;
   right: 12px;
-  bottom: 12px;
   z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
-  width: min(340px, calc(100% - 24px));
+  width: min(300px, calc(100% - 24px));
+  /* Only as tall as its content, so the stock below stays visible. */
+  max-height: calc(100% - 68px);
   padding: 10px 12px;
   overflow: hidden;
   border: 1px solid var(--line-strong);
@@ -103,7 +104,7 @@
 
 .verify-panel__results {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
   min-height: 0;

@@ -33,6 +33,10 @@
  * - **unintendedLeftover** — material above the model beyond it;
  * - **ok** — within the tolerance.
  *
+ * Uncut stock the cuts have separated from the part — outside a cut-out, or the
+ * slug of a through hole — is scrap, not a leftover, and reads as ok
+ * (`releaseScrap`).
+ *
  * "Within" is measured as an offset of the model surface, not only straight
  * down: the allowance is the operation's radial stock-to-leave sideways and
  * its axial stock-to-leave vertically (an axis-aligned ellipsoid swept over
@@ -141,6 +145,8 @@ export interface ModelDeviationSummary {
   gougeCells: number
   intendedLeftoverCells: number
   unintendedLeftoverCells: number
+  /** Uncut stock the cuts separate from the part (`releaseScrap`); classified ok, not counted above. */
+  scrapCells: number
 }
 
 /**
@@ -339,6 +345,120 @@ export function classifyModelDeviation(
     }
   }
   return { cellClasses, deviation }
+}
+
+// ── Scrap ───────────────────────────────────────────────────────────────────
+
+/**
+ * Per cell, 1 where a material-removing move's cutter swept over any part of
+ * the cell below the stock top, else 0. A cut narrower than a cell lowers few
+ * or no cell centres, so a route's kerf is a broken ring of lowered cells at
+ * the grid's resolution; the swept footprint is not.
+ */
+export function cellsSweptByCutter(
+  grid: Pick<SimulationGrid, 'cols' | 'rows' | 'cellSize' | 'originX' | 'originY' | 'stockTopZ'>,
+  items: readonly SimulationReplayItem[],
+): Uint8Array {
+  const { cols, rows, cellSize, originX, originY, stockTopZ } = grid
+  const swept = new Uint8Array(cols * rows)
+  const halfDiagonal = cellSize * Math.SQRT1_2
+  for (const item of items) {
+    const reach = Math.max(0, item.toolRadius) + halfDiagonal
+    const reachSq = reach * reach
+    for (const move of item.toolpath.moves) {
+      if (!moveIsMaterialRemoving(move) || Math.min(move.from.z, move.to.z) >= stockTopZ) continue
+      const ax = move.from.x, ay = move.from.y
+      const dx = move.to.x - ax, dy = move.to.y - ay
+      const lengthSq = dx * dx + dy * dy
+      const colMin = Math.max(0, Math.floor((Math.min(ax, move.to.x) - reach - originX) / cellSize))
+      const colMax = Math.min(cols - 1, Math.floor((Math.max(ax, move.to.x) + reach - originX) / cellSize))
+      const rowMin = Math.max(0, Math.floor((Math.min(ay, move.to.y) - reach - originY) / cellSize))
+      const rowMax = Math.min(rows - 1, Math.floor((Math.max(ay, move.to.y) + reach - originY) / cellSize))
+      for (let row = rowMin; row <= rowMax; row += 1) {
+        const py = originY + (row + 0.5) * cellSize
+        for (let col = colMin; col <= colMax; col += 1) {
+          const cell = row * cols + col
+          if (swept[cell]) continue
+          const px = originX + (col + 0.5) * cellSize
+          const t = lengthSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq)) : 0
+          const ex = px - (ax + t * dx), ey = py - (ay + t * dy)
+          if (ex * ex + ey * ey <= reachSq) swept[cell] = 1
+        }
+      }
+    }
+  }
+  return swept
+}
+
+/**
+ * Clear the leftover that is scrap, not part: material no operation was meant
+ * to remove. Outside a cut-out the stock is never machined, and the slug of a
+ * through hole drops out; neither is a leftover on the part.
+ *
+ * A connected (4-neighbour) group of leftover cells is scrap when no operation
+ * lowered any of them, the model has no material under any of them (its
+ * surface is at the stock bottom), and the cutter swept over every neighbour
+ * outside the group (`swept`, from {@link cellsSweptByCutter}) — the cuts
+ * separate it from the part. Material still joined to the part therefore stays
+ * a leftover: a forgotten cut-out, a corner a round tool cannot reach, an
+ * uncleared island on a pocket floor. A kerf that stops short of the bottom
+ * stays a leftover too: its cells were lowered, so they are never scrap.
+ *
+ * Scrap cells are set to ok in `classification.cellClasses`, in place; returns
+ * how many there were.
+ */
+export function releaseScrap(
+  grid: Pick<SimulationGrid, 'cols' | 'rows' | 'stockBottomZ'>,
+  target: Float32Array,
+  classification: ModelDeviationClassification,
+  cellOperation: Int32Array,
+  swept: Uint8Array,
+  tolerance: number,
+): number {
+  const { cols, rows, stockBottomZ } = grid
+  const { cellClasses } = classification
+  const floor = stockBottomZ + Math.max(0, tolerance)
+  const candidate = (cell: number) => cellOperation[cell] < 0
+    && (cellClasses[cell] === MODEL_DEVIATION_UNINTENDED_LEFTOVER || cellClasses[cell] === MODEL_DEVIATION_INTENDED_LEFTOVER)
+  const visited = new Uint8Array(cols * rows)
+  const stack: number[] = []
+  const group: number[] = []
+  let released = 0
+  for (let start = 0; start < cellClasses.length; start += 1) {
+    if (visited[start] || !candidate(start)) continue
+    visited[start] = 1
+    stack.push(start)
+    group.length = 0
+    let scrap = true
+    while (stack.length > 0) {
+      const cell = stack.pop()!
+      group.push(cell)
+      if (target[cell] > floor) scrap = false
+      const col = cell % cols
+      const row = (cell - col) / cols
+      const neighbours = [
+        col > 0 ? cell - 1 : -1,
+        col < cols - 1 ? cell + 1 : -1,
+        row > 0 ? cell - cols : -1,
+        row < rows - 1 ? cell + cols : -1,
+      ]
+      for (const next of neighbours) {
+        if (next < 0) continue
+        if (candidate(next)) {
+          if (!visited[next]) {
+            visited[next] = 1
+            stack.push(next)
+          }
+        } else if (!swept[next]) {
+          scrap = false
+        }
+      }
+    }
+    if (!scrap) continue
+    for (const cell of group) cellClasses[cell] = MODEL_DEVIATION_OK
+    released += group.length
+  }
+  return released
 }
 
 // ── Regions ─────────────────────────────────────────────────────────────────
@@ -548,8 +668,10 @@ export async function verifyAgainstModel(input: VerifyAgainstModelInput): Promis
 
   const tolerance = Math.max(input.tolerance ?? 0, modelDeviationToleranceFloor(grid, view.localProject))
   const classification = classifyModelDeviation(grid, target, allowances, tolerance)
+  const swept = cellsSweptByCutter(grid, localItems)
+  const scrapCells = releaseScrap(grid, target, classification, lastItem, swept, tolerance)
   const regions = modelDeviationRegions(grid, target, classification, lastItem, operationIds)
-  const summary: ModelDeviationSummary = { gougeCells: 0, intendedLeftoverCells: 0, unintendedLeftoverCells: 0 }
+  const summary: ModelDeviationSummary = { gougeCells: 0, intendedLeftoverCells: 0, unintendedLeftoverCells: 0, scrapCells }
   for (const code of classification.cellClasses) {
     if (code === MODEL_DEVIATION_GOUGE) summary.gougeCells += 1
     else if (code === MODEL_DEVIATION_INTENDED_LEFTOVER) summary.intendedLeftoverCells += 1

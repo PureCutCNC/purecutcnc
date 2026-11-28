@@ -42,7 +42,9 @@ import {
   MODEL_DEVIATION_INTENDED_LEFTOVER,
   MODEL_DEVIATION_OK,
   MODEL_DEVIATION_UNINTENDED_LEFTOVER,
+  cellsSweptByCutter,
   modelDeviationRegions,
+  releaseScrap,
   replayItemsWithRemovalAttribution,
   verifyAgainstModel,
   type ModelCellAllowances,
@@ -369,9 +371,85 @@ async function testUnverified(): Promise<void> {
   assert(result.warnings.some((warning) => warning.code === 'unknownOperation' && warning.operationId === 'finish'), 'an unknown operation is a warning')
 }
 
+function testScrap(): void {
+  console.log('Testing scrap: stock the cuts separate from the part reads ok...')
+  // 20×20 stock 10 high, no model outside a 6×6 part at columns/rows 7..12.
+  // When routed, a one-cell kerf at 6 and 13 cuts the part out.
+  const n = 20
+  const sweptOf = (cellOperation: Int32Array) => Uint8Array.from(cellOperation, (op) => (op >= 0 ? 1 : 0))
+  const at = (col: number, row: number) => row * n + col
+  const inside = (c: number, r: number, lo: number, hi: number) => c >= lo && c <= hi && r >= lo && r <= hi
+  const build = (routed: boolean) => {
+    const grid = syntheticGrid(n, n, 10)
+    const target = new Float32Array(n * n) // no model: the stock bottom
+    const cellOperation = new Int32Array(n * n).fill(-1)
+    for (let r = 0; r < n; r += 1) {
+      for (let c = 0; c < n; c += 1) {
+        if (inside(c, r, 7, 12)) target[at(c, r)] = 10
+        if (routed && inside(c, r, 6, 13) && !inside(c, r, 7, 12)) {
+          grid.topZ[at(c, r)] = 0
+          cellOperation[at(c, r)] = 0
+        }
+      }
+    }
+    return { grid, target, cellOperation }
+  }
+
+  // Routed: the outside is scrap.
+  let { grid, target, cellOperation } = build(true)
+  // A 4×4 through hole at 8..11, routed on its inside edge: a one-cell kerf
+  // leaves a 2×2 slug at 9..10.
+  for (let r = 8; r <= 11; r += 1) {
+    for (let c = 8; c <= 11; c += 1) {
+      target[at(c, r)] = 0
+      if (inside(c, r, 9, 10)) continue
+      grid.topZ[at(c, r)] = 0
+      cellOperation[at(c, r)] = 1
+    }
+  }
+  let classification = classifyModelDeviation(grid, target, zeroAllowances(n * n), 0.5)
+  assert(classification.cellClasses[at(0, 0)] === MODEL_DEVIATION_UNINTENDED_LEFTOVER, 'uncut stock outside the part reads above the model')
+  let released = releaseScrap(grid, target, classification, cellOperation, sweptOf(cellOperation), 0.5)
+  assert(classification.cellClasses[at(0, 0)] === MODEL_DEVIATION_OK, 'stock outside a cut-out is scrap')
+  assert(classification.cellClasses[at(9, 9)] === MODEL_DEVIATION_OK, 'the slug of a through hole is scrap')
+  assert(released === n * n - 8 * 8 + 4, `scrap counted, got ${released}`)
+
+  // Not routed: the outside still touches the part, so it stays a leftover.
+  ;({ grid, target, cellOperation } = build(false))
+  classification = classifyModelDeviation(grid, target, zeroAllowances(n * n), 0.5)
+  released = releaseScrap(grid, target, classification, cellOperation, sweptOf(cellOperation), 0.5)
+  assert(released === 0 && classification.cellClasses[at(0, 0)] === MODEL_DEVIATION_UNINTENDED_LEFTOVER, 'a forgotten cut-out stays a leftover')
+
+  // An uncleared island on a pocket floor sits on model material: not scrap.
+  const pocket = syntheticGrid(10, 10, 10)
+  const floor = new Float32Array(100).fill(4)
+  const cutBy = new Int32Array(100).fill(0)
+  pocket.topZ.fill(4)
+  pocket.topZ[at2(5, 5)] = 10
+  cutBy[at2(5, 5)] = -1
+  classification = classifyModelDeviation(pocket, floor, zeroAllowances(100), 0.5)
+  released = releaseScrap(pocket, floor, classification, cutBy, sweptOf(cutBy), 0.5)
+  assert(released === 0 && classification.cellClasses[at2(5, 5)] === MODEL_DEVIATION_UNINTENDED_LEFTOVER, 'an island on the floor stays a leftover')
+
+  function at2(col: number, row: number): number { return row * 10 + col }
+
+  // A kerf on a cell edge lowers no cell centre, but sweeps both cells beside it.
+  const thin = syntheticGrid(10, 10, 5)
+  const route = (z: number): SimulationReplayItem => ({
+    operationId: 'route', operationName: 'route', toolRef: null, toolType: 'flat_endmill', toolRadius: 0.1, vBitAngle: null,
+    toolpath: { moves: [{ kind: 'cut', from: { x: 3, y: 1, z }, to: { x: 3, y: 8, z } }] } as unknown as SimulationReplayItem['toolpath'],
+  })
+  let swept = cellsSweptByCutter(thin, [route(0)])
+  assert(swept[at2(2, 4)] === 1 && swept[at2(3, 4)] === 1, 'both cells beside an edge kerf are swept')
+  assert(swept[at2(5, 4)] === 0 && swept[at2(3, 9)] === 0, 'cells beyond the cutter are not swept')
+  swept = cellsSweptByCutter(thin, [route(6)])
+  assert(swept.every((value) => value === 0), 'a move above the stock sweeps nothing')
+}
+
 async function main(): Promise<void> {
   testSyntheticClasses()
   testSyntheticWalls()
+  testScrap()
   await testTarget()
   testAttributionParity()
   await testRoughIntendedLeftover()
