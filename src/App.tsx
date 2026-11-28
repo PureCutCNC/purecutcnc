@@ -226,7 +226,6 @@ function App() {
 
   const {
     requestToolpath,
-    requestGenerationTrace,
     generatingOperationIds,
     warningOperationIds,
     selectedToolpath,
@@ -549,7 +548,6 @@ function App() {
           onClose={() => setExportDialogRequest(null)}
           service={generationService}
           contextRef={generationContextRef}
-          requestGenerationTrace={requestGenerationTrace}
           initialOperationIds={exportDialogRequest.operationIds}
         />
       )}

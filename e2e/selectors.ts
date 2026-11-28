@@ -662,11 +662,6 @@ export const exportDialog = {
   /** The primary footer button that performs the export. */
   exportButton: (page: Page) => exportDialog.root(page).locator('.dialog-footer .btn-primary'),
 
-  /** The "Inspect exported motion" footer button (issue #356). Shown only when
-   *  exactly one eligible operation is selected. */
-  inspectButton: (page: Page) =>
-    exportDialog.root(page).locator('.dialog-footer button', { hasText: 'Inspect exported motion' }),
-
   /** A setup heading in the operation checklist, by the face it cuts. */
   setupHeading: (page: Page, face: 'top' | 'bottom' | 'around') =>
     exportDialog.root(page).locator(`.export-setup-heading[data-setup-face="${face}"]`),
@@ -717,49 +712,6 @@ export const generation = {
   pausedOperationBadges: (page: Page) => page.locator('.cam-operation-badge--paused'),
   /** The animated spinner itself, so "nothing is spinning" is directly assertable. */
   operationSpinners: (page: Page) => page.locator('.cam-generating-spinner'),
-}
-
-// ── Exported-motion debug view (issue #356) ────────────────────────
-
-export const motionDebug = {
-  /** The exported-motion debug dialog root. */
-  root: (page: Page) => page.locator('.dialog--motion-debug'),
-
-  /** The SVG plan view. */
-  svg: (page: Page) => motionDebug.root(page).locator('.motion-debug__svg'),
-
-  /** A layer toggle checkbox by its (English) label. */
-  layerCheckbox: (page: Page, label: string) =>
-    motionDebug.root(page).locator('.motion-debug__layer-row', { hasText: label }).locator('input[type="checkbox"]'),
-
-  /** The non-cutting-moves toggle. */
-  nonCuttingCheckbox: (page: Page) =>
-    motionDebug.layerCheckbox(page, 'Non-cutting moves'),
-
-  /** The cutting-Z level <select>. */
-  zLevelSelect: (page: Page) =>
-    motionDebug.root(page).locator('.motion-debug__sidebar select'),
-
-  /** The bottom diagnostic status bar. */
-  diagnostic: (page: Page) => motionDebug.root(page).locator('.motion-debug__diagnostic'),
-
-  /** The 2D/3D view toggle; absent for a program with no rotary angle. */
-  viewToggle: (page: Page) => motionDebug.root(page).locator('.motion-debug__view-toggle'),
-
-  /** The toggle's "3D wrapped" button (issue #1179). */
-  view3dButton: (page: Page) => motionDebug.root(page).locator('[data-testid="motion-debug-view-3d"]'),
-
-  /** The toggle's "2D plan" button. */
-  view2dButton: (page: Page) => motionDebug.root(page).locator('.motion-debug__view-toggle button', { hasText: '2D plan' }),
-
-  /** The three.js canvas the 3D wrapped view appends. */
-  wrappedCanvas: (page: Page) => motionDebug.root(page).locator('[data-testid="motion-debug-3d"] canvas'),
-
-  /** The angle readout the 3D wrapped view shows over the canvas. */
-  angleReadout: (page: Page) => motionDebug.root(page).locator('.motion-debug__angle-readout'),
-
-  /** The footer Close button. */
-  closeButton: (page: Page) => motionDebug.root(page).locator('.dialog-footer .btn-primary'),
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────

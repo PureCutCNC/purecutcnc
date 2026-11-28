@@ -425,11 +425,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   frames, units, feeds, canned cycles, G53 footer, rotary, manual index,
   refusals) and the comparison (resegmentation, moved/missing/extra cuts,
   feeds, the stock frame, the grid against a scan).
-- `motionDebug.ts` — exported-motion debug helpers (issue #356):
+- `motionDebug.ts` — helpers from the retired exported-motion debug view
+  (issue #356; the view was replaced by the simulation's Verify mode, #1269):
   `parseExportedMotion` (parses in the definition's own dialect, handing the
   G-code parser the definition's rotary word and inverse-time commands, and
-  since #1261 its canned cycles),
-  eligibility, the exported-vs-source diagnostic — which compares the rotary
+  since #1261 its canned cycles; used by `exportedMotion.ts`),
+  the exported-vs-source diagnostic — which compares the rotary
   angle at each endpoint as well as X/Y/Z, and does not compare a borrowed
   axis's coordinate the program cannot carry — and the three-layer model
   builder.

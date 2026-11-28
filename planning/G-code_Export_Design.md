@@ -340,7 +340,7 @@ number format, arc support) are under Advanced.
 **Wording follows the dialect.** Everything that names the exported format
 names the one the project's machine writes: the export dialog's title and its
 "emit tool changes" option ("Export ShopBot part file", "(C9)"), the exported
-layer of the debug view ("Exported part file"), the per-operation export button
+the per-operation export button
 in the CAM panel, and the desktop app's File menu item. `exportDialectLabels.ts`
 maps each dialect to its wording. The native menu is built in Rust and is not
 translated, so the app shell passes it an English label through the
@@ -392,7 +392,7 @@ selection. The diagnostics name the template path, one-based program line,
 offending text/word and broken rule, and every offending line is reported.
 
 `getActiveMachineDefinition(project)` is the export boundary and resolves
-**only** the embedded snapshot. Export, preview, exported-motion inspection,
+**only** the embedded snapshot. Export, preview, the Verify mode's exported comparisons,
 and output file extension therefore stay deterministic for whoever opens the
 file: a shared project remains exportable when the recipient has never seen
 that machine, and editing or removing a library entry cannot change an
@@ -516,59 +516,20 @@ project→machine coordinate transform and G-code emission. It does not modify
 - Helical/ramping moves, rapids, plunges, leads, and non-circular runs remain
   linear and never trigger the warning.
 
-## Exported-motion debug inspection
+## Exported-motion inspection
 
-The exported-motion debug view (issue #356, `src/components/export/ExportedMotionDebugDialog.tsx`
-backed by `src/engine/gcode/gcodeMotionParser.ts` and `motionDebug.ts`) is a
-diagnostic overlay that verifies the motion *written to the exported file* still
-represents the intended path. The text is parsed in the definition's own output
-dialect (`parseExportedMotion`): G-code through `gcodeMotionParser.ts`, a
-ShopBot part file through `sbpMotionParser.ts`. Both return the same motion
-shape, so everything after the parse is dialect-independent. It opens from the Export dialog when exactly one
-eligible operation is selected, and overlays three planar layers in project
-coordinates:
-
-- **Generated** — the raw toolpath before adjacent-collinear cut moves are merged
-  (captured at the `optimizeLinearMoves` seam in
-  `src/engine/toolpaths/generateOperation.ts`
-  into an ephemeral `ToolpathGenerationTrace`; never serialised into `.camj`).
-- **Optimized** — the canonical toolpath after always-on line optimization,
-  before export arc fitting.
-- **Exported G-code** — the path reconstructed by parsing the literal emitted
-  G-code text (`parseGcodeMotion`), mapped back to project space via the inverse
-  `machineToProjectPoint` transform. Arc sweep direction is inverted when the
-  machine's axis mapping is orientation-reversing in the plane (a mirrored `-X`
-  or an X/Y swap — see `machineToProjectFlipsArcDirection`), so the layer
-  renders the true machine path for mirrored-axis machines.
-
-Invariants:
-
-- The exported layer comes from parsing the literal G-code, not from an internal
-  approximation in its place. Arcs are kept analytic in the parsed model and
-  tessellate only for SVG display, so partial arcs stay visibly partial.
-- The postprocessor exposes its machine-coordinate motion trace
-  (`OperationMotionTrace`: transformed moves + fitted descriptors) only when
-  `PostProcessorOptions.captureMotionTrace` is set — the normal export path pays
-  no cost. The debug view reuses `runPostProcessor` for the single operation
-  rather than reimplementing formatting.
-- The diagnostic compares the parsed exported trace against the postprocessor
-  trace by non-rapid segment endpoint continuity plus arc-centre/direction
-  agreement at the configured 0.01 mm tolerance. It surfaces parser-unsupported,
-  parser-failed, discontinuity, and tolerance-deviation warnings explicitly and
-  never reports `verified` for a partial or unsupported parse.
-- The exported-vs-optimized deviation check compares like with like. Linear
-  moves are measured against the reference polyline directly; a fitted **arc**
-  is measured against the reference **vertices** it spans, which must lie within
-  tolerance of the swept arc. This diagnostic measures agreement with the
-  source vertices. Export also checks each source chord during fitting, with
-  the generator's sampling allowance where available, as described above.
-- Both the tolerance the fitter accepts and the tolerance the diagnostic
-  verifies come from `exportGeometryTolerance()` in `src/utils/units.ts`, so the
-  two cannot drift apart.
-- Eligibility is motion-derived, not an operation-name allow-list: a non-empty
-  planar cutting trace with discrete constant-Z cutting levels. Variable-Z cuts
-  (V-carve, ramping surface paths) and drilling are unavailable, with a reason —
-  they are not flattened into a deceptively simple 2D result.
+The exported-motion debug view (issue #356) was retired by the simulation
+viewport's **Verify** mode (issue #1269): its Internal ↔ Exported comparison
+(`exportParity.ts` over `exportedMotion.ts`, issue #1261) covers the planar
+checks the view made, for every operation rather than one, and Model ↔ Exported
+replays the program read back against the model (#1268). The program is still
+read in the definition's own output dialect (`parseExportedMotion` in
+`motionDebug.ts`): G-code through `gcodeMotionParser.ts`, a ShopBot part file
+through `sbpMotionParser.ts`. `motionDebug.ts` keeps the exported-vs-source
+diagnostic and the three-layer model builder its own and the parsers' tests use
+as an oracle, and the postprocessor still exposes its machine-coordinate motion
+trace when `PostProcessorOptions.captureMotionTrace` is set (the examples
+re-save check reads it); the Export dialog no longer asks for one.
 
 ## Current limits and future work
 
