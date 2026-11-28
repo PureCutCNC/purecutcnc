@@ -158,7 +158,7 @@ export function profileToShape(profile: SketchProfile): THREE.Shape {
 // ── Stock mesh ───────────────────────────────────────────────────────────────
 
 /** Chords around a round bar — 64 reads as round without a visible facet. */
-const ROUND_BAR_SEGMENTS = 64
+export const ROUND_BAR_SEGMENTS = 64
 
 /**
  * A round bar's cylinder in project coordinates: `diameter` across, lying along
@@ -1616,6 +1616,48 @@ export function squareSheetModelFilter(project: Project, features: SketchFeature
     || squareSheetFeatureBlock(project, feature.id, 0, index) === null)
 }
 
+/** The visible features the 3D model is built from, flat and Around. */
+interface SceneModelFeatures {
+  visibleFeatures: SketchFeature[]
+  aroundFeatures: SketchFeature[]
+}
+
+/**
+ * The features `buildScene` models: the visible flat (Top/Bottom) ones, and
+ * the visible Around ones a bar wraps. Only a bar can wrap, and only a rotary
+ * project works the Around face at all (issue #1028): in any other type the
+ * Around features stay in the project and the tree but are not modelled. A
+ * square blank (#1131) draws its sheet lines and regions like a round bar, and
+ * folds an add/subtract into the bar only where Turns above it have made the
+ * section round — elsewhere it is kept, not cut, so it is not modelled.
+ */
+function sceneModelFeatures(project: Project): SceneModelFeatures {
+  const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
+  const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
+  const aroundFeatures = isBarStock(project.stock) && aroundFeaturesActive(project)
+    ? squareSheetModelFilter(project, modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
+      .filter((feature) => feature.visible))
+    : []
+  return { visibleFeatures, aroundFeatures }
+}
+
+/**
+ * The combined model solid exactly as the viewport folds it (issue #1268):
+ * the bar fold of a rotary bar project, otherwise the flat add/subtract fold.
+ * Imported models (`operation === 'model'`) are not in the flat fold — the
+ * viewport draws them as their own mesh — so a caller that needs their
+ * material reads them separately. `null` when nothing folds (a block project
+ * without an add, or a bar fold that changes nothing). The caller owns and
+ * deletes the returned solid. Unlike `buildScene`, a failing bar fold throws
+ * rather than falling back to the flat model: a verifier must not compare
+ * against a model the viewport only shows as a fallback.
+ */
+export function buildCombinedModelSolid(module: ManifoldToplevel, project: Project): ManifoldSolid | null {
+  const { visibleFeatures, aroundFeatures } = sceneModelFeatures(project)
+  if (barSeedsModel(project)) return buildBarModelSolid(module, project, visibleFeatures, aroundFeatures)
+  return buildFlatModelSolid(module, project, visibleFeatures)
+}
+
 async function buildBooleanModel(
   project: Project,
   visibleFeatures: SketchFeature[],
@@ -1757,18 +1799,7 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   // round solid, an add is an island standing inside a cut. Top and Bottom
   // features draw exactly as before, and a project with no visible Around
   // feature is untouched.
-  const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
-  const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
-  // The same model filter for the Around half. Only a bar can wrap, and only a
-  // rotary project works the Around face at all (issue #1028): in any other
-  // type the features stay in the project and the tree but are not modelled.
-  // A square blank (#1131) draws its sheet lines and regions like a round bar,
-  // and folds an add/subtract into the bar only where Turns above it have made
-  // the section round — elsewhere it is kept, not cut, so it is not modelled.
-  const aroundFeatures = isBarStock(project.stock) && aroundFeaturesActive(project)
-    ? squareSheetModelFilter(project, modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
-      .filter((feature) => feature.visible))
-    : []
+  const { visibleFeatures, aroundFeatures } = sceneModelFeatures(project)
   const visibleTabs = project.tabs.filter((tab) => tab.visible)
   const visibleClamps = project.clamps.filter((clamp) => clamp.visible)
   const stockMesh = buildStockMesh(project.stock, threePalette)
