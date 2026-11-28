@@ -55,6 +55,9 @@ export function parseExportedMotion(program: string, definition: PinnedMachineDe
         word === null
           ? undefined
           : { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
+        // The definition's own canned cycles (issue #1261): the parser expands
+        // them the way this controller runs them.
+        definition.cannedCycles,
       )
     }
   }
