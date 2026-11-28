@@ -358,16 +358,79 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   rejects, so it takes the parser's existing downgrade path and reports
   `unsupported` rather than verified with a borrowed F; an F on a line of its
   own does not count. A `G53` block is a machine-coordinate move, not a work
-  position (#1054 fix 4): it is not added to the work-frame trace, it leaves the
-  tracked work Z unknown until a later block states one, and the parse reports
-  `unsupported` rather than verified. A program with no rotary word and no `G93`
-  parses exactly as before.
+  position (#1054 fix 4): it is not added to the work-frame trace and it leaves
+  the tracked work Z unknown until a later block states one. Since #1261 a
+  Z-only `G53` rapid is understood as a retract (the grblHAL footer, the bar
+  clearance retract) and a rapid after it that states no Z is kept at the last
+  work Z and marked `workZUnknown`; both are `info` notes. A G53 that moves X/Y,
+  a bare G53, or a *feed* after the retract without a Z still downgrade to
+  `unsupported`. Also since #1261: every feed move carries the modal `F` it ran
+  at (`feed`); `G20`/`G21` are tracked; given the definition's `cannedCycles`
+  block the parser expands G81/G82/G83/G73 into the plunges, pecks and
+  retracts LinuxCNC documents (G98/G99, `R`, the definition's peck word, `P`,
+  modal repeats at a new X/Y, the cancel command; the 0.010 in peck clearance),
+  G73's in-hole retract flagged `chipBreakRetractApproximate` — without the
+  block a cycle stays `unsupported`; a probe (`G38.2`–`G38.5`) and the
+  `G10 L20`/`G92` Z touch-off after it are not moves (every move after it
+  carries `touchOffZ`, Z measured from the probed surface); `G92 A0`-style
+  rotary zeroing restarts the angle without a turn; `G28`/`G30` and any other
+  work-offset change are `unsupported`. Findings come back twice: English
+  `warnings` for the debug view and structured `notes` (code, line, severity,
+  command) for product code; `statedAxes` says which machine axes any block
+  states. A program with no rotary word and no `G93` parses exactly as before.
 - `sbpMotionParser.ts` — the same for emitted SBP. Understands exactly what
-  `opensbpEmitter.ts` writes and reports anything else as `unsupported`.
-- `motionDebug.ts` — exported-motion debug helpers (issue #356):
+  `opensbpEmitter.ts` writes and reports anything else as `unsupported`. Since
+  #1261 it reads `MS` speeds back as each move's `feed` (units/min: the XY
+  speed for a move that travels in XY, the Z speed otherwise) and returns the
+  same `notes` and `statedAxes`.
+- `exportedMotion.ts` — `exportOperationMotion` (#1261, slice 1 of #1267):
+  posts one operation alone (no tool change, no coolant), parses it with
+  `parseExportedMotion`, flattens arcs in machine space within half the export
+  tolerance and maps every point back to project space with
+  `machineToProjectPoint`, the operation's setup frame and the rotary angle.
+  Returns the program, `ExportedToolpathMove[]` (plain `ToolpathMove`s the
+  simulation can replay, plus `feed` / `inverseTimeFeed`), a status and
+  `reasons` — structured codes with a severity and a count, never English.
+  A machine axis the program never states (a borrowed rotary motor, a cross
+  axis held by touch-off) is filled from the toolpath (`axisNotStated`); the
+  opening turn of a manual-index bar program is taken out of the angles,
+  because the setup frame already is that turn (`manualIndexTurnRemoved`); a
+  touch-off's Z is mapped back from the stock top. A program with no feed move
+  for an operation that has some, where the post gave a warning, is the post
+  refusing the operation (`operationRefused`, `failed`).
+- `exportParity.ts` — `compareExportedToInternal` and the one-call
+  `verifyExportedOperation` (#1261). Compares feed moves both ways (sampled
+  point-to-segment distance through a spatial grid: every exported cut near an
+  internal one, else `extraCut`; every internal cut near an exported one, else
+  `missingCut`), in the stock frame — a turning move is unturned about the bar
+  (`stockSpacePoint`) — so segmentation and arc fitting are not deviations; an
+  internal move's `arcChordError` widens the tolerance for that move only. The
+  feed check takes the plunge feed for a plunge and the operation feed times
+  `feedScale` otherwise, an inverse-time F as feed over the stock-frame length
+  (with the rounding of a short move's ends), and accepts a vertical move capped
+  at the plunge feed (ShopBot's Z speed). Plasma leaves plunges out: the torch's
+  Z is a height, and the pierce is the controller's sequence. Verdict
+  `verified` | `deviation` (kind, stock-frame location, distance, operation) |
+  `unverified` (`exportUnsupported`, `exportFailed`, `noCutMoves`). The public
+  types are the contract slices 2 and 3 consume: add, never rename.
+  `exportParityTolerance` is twice the export tolerance.
+- `exportParity.matrix.test.ts` — the coverage matrix: every operation kind
+  (drilling per drill type, plus wrapped Around pocket/engrave) generated by
+  the real generator, posted on every bundled post that can run it, Top and
+  Bottom, mm and inch, each cell's verdict asserted against an explicit table.
+  `MATRIX_PRINT=1` prints the observed table; `MATRIX_DUMP=<cell key>` prints
+  one cell's program, reasons and deviations. Known non-verified cells and why
+  are commented in the table.
+- `exportedMotion.test.ts`, `exportParity.test.ts` — the read-back (setup
+  frames, units, feeds, canned cycles, G53 footer, rotary, manual index,
+  refusals) and the comparison (resegmentation, moved/missing/extra cuts,
+  feeds, the stock frame, the grid against a scan).
+- `motionDebug.ts` — helpers from the retired exported-motion debug view
+  (issue #356; the view was replaced by the simulation's Verify mode, #1269):
   `parseExportedMotion` (parses in the definition's own dialect, handing the
-  G-code parser the definition's rotary word and inverse-time commands),
-  eligibility, the exported-vs-source diagnostic — which compares the rotary
+  G-code parser the definition's rotary word and inverse-time commands, and
+  since #1261 its canned cycles; used by `exportedMotion.ts`),
+  the exported-vs-source diagnostic — which compares the rotary
   angle at each endpoint as well as X/Y/Z, and does not compare a borrowed
   axis's coordinate the program cannot carry — and the three-layer model
   builder.

@@ -196,6 +196,16 @@ export interface ThreeThemePalette {
   lineDefault: number
   /** Batched-line overlay — subtract features. */
   lineSubtract: number
+  /** Verify view (issue #1269): stock cut inside the model. */
+  verifyGouge: number
+  /** Verify view: material within the operation's stock-to-leave. */
+  verifyIntendedLeftover: number
+  /** Verify view: material beyond any stock-to-leave. */
+  verifyUnintendedLeftover: number
+  /** Verify view: stock cut by an operation that could not be verified. */
+  verifyUnverified: number
+  /** Verify view: an Internal ↔ Exported deviation marker. */
+  verifyMarker: number
 }
 
 export interface ThemePalette {
@@ -329,6 +339,11 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolShank: 0x7d8591,
       lineDefault: 0x33aa66,
       lineSubtract: 0x3366cc,
+      verifyGouge: 0xff5a5a,
+      verifyIntendedLeftover: 0x5fb8ff,
+      verifyUnintendedLeftover: 0xffb347,
+      verifyUnverified: 0xb07cff,
+      verifyMarker: 0xff3df2,
     },
   },
   light: {
@@ -456,6 +471,11 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       toolShank: 0x5a6470,
       lineDefault: 0x22884d,
       lineSubtract: 0x224d99,
+      verifyGouge: 0xd62828,
+      verifyIntendedLeftover: 0x1f78c8,
+      verifyUnintendedLeftover: 0xe07b00,
+      verifyUnverified: 0x7b3fd1,
+      verifyMarker: 0xc2008f,
     },
   },
 }

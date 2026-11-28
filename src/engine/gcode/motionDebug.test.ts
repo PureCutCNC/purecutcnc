@@ -32,7 +32,6 @@ import { runPostProcessor } from './postprocessor'
 import { exportGeometryTolerance } from '../../utils/units'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import {
-  getExportedMotionEligibility,
   compareMotionTraces,
   buildExportedMotionDebugModel,
   parseExportedMotion,
@@ -103,26 +102,6 @@ function mirroredBorrowedRotaryDefinition(): MachineDefinition {
 
 const ORIGIN: MachineOrigin = { name: 'O', x: 10, y: 20, z: 0, visible: true }
 const ZERO_ORIGIN: MachineOrigin = { name: 'O', x: 0, y: 0, z: 0, visible: true }
-
-function testEligibility(): void {
-  console.log('Testing exported-motion eligibility...')
-  const constantZ = [cut(pt(0, 0, 0), pt(10, 0, 0)), cut(pt(10, 0, 0), pt(10, 5, 0))]
-  let e = getExportedMotionEligibility(constantZ)
-  assert(e.eligible, 'constant-Z pocket-like should be eligible')
-
-  const variableZ = [cut(pt(0, 0, 0), pt(5, 0, -1))]
-  e = getExportedMotionEligibility(variableZ)
-  assert(!e.eligible && e.reason === 'variableZ', `variable-Z ineligible, got ${e.reason}`)
-
-  e = getExportedMotionEligibility([rapid(pt(0, 0, 5), pt(0, 0, 0))])
-  assert(!e.eligible && e.reason === 'noCutMoves', `no-cut ineligible, got ${e.reason}`)
-
-  e = getExportedMotionEligibility({
-    moves: constantZ,
-    drillCycles: [{ x: 0, y: 0, clearZ: 1, retractZ: 1, bottomZ: 0, drillType: 'simple' }],
-  })
-  assert(!e.eligible && e.reason === 'drilling', `drilling ineligible, got ${e.reason}`)
-}
 
 function testInverseTransform(): void {
   console.log('Testing machineToProjectPoint inverts projectToMachinePoint...')
@@ -257,15 +236,17 @@ function testRotaryProgramReadback(): void {
     const { gcode, trace } = exportRotary(definition, moves)
     const parsed = parseExportedMotion(gcode, pinRotaryAxis(definition, null))
     // Since #1103 slice ca-h the operation closes with a machine-coordinate
-    // retract and a forward turn to the next whole turn. Those two blocks are
-    // machine-frame motion the parser cannot place in the work frame, so it
-    // reports exactly them — and nothing about the cutting motion.
-    assert(parsed.status === 'unsupported', `${drive}: the end turn is reported (${parsed.status})`)
+    // retract and a forward turn to the next whole turn. Since #1261 a Z-only
+    // G53 rapid is understood as a retract, and the rapid turn after it as
+    // travel at the machine height, so the program verifies; the parser still
+    // notes exactly those two blocks — and nothing about the cutting motion.
+    assert(parsed.status === 'verified', `${drive}: the end turn is understood (${parsed.status})`)
     assert(parsed.warnings.length === 2, `${drive}: the retract and the turn after it, got ${JSON.stringify(parsed.warnings)}`)
-    for (const warning of parsed.warnings) {
-      assert(/G53 machine-coordinate move|move after a G53 block does not state Z/.test(warning),
-        `${drive}: only the end-turn blocks are unplaceable: ${warning}`)
-    }
+    assert(
+      JSON.stringify((parsed.notes ?? []).map((note) => [note.code, note.severity]))
+        === JSON.stringify([['machineCoordinateRetract', 'info'], ['rapidAfterMachineRetract', 'info']]),
+      `${drive}: only the end-turn blocks are noted, got ${JSON.stringify(parsed.notes)}`,
+    )
 
     const feedMoves = parsed.moves.filter((m) => m.kind !== 'rapid')
     assert(feedMoves.length === 3, `${drive}: plunge + turning cut + straight cut, got ${feedMoves.length}`)
@@ -289,12 +270,12 @@ function testRotaryProgramReadback(): void {
     const angles = feedMoves.map((m) => m.to.a)
     assert(JSON.stringify(angles) === '[0,90,90]', `${drive}: angles ${JSON.stringify(angles)}`)
 
-    // The view's own comparison matches every cutting endpoint and angle; its
-    // one diagnostic is the machine-coordinate end turn itself, which the view
-    // reports rather than silently mis-places.
+    // The view's own comparison matches every cutting endpoint and angle. The
+    // machine-coordinate end turn is a retract the parser now understands
+    // (#1261), so the view has nothing left to report.
     const diagnostic = compareMotionTraces(parsed, trace, tolerance)
-    assert(diagnostic.warnings.length === 1 && diagnostic.warnings[0].kind === 'unsupported',
-      `${drive}: the only diagnostic is the end turn's machine-coordinate block: ${JSON.stringify(diagnostic.warnings)}`)
+    assert(diagnostic.warnings.length === 0,
+      `${drive}: the end turn's retract is no longer a diagnostic: ${JSON.stringify(diagnostic.warnings)}`)
 
     if (drive === 'borrowed') {
       for (const m of parsed.moves) {
@@ -343,13 +324,19 @@ function testCompactMachineCoordinateReadback(): void {
   })
   assert(gcode.includes('G53G0'), `the exporter writes the compact machine-coordinate command:\n${gcode}`)
   const parsed = parseExportedMotion(gcode, pinRotaryAxis(definition, null))
+  // Read as a machine-coordinate retract, not a work move to Z0. Since #1261 a
+  // Z-only G53 rapid is understood (an info note, not a downgrade).
   assert(
-    parsed.status === 'unsupported',
-    `the compact machine retract is not verified, got ${parsed.status}: ${parsed.warnings.join('; ')}`,
+    parsed.status === 'verified',
+    `the compact machine retract is understood, got ${parsed.status}: ${parsed.warnings.join('; ')}`,
   )
   assert(
-    parsed.warnings.some((warning) => warning.includes('G53')),
-    `the reason names G53, got ${JSON.stringify(parsed.warnings)}`,
+    (parsed.notes ?? []).some((note) => note.code === 'machineCoordinateRetract' && note.command === 'G53'),
+    `the retract is noted as G53, got ${JSON.stringify(parsed.notes)}`,
+  )
+  assert(
+    !parsed.moves.some((move) => move.kind === 'rapid' && move.to.z === 0 && move.from.z !== 0),
+    'the G53 block is not a work-coordinate move to Z0',
   )
 }
 
@@ -700,7 +687,6 @@ function testMajorArcTakenTheShortWayStillWarns(): void {
     `expected an arcDeviation warning, got ${JSON.stringify(model.diagnostic.warnings)}`)
 }
 
-testEligibility()
 testInverseTransform()
 testRotaryAngleInverse()
 testRotaryProgramReadback()

@@ -38,7 +38,7 @@
 
 import type { ToolpathPoint } from '../toolpaths/types'
 import { arcMoveFromCenter } from './gcodeMotionParser'
-import type { GcodeParseStatus, ParsedGcodeMotion, ParsedGcodeMove } from './gcodeMotionParser'
+import type { GcodeParseNote, GcodeParseStatus, ParsedGcodeMotion, ParsedGcodeMove } from './gcodeMotionParser'
 
 type Axis = 'x' | 'y' | 'z'
 
@@ -53,7 +53,6 @@ const AXES_BY_SUFFIX: Record<string, readonly Axis[]> = {
 
 /** Lines that are part of an emitted program and do not move the tool. */
 const NON_MOTION_COMMANDS = new Set([
-  'MS',   // move speeds
   'JS',   // jog speeds
   'SA',   // absolute mode
   'TR',   // spindle RPM
@@ -84,12 +83,26 @@ function parseParameter(raw: string | undefined): number | undefined | 'invalid'
 export function parseSbpMotion(program: string): ParsedGcodeMotion {
   const moves: ParsedGcodeMove[] = []
   const warnings: string[] = []
+  const notes: GcodeParseNote[] = []
+  const statedAxes = { x: false, y: false, z: false }
   let status: GcodeParseStatus = 'verified'
   let pos: ToolpathPoint = { x: 0, y: 0, z: 0 }
+  // The move speeds last set by `MS`, in units per second (issue #1261). A
+  // move that travels in XY runs at the XY speed; a Z-only move at the Z one.
+  const speedState: { current: { xy: number; z: number } | null } = { current: null }
 
-  const unsupported = (lineNumber: number, message: string) => {
+  const unsupported = (lineNumber: number, message: string, command?: string) => {
     if (status === 'verified') status = 'unsupported'
     warnings.push(`line ${lineNumber}: ${message}`)
+    notes.push(command === undefined
+      ? { code: 'unsupportedStatement', line: lineNumber, severity: 'unsupported' }
+      : { code: 'unsupportedStatement', line: lineNumber, severity: 'unsupported', command })
+  }
+  const feedFor = (from: ToolpathPoint, to: ToolpathPoint): { feed: number } | null => {
+    const speeds = speedState.current
+    if (speeds === null) return null
+    const xyMoves = from.x !== to.x || from.y !== to.y
+    return { feed: (xyMoves ? speeds.xy : speeds.z) * 60 }
   }
 
   const lines = program.split(/\r?\n/)
@@ -106,6 +119,18 @@ export function parseSbpMotion(program: string): ParsedGcodeMotion {
     const [rawCommand, ...args] = line.split(',')
     const command = rawCommand.trim().toUpperCase()
 
+    if (command === 'MS') {
+      const xy = parseParameter(args[0])
+      const z = parseParameter(args[1])
+      if (typeof xy === 'number' || typeof z === 'number') {
+        const previous = speedState.current
+        speedState.current = {
+          xy: typeof xy === 'number' ? xy : previous?.xy ?? 0,
+          z: typeof z === 'number' ? z : previous?.z ?? 0,
+        }
+      }
+      continue
+    }
     if (NON_MOTION_COMMANDS.has(command)) continue
 
     // Jogs and moves: `J3,x,y,z`, `MZ,z`, …
@@ -117,13 +142,18 @@ export function parseSbpMotion(program: string): ParsedGcodeMotion {
       axes.forEach((axis, index) => {
         const value = parseParameter(args[index])
         if (value === 'invalid') valid = false
-        else if (value !== undefined) to[axis] = value
+        else if (value !== undefined) {
+          to[axis] = value
+          statedAxes[axis] = true
+        }
       })
       if (!valid || args.length > axes.length) {
-        unsupported(lineNumber, `unsupported ${command} parameters`)
+        unsupported(lineNumber, `unsupported ${command} parameters`, command)
         continue
       }
-      moves.push({ kind: family === 'J' ? 'rapid' : 'linear', from: pos, to })
+      moves.push(family === 'J'
+        ? { kind: 'rapid', from: pos, to }
+        : { kind: 'linear', from: pos, to, ...feedFor(pos, to) })
       pos = to
       continue
     }
@@ -146,23 +176,28 @@ export function parseSbpMotion(program: string): ParsedGcodeMotion {
         || (direction !== 1 && direction !== -1)
         || extras
       ) {
-        unsupported(lineNumber, 'unsupported CG parameters')
+        unsupported(lineNumber, 'unsupported CG parameters', command)
         continue
       }
       const to: ToolpathPoint = { x: endX, y: endY, z: pos.z }
-      moves.push(arcMoveFromCenter(
-        pos,
-        to,
-        { x: pos.x + offsetI, y: pos.y + offsetJ },
-        Math.hypot(offsetI, offsetJ),
-        direction === 1,
-      ))
+      statedAxes.x = true
+      statedAxes.y = true
+      moves.push({
+        ...arcMoveFromCenter(
+          pos,
+          to,
+          { x: pos.x + offsetI, y: pos.y + offsetJ },
+          Math.hypot(offsetI, offsetJ),
+          direction === 1,
+        ),
+        ...(speedState.current !== null ? { feed: speedState.current.xy * 60 } : null),
+      })
       pos = to
       continue
     }
 
-    unsupported(lineNumber, `unsupported ShopBot statement (${command})`)
+    unsupported(lineNumber, `unsupported ShopBot statement (${command})`, command)
   }
 
-  return { moves, status, warnings }
+  return { moves, status, warnings, notes, statedAxes }
 }

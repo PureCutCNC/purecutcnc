@@ -32,3 +32,7 @@ export * from './simulationScene'
 export * from './playback'
 
 export * from './toolMesh'
+
+export * from './modelTarget'
+
+export * from './modelDeviation'

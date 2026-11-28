@@ -15,8 +15,10 @@
  */
 
 /**
- * Pure helpers for the exported-motion debug view (issue #356): eligibility,
- * the exported-path-vs-source diagnostic, and the planar debug-model builder
+ * Pure helpers from the exported-motion debug view (issue #356; the view was
+ * retired by the Verify mode, #1269): reading a program back in its own
+ * dialect (`parseExportedMotion`, used by `exportedMotion.ts`), the
+ * exported-path-vs-source diagnostic, and the planar debug-model builder
  * that turns a generation trace + parsed G-code into the three overlay layers.
  */
 
@@ -29,7 +31,9 @@ import type { ParsedGcodeMove, ParsedGcodeMotion } from './gcodeMotionParser'
 import { parseSbpMotion } from './sbpMotionParser'
 import { machineToProjectPoint, machineToProjectFlipsArcDirection } from './utils'
 
-const Z_EPS = 1e-6
+function roundZ(z: number): number {
+  return Math.round(z * 1e6) / 1e6
+}
 
 // ── Parsing the exported program ──────────────────────────────
 
@@ -55,52 +59,12 @@ export function parseExportedMotion(program: string, definition: PinnedMachineDe
         word === null
           ? undefined
           : { word, inverseTimeFeed: definition.rotary?.inverseTimeFeed ?? null },
+        // The definition's own canned cycles (issue #1261): the parser expands
+        // them the way this controller runs them.
+        definition.cannedCycles,
       )
     }
   }
-}
-
-// ── Eligibility ───────────────────────────────────────────────
-
-export type IneligibleReason = 'drilling' | 'noCutMoves' | 'variableZ'
-
-export interface ExportedMotionEligibility {
-  eligible: boolean
-  reason?: IneligibleReason
-}
-
-function roundZ(z: number): number {
-  return Math.round(z * 1e6) / 1e6
-}
-
-/**
- * Whether an operation's generated motion is viewable in this release: a
- * non-empty planar cutting trace with discrete constant-Z cutting levels.
- * Derived purely from the motion (not an operation-name allow-list), so it
- * admits pockets, edge routes, and constant-depth follow-line work, and
- * excludes drilling (drillCycles), empty paths, and variable-Z cuts (V-carve,
- * ramping surface paths whose cut moves span Z).
- */
-export function getExportedMotionEligibility(trace: ToolpathMove[] | { moves: ToolpathMove[]; drillCycles?: unknown[] }): ExportedMotionEligibility {
-  const moves = Array.isArray(trace) ? trace : trace.moves
-  const drillCycles = Array.isArray(trace) ? undefined : trace.drillCycles
-  if (drillCycles && drillCycles.length > 0) {
-    return { eligible: false, reason: 'drilling' }
-  }
-  const cutMoves = moves.filter((m) => m.kind === 'cut')
-  if (cutMoves.length === 0) {
-    return { eligible: false, reason: 'noCutMoves' }
-  }
-  for (const m of cutMoves) {
-    if (Math.abs(m.from.z - m.to.z) > Z_EPS) {
-      return { eligible: false, reason: 'variableZ' }
-    }
-  }
-  const zSet = new Set(cutMoves.map((m) => roundZ(m.from.z)))
-  if (zSet.size === 0) {
-    return { eligible: false, reason: 'noCutMoves' }
-  }
-  return { eligible: true }
 }
 
 // ── Debug model types ────────────────────────────────────────

@@ -24,8 +24,6 @@ import {
   machineExportDiagnostics,
   projectExportsPerSetup,
 } from '../../engine/gcode'
-import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
-import type { Operation } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from '../../app/toolpathGeneration/service'
 import { exportHasError, type ExportPostOptions, type PreparedProgram } from '../../app/toolpathGeneration/exportPreparation'
 import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
@@ -33,8 +31,6 @@ import {
   groupExportOperationOptions,
   listExportOperationOptions,
 } from './exportOperationSelection'
-import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
-import { planInspectMotion, type InspectMotionPlan } from './inspectMotionPlan'
 import { exportDialectLabels } from './exportDialectLabels'
 import { shouldShowRotaryZeroNotice } from './rotaryZeroNotice'
 import { rotaryFollowsStockNote, rotaryProjectNeedsMm } from './rotaryUnitsNotice'
@@ -54,13 +50,11 @@ interface ExportDialogProps {
   /** The generation service and the live context to submit against (issue #675). */
   service: ToolpathGenerationService
   contextRef: React.RefObject<GenerationContext>
-  /** Debug-only (issue #356): produces a {raw, optimized} trace for one operation. */
-  requestGenerationTrace: (operationId: string, signal?: AbortSignal) => Promise<ToolpathGenerationTrace | null>
   /** Pre-check only these operations (per-operation export); defaults to the visible set. */
   initialOperationIds?: string[]
 }
 
-export function ExportDialog({ onClose, service, contextRef, requestGenerationTrace, initialOperationIds }: ExportDialogProps) {
+export function ExportDialog({ onClose, service, contextRef, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, selectProject, markExported } = useProjectStore()
   const { t, languageTag } = useI18n()
@@ -112,8 +106,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     emitToolChanges,
     emitCoolant,
     programName: project.meta.name,
-    captureMotionTrace: selectedInProjectOrder.length === 1,
-  }), [emitToolChanges, emitCoolant, project.meta.name, selectedInProjectOrder.length])
+    // The motion trace fed the retired Motion debug view (#1269); the dialog
+    // has nothing to read it with, so it does not pay for one.
+    captureMotionTrace: false,
+  }), [emitToolChanges, emitCoolant, project.meta.name])
 
   // Generation is asynchronous now (issue #675), so the program is *prepared*
   // rather than derived during render. The preparation either produces a
@@ -171,18 +167,6 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     })
   }
 
-  type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
-  const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
-
-  // The exported-motion debug view is offered for exactly one operation. The
-  // plan view's eligibility refuses variable-Z cutting, which every rotary
-  // rough/finish has by design; a motion carrying rotary angles is offered
-  // through the wrapped view instead (issue #1179 correction round 3), so the
-  // dialog can be reached for the operations it exists for.
-  const inspectPlan = useMemo<InspectMotionPlan>(() => {
-    if (activeOperations.length !== 1) return { offer: false, wrapped: false, reason: null }
-    return planInspectMotion(activeOperations[0].toolpath)
-  }, [activeOperations])
 
   // The engine's codes carry their own severity, so one code lands in the same
   // tier everywhere it is shown; the dialog only decides what to put beside
@@ -560,16 +544,6 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
-          {inspectPlan.offer && (
-            <button
-              className="btn-secondary"
-              onClick={() => setDebugOperation(activeOperations[0])}
-              disabled={!activeDefinition}
-              type="button"
-            >
-              {td('dialogs.export.inspectMotion')}
-            </button>
-          )}
           <button
             className="btn-primary"
             onClick={handleExport}
@@ -582,17 +556,6 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           </button>
         </div>
       </div>
-      {debugOperation && activeDefinition && previewResult && (
-        <ExportedMotionDebugDialog
-          operation={debugOperation.operation}
-          requestGenerationTrace={requestGenerationTrace}
-          project={project}
-          definition={activeDefinition}
-          previewResult={previewResult}
-          toolpath={debugOperation.toolpath}
-          onClose={() => setDebugOperation(null)}
-        />
-      )}
     </div>
   )
 }
