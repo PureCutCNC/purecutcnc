@@ -1616,7 +1616,13 @@ export function squareSheetModelFilter(project: Project, features: SketchFeature
     || squareSheetFeatureBlock(project, feature.id, 0, index) === null)
 }
 
-/** The visible features the 3D model is built from, flat and Around. */
+/** How {@link buildCombinedModelSolid} chooses its features. */
+export interface CombinedModelOptions {
+  /** Fold hidden features too (verification); the viewport leaves them out. */
+  includeHidden?: boolean
+}
+
+/** The features the 3D model is built from, flat and Around. */
 interface SceneModelFeatures {
   visibleFeatures: SketchFeature[]
   aroundFeatures: SketchFeature[]
@@ -1631,12 +1637,13 @@ interface SceneModelFeatures {
  * folds an add/subtract into the bar only where Turns above it have made the
  * section round — elsewhere it is kept, not cut, so it is not modelled.
  */
-function sceneModelFeatures(project: Project): SceneModelFeatures {
+function sceneModelFeatures(project: Project, options: CombinedModelOptions = {}): SceneModelFeatures {
+  const shown = (feature: SketchFeature) => options.includeHidden === true || feature.visible
   const sceneFeatures = resolvedProjectFeatures(project).filter((feature) => feature.authoringFace !== 'around')
-  const visibleFeatures = modelFeatures(sceneFeatures).filter((feature) => feature.visible)
+  const visibleFeatures = modelFeatures(sceneFeatures).filter(shown)
   const aroundFeatures = isBarStock(project.stock) && aroundFeaturesActive(project)
     ? squareSheetModelFilter(project, modelFeatures(resolvedProjectFeatures(project).filter((feature) => feature.authoringFace === 'around'))
-      .filter((feature) => feature.visible))
+      .filter(shown))
     : []
   return { visibleFeatures, aroundFeatures }
 }
@@ -1651,9 +1658,18 @@ function sceneModelFeatures(project: Project): SceneModelFeatures {
  * deletes the returned solid. Unlike `buildScene`, a failing bar fold throws
  * rather than falling back to the flat model: a verifier must not compare
  * against a model the viewport only shows as a fallback.
+ *
+ * The viewport folds only visible features; `includeHidden` folds every
+ * feature regardless of its eye toggle (issue #1269), because hiding a feature
+ * does not stop it being machined, and a verifier that left it out would read
+ * its machining as a gouge.
  */
-export function buildCombinedModelSolid(module: ManifoldToplevel, project: Project): ManifoldSolid | null {
-  const { visibleFeatures, aroundFeatures } = sceneModelFeatures(project)
+export function buildCombinedModelSolid(
+  module: ManifoldToplevel,
+  project: Project,
+  options: CombinedModelOptions = {},
+): ManifoldSolid | null {
+  const { visibleFeatures, aroundFeatures } = sceneModelFeatures(project, options)
   if (barSeedsModel(project)) return buildBarModelSolid(module, project, visibleFeatures, aroundFeatures)
   return buildFlatModelSolid(module, project, visibleFeatures)
 }

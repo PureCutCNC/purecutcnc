@@ -465,6 +465,18 @@ function flatRoundBarFor(stock: RoundStock): FlatRoundBarDescriptor {
   return { axis: stock.axis, pivot: barPivotZ(stock), radius: barInscribedRadius(stock), centre: barCentre(stock), length: barLength(stock) }
 }
 
+/**
+ * The grid options verification builds its fresh grid with, for a flat
+ * setup's local project (`modelSetupView(...).localProject`). Exported so the
+ * Verify view (issue #1269) can replay other moves into the very same grid.
+ */
+export function modelVerificationGridOptions(localProject: Project, detailCells?: number): SimulationBuildOptions {
+  return {
+    ...(detailCells !== undefined ? { targetLongAxisCells: detailCells } : {}),
+    ...(isRoundStock(localProject.stock) ? { flatRoundBar: flatRoundBarFor(localProject.stock) } : {}),
+  }
+}
+
 /** The smallest tolerance the comparison can honestly resolve: one cell plus the mesh tessellation. */
 export function modelDeviationToleranceFloor(grid: Pick<SimulationGrid, 'cellSize'>, project: Project): number {
   return grid.cellSize + modelTessellationTolerance(project)
@@ -515,11 +527,7 @@ export async function verifyAgainstModel(input: VerifyAgainstModelInput): Promis
     return unverified('unsupportedSetup', warnings, operationIds)
   }
 
-  const options: SimulationBuildOptions = {
-    ...(input.detailCells !== undefined ? { targetLongAxisCells: input.detailCells } : {}),
-    ...(isRoundStock(view.localProject.stock) ? { flatRoundBar: flatRoundBarFor(view.localProject.stock) } : {}),
-  }
-  const grid = createSimulationGrid(view.localProject, options)
+  const grid = createSimulationGrid(view.localProject, modelVerificationGridOptions(view.localProject, input.detailCells))
   const module = await getManifoldModule()
   const target = rasterModelTargetHeights(module, grid, project, setup)
   if (!target) return unverified('noModel', warnings, operationIds)
