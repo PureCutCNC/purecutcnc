@@ -18,7 +18,7 @@
  * The combined model as a simulation-grid height raster (issue #1268).
  *
  * The model is the solid the viewport already folds (`buildCombinedModelSolid`
- * in `csg.ts`), plus the imported models a flat fold leaves out because the
+ * in `csg.ts`, hidden features included — visibility is a view setting), plus the imported models a flat fold leaves out because the
  * viewport draws them as their own mesh. Seen from a setup's face it is that
  * project turned into the setup's frame (`projectInSetupFrame`, the same turn
  * the simulation runs on), with the other face's blind subtracts removed
@@ -151,7 +151,9 @@ export function rasterModelTargetHeights(
   let rastered = false
 
   const barModel = barSeedsModel(modelProject) && isBarStock(modelProject.stock)
-  let solid: ManifoldSolid | null = buildCombinedModelSolid(module, modelProject)
+  // Every feature, hidden ones included (issue #1269): hiding a feature in the
+  // viewport does not stop it being machined.
+  let solid: ManifoldSolid | null = buildCombinedModelSolid(module, modelProject, { includeHidden: true })
   // A bar fold that changes nothing returns no solid: the model is the bar.
   if (!solid && barModel && isBarStock(modelProject.stock)) solid = barStockSolid(module, modelProject.stock)
   if (solid) {
@@ -170,7 +172,7 @@ export function rasterModelTargetHeights(
   if (!barModel) {
     const features = modelFeatures(resolvedProjectFeatures(modelProject))
     for (const feature of features) {
-      if (!feature.visible || feature.kind !== 'stl' || feature.operation !== 'model') continue
+      if (feature.kind !== 'stl' || feature.operation !== 'model') continue
       const data = loadSTLTransformedGeometry(feature, modelProject)
       if (!data) continue
       rasterTriangles(heights, grid, data.positions, 3, data.index)

@@ -44,6 +44,7 @@ import { useToolpathGeneration } from './app/useToolpathGeneration'
 import { StatusBarExtras } from './components/layout/StatusBarExtras'
 import { useExecutorPreference } from './app/toolpathGeneration/useExecutorPreference'
 import { useSimulationModel } from './app/useSimulationModel'
+import { useVerifyModel } from './app/verify/useVerifyModel'
 import { useTreeContextMenu } from './app/useTreeContextMenu'
 import { useFeatureTreeActions } from './app/useFeatureTreeActions'
 import { useSnapSettings } from './app/useSnapSettings'
@@ -225,7 +226,6 @@ function App() {
 
   const {
     requestToolpath,
-    requestGenerationTrace,
     generatingOperationIds,
     warningOperationIds,
     selectedToolpath,
@@ -258,6 +258,9 @@ function App() {
     selectedToolpath,
     requestToolpath,
   })
+
+  // The simulation viewport's Verify mode (issue #1269): runs only on demand.
+  const verifyModel = useVerifyModel({ project, selectedOperationId: selectedOperation?.id ?? null, detailCells: simulationDetailCells, requestToolpath })
 
   // Surface a one-time warning when a loaded file is newer than this build supports.
   useEffect(() => {
@@ -464,6 +467,7 @@ function App() {
             onZoomWindowComplete={onZoomWindowComplete}
             playbackInput={simulationPlaybackInput}
             projectKey={projectKey}
+            verify={verifyModel}
           />
         }
         featureTree={<FeatureTree onFeatureContextMenu={openFeatureContextMenu} onTabContextMenu={openTabContextMenu} onClampContextMenu={openClampContextMenu} />}
@@ -544,7 +548,6 @@ function App() {
           onClose={() => setExportDialogRequest(null)}
           service={generationService}
           contextRef={generationContextRef}
-          requestGenerationTrace={requestGenerationTrace}
           initialOperationIds={exportDialogRequest.operationIds}
         />
       )}

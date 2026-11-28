@@ -317,6 +317,22 @@ async function testDeepMoveGouges(): Promise<void> {
   assert(gouges[0].bounds.minX >= 26.5 && gouges[0].bounds.maxX <= 33.5, 'the gouge spans the move and its cutter')
 }
 
+async function testHiddenFeaturesStayInTheModel(): Promise<void> {
+  console.log('Testing a hidden feature is still part of the model (issue #1269)...')
+  const shown = blockProject()
+  const hidden: Project = {
+    ...shown,
+    features: shown.features.map((entry) => (entry.id === 'pocket' ? { ...entry, visible: false } : entry)),
+  }
+  const grid = createSimulationGrid(hidden, {})
+  const target = await buildModelTargetHeights(grid, hidden)
+  assert(target, 'the hidden project still has a model')
+  const centre = target[Math.floor(20 / grid.cellSize) * grid.cols + Math.floor(30 / grid.cellSize)]
+  assert(Math.abs(centre - POCKET.floor) < 1e-4, `a hidden pocket still lowers the target to its floor, got ${centre}`)
+  const result = verified(await verifyAgainstModel({ project: hidden, items: [roughItem(), finishItem()] }))
+  assert(result.summary.gougeCells === 0, 'machining a hidden pocket is not a gouge')
+}
+
 async function testBottomSetup(): Promise<void> {
   console.log('Testing a Bottom setup verifies in its own frame...')
   const project = withBottomSetup(blockProject('bottom'))
@@ -361,6 +377,7 @@ async function main(): Promise<void> {
   await testRoughIntendedLeftover()
   await testFinishCornersUnintended()
   await testDeepMoveGouges()
+  await testHiddenFeaturesStayInTheModel()
   await testBottomSetup()
   await testUnverified()
   console.log('modelDeviation tests passed')

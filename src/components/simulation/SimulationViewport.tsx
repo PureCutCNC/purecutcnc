@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { buildClampMesh, buildOriginTriad } from '../../engine/csg'
 import { updateHeightfieldTexture, uploadHeightfieldRegion } from '../../engine/simulation/gpuMesh'
@@ -42,6 +42,11 @@ import type { Units } from '../../utils/units'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 import { SimulationSetupInfo } from './SimulationSetupInfo'
+import type { VerifyModel } from '../../app/verify/useVerifyModel'
+import type { VerifyFinding } from '../../app/verify/verifyRun'
+import { createCellTintTexture, writeCellTint } from '../../engine/simulation/cellTint'
+import { VerifyPanel } from './VerifyPanel'
+import { useVerifySceneObjects, verifyFindingBox, verifyKindColours, verifyTintColours } from './verifyScene'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -142,6 +147,12 @@ interface SimulationViewportProps {
   isActive?: boolean
   /** Incremented each time the project changes so the viewport can reset its camera. */
   projectKey?: number
+  /**
+   * The Verify mode (issue #1269). While it is active the toolbar's Verify
+   * button is on, playback is off, the panel lists the run, and a run's
+   * cumulative stock replaces the simulation, coloured by class.
+   */
+  verify?: VerifyModel
 }
 
 export interface SimulationViewportHandle {
@@ -320,6 +331,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   isComputing = false,
   isActive = true,
   projectKey,
+  verify,
 }, ref) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -328,6 +340,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // An Around setup draws the bar, and only the bar (issue #395 G3): there is
   // no second flat view, so `bar` being present always means the bar view.
   const wrappedFrame = bar?.frame
+  // The Verify mode's stock (issue #1269): a run's flat cumulative grid. An
+  // Around setup keeps its wrapped simulation; a flat grid is never wrapped.
+  const verifyActive = verify?.active === true
+  const verifyResult = verifyActive ? verify.result : null
+  const verifyDisplay = verifyResult && !wrappedFrame ? verifyResult.display : null
+  const verifyTintRef = useRef<THREE.DataTexture | null>(null)
+  const [verifyFinding, setVerifyFinding] = useState<VerifyFinding | null>(null)
   // The frame's values, not its identity, key the viewport's Around effects.
   // `bar` and its `frame` are new objects on every recompute of the setup
   // input (selecting another operation, any project edit), which must not
@@ -775,20 +794,23 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
 
     disposeCurrentMesh()
 
-    if (!simulation) {
+    const grid = verifyDisplay?.grid ?? simulation?.grid
+    if (!grid) {
       return
     }
 
-    const grid = simulation.grid
     const color = stockColor ? new THREE.Color(stockColor) : new THREE.Color(threePalette.stockDefault)
     const frame = wrappedFrameRef.current
     const parent = barTurnRef.current?.content ?? scene
+    // Verify (issue #1269): each cell coloured by its class, from the theme.
+    const tint = verifyDisplay ? createCellTintTexture(grid, verifyDisplay.cellCodes, verifyTintColours(threePalette)) : null
+    verifyTintRef.current = tint
 
     // One builder mounts the heightfield surface, the shader-driven walls and
     // — for a flat round bar — the static lower half the top-down heightfield
     // cannot represent. The static and playback views share it, so neither can
     // mount a bar without the half below its equator (issue #1049).
-    const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current)
+    const built = buildSimulationStockScene(grid, color, frame, flatRoundBarRef.current, squareBlankSideRef.current, tint ?? undefined)
     parent.add(built.group)
     // The viewport attributes report what is actually in the scene, not only
     // what the builder returned, so a dropped mount cannot read as mounted.
@@ -814,9 +836,43 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         hasAutoFramedRef.current = true
       }
     }
-    return () => built.heightfieldTexture.dispose()
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle. `frameKey` and `flatRoundBarKey` stand in for the objects read through refs (`squareBlankSideRef` is the bar's own side, so it can only change with `frameKey`), so a rebuilt identical input does not rebuild the mesh.
-  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey, flatRoundBarKey])
+    return () => {
+      built.heightfieldTexture.dispose()
+      tint?.dispose()
+      if (verifyTintRef.current === tint) verifyTintRef.current = null
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is read from a stable theme; adding it would rebuild geometry on theme toggle (the verify tint follows it in its own effect below). `frameKey` and `flatRoundBarKey` stand in for the objects read through refs (`squareBlankSideRef` is the bar's own side, so it can only change with `frameKey`), so a rebuilt identical input does not rebuild the mesh.
+  }, [disposeCurrentMesh, playbackEnabled, simulation, stockColor, frameKey, flatRoundBarKey, verifyDisplay])
+
+  // A theme change recolours the verify tint in place instead of rebuilding the scene.
+  useEffect(() => {
+    const tint = verifyTintRef.current
+    if (!tint || !verifyDisplay) return
+    writeCellTint(tint.image.data as Uint8Array, verifyDisplay.cellCodes, verifyTintColours(threePalette))
+    tint.needsUpdate = true
+    needsRenderRef.current = true
+  }, [threePalette, verifyDisplay])
+
+  // Internal ↔ Exported draws its deviations as markers on the stock it ran.
+  const verifyMarkers = useMemo(() => (
+    verifyDisplay && verifyResult?.request.comparison === 'internalExported'
+      ? verifyResult.operations.flatMap((operation) => operation.findings)
+      : null
+  ), [verifyDisplay, verifyResult])
+  // A new result, or leaving Verify, drops the selection.
+  useEffect(() => {
+    setVerifyFinding(null)
+  }, [verifyResult])
+  const verifyHighlight = useMemo(
+    () => (verifyFinding && verifyDisplay ? verifyFindingBox(verifyFinding, verifyDisplay.grid) : null),
+    [verifyDisplay, verifyFinding],
+  )
+  useVerifySceneObjects({ sceneRef, needsRenderRef, markers: verifyMarkers, highlight: verifyHighlight, three: threePalette })
+  const verifyColours = useMemo(() => verifyKindColours(threePalette), [threePalette])
+  const selectVerifyFinding = useCallback((finding: VerifyFinding) => {
+    setVerifyFinding(finding)
+    if (verifyDisplay) controlsRef.current?.fitToBounds(verifyFindingBox(finding, verifyDisplay.grid))
+  }, [verifyDisplay])
 
   // The playback boundary mesh is static — walls track the heightfield texture
   // in the vertex shader — so the only per-tick GPU work is pushing the cells
@@ -1347,6 +1403,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       // Read by the setup simulation e2e (issue #947): which setup is shown
       // and what the heightfield removed, without sampling WebGL pixels.
       data-simulation-setup={setup?.id}
+      // The Verify mode's overlay (issue #1269): set while a run's coloured stock is shown.
+      data-verify-overlay={verifyDisplay ? 'cells' : undefined}
       data-simulation-removed-cells={simulation?.stats.removedCellCount}
       data-simulation-min-z={simulation?.stats.minTopZ}
       // The mounted surface, shared by every bar shape (#1016 C2). A shape that
@@ -1428,19 +1486,40 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         <div className="viewport-presets__group viewport-presets__group--status">
           <div className="simulation-mode-toggle" role="tablist" aria-label={t('viewport.sim.modeLabel')}>
             <button
-              className={`simulation-mode-toggle__btn ${mode === 'selected' ? 'simulation-mode-toggle__btn--active' : ''}`}
+              className={`simulation-mode-toggle__btn ${mode === 'selected' && !verifyActive ? 'simulation-mode-toggle__btn--active' : ''}`}
               type="button"
-              onClick={() => onModeChange('selected')}
+              onClick={() => {
+                verify?.setActive(false)
+                onModeChange('selected')
+              }}
             >
               {t('viewport.sim.modeSelected')}
             </button>
             <button
-              className={`simulation-mode-toggle__btn ${mode === 'visible' ? 'simulation-mode-toggle__btn--active' : ''}`}
+              className={`simulation-mode-toggle__btn ${mode === 'visible' && !verifyActive ? 'simulation-mode-toggle__btn--active' : ''}`}
               type="button"
-              onClick={() => onModeChange('visible')}
+              onClick={() => {
+                verify?.setActive(false)
+                onModeChange('visible')
+              }}
             >
               {t('viewport.sim.modeVisible')}
             </button>
+            {verify && (
+              <button
+                className={`simulation-mode-toggle__btn ${verifyActive ? 'simulation-mode-toggle__btn--active' : ''}`}
+                type="button"
+                data-simulation-mode="verify"
+                aria-pressed={verifyActive}
+                title={t('verify.modeTitle')}
+                onClick={() => {
+                  if (playbackEnabled) handlePlaybackToggle()
+                  verify.setActive(true)
+                }}
+              >
+                {t('verify.mode')}
+              </button>
+            )}
           </div>
           <label className="simulation-detail-control" title={t('viewport.sim.detailTitle')}>
             <span className="simulation-detail-control__label">{t('viewport.sim.detailLabel')}</span>
@@ -1459,7 +1538,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             className={`simulation-mode-toggle__btn simulation-playback-toggle ${playbackEnabled ? 'simulation-mode-toggle__btn--active' : ''}`}
             type="button"
             onClick={handlePlaybackToggle}
-            disabled={mode !== 'selected' || !playbackInput || webglStatus === 'unavailable'}
+            disabled={verifyActive || mode !== 'selected' || !playbackInput || webglStatus === 'unavailable'}
             title={mode !== 'selected'
               ? t('viewport.sim.playToolDisabledMode')
               : !playbackInput
@@ -1482,6 +1561,17 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         </div>
         <SimulationSetupInfo note={setupNote} />
       </div>
+      {verifyActive && verify && (
+        <VerifyPanel
+          verify={verify}
+          units={units}
+          setupName={verify.scope.setupName}
+          uptoOperationName={verify.scope.uptoOperationName}
+          colours={verifyColours}
+          selectedFindingId={verifyFinding?.id ?? null}
+          onSelectFinding={selectVerifyFinding}
+        />
+      )}
       {playbackEnabled && playbackInput && (
         <div
           className={`simulation-playback-bar${barPosition ? ' simulation-playback-bar--dragged' : ''}`}

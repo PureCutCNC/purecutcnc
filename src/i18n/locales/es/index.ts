@@ -28,6 +28,7 @@ import { languageManagerEs } from './languageManager'
 import { themeManagerEs } from './themeManager'
 import { bookletEs } from './booklet'
 import { printEs } from './print'
+import { verifyEs } from './verify'
 
 /** Complete built-in Spanish catalog. */
 export const es: Record<MessageKey, string> = {
@@ -44,4 +45,5 @@ export const es: Record<MessageKey, string> = {
   ...themeManagerEs,
   ...bookletEs,
   ...printEs,
+  ...verifyEs,
 }

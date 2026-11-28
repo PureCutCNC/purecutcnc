@@ -694,10 +694,12 @@ ${flatRoundBar ? `    vAcrossWorld = uBarAxis < 0.5 ? displaced.z : displaced.x;
   }
 `
 
-const fragmentShader = (flatRoundBar: boolean, winners: boolean): string => /* glsl */ `
+const fragmentShader = (flatRoundBar: boolean, winners: boolean, tint = false): string => /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec3 uColor;
-  uniform float uStockBottomZ;
+${tint ? `  // Issue #1269: a per-cell colour (rgb) mixed over the stock colour by its alpha.
+  uniform sampler2D uCellTint;
+` : ''}  uniform float uStockBottomZ;
   uniform float uStockTopZ;
   uniform float uCellSize;
 
@@ -730,7 +732,9 @@ ${flatRoundBar ? `  ${ROUND_BAR_SILHOUETTE_GLSL}
 ` : ''}
   void main() {
     float threshold = uStockBottomZ + 0.000001;
-${winners ? `    // Issue #1209: once a cell spans two pixels or more, the surface is the
+${tint ? `    vec4 cellTint = texelFetch(uCellTint, vCell, 0);
+    vec3 cellColor = mix(uColor, cellTint.rgb, cellTint.a);
+` : ''}${winners ? `    // Issue #1209: once a cell spans two pixels or more, the surface is the
     // exact cutter surface of the moves that won the cells around this point,
     // not the cell's sampled height. A cell whose centre is cut through still
     // draws here, so material inside it (a thin skin) shows; one with no
@@ -753,7 +757,7 @@ ${winners ? `    // Issue #1209: once a cell spans two pixels or more, the surfa
       if (!skip && winnerSurface(vSheet, cellPos, uStockTopZ, uStockBottomZ, exactHeight, exactSlope)) {
         if (exactHeight <= threshold) discard;
         vec3 exactLighting = calcLighting(normalize(vec3(-exactSlope.x, 1.0, -exactSlope.y)));
-        fragColor = vec4(uColor * exactLighting * depthDarken(exactHeight, uStockTopZ), 1.0);
+        fragColor = vec4(${tint ? 'cellColor' : 'uColor'} * exactLighting * depthDarken(exactHeight, uStockTopZ), 1.0);
         return;
       }
     }
@@ -776,7 +780,7 @@ ${flatRoundBar ? `    // The flat top is part of the bar's silhouette: an outerm
     lighting = calcLighting(normalize(mat3(modelMatrix) * aroundSurfaceNormal(surfaceNormal(vCell, vLocal, wide), vAcross)));
 #endif
 
-    fragColor = vec4(uColor * lighting * depthDarken(vHeight, uStockTopZ), 1.0);
+    fragColor = vec4(${tint ? 'cellColor' : 'uColor'} * lighting * depthDarken(vHeight, uStockTopZ), 1.0);
   }
 `
 
@@ -789,6 +793,7 @@ export function createHeightfieldMaterial(
   squareBlankSide?: number,
   outlineCorners?: THREE.Texture,
   winnerShading?: WinnerShading | null,
+  cellTint?: THREE.Texture,
 ): THREE.ShaderMaterial {
   const roundBar = flatRoundBar !== undefined
   // Sub-cell walls (issue #973) are a flat-sheet feature: a wrapped grid's
@@ -820,9 +825,10 @@ export function createHeightfieldMaterial(
       ...(blankSide !== undefined ? { uBlankSide: { value: blankSide } } : {}),
       ...(outline ? { uOutlineCorners: { value: outline } } : {}),
       ...(winners ? winners.uniforms : {}),
+      ...(cellTint ? { uCellTint: { value: cellTint } } : {}),
     },
     vertexShader: aroundShader(vertexShader(roundBar, blankSide !== undefined, outline !== undefined, winners !== null), frame),
-    fragmentShader: aroundShader(fragmentShader(roundBar, winners !== null), frame),
+    fragmentShader: aroundShader(fragmentShader(roundBar, winners !== null, cellTint !== undefined), frame),
     glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })

@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo } from 'react'
-import type { ToolpathResult, ToolpathGenerationTrace } from '../engine/toolpaths'
+import type { ToolpathResult } from '../engine/toolpaths'
 import {
   captureCacheInputs,
   cacheInputsValid,
@@ -137,11 +137,6 @@ export interface ToolpathGenerationBinding {
     purpose: GenerationPurpose,
     signal?: AbortSignal,
   ) => Promise<ToolpathResult | null>
-  /** Await a {raw, optimized} trace (issue #356). Never served from the ordinary cache. */
-  requestGenerationTrace: (
-    operationId: string,
-    signal?: AbortSignal,
-  ) => Promise<ToolpathGenerationTrace | null>
   generatingOperationIds: Set<string>
   /** Operations whose displayed toolpath carries any warning or error (issue #837). */
   warningOperationIds: Set<string>
@@ -218,15 +213,6 @@ export function useToolpathGeneration(
     [service, contextRef],
   )
 
-  const requestGenerationTrace = useCallback(
-    async (operationId: string, signal?: AbortSignal): Promise<ToolpathGenerationTrace | null> => {
-      const outcome = await service.request(contextRef.current, operationId, { purpose: 'debug', trace: true, signal })
-      if (outcome.status !== 'completed' || !outcome.raw) return null
-      return { operationId, raw: outcome.raw, optimized: outcome.result }
-    },
-    [service, contextRef],
-  )
-
   const stopGeneration = useCallback(() => { service.stopAutomaticGeneration() }, [service])
   const resumeGeneration = useCallback(() => { service.resumeAutomaticGeneration() }, [service])
   const retryGeneration = useCallback(() => { service.retryAfterFailure() }, [service])
@@ -265,7 +251,6 @@ export function useToolpathGeneration(
   return {
     toolpathMap,
     requestToolpath,
-    requestGenerationTrace,
     generatingOperationIds,
     warningOperationIds,
     selectedToolpath,

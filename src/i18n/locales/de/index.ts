@@ -28,6 +28,7 @@ import { languageManagerDe } from './languageManager'
 import { themeManagerDe } from './themeManager'
 import { bookletDe } from './booklet'
 import { printDe } from './print'
+import { verifyDe } from './verify'
 
 /**
  * The complete German catalog, merged from per-area modules that mirror
@@ -49,4 +50,5 @@ export const de: Record<MessageKey, string> = {
   ...themeManagerDe,
   ...bookletDe,
   ...printDe,
+  ...verifyDe,
 }

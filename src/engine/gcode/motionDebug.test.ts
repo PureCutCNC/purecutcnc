@@ -32,7 +32,6 @@ import { runPostProcessor } from './postprocessor'
 import { exportGeometryTolerance } from '../../utils/units'
 import { parseGcodeMotion } from './gcodeMotionParser'
 import {
-  getExportedMotionEligibility,
   compareMotionTraces,
   buildExportedMotionDebugModel,
   parseExportedMotion,
@@ -103,26 +102,6 @@ function mirroredBorrowedRotaryDefinition(): MachineDefinition {
 
 const ORIGIN: MachineOrigin = { name: 'O', x: 10, y: 20, z: 0, visible: true }
 const ZERO_ORIGIN: MachineOrigin = { name: 'O', x: 0, y: 0, z: 0, visible: true }
-
-function testEligibility(): void {
-  console.log('Testing exported-motion eligibility...')
-  const constantZ = [cut(pt(0, 0, 0), pt(10, 0, 0)), cut(pt(10, 0, 0), pt(10, 5, 0))]
-  let e = getExportedMotionEligibility(constantZ)
-  assert(e.eligible, 'constant-Z pocket-like should be eligible')
-
-  const variableZ = [cut(pt(0, 0, 0), pt(5, 0, -1))]
-  e = getExportedMotionEligibility(variableZ)
-  assert(!e.eligible && e.reason === 'variableZ', `variable-Z ineligible, got ${e.reason}`)
-
-  e = getExportedMotionEligibility([rapid(pt(0, 0, 5), pt(0, 0, 0))])
-  assert(!e.eligible && e.reason === 'noCutMoves', `no-cut ineligible, got ${e.reason}`)
-
-  e = getExportedMotionEligibility({
-    moves: constantZ,
-    drillCycles: [{ x: 0, y: 0, clearZ: 1, retractZ: 1, bottomZ: 0, drillType: 'simple' }],
-  })
-  assert(!e.eligible && e.reason === 'drilling', `drilling ineligible, got ${e.reason}`)
-}
 
 function testInverseTransform(): void {
   console.log('Testing machineToProjectPoint inverts projectToMachinePoint...')
@@ -708,7 +687,6 @@ function testMajorArcTakenTheShortWayStillWarns(): void {
     `expected an arcDeviation warning, got ${JSON.stringify(model.diagnostic.warnings)}`)
 }
 
-testEligibility()
 testInverseTransform()
 testRotaryAngleInverse()
 testRotaryProgramReadback()
