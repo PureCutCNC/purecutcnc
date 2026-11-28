@@ -884,15 +884,16 @@ console.log('Testing the exported program parses back onto the flat toolpath...'
     { word: rotaryWord(pinRotaryAxis(OWN_X, null))!, inverseTimeFeed: OWN_X.rotary?.inverseTimeFeed ?? null },
   )
   // Since #1103 slice ca-h every operation that commands A closes with a
-  // machine-coordinate retract and a forward turn to the next whole turn. The
-  // parser cannot place machine-coordinate motion in the work frame, so it
-  // reports exactly those blocks — two per operation (the retract, then the
-  // A-only rapid that follows it) — and nothing else.
-  assert.equal(parsed.status, 'unsupported', 'the end turns are reported, not silently mis-placed')
+  // machine-coordinate retract and a forward turn to the next whole turn.
+  // Since #1261 the parser understands a Z-only G53 rapid as a retract and the
+  // A-only rapid after it as travel at the machine height, so the program
+  // verifies; it still notes exactly those blocks — two per operation (the
+  // retract, then the rapid that follows it) — and nothing else.
+  assert.equal(parsed.status, 'verified', 'the end turns are understood, not silently mis-placed')
   assert.ok(parsed.moves.length > 0, 'and the program still traces')
   for (const warning of parsed.warnings) {
-    assert.match(warning, /G53 machine-coordinate move|move after a G53 block does not state Z/,
-      `only the end-turn blocks are unplaceable: ${warning}`)
+    assert.match(warning, /G53 machine-coordinate retract|rapid after a G53 retract does not state Z/,
+      `only the end-turn blocks are noted: ${warning}`)
   }
   const turningOperations = MM.operations.filter((entry) => MM.wrapped.get(entry.id)!.moves.some(
     (move) => move.from.a !== undefined || move.to.a !== undefined,
